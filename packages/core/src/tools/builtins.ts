@@ -12,6 +12,8 @@ import type { ToolBackupServicePort } from "../core/types.js";
 import type { WorkspaceBoundary } from "./workspace-boundary.js";
 import type { BackupDeletionAuthorizationController } from "./backup-vault.js";
 import type { BackupVault } from "./backup-vault.js";
+import type { ProtectedStoragePolicy } from "./protected-storage-policy.js";
+import type { GenericToolFileOperation } from "./protected-storage-policy.js";
 
 export interface BuiltinToolExecutionContext {
   workspaceBoundary: WorkspaceBoundary;
@@ -20,6 +22,11 @@ export interface BuiltinToolExecutionContext {
   backupServicePort: ToolBackupServicePort | null;
   vault: BackupVault | null;
   deletionController: BackupDeletionAuthorizationController | null;
+  /**
+   * AR-01：受保护存储策略（必填）。普通工具在真实执行文件操作前必须
+   * 调用 assertGenericToolAccessAllowed，列目录时过滤受保护条目。
+   */
+  protectedStoragePolicy: ProtectedStoragePolicy;
 }
 
 export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
@@ -120,8 +127,9 @@ export async function executeBuiltinTool(
       if (typeof filePath !== "string") {
         throw new Error("readFile 参数 filePath 缺失或非法");
       }
-      const resolvedPath =
-        await executionContext.workspaceBoundary.resolveWithinWorkspace(filePath);
+      // 双层校验（AR-01）：预检 + 紧邻 IO 的复检，拦截"预检后目标被替换为链接"的 TOCTOU
+      await resolveAndAssertAccess(executionContext, filePath, "read");
+      const resolvedPath = await resolveAndAssertAccess(executionContext, filePath, "read");
       const content = await readFile(resolvedPath, "utf8");
       return { outputText: content, isSideEffectFree: true };
     }
@@ -130,12 +138,21 @@ export async function executeBuiltinTool(
       if (typeof directoryPath !== "string") {
         throw new Error("listDirectory 参数 directoryPath 缺失或非法");
       }
-      const resolvedPath =
-        await executionContext.workspaceBoundary.resolveWithinWorkspace(directoryPath);
+      await resolveAndAssertAccess(executionContext, directoryPath, "list");
+      const resolvedPath = await resolveAndAssertAccess(executionContext, directoryPath, "list");
       const { readdir } = await import("node:fs/promises");
       const entries = await readdir(resolvedPath, { withFileTypes: true });
-      const renderedEntries = entries
-        .map((entry) => `${entry.isDirectory() ? "d" : "-"} ${entry.name}`)
+      // AR-01：列出受保护根的父目录时过滤受保护条目，不暴露物理布局
+      const visibleEntries = entries
+        .map((entry) => entry.name)
+        .filter((entryName) =>
+          executionContext.protectedStoragePolicy.filterProtectedEntries([entryName]).includes(entryName),
+        );
+      const renderedEntries = visibleEntries
+        .map((entryName) => {
+          const entry = entries.find((candidate) => candidate.name === entryName);
+          return `${entry?.isDirectory() ? "d" : "-"} ${entryName}`;
+        })
         .join("\n");
       return { outputText: renderedEntries, isSideEffectFree: true };
     }
@@ -158,6 +175,10 @@ export async function executeBuiltinTool(
       )) {
         throw new Error("writeFileTemporary 拒绝穿越临时目录的文件名");
       }
+      executionContext.protectedStoragePolicy.assertGenericToolAccessAllowed({
+        canonicalTargetPath: resolvedTargetPath,
+        operation: "create",
+      });
       const { writeFile } = await import("node:fs/promises");
       await writeFile(resolvedTargetPath, content, { encoding: "utf8", flag: "wx" });
       return {
@@ -173,6 +194,15 @@ export async function executeBuiltinTool(
       }
       const resolvedPath =
         await executionContext.workspaceBoundary.resolveWithinWorkspace(filePath);
+      executionContext.protectedStoragePolicy.assertGenericToolAccessAllowed({
+        canonicalTargetPath: resolvedPath,
+        operation: "replace",
+      });
+      await executionContext.workspaceBoundary.resolveWithinWorkspace(filePath);
+      executionContext.protectedStoragePolicy.assertGenericToolAccessAllowed({
+        canonicalTargetPath: resolvedPath,
+        operation: "replace",
+      });
       if (executionContext.backupServicePort === null) {
         throw new Error("replaceFileContent 缺少自动备份端口，拒绝执行破坏性变更");
       }
@@ -237,8 +267,9 @@ async function executeBackupVaultAction(
     throw new Error("backupVault read/restore 需要 backupIdentifier");
   }
   if (action === "read") {
-    const content = await executionContext.vault.readBackup(backupIdentifier);
-    return { outputText: content, isSideEffectFree: true };
+    const readResult = await executionContext.vault.readBackup(backupIdentifier);
+    // AR-01：按显式编码返回内容（二进制以 base64，不按 UTF-8 损坏）
+    return { outputText: readResult.content, isSideEffectFree: true };
   }
   const restored = await executionContext.vault.restoreBackup(backupIdentifier);
   return {
@@ -308,4 +339,22 @@ function isPathWithinDirectory(directoryPath: string, candidatePath: string): bo
     relativePath === "" ||
     (!relativePath.startsWith("..") && !path.isAbsolute(relativePath))
   );
+}
+
+/**
+ * AR-01：解析工作区路径 + 受保护存储策略断言（一次访问检查）。
+ * 配合 IO 前的第二次调用形成"预检 + 复检"，拦截目标在检查间隙被替换为链接的 TOCTOU。
+ */
+async function resolveAndAssertAccess(
+  executionContext: BuiltinToolExecutionContext,
+  requestedPath: string,
+  operation: GenericToolFileOperation,
+): Promise<string> {
+  const resolvedPath =
+    await executionContext.workspaceBoundary.resolveWithinWorkspace(requestedPath);
+  executionContext.protectedStoragePolicy.assertGenericToolAccessAllowed({
+    canonicalTargetPath: resolvedPath,
+    operation,
+  });
+  return resolvedPath;
 }

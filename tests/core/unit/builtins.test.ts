@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ModeMachine } from "../../../packages/core/src/core/mode-machine.js";
 import { executeBuiltinTool } from "../../../packages/core/src/tools/builtins.js";
 import { WorkspaceBoundary } from "../../../packages/core/src/tools/workspace-boundary.js";
+import { ProtectedStoragePolicy } from "../../../packages/core/src/tools/protected-storage-policy.js";
 import {
   BackupDeletionAuditLog,
   BackupDeletionAuthorizationController,
@@ -37,6 +38,9 @@ function executionContext() {
     backupServicePort: null,
     vault: null,
     deletionController: null,
+    protectedStoragePolicy: new ProtectedStoragePolicy({
+      stateDirectoryPath: temporaryDirectory,
+    }),
   };
 }
 
@@ -147,6 +151,9 @@ describe("T06A 备份层内置工具", () => {
       backupServicePort: vault,
       vault,
       deletionController: null,
+      protectedStoragePolicy: new ProtectedStoragePolicy({
+        stateDirectoryPath: temporaryDirectory,
+      }),
     };
     const result = await executeBuiltinTool(
       "replaceFileContent",
@@ -158,7 +165,7 @@ describe("T06A 备份层内置工具", () => {
     const entries = await vault.listBackups(null);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ toolName: "replaceFileContent", status: "active" });
-    expect(await vault.readBackup(entries[0]!.backupIdentifier)).toBe("原始笔记");
+    expect((await vault.readBackup(entries[0]!.backupIdentifier)).content).toBe("原始笔记");
     await vault.restoreBackup(entries[0]!.backupIdentifier);
     expect(await fs.readFile(targetPath, "utf8")).toBe("原始笔记");
   });
@@ -199,6 +206,9 @@ describe("T06A 备份层内置工具", () => {
       backupServicePort: vault,
       vault,
       deletionController,
+      protectedStoragePolicy: new ProtectedStoragePolicy({
+        stateDirectoryPath: temporaryDirectory,
+      }),
     };
     const result = await executeBuiltinTool(
       "deleteBackup",
@@ -247,6 +257,9 @@ describe("T06A 备份层内置工具", () => {
       backupServicePort: vault,
       vault,
       deletionController,
+      protectedStoragePolicy: new ProtectedStoragePolicy({
+        stateDirectoryPath: temporaryDirectory,
+      }),
     };
     await expect(
       executeBuiltinTool(
@@ -276,6 +289,9 @@ describe("T06A 备份层内置工具", () => {
       backupServicePort: vault,
       vault,
       deletionController: null,
+      protectedStoragePolicy: new ProtectedStoragePolicy({
+        stateDirectoryPath: temporaryDirectory,
+      }),
     };
     const listResult = await executeBuiltinTool(
       "backupVault",
@@ -321,6 +337,9 @@ describe("T06A 备份层内置工具", () => {
       backupServicePort: vault,
       vault,
       deletionController: null,
+      protectedStoragePolicy: new ProtectedStoragePolicy({
+        stateDirectoryPath: temporaryDirectory,
+      }),
     };
     const result = await executeBuiltinTool(
       "replaceFileContent",
@@ -343,6 +362,9 @@ describe("T06A 备份层内置工具", () => {
       backupServicePort: vault,
       vault,
       deletionController: null,
+      protectedStoragePolicy: new ProtectedStoragePolicy({
+        stateDirectoryPath: temporaryDirectory,
+      }),
     };
     // 备份后、写入前模拟第三方修改：用包装端口篡改目标指纹
     const wrappedBackupPort = {

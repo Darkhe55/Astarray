@@ -24,6 +24,7 @@ import {
   BackupDeletionAuthorizationController,
   BackupVault,
 } from "../../../core/src/tools/backup-vault.js";
+import { ProtectedStoragePolicy } from "../../../core/src/tools/protected-storage-policy.js";
 import { AgentWorkArchiveStore } from "../../../core/src/orchestration/work-archive-store.js";
 import { InteractiveBackupDeletionAuthorizationPort } from "./backup-deletion-port.js";
 
@@ -76,6 +77,10 @@ export async function bootstrapCli(
   const backupVault = new BackupVault({ baseDirectory: stateDirectory });
   await backupVault.initialize();
   const backupDeletionAuditLog = new BackupDeletionAuditLog(stateDirectory);
+  // AR-01：受保护存储策略（普通工具不得访问保管库与审计存储）
+  const protectedStoragePolicy = new ProtectedStoragePolicy({
+    stateDirectoryPath: stateDirectory,
+  });
   // S5：交互式授权通道（警告→暂停→等待用户决定）；非 TTY 环境 fail-closed
   const interactiveDeletionPort = new InteractiveBackupDeletionAuthorizationPort({
     warnOutput: process.stderr,
@@ -133,6 +138,7 @@ export async function bootstrapCli(
         vault: backupVault,
         deletionController: backupDeletionController,
         requestingAgentInstanceId: `worker:${task.id}`,
+        protectedStoragePolicy,
       }),
     buildPermissionExplanation: (toolName: string) =>
       `执行任务需要调用工具 ${toolName}`,

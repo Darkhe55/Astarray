@@ -226,7 +226,7 @@ describe("CLI 命令（直接调用）", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ toolName: "config-init", status: "active" });
     const backedUpContent = await vault.readBackup(entries[0]!.backupIdentifier);
-    expect(backedUpContent).toContain("devolve");
+    expect(backedUpContent.content).toContain("devolve");
   });
 
   it("status：文本模式输出 mission 详情", async () => {

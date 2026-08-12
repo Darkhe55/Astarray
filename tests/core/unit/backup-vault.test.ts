@@ -50,10 +50,12 @@ describe("BackupVault 自动 pre-image", () => {
     expect(receipt.backupIdentifier).toMatch(/^backup-/);
     expect(receipt.targetFingerprintBeforeMutation).toMatch(/^[a-f0-9]{64}$/);
 
-    // 目标被修改后，备份仍持有原始内容
+    // 目标被修改后，备份仍持有原始内容（显式编码 + 媒体类型）
     await fs.writeFile(targetPath, "新内容", "utf8");
     const backedUpContent = await vault.readBackup(receipt.backupIdentifier);
-    expect(backedUpContent).toBe("原始内容");
+    expect(backedUpContent.content).toBe("原始内容");
+    expect(backedUpContent.encoding).toBe("utf-8");
+    expect(backedUpContent.mediaType).toContain("text/plain");
 
     const restored = await vault.restoreBackup(receipt.backupIdentifier);
     expect(restored.restoredPath).toBe(targetPath);

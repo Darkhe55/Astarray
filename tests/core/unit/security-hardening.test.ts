@@ -22,6 +22,7 @@ import { PolicyWrapper } from "../../../packages/core/src/tools/policy-wrapper.j
 import { ToolRegistry } from "../../../packages/core/src/tools/registry.js";
 import { BUILTIN_TOOL_DESCRIPTORS, executeBuiltinTool } from "../../../packages/core/src/tools/builtins.js";
 import { WorkspaceBoundary } from "../../../packages/core/src/tools/workspace-boundary.js";
+import { ProtectedStoragePolicy } from "../../../packages/core/src/tools/protected-storage-policy.js";
 import { ScriptedRuntime } from "../../../packages/core/src/runtime/scripted-runtime.js";
 import { DevolveScheduler } from "../../../packages/core/src/orchestration/devolve-scheduler.js";
 import { Redactor } from "../../../packages/core/src/infra/redaction.js";
@@ -146,6 +147,9 @@ describe("T12：Ponder 不落盘", () => {
       workerAllowedToolNames: null,
       nowUnixSeconds: () => 1_800_000_000,
       getCurrentMode: () => modeMachine.getCurrentMode(),
+      protectedStoragePolicy: new ProtectedStoragePolicy({
+        stateDirectoryPath: temporaryDirectory,
+      }),
     });
     const result = await wrapper.execute(
       "readFile",
@@ -221,6 +225,9 @@ describe("T12：路径穿越变体", () => {
           backupServicePort: null,
           vault: null,
           deletionController: null,
+          protectedStoragePolicy: new ProtectedStoragePolicy({
+            stateDirectoryPath: temporaryDirectory,
+          }),
         },
       ),
     ).rejects.toThrow();
@@ -296,5 +303,8 @@ function buildAssistWrapper(): PolicyWrapper {
     workerAllowedToolNames: null,
     nowUnixSeconds: () => 1_800_000_000,
     getCurrentMode: () => modeMachine.getCurrentMode(),
+    protectedStoragePolicy: new ProtectedStoragePolicy({
+      stateDirectoryPath: temporaryDirectory,
+    }),
   });
 }

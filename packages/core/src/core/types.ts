@@ -136,6 +136,32 @@ export interface ToolBackupReceipt {
 /** 受控备份库工具支持的操作；删除由独立特权入口处理。 */
 export type BackupVaultAction = "list" | "read" | "restore";
 
+/**
+ * 备份公开摘要（AR-01 DTO）。
+ * 只包含逻辑元数据；不得包含对象哈希、恢复能力标识或物理存储路径。
+ */
+export interface BackupSummary {
+  backupIdentifier: string;
+  createdAtIso: string;
+  toolName: string;
+  /** 备份所保护的逻辑目标路径（工作区语义，非保管库物理路径）。 */
+  targetPath: string;
+  mutationKind: (typeof TOOL_MUTATION_KINDS_REQUIRING_AUTOMATIC_BACKUP)[number];
+  status: "active" | "quarantined" | "purged";
+  quarantinedAtIso: string | null;
+  purgedAtIso: string | null;
+}
+
+/**
+ * 受控读取结果（AR-01）：显式编码与媒体类型。
+ * 文本内容以 utf-8 原文返回；二进制内容以 base64 返回，不做无条件 UTF-8 解码损坏。
+ */
+export interface ReadBackupResult {
+  encoding: "utf-8" | "base64";
+  mediaType: string;
+  content: string;
+}
+
 /** 协同模式删除备份时发给用户的单次、精确授权请求。 */
 export interface BackupDeletionAuthorizationRequest {
   authorizationRequestId: string;

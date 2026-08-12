@@ -16,6 +16,7 @@ import { PolicyWrapper } from "../../../packages/core/src/tools/policy-wrapper.j
 import { ToolRegistry } from "../../../packages/core/src/tools/registry.js";
 import { BUILTIN_TOOL_DESCRIPTORS } from "../../../packages/core/src/tools/builtins.js";
 import { WorkspaceBoundary } from "../../../packages/core/src/tools/workspace-boundary.js";
+import { ProtectedStoragePolicy } from "../../../packages/core/src/tools/protected-storage-policy.js";
 
 type ErrorToolCallResult = Extract<ToolCallResult, { kind: "error" }>;
 type SuccessToolCallResult = Extract<ToolCallResult, { kind: "success" }>;
@@ -67,6 +68,9 @@ function buildWrapper(options: {
     workerAllowedToolNames: options.workerAllowedToolNames ?? null,
     nowUnixSeconds: () => NOW_UNIX_SECONDS,
     getCurrentMode: () => modeMachine.getCurrentMode(),
+    protectedStoragePolicy: new ProtectedStoragePolicy({
+      stateDirectoryPath: temporaryDirectory,
+    }),
     auditSink: (event) => options.auditEvents?.push(event),
   });
 }
@@ -208,6 +212,9 @@ describe("PolicyWrapper 权限执行", () => {
       workerAllowedToolNames: null,
       nowUnixSeconds: () => NOW_UNIX_SECONDS,
       getCurrentMode: () => modeMachine.getCurrentMode(),
+      protectedStoragePolicy: new ProtectedStoragePolicy({
+        stateDirectoryPath: temporaryDirectory,
+      }),
     });
     const argumentsJson = JSON.stringify({ fileName: "out.txt", content: "x" });
     sessionManager.grant("writeFileTemporary", hashToolArguments(argumentsJson), NOW_UNIX_SECONDS);

@@ -16,6 +16,7 @@ import type {
 import type { ToolRegistry } from "./registry.js";
 import type { WorkspaceBoundary } from "./workspace-boundary.js";
 import type { BackupDeletionAuthorizationController, BackupVault } from "./backup-vault.js";
+import type { ProtectedStoragePolicy } from "./protected-storage-policy.js";
 import {
   executeBuiltinTool,
   BUILTIN_TOOL_DESCRIPTORS,
@@ -44,6 +45,8 @@ export interface PolicyWrapperOptions {
   vault?: BackupVault | null;
   deletionController?: BackupDeletionAuthorizationController | null;
   requestingAgentInstanceId?: string;
+  /** AR-01：受保护存储策略（普通工具执行前强制检查，必填）。 */
+  protectedStoragePolicy: ProtectedStoragePolicy;
 }
 
 export class PolicyWrapper implements ToolPort {
@@ -183,6 +186,7 @@ export class PolicyWrapper implements ToolPort {
           backupServicePort: this.options.backupServicePort ?? null,
           vault: this.options.vault ?? null,
           deletionController: this.options.deletionController ?? null,
+          protectedStoragePolicy: this.options.protectedStoragePolicy,
         });
         return {
           kind: "success",

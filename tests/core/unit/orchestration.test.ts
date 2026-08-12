@@ -28,6 +28,7 @@ import { PolicyWrapper } from "../../../packages/core/src/tools/policy-wrapper.j
 import { ToolRegistry } from "../../../packages/core/src/tools/registry.js";
 import { BUILTIN_TOOL_DESCRIPTORS } from "../../../packages/core/src/tools/builtins.js";
 import { WorkspaceBoundary } from "../../../packages/core/src/tools/workspace-boundary.js";
+import { ProtectedStoragePolicy } from "../../../packages/core/src/tools/protected-storage-policy.js";
 import { ScriptedRuntime } from "../../../packages/core/src/runtime/scripted-runtime.js";
 import { AssistScheduler } from "../../../packages/core/src/orchestration/assist-scheduler.js";
 import { DevolveScheduler } from "../../../packages/core/src/orchestration/devolve-scheduler.js";
@@ -171,6 +172,9 @@ function buildScheduler(
         workerAllowedToolNames: new Set(task.toolNames),
         nowUnixSeconds: () => NOW_UNIX_SECONDS,
         getCurrentMode: () => modeMachine.getCurrentMode(),
+        protectedStoragePolicy: new ProtectedStoragePolicy({
+          stateDirectoryPath: temporaryDirectory,
+        }),
       });
     },
     buildPermissionExplanation: (toolName: string) => `需要 ${toolName} 完成分配任务`,
@@ -509,6 +513,9 @@ describe("T08 编排：Devolve 与取消", () => {
             workerAllowedToolNames: new Set(task.toolNames),
             nowUnixSeconds: () => NOW_UNIX_SECONDS,
             getCurrentMode: () => modeMachine.getCurrentMode(),
+            protectedStoragePolicy: new ProtectedStoragePolicy({
+              stateDirectoryPath: temporaryDirectory,
+            }),
           }),
         buildPermissionExplanation: () => "说明",
       },
@@ -589,6 +596,9 @@ describe("T08 编排：Devolve 与取消", () => {
       workerAllowedToolNames: new Set(["readFile"]),
       nowUnixSeconds: () => NOW_UNIX_SECONDS,
       getCurrentMode: () => modeMachine.getCurrentMode(),
+      protectedStoragePolicy: new ProtectedStoragePolicy({
+        stateDirectoryPath: temporaryDirectory,
+      }),
     });
     const scripts: unknown[] = [];
     let attempt = 0;

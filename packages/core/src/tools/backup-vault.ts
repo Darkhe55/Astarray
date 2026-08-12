@@ -22,6 +22,8 @@ import type {
   BackupDeletionAuthorizationControlPort,
   BackupDeletionAuthorizationDecision,
   BackupDeletionAuthorizationRequest,
+  BackupSummary,
+  ReadBackupResult,
   ToolBackupReceipt,
   ToolBackupServicePort,
 } from "../core/types.js";
@@ -84,6 +86,18 @@ function isValidSnapshotDocument(value: unknown): value is BackupSnapshotDocumen
         typeof entry.contentBase64 === "string",
     )
   );
+}
+
+/**
+ * 探测内容是否为可读文本：可 UTF-8 解码且不含 NUL 字节。
+ * 用于 readBackup 的编码选择（AR-01：不得无条件按 UTF-8 损坏二进制）。
+ */
+function isUtf8TextContent(content: Buffer): boolean {
+  if (content.includes(0x00)) {
+    return false;
+  }
+  const decoded = content.toString("utf8");
+  return Buffer.from(decoded, "utf8").equals(content);
 }
 
 export interface BackupVaultOptions {
@@ -187,23 +201,56 @@ export class BackupVault implements ToolBackupServicePort {
     }
   }
 
-  /** 列出备份（不含 pre-image 内容，仅元数据）。 */
-  async listBackups(missionId: string | null): Promise<BackupVaultEntry[]> {
+  /** 列出备份公开摘要（AR-01 DTO：不含对象哈希、能力标识与物理路径）。 */
+  async listBackups(missionId: string | null): Promise<BackupSummary[]> {
     void missionId;
     return this.manifest.entries
       .filter((entry) => entry.status !== "purged")
-      .map((entry) => ({ ...entry }));
+      .map((entry) => ({
+        backupIdentifier: entry.backupIdentifier,
+        createdAtIso: entry.createdAtIso,
+        toolName: entry.toolName,
+        targetPath: entry.targetPath,
+        mutationKind: entry.mutationKind,
+        status: entry.status,
+        quarantinedAtIso: entry.quarantinedAtIso,
+        purgedAtIso: entry.purgedAtIso,
+      }));
   }
 
-  /** 读取备份内容（恢复子系统的受控读取；文件型返回文本，目录型返回条目清单）。 */
-  async readBackup(backupIdentifier: string): Promise<string> {
+  /**
+   * 受控读取备份内容（AR-01）。
+   * 返回显式编码与媒体类型：文本 utf-8 原文、二进制 base64、目录为结构化清单；
+   * 不按 UTF-8 无条件解码二进制内容。
+   */
+  async readBackup(backupIdentifier: string): Promise<ReadBackupResult> {
     const snapshot = await this.readSnapshot(backupIdentifier);
     if (snapshot.kind === "directory") {
-      return snapshot.entries
-        .map((entry) => `${entry.relativePath} (${entry.contentBase64.length} B)`)
+      const directoryListing = snapshot.entries
+        .map(
+          (entry) =>
+            `${entry.relativePath} (${entry.contentBase64.length} B)`,
+        )
         .join("\n");
+      return {
+        encoding: "utf-8",
+        mediaType: "application/vnd.astarray.directory-snapshot",
+        content: directoryListing,
+      };
     }
-    return Buffer.from(snapshot.entries[0]!.contentBase64, "base64").toString("utf8");
+    const content = Buffer.from(snapshot.entries[0]!.contentBase64, "base64");
+    if (isUtf8TextContent(content)) {
+      return {
+        encoding: "utf-8",
+        mediaType: "text/plain; charset=utf-8",
+        content: content.toString("utf8"),
+      };
+    }
+    return {
+      encoding: "base64",
+      mediaType: "application/octet-stream",
+      content: content.toString("base64"),
+    };
   }
 
   /**
