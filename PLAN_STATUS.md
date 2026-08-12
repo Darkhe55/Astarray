@@ -12,24 +12,27 @@
 
 ## 任务总览
 
+> ⚠️ 重新验收中（AR-00 起，依据 `AUDIT_REMEDIATION_TASKS.md`）：以下任务状态不再视为最终通过。
+> 基线证据见 `.tmp/ar00-baseline-evidence.md`；每个任务须在对应 AR 主任务完成并动态复验后才恢复为 done。
+
 | 任务 | 内容 | 状态 | 批次 | 备注 |
 |---|---|---|---|---|
-| T00 | 架构定稿与契约 | done | 1 | 2026-08-12 验收通过 |
-| T01 | npm 与 TypeScript 工程骨架 | done | 1 | 2026-08-12 验收通过 |
-| T02 | 模式状态机与权限策略 | done | 2 | 2026-08-12 验收通过 |
-| T03 | 原子任务链持久化 | done | 2 | 2026-08-12 验收通过 |
-| T04 | 独立反馈进程 | done | 3 | 2026-08-12 验收通过 |
-| T05 | DAG 调度器 | done | 4 | 2026-08-12 验收通过 |
-| T06 | 工具注册表与最小权限 | done | 4 | 2026-08-12 验收通过 |
-| T06A | 工具内破坏性变更备份层 | done | 4C | 2026-08-12 验收通过（ADR-0009） |
-| T07 | Agent Runtime | done | 4 | 2026-08-12 验收通过 |
-| T08 | 三级 Agent 编排 | done | 5 | 2026-08-12 验收通过 |
-| T09 | 记忆、缓存与指标 | done | 6 | 2026-08-12 验收通过 |
-| T10 | TUI | done | 6 | 2026-08-12 验收通过 |
-| T11 | Headless CLI | done | 6 | 2026-08-12 验收通过 |
-| T12 | 恢复、安全与异常加固 | done | 7 | 2026-08-12 验收通过 |
-| T13 | npm 打包与隔离安装 | done | 8 | 2026-08-12 验收通过 |
-| T14 | 文档与最终报告 | done | 8 | 2026-08-12 验收通过 |
+| T00 | 架构定稿与契约 | re-verifying | 1 | AR-00 重新验收中 |
+| T01 | npm 与 TypeScript 工程骨架 | re-verifying | 1 | AR-00 重新验收中 |
+| T02 | 模式状态机与权限策略 | re-verifying | 2 | AR-00 重新验收中 |
+| T03 | 原子任务链持久化 | re-verifying | 2 | AR-00 重新验收中 |
+| T04 | 独立反馈进程 | re-verifying | 3 | AR-00 重新验收中（AR-03 认证） |
+| T05 | DAG 调度器 | re-verifying | 4 | AR-00 重新验收中 |
+| T06 | 工具注册表与最小权限 | re-verifying | 4 | AR-00 重新验收中（AR-01 受保护存储） |
+| T06A | 工具内破坏性变更备份层 | re-verifying | 4C | AR-00 重新验收中（AR-01/AR-05/AR-06） |
+| T07 | Agent Runtime | re-verifying | 4 | AR-00 重新验收中 |
+| T08 | 三级 Agent 编排 | re-verifying | 5 | AR-00 重新验收中（AR-04 身份一致性） |
+| T09 | 记忆、缓存与指标 | re-verifying | 6 | AR-00 重新验收中 |
+| T10 | TUI | re-verifying | 6 | AR-00 重新验收中（AR-02 授权交互） |
+| T11 | Headless CLI | re-verifying | 6 | AR-00 重新验收中 |
+| T12 | 恢复、安全与异常加固 | re-verifying | 7 | AR-00 重新验收中 |
+| T13 | npm 打包与隔离安装 | re-verifying | 8 | AR-00 重新验收中（AR-07 终验） |
+| T14 | 文档与最终报告 | re-verifying | 8 | AR-00 重新验收中（AR-07 文档对齐） |
 
 ## 审计整改记录（外部验收后）
 
