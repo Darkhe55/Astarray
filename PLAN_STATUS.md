@@ -7,6 +7,8 @@
 > 2026-08-12 设计增补：Agent 来源进一步收紧为具体且不可复用的 `agentInstanceId`。新增 T05A：每个次级/三级 Agent 拥有独立工作存档，上级发布任务或重新调用前可选择具体条目附加，默认不注入。
 > 2026-08-12 设计增补：新增 T06A 工具内破坏性变更备份层。文件/目录删除、文字删除、替换、截断和覆盖必须先由工具自动保存完整 pre-image；备份数据、路径与恢复能力不经过模型端。
 > 2026-08-12 设计增补：T06A 增加 `backupVault` 读取/恢复工具和独立 `deleteBackup` 特权入口。协同模式删除会警告用户并暂停 Agent，逐次授权；放权模式不提醒但保留 HIGH 审计记录；采用 quarantine 两阶段删除防止递归与死锁。模式中文名统一为思索/协同/放权。
+>
+> 2026-08-12 审计整改：外部验收发现 7 项阻断性问题，全部已修复并回归（详见"审计整改记录"）。修复涉及 S1 doctor 数据丢失、S2 反馈入池校验、S3 备份事务闭环、S4 授权绑定、S5 交互授权通道、S6 存档 provenance、S7 config 备份保护；另完成覆盖率与测试基建改善（S8/S9）。
 
 ## 任务总览
 
@@ -28,6 +30,22 @@
 | T12 | 恢复、安全与异常加固 | done | 7 | 2026-08-12 验收通过 |
 | T13 | npm 打包与隔离安装 | done | 8 | 2026-08-12 验收通过 |
 | T14 | 文档与最终报告 | done | 8 | 2026-08-12 验收通过 |
+
+## 审计整改记录（外部验收后）
+
+### 2026-08-12 — 阻断性问题全部修复并回归
+
+| 项 | 问题 | 修复 |
+|---|---|---|
+| S1 | doctor 用固定 `.write-probe` 覆盖再删除，可能销毁用户文件 | 随机唯一文件名 + `wx` 排他创建；回归测试（用户同名文件完好、无残留） |
+| S2 | 反馈入池无运行时校验，伪造来源/非法层级可入 journal | `feedbackMessageSchema` 严格校验 + Agent 来源身份注册（setAgentStatus 注册，未注册拒绝），拒绝路径写 stderr + `accepted=false` |
+| S3 | 备份事务无闭环（TOCTOU/恢复不可撤销/备份 ID 暴露/purge 虚报/仅 UTF-8 文本） | 写入前 `verifyTargetUnchanged` 指纹复核；恢复前自动备份当前版本；输出不再含备份 ID；purge 物理删除失败抛错保持 quarantined；pre-image 改为 base64 快照（二进制 + 目录递归，跳过符号链接） |
+| S4 | 删除授权仅查 revision，未核对请求 ID/Agent/集合/过期/最新 revision | 决策绑定严格校验（请求 ID、发起 Agent、精确备份集合、过期时间）+ 授权后读取最新 revision 比对；工具隔离前再校验一次 |
+| S5 | CLI 授权通道固定 null，协同模式只能拒绝 | 新增 `InteractiveBackupDeletionAuthorizationPort`（警告→暂停→等待 yes/deny，非 TTY fail-closed），接入 bootstrap |
+| S6 | 存档合并后虚构 owner/revision、Worker ID 复用、路径编码碰撞、自动附加违反"默认不附加" | 按属主分别生成附件（真实 owner+revision）；每次启动唯一实例 ID；`~XXXX` 单射幂等编码；`attachArchiveContextOnRetry` 默认关闭 |
+| S7 | config init 无备份覆盖 | 覆盖前走 BackupVault 自动备份 + TOCTOU 校验 |
+
+另（S8/S9）：反馈进程分支覆盖提升（transport 100%、mailbox 90%+，entrypoint 受 v8 源映射偏移影响部分失真）；新增 TUI 启动路径测试；`pretest` 保证 dist 新鲜（消除 skipIf 静默跳过）；ADR 0007-0010 去重重编号（重复 0008/0009 删除）；`npm prune` 清理 extraneous 自副本；git 基线提交 `2ac838a`；Windows rename 瞬时 EPERM 加有界重试。
 
 ## Batch 4A/4C（T05A/T06A 增补任务）检查点记录
 

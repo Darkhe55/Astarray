@@ -55,12 +55,12 @@ describe("launchTui 渲染路径", () => {
     const signalListeners = new Set<(signal: string) => void>();
     const originalOn = process.on.bind(process);
     vi.spyOn(process, "on").mockImplementation(
-      (event: string, listener: (signal: string) => void) => {
+      ((event: string, listener: (signal: string) => void) => {
         if (event === "SIGINT") {
           signalListeners.add(listener);
         }
         return originalOn(event, listener as never);
-      },
+      }) as typeof process.on,
     );
     const launchPromise = launchTui("C:/tmp/astarray-state");
     await new Promise((resolve) => setTimeout(resolve, 20));

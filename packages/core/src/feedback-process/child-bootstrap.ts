@@ -3,6 +3,7 @@
  * 与 cli.tsx 同类：仅在被 fork 的真实 Node 进程中执行的入口粘合代码，
  * 不参与单元/集成覆盖统计（vitest coverage exclude）。
  */
+import type { ChildProcessLike } from "./entrypoint.js";
 import { isNodeJsProcess } from "./entrypoint.js";
 import { runFeedbackProcessEntry } from "./entrypoint.js";
 
@@ -12,7 +13,7 @@ if (
   typeof process.send === "function"
 ) {
   runFeedbackProcessEntry(
-    process as unknown as import("./entrypoint.js").ChildProcessLike,
+    process as unknown as ChildProcessLike,
     {
       defaultBaseDirectory: process.env.ASTARRAY_STATE_DIRECTORY ?? ".astarray",
     },

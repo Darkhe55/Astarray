@@ -1,7 +1,7 @@
 # DELIVERY_REPORT — Astarray v0.1
 
-> 生成日期：2026-08-12
-> 目标：T00–T14 全部计划任务
+> 生成日期：2026-08-12（含审计整改后复验）
+> 目标：T00–T14 全部计划任务 + T05A/T06A 增补 + 外部审计整改
 
 ## 1. 任务完成情况
 
@@ -33,8 +33,8 @@
 | `npm run typecheck` | 0 | tsc --noEmit 无错误 |
 | `npm run lint` | 0 | eslint 无告警 |
 | `npm run build` | 0 | dist/cli.js + dist/feedback-process-entry.js |
-| `npm run test` | 0 | 30 文件 / 379 测试通过 |
-| `npm run test:coverage` | 0 | Stmts 92.02% / Branch 85.17% / Funcs 89.25%（门槛 85%） |
+| `npm run test` | 0 | 32 文件 / 412 测试通过（`pretest` 自动构建保证 dist 新鲜） |
+| `npm run test:coverage` | 0 | Stmts 92.23% / Branch 85.44% / Funcs 89.13%（门槛 85%） |
 | `npm run check` | 0 | 全绿（连续多次） |
 | `npm pack --dry-run --json` | 0 | 13 文件 / ~105 KB |
 | `node scripts/verify-package.mjs .tmp/packages/astarray-0.1.0.tgz` | 0 | 内容/BOM/shebang 校验通过 |
@@ -76,7 +76,23 @@
 6. **SSE 实现**：OpenAI 兼容运行时以整文本解析 SSE，语义正确但非逐块流式（生产可优化为流式消费）。
 7. **T04 集成测试依赖构建产物**：`npm run test` 单独运行（未 build）时自动跳过（`describe.skipIf`）。
 
-## 7. 交付物清单
+## 7. 审计整改记录（外部验收后复验）
+
+外部验收发现的 7 项阻断性问题已全部修复并通过回归（详见 `PLAN_STATUS.md` 审计整改记录）：
+
+- S1 doctor 不再可能销毁用户文件（随机探测名 + wx 排他 + 回归测试）
+- S2 反馈进程入池前做 schema 与身份注册运行时校验
+- S3 备份事务闭环：TOCTOU 复核、恢复可撤销、备份 ID 不外泄、purge 失败不虚报、二进制/目录快照
+- S4 删除授权绑定完整校验（请求 ID / Agent / 精确集合 / 过期 / 最新 revision）
+- S5 交互式授权通道（警告→暂停→等待授权；非 TTY fail-closed）
+- S6 存档 provenance 修正（逐属主附件、唯一实例 ID、无碰撞编码、默认不附加）
+- S7 config init 覆盖前自动备份 + TOCTOU
+
+基建改善：`pretest` 构建消除集成测试静默跳过/旧产物；ADR 0007-0010 去重重编号；`npm prune` 清理 extraneous 自副本；git 基线提交 `2ac838a`；Windows rename 瞬时 EPERM 有界重试。
+
+覆盖说明：整体 85%+ 门槛保持通过；反馈进程模块分支覆盖 transport 100%、mailbox ~90%、entrypoint 文本报告受 v8 源映射偏移影响（中文注释行漂移），已按可执行分支逐项补齐测试；真实进程引导块（`child-bootstrap.ts`）与 cli.tsx 同类移出覆盖统计。
+
+## 8. 交付物清单
 
 - 生产代码：底层架构位于 `packages/core/src/`，TUI/CLI 位于 `packages/tui/src/`（约 5,000 行 TS）
 - 测试：`tests/{unit,component,integration}`（355 例）
