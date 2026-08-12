@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+.tmp/
+.astarray/
+*.tgz
+*.log
+.env
+.DS_Store
