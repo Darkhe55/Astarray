@@ -16,6 +16,7 @@ import type { ProtectedStoragePolicy } from "./protected-storage-policy.js";
 import type { GenericToolFileOperation } from "./protected-storage-policy.js";
 import type { TaskSequenceStatusController } from "../orchestration/task-sequence-controllers.js";
 import type { LocalToolPolicyEngine } from "./local-tool-policy-engine.js";
+import type { SensitiveContentAccessPolicy } from "./sensitive-content-access-policy.js";
 
 export interface BuiltinToolExecutionContext {
   workspaceBoundary: WorkspaceBoundary;
@@ -41,6 +42,11 @@ export interface BuiltinToolExecutionContext {
   localToolPolicyEngine?: LocalToolPolicyEngine | null;
   /** T06B：Ponder 只读 git 视图的工作仓库目录（通常为工作区根）。 */
   ponderGitRepositoryPath?: string | null;
+  /**
+   * T06C：全模式敏感内容禁读策略（所有模式、所有读通道执行前检查；
+   * 未装配时跳过策略——由装配方保证注入）。
+   */
+  sensitiveContentAccessPolicy?: SensitiveContentAccessPolicy | null;
 }
 
 export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
@@ -186,7 +192,10 @@ export async function executeBuiltinTool(
       // 双层校验（AR-01）：预检 + 紧邻 IO 的复检，拦截"预检后目标被替换为链接"的 TOCTOU
       await resolveAndAssertAccess(executionContext, filePath, "read");
       const resolvedPath = await resolveAndAssertAccess(executionContext, filePath, "read");
+      // T06C：全模式敏感内容禁读（读取前 + 内容 DLP 双检）
+      await assertSensitiveContentAllowed(executionContext, resolvedPath, null);
       const content = await readFile(resolvedPath, "utf8");
+      await assertSensitiveContentAllowed(executionContext, resolvedPath, content);
       return { outputText: content, isSideEffectFree: true };
     }
     case "listDirectory": {
@@ -199,13 +208,21 @@ export async function executeBuiltinTool(
       const { readdir } = await import("node:fs/promises");
       const entries = await readdir(resolvedPath, { withFileTypes: true });
       // AR-01/AR-01a：仅当目录是受保护根所在的状态目录时过滤受保护条目
-      const visibleEntries = entries
+      let visibleEntries = entries
         .map((entry) => entry.name)
         .filter((entryName) =>
           executionContext.protectedStoragePolicy
             .filterProtectedEntries(resolvedPath, [entryName])
             .includes(entryName),
         );
+      // T06C：过滤敏感条目（.env/凭据/私钥等），不泄露敏感名称
+      const sensitivePolicy = executionContext.sensitiveContentAccessPolicy;
+      if (sensitivePolicy !== null && sensitivePolicy !== undefined) {
+        visibleEntries = sensitivePolicy.filterSensitiveDirectoryEntries(
+          resolvedPath,
+          visibleEntries,
+        );
+      }
       const renderedEntries = visibleEntries
         .map((entryName) => {
           const entry = entries.find((candidate) => candidate.name === entryName);
@@ -330,6 +347,7 @@ export async function executeBuiltinTool(
         executionContext.workspaceBoundary.getWorkspaceRoot(),
         pattern,
         localEngine,
+        executionContext.sensitiveContentAccessPolicy ?? null,
       );
       return { outputText: matches, isSideEffectFree: true };
     }
@@ -363,11 +381,17 @@ export async function executeBuiltinTool(
         gitArguments,
         `Ponder 只读 git 视图 ${parsed.view}`,
       );
-      return {
-        outputText:
-          result.stdoutText.trim() === "" ? "（无输出）" : result.stdoutText,
-        isSideEffectFree: true,
-      };
+      const outputText =
+        result.stdoutText.trim() === "" ? "（无输出）" : result.stdoutText;
+      // T06C：git 视图输出做 DLP 扫描（固定视图无正文，防御未来视图扩展）
+      const sensitivePolicy = executionContext.sensitiveContentAccessPolicy;
+      if (sensitivePolicy !== null && sensitivePolicy !== undefined) {
+        await sensitivePolicy.assertSensitiveContentReadAllowed({
+          canonicalPath: repositoryPath,
+          content: outputText,
+        });
+      }
+      return { outputText, isSideEffectFree: true };
     }
     default:
       throw new Error(`未知内置工具: ${toolName}`);
@@ -402,11 +426,11 @@ async function executeBackupVaultAction(
   if (action === "read") {
     const readResult = await executionContext.vault.readBackup(backupIdentifier);
     // AR-01a：输出携带显式编码与媒体类型，调用者可区分普通文本与 base64 二进制
-    return {
-      outputText:
-        `[encoding: ${readResult.encoding}, media-type: ${readResult.mediaType}]\n${readResult.content}`,
-      isSideEffectFree: true,
-    };
+    const outputText =
+      `[encoding: ${readResult.encoding}, media-type: ${readResult.mediaType}]\n${readResult.content}`;
+    // T06C：备份恢复的 pre-image 可能是敏感文件（如 .env 的备份）——内容 DLP 扫描
+    await assertSensitiveContentAllowed(executionContext, backupIdentifier, outputText);
+    return { outputText, isSideEffectFree: true };
   }
   const restored = await executionContext.vault.restoreBackup(backupIdentifier);
   return {
@@ -497,6 +521,25 @@ async function resolveAndAssertAccess(
 }
 
 /**
+ * T06C：全模式敏感内容禁读检查（路径身份 + 可选内容 DLP）。
+ * 未装配策略时放行（装配方负责注入）；命中抛 sensitive-content-read-denied。
+ */
+async function assertSensitiveContentAllowed(
+  executionContext: BuiltinToolExecutionContext,
+  canonicalPath: string,
+  content: string | null,
+): Promise<void> {
+  const sensitivePolicy = executionContext.sensitiveContentAccessPolicy;
+  if (sensitivePolicy === null || sensitivePolicy === undefined) {
+    return;
+  }
+  await sensitivePolicy.assertSensitiveContentReadAllowed({
+    canonicalPath,
+    content: content ?? undefined,
+  });
+}
+
+/**
  * T06B：Ponder 只读文本检索（不经 shell）。
  * 递归遍历工作区普通文件，逐文件经本地策略引擎校验后以只读方式搜索；
  * 跳过受保护/敏感路径与二进制文件，限制最大文件数与行数（有界）。
@@ -509,9 +552,9 @@ async function searchProjectText(
   workspaceRootPath: string,
   pattern: string,
   localEngine: LocalToolPolicyEngine,
+  sensitiveContentPolicy: SensitiveContentAccessPolicy | null,
 ): Promise<string> {
-  const { readdir, readFile } = await import("node:fs/promises");
-  const { access } = await import("node:fs/promises");
+  const { readdir, readFile, access } = await import("node:fs/promises");
   const skipDirectories = new Set([
     "node_modules",
     ".git",
@@ -549,6 +592,13 @@ async function searchProjectText(
       } catch {
         continue;
       }
+      // T06C：敏感文件名/路径直接跳过（不读取、不返回）
+      if (
+        sensitiveContentPolicy !== null &&
+        sensitiveContentPolicy.matchSensitivePathName(entryPath) !== null
+      ) {
+        continue;
+      }
       let resolvedPath: string;
       try {
         resolvedPath = await localEngine.assertPonderReadonlyFilePath(entryPath);
@@ -571,6 +621,7 @@ async function searchProjectText(
       if (content.includes("\u0000")) {
         continue; // 二进制文件
       }
+      // T06C：名称正常但内容疑似凭据 → 丢弃整行结果
       const lines = content.split("\n");
       for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
         const line = lines[lineIndex]!;

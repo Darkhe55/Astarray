@@ -35,7 +35,7 @@
 | T06 | 工具注册表与最小权限 | re-verifying | 4 | AR-00 重新验收中（AR-01 受保护存储） |
 | T06A | 工具内破坏性变更备份层 | re-verifying | 4C | AR-00 重新验收中（AR-01/AR-05/AR-06） |
 | T06B | Ponder 本地只读边界与敏感操作分类 | re-verifying | 4F | 2026-08-13 完成；Batch 4F 检查点（510 测试全绿）；待 AR 复验 |
-| T06C | 全模式本地敏感内容禁读 | pending | 4G | 新增设计；须按 ADR-0018 实现和动态验收 |
+| T06C | 全模式本地敏感内容禁读 | re-verifying | 4G | 2026-08-13 完成；Batch 4G 检查点（524 测试全绿）；待 AR 复验 |
 | T06D | 高严谨性事实验证工具 | pending | 4I | 新增设计；须按 ADR-0016 实现和动态验收 |
 | T07 | Agent Runtime | re-verifying | 4 | AR-00 重新验收中 |
 | T07A | 明确完成协议与早停恢复 | pending | 4J | 新增设计；须按 ADR-0015 实现和动态验收 |
@@ -212,6 +212,26 @@ T14 产出：`README.md`（安装/三模式/Provider/状态目录/headless/反�
 - T11：`run/status/resume/cancel/doctor/config init` 全部实现；`--json` 模式 stdout 仅 JSON、日志走 stderr；退出码 0/1/2 稳定；11 项构建产物集成测试 + 17 项命令单元测试；反馈进程入口路径解析修复。
 
 遗留风险：TUI 键盘输入路径未做 PTY 自动化（T13 用 node-pty 补）；指标尚未接入编排循环（v0.1 头栏显示 0）。
+
+## Batch 4G（T06C 增补任务）检查点记录
+
+### 2026-08-13 — 通过
+
+验收命令与实际结果：
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `npm run check` | 0 | 45 文件 / 524 测试通过（typecheck/lint/build/test 全绿） |
+| `npm run test:coverage` | 0 | Stmts 92.75% / Branch 85.23% |
+
+T06C（全模式本地敏感内容禁读，ADR-0018）：
+
+- `SensitiveContentAccessPolicy`：全模式（Ponder/Assist/Devolve）读通道执行前统一拒绝 `.env`/`.env.*` 及大小写变体、`.npmrc`/`.pypirc`/`.netrc`/`.git-credentials`、云/K8s 凭据、私钥/证书容器（id_rsa、*.key/*.pem/*.p12/*.pfx）、能力令牌与管理员扩展路径/模式；稳定拒绝码 `sensitive-content-read-denied`（新错误码），错误只含规则类别不泄露秘密值。
+- `SensitiveResourceIdentityResolver`：规范路径 + realpath + 符号链接/联接（isLinkLike）+ 硬链接身份（dev:ino）+ 平台大小写折叠识别同一敏感资源；`isSameResource` 同一性判定。
+- 本地可信 DLP 扫描器：名称正常但内容疑似凭据（api key/AWS AKIA/私钥块/ghp 与 glpat token/连接串，支持 JSON 引号包裹）→ 丢弃整个结果，不返回正文或命中片段；有界扫描（256KB）。
+- 接入所有读通道：readFile（读前路径 + 读后内容双检）、listDirectory（过滤敏感条目）、searchProjectText（敏感文件名跳过）、gitReadonlyView（输出 DLP，防御视图扩展）、backupVault read（备份 pre-image 内容 DLP，防 .env 备份旁路）。
+- 反例覆盖：大小写变体/相对路径、符号链接与硬链接伪装、DLP 命中、目录过滤不泄露名称、错误不含秘密字节、普通配置不误杀、管理员扩展、Devolve/授权不能放行（策略在权限之前）。
+- 已知限制（ADR-0018 文档语义）：内容不含任何凭据模式的凭据库文件经硬链接读取无法由 DLP 识别；名称规则 + DLP 双检覆盖 ADR 必测清单。
 
 ## Batch 4F（T06B 增补任务）检查点记录
 

@@ -30,6 +30,7 @@ export type DomainErrorCode =
   | "task-priority-denied"
   | "task-bundle-invalid"
   | "task-sequence-permission-denied"
+  | "sensitive-content-read-denied"
   | "unknown";
 
 export class DomainError extends Error {
