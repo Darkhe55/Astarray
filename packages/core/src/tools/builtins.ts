@@ -142,11 +142,13 @@ export async function executeBuiltinTool(
       const resolvedPath = await resolveAndAssertAccess(executionContext, directoryPath, "list");
       const { readdir } = await import("node:fs/promises");
       const entries = await readdir(resolvedPath, { withFileTypes: true });
-      // AR-01：列出受保护根的父目录时过滤受保护条目，不暴露物理布局
+      // AR-01/AR-01a：仅当目录是受保护根所在的状态目录时过滤受保护条目
       const visibleEntries = entries
         .map((entry) => entry.name)
         .filter((entryName) =>
-          executionContext.protectedStoragePolicy.filterProtectedEntries([entryName]).includes(entryName),
+          executionContext.protectedStoragePolicy
+            .filterProtectedEntries(resolvedPath, [entryName])
+            .includes(entryName),
         );
       const renderedEntries = visibleEntries
         .map((entryName) => {
@@ -192,17 +194,9 @@ export async function executeBuiltinTool(
       if (typeof filePath !== "string" || typeof content !== "string") {
         throw new Error("replaceFileContent 参数 filePath/content 缺失或非法");
       }
-      const resolvedPath =
-        await executionContext.workspaceBoundary.resolveWithinWorkspace(filePath);
-      executionContext.protectedStoragePolicy.assertGenericToolAccessAllowed({
-        canonicalTargetPath: resolvedPath,
-        operation: "replace",
-      });
-      await executionContext.workspaceBoundary.resolveWithinWorkspace(filePath);
-      executionContext.protectedStoragePolicy.assertGenericToolAccessAllowed({
-        canonicalTargetPath: resolvedPath,
-        operation: "replace",
-      });
+      await resolveAndAssertAccess(executionContext, filePath, "replace");
+      // AR-01a：紧邻 IO 的复检，复检结果（而非第一次解析结果）用于后续全部操作
+      const resolvedPath = await resolveAndAssertAccess(executionContext, filePath, "replace");
       if (executionContext.backupServicePort === null) {
         throw new Error("replaceFileContent 缺少自动备份端口，拒绝执行破坏性变更");
       }
@@ -268,8 +262,12 @@ async function executeBackupVaultAction(
   }
   if (action === "read") {
     const readResult = await executionContext.vault.readBackup(backupIdentifier);
-    // AR-01：按显式编码返回内容（二进制以 base64，不按 UTF-8 损坏）
-    return { outputText: readResult.content, isSideEffectFree: true };
+    // AR-01a：输出携带显式编码与媒体类型，调用者可区分普通文本与 base64 二进制
+    return {
+      outputText:
+        `[encoding: ${readResult.encoding}, media-type: ${readResult.mediaType}]\n${readResult.content}`,
+      isSideEffectFree: true,
+    };
   }
   const restored = await executionContext.vault.restoreBackup(backupIdentifier);
   return {
@@ -352,7 +350,7 @@ async function resolveAndAssertAccess(
 ): Promise<string> {
   const resolvedPath =
     await executionContext.workspaceBoundary.resolveWithinWorkspace(requestedPath);
-  executionContext.protectedStoragePolicy.assertGenericToolAccessAllowed({
+  await executionContext.protectedStoragePolicy.assertGenericToolAccessAllowed({
     canonicalTargetPath: resolvedPath,
     operation,
   });

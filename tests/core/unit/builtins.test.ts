@@ -305,7 +305,10 @@ describe("T06A 备份层内置工具", () => {
       JSON.stringify({ action: "read", backupIdentifier }),
       context,
     );
-    expect(readResult.outputText).toBe("v1");
+    // AR-01a：read 输出携带显式编码/媒体类型头 + 内容体
+    expect(readResult.outputText).toContain("[encoding: utf-8,");
+    expect(readResult.outputText).toContain("media-type:");
+    expect(readResult.outputText).toContain("v1");
     const restoreResult = await executeBuiltinTool(
       "backupVault",
       JSON.stringify({ action: "restore", backupIdentifier }),

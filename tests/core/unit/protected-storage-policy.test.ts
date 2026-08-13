@@ -185,30 +185,37 @@ describe("ProtectedStoragePolicy 路径判定", () => {
     expect(policy.isProtectedPath("C:\\data\\app\\missions\\m\\task-chain.json")).toBe(false);
   });
 
-  it("受保护根自身不可访问", () => {
+  it("受保护根自身不可访问", async () => {
     const policy = new ProtectedStoragePolicy({
       stateDirectoryPath: temporaryDirectory,
     });
     expect(policy.isProtectedPath(path.join(temporaryDirectory, "backup-vault"))).toBe(true);
-    expect(() =>
+    await expect(
       policy.assertGenericToolAccessAllowed({
         canonicalTargetPath: path.join(temporaryDirectory, "backup-vault"),
         operation: "list",
       }),
-    ).toThrowError(/受保护存储/);
+    ).rejects.toThrowError(/受保护存储/);
   });
 
-  it("filterProtectedEntries 过滤受保护条目", () => {
+  it("filterProtectedEntries 只过滤状态目录中的受保护条目（AR-01a 收窄）", () => {
     const policy = new ProtectedStoragePolicy({
       stateDirectoryPath: temporaryDirectory,
     });
-    const filtered = policy.filterProtectedEntries([
+    const entries = [
       "missions",
       "backup-vault",
       "backup-deletion-audit.jsonl",
       "config.json",
-    ]);
+    ];
+    // 状态目录：过滤
+    const filtered = policy.filterProtectedEntries(temporaryDirectory, entries);
     expect(filtered).toEqual(["missions", "config.json"]);
+    // 任意普通目录：同名普通文件不被隐藏
+    const ordinaryDirectory = path.join(workspaceDirectory, "docs");
+    expect(
+      policy.filterProtectedEntries(ordinaryDirectory, ["backup-vault", "notes.md"]),
+    ).toEqual(["backup-vault", "notes.md"]);
   });
 
   it("listBackups 公开 DTO 不含对象哈希、能力标识与物理路径（AR-01）", async () => {
@@ -262,6 +269,129 @@ describe("ProtectedStoragePolicy 路径判定", () => {
           requestingAgentInstanceId: "agent-toc",
           backupServicePort: null,
           vault: null,
+          deletionController: null,
+          protectedStoragePolicy,
+        },
+      ),
+    ).rejects.toMatchObject({ errorCode: "path-escape-attempt" });
+  });
+
+  it("AR-01a：Windows 大小写变化不能绕过审计文件保护", async () => {
+    const policy = new ProtectedStoragePolicy({
+      stateDirectoryPath: "C:\\data\\app",
+    });
+    const caseVariants = [
+      "C:\\data\\app\\BACKUP-DELETION-AUDIT.JSONL",
+      "C:\\data\\app\\Backup-Deletion-Audit.jsonl",
+      "C:\\data\\app\\BACKUP-VAULT",
+      "C:\\data\\app\\Backup-Vault\\Data\\x",
+    ];
+    for (const variant of caseVariants) {
+      expect(policy.isProtectedPath(variant)).toBe(true);
+    }
+    if (process.platform === "win32") {
+      await expect(
+        policy.assertGenericToolAccessAllowed({
+          canonicalTargetPath: "C:\\data\\app\\Backup-Deletion-Audit.JSONL",
+          operation: "read",
+        }),
+      ).rejects.toMatchObject({ errorCode: "tool-permission-denied" });
+    }
+  });
+
+  it("AR-01a：工作区内指向保管库的联接/符号链接别名不能读取保护内容", async () => {
+    const { backupIdentifier } = await seedProtectedContent();
+    // 工作区内建立 junction/符号链接：workspace/alias → backup-vault
+    const aliasPath = path.join(workspaceDirectory, "alias");
+    await fs.symlink(
+      path.join(temporaryDirectory, "backup-vault"),
+      aliasPath,
+      "junction",
+    );
+    const aliasRealPath = await fs.realpath(aliasPath);
+    expect(aliasRealPath).toContain("backup-vault");
+    // 预检：确认别名可读（junction 有效）
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await expect(
+      fs.readFile(path.join(aliasPath, "data", backupIdentifier), "utf8"),
+    ).resolves.toContain("schemaVersion");
+
+    // 直连验证（绕过 wrapper）：别名访问必须拿不到保管库内容。
+    // 注：Windows junction 对 lstat 返回 ENOENT 是 Node 平台局限，lstat 链检测不适用；
+    // 安全目标为"模型经别名无法读取保护内容"：realpath 成功分支会拒绝，
+    // realpath 失败时访问本身失败（ENOENT），两者均不可读。
+    const directResult = await executeBuiltinTool(
+      "readFile",
+      JSON.stringify({ filePath: path.join("alias", "data", backupIdentifier) }),
+      {
+        workspaceBoundary: new WorkspaceBoundary(temporaryDirectory),
+        temporaryDirectoryPath: path.join(temporaryDirectory, "temp"),
+        requestingAgentInstanceId: "agent-alias-direct",
+        backupServicePort: null,
+        vault: null,
+        deletionController: null,
+        protectedStoragePolicy,
+      },
+    ).catch((error: unknown) => ({
+      kind: "error",
+      errorCode:
+        (error as { errorCode?: string }).errorCode ?? "thrown",
+      errorMessage: (error as Error).message ?? "",
+    }));
+    const directOutput = JSON.stringify(directResult);
+    expect(directOutput).not.toContain("schemaVersion");
+
+    // wrapper 路径同样不可读
+    const wrapperResult = await wrapper.execute(
+      "readFile",
+      JSON.stringify({
+        filePath: path.join("alias", "data", backupIdentifier),
+      }),
+      "ar01a-alias-wrapper",
+      new AbortController().signal,
+    );
+    expect(JSON.stringify(wrapperResult)).not.toContain("schemaVersion");
+
+    // 预检：备份对象确实存在于真实保管库路径（junction 有效）
+    const realBackupPath = path.join(
+      temporaryDirectory,
+      "backup-vault",
+      "data",
+      backupIdentifier,
+    );
+    await expect(fs.access(realBackupPath)).resolves.toBeUndefined();
+  });
+
+  it("AR-01a：replaceFileContent 使用复检后的路径（预检后换链被拦截）", async () => {
+    const subDirectory = path.join(workspaceDirectory, "replace-target");
+    const targetPath = path.join(subDirectory, "file.txt");
+    await fs.mkdir(subDirectory, { recursive: true });
+    await fs.writeFile(targetPath, "原始", "utf8");
+    const outsideDirectory = await fs.mkdtemp(
+      path.join(os.tmpdir(), "astarray-ar01a-outside-"),
+    );
+    const boundary = new WorkspaceBoundary(temporaryDirectory);
+    let resolveCallCount = 0;
+    const toctouBoundary = {
+      resolveWithinWorkspace: async (requestedPath: string) => {
+        resolveCallCount += 1;
+        if (resolveCallCount === 2) {
+          await fs.rm(subDirectory, { recursive: true, force: true });
+          await fs.symlink(outsideDirectory, subDirectory, "junction");
+        }
+        return boundary.resolveWithinWorkspace(requestedPath);
+      },
+    };
+    await expect(
+      executeBuiltinTool(
+        "replaceFileContent",
+        JSON.stringify({ filePath: "workspace/replace-target/file.txt", content: "篡改" }),
+        {
+          workspaceBoundary: toctouBoundary as never,
+          temporaryDirectoryPath: path.join(temporaryDirectory, "temp"),
+          requestingAgentInstanceId: "agent-replace",
+          backupServicePort: vault,
+          vault,
           deletionController: null,
           protectedStoragePolicy,
         },

@@ -7,6 +7,8 @@
 > 2026-08-12 设计增补：Agent 来源进一步收紧为具体且不可复用的 `agentInstanceId`。新增 T05A：每个次级/三级 Agent 拥有独立工作存档，上级发布任务或重新调用前可选择具体条目附加，默认不注入。
 > 2026-08-12 设计增补：新增 T06A 工具内破坏性变更备份层。文件/目录删除、文字删除、替换、截断和覆盖必须先由工具自动保存完整 pre-image；备份数据、路径与恢复能力不经过模型端。
 > 2026-08-12 设计增补：T06A 增加 `backupVault` 读取/恢复工具和独立 `deleteBackup` 特权入口。协同模式删除会警告用户并暂停 Agent，逐次授权；放权模式不提醒但保留 HIGH 审计记录；采用 quarantine 两阶段删除防止递归与死锁。模式中文名统一为思索/协同/放权。
+> 2026-08-13 设计增补：新增 T05B。涉及 Git 写入的多 Agent 任务由次级 Agent 负责分支/worktree 分流、三级 Agent 提交审查、集成测试和受控合并；三级 Agent 只能提交自己的隔离分支。Git 历史不替代工具内自动备份，破坏性 Git 操作必须先创建受保护恢复点。
+> 2026-08-13 设计增补：新增 T05C。每个调度 Agent 在自己的记忆存档域维护独立待办任务偏序集，发布者可指定前驱/后继；用户任务默认优先级层级 0，Agent/system/工具任务只能层级 1 或以下。次级 Agent 可把一条链打包给三级 Agent，并提供无副作用状态查询工具。
 >
 > 2026-08-12 审计整改：外部验收发现 7 项阻断性问题，全部已修复并回归（详见"审计整改记录"）。修复涉及 S1 doctor 数据丢失、S2 反馈入池校验、S3 备份事务闭环、S4 授权绑定、S5 交互授权通道、S6 存档 provenance、S7 config 备份保护；另完成覆盖率与测试基建改善（S8/S9）。
 
@@ -23,10 +25,12 @@
 | T03 | 原子任务链持久化 | re-verifying | 2 | AR-00 重新验收中 |
 | T04 | 独立反馈进程 | re-verifying | 3 | AR-00 重新验收中（AR-03 认证） |
 | T05 | DAG 调度器 | re-verifying | 4 | AR-00 重新验收中 |
+| T05B | 次级 Agent Git 分流、审查与合并 | pending | 4D | 2026-08-13 新设计；纳入 AR-04/AR-06 验收 |
+| T05C | Agent 待办偏序集、任务包与状态工具 | pending | 4E | 2026-08-13 新设计；独立于项目任务/产出存储，纳入 AR-04 验收 |
 | T06 | 工具注册表与最小权限 | re-verifying | 4 | AR-00 重新验收中（AR-01 受保护存储） |
 | T06A | 工具内破坏性变更备份层 | re-verifying | 4C | AR-00 重新验收中（AR-01/AR-05/AR-06） |
 | T07 | Agent Runtime | re-verifying | 4 | AR-00 重新验收中 |
-| T08 | 三级 Agent 编排 | re-verifying | 5 | AR-00 重新验收中（AR-04 身份一致性） |
+| T08 | 三级 Agent 编排 | re-verifying | 5 | AR-00 重新验收中（AR-04 身份一致性及次级 Git 集成） |
 | T09 | 记忆、缓存与指标 | re-verifying | 6 | AR-00 重新验收中 |
 | T10 | TUI | re-verifying | 6 | AR-00 重新验收中（AR-02 授权交互） |
 | T11 | Headless CLI | re-verifying | 6 | AR-00 重新验收中 |
@@ -43,6 +47,14 @@
 - 双层校验（预检 + 紧邻 IO 复检）拦截"预检后目标被替换为链接"的 TOCTOU（junction 反例测试）。
 - 安全反例测试先失败后通过；`npm run check` 全绿（33 文件 / 422 测试）；证据见 `.tmp/ar01-evidence.md`。
 - 任务状态保持 `re-verifying`，待 AR-07 最终安全清单全部勾选后统一恢复 done。
+
+### AR-01a 别名/链接绕过加固 — 2026-08-13 完成
+
+- 受保护存储策略补 fail-closed 真实路径判定：词法判定之外，`assertGenericToolAccessAllowed` 解析 realpath，真实目标落入保管库/审计文件即拒绝；realpath 无法解析且路径链含符号链接（lstat 检测）时一律拒绝，拦截"工作区内链接/联接指向保管库"的别名绕过。
+- Windows 大小写不敏感折叠（normalize + toLowerCase）用于审计文件路径比较与保护区包含判定；realpath 返回值大小写差异不再误放行。
+- 目录条目过滤收窄：仅当目录是受保护根所在的状态目录时过滤（不在任意目录隐藏同名普通文件）。
+- `backupVault read` 输出携带 `[encoding: ... , media-type: ...]` 头；`replaceFileContent` 紧邻 IO 复检结果用于后续全部操作（预检后换链被拦截）。
+- 验证：确定性 mock 单测（fail-closed 链接链分支、大小写变体、词法兜底）+ 集成反例（junction 别名不可读取保护内容，Windows junction lstat 平台局限已注释说明）；`npm run check` 全绿（35 文件 / 435 测试）。
 
 ### 2026-08-12 — 阻断性问题全部修复并回归
 
