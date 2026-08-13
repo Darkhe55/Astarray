@@ -15,6 +15,7 @@ import type { BackupVault } from "./backup-vault.js";
 import type { ProtectedStoragePolicy } from "./protected-storage-policy.js";
 import type { GenericToolFileOperation } from "./protected-storage-policy.js";
 import type { TaskSequenceStatusController } from "../orchestration/task-sequence-controllers.js";
+import type { LocalToolPolicyEngine } from "./local-tool-policy-engine.js";
 
 export interface BuiltinToolExecutionContext {
   workspaceBoundary: WorkspaceBoundary;
@@ -34,6 +35,12 @@ export interface BuiltinToolExecutionContext {
    * 他人 ID 获得他人视图。
    */
   taskSequenceStatusController?: TaskSequenceStatusController | null;
+  /**
+   * T06B：Ponder 本地只读边界（Ponder 专属工具注入；未装配时调用报错）。
+   */
+  localToolPolicyEngine?: LocalToolPolicyEngine | null;
+  /** T06B：Ponder 只读 git 视图的工作仓库目录（通常为工作区根）。 */
+  ponderGitRepositoryPath?: string | null;
 }
 
 export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
@@ -131,6 +138,35 @@ export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
     inputSchema: {
       type: "object",
       properties: { sequenceId: { type: "string" } },
+    },
+  },
+  {
+    name: "searchProjectText",
+    summary: "在工作区内检索文本（Ponder 只读；固定参数，不经 shell）",
+    category: "readonly",
+    mutationKind: "none",
+    backupPolicy: "not-required",
+    authorizationPolicy: "standard",
+    supportedTaskTypes: ["data", "doc", "code"],
+    inputSchema: {
+      type: "object",
+      properties: { pattern: { type: "string" } },
+    },
+  },
+  {
+    name: "gitReadonlyView",
+    summary: "只读 Git 视图（status/diff/log；固定参数，不经 shell，无写入）",
+    category: "readonly",
+    mutationKind: "none",
+    backupPolicy: "not-required",
+    authorizationPolicy: "standard",
+    supportedTaskTypes: ["data", "doc", "code"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        view: { type: "string", enum: ["status", "diff", "log"] },
+        limit: { type: "number" },
+      },
     },
   },
 ];
@@ -273,6 +309,66 @@ export async function executeBuiltinTool(
         isSideEffectFree: true,
       };
     }
+    case "searchProjectText": {
+      const pattern = args["pattern"];
+      if (typeof pattern !== "string" || pattern.length === 0) {
+        throw new Error("searchProjectText 参数 pattern 缺失或非法");
+      }
+      const localEngine = executionContext.localToolPolicyEngine;
+      if (localEngine === null || localEngine === undefined) {
+        throw new Error("searchProjectText 本地策略引擎未装配");
+      }
+      // 实际执行前再次校验（fail-closed 双时点）
+      await localEngine.assertPonderToolExecutionAllowed({
+        toolName: "searchProjectText",
+        descriptor: BUILTIN_TOOL_DESCRIPTORS.find(
+          (descriptor) => descriptor.name === "searchProjectText",
+        )!,
+        argumentsJson,
+      });
+      const matches = await searchProjectText(
+        executionContext.workspaceBoundary.getWorkspaceRoot(),
+        pattern,
+        localEngine,
+      );
+      return { outputText: matches, isSideEffectFree: true };
+    }
+    case "gitReadonlyView": {
+      const localEngine = executionContext.localToolPolicyEngine;
+      if (localEngine === null || localEngine === undefined) {
+        throw new Error("gitReadonlyView 本地策略引擎未装配");
+      }
+      await localEngine.assertPonderToolExecutionAllowed({
+        toolName: "gitReadonlyView",
+        descriptor: BUILTIN_TOOL_DESCRIPTORS.find(
+          (descriptor) => descriptor.name === "gitReadonlyView",
+        )!,
+        argumentsJson,
+      });
+      const parsed = localEngine.parsePonderGitReadonlyArguments(args);
+      if (parsed === null) {
+        throw new Error("gitReadonlyView 参数非法");
+      }
+      const repositoryPath =
+        executionContext.ponderGitRepositoryPath ??
+        executionContext.workspaceBoundary.getWorkspaceRoot();
+      const gitArguments = localEngine.buildPonderGitReadonlyArguments(
+        parsed.view,
+        parsed.logLimit,
+      );
+      const { GitProcess } = await import("../orchestration/git-process.js");
+      const gitProcess = new GitProcess({ gitCommandTimeoutSeconds: 30 });
+      const result = await gitProcess.run(
+        repositoryPath,
+        gitArguments,
+        `Ponder 只读 git 视图 ${parsed.view}`,
+      );
+      return {
+        outputText:
+          result.stdoutText.trim() === "" ? "（无输出）" : result.stdoutText,
+        isSideEffectFree: true,
+      };
+    }
     default:
       throw new Error(`未知内置工具: ${toolName}`);
   }
@@ -398,4 +494,99 @@ async function resolveAndAssertAccess(
     operation,
   });
   return resolvedPath;
+}
+
+/**
+ * T06B：Ponder 只读文本检索（不经 shell）。
+ * 递归遍历工作区普通文件，逐文件经本地策略引擎校验后以只读方式搜索；
+ * 跳过受保护/敏感路径与二进制文件，限制最大文件数与行数（有界）。
+ */
+const MAX_SEARCH_FILES = 500;
+const MAX_SEARCH_RESULTS = 100;
+const MAX_SEARCH_FILE_BYTES = 512 * 1024;
+
+async function searchProjectText(
+  workspaceRootPath: string,
+  pattern: string,
+  localEngine: LocalToolPolicyEngine,
+): Promise<string> {
+  const { readdir, readFile } = await import("node:fs/promises");
+  const { access } = await import("node:fs/promises");
+  const skipDirectories = new Set([
+    "node_modules",
+    ".git",
+    "dist",
+    ".astarray",
+    "temp",
+  ]);
+  const results: string[] = [];
+  let fileCount = 0;
+
+  const visit = async (directoryPath: string): Promise<void> => {
+    if (results.length >= MAX_SEARCH_RESULTS || fileCount >= MAX_SEARCH_FILES) {
+      return;
+    }
+    let entries: { name: string; isDirectory: () => boolean }[];
+    try {
+      entries = await readdir(directoryPath, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (results.length >= MAX_SEARCH_RESULTS || fileCount >= MAX_SEARCH_FILES) {
+        return;
+      }
+      if (skipDirectories.has(entry.name)) {
+        continue;
+      }
+      const entryPath = path.join(directoryPath, entry.name);
+      if (entry.isDirectory()) {
+        await visit(entryPath);
+        continue;
+      }
+      try {
+        await access(entryPath);
+      } catch {
+        continue;
+      }
+      let resolvedPath: string;
+      try {
+        resolvedPath = await localEngine.assertPonderReadonlyFilePath(entryPath);
+      } catch {
+        continue; // 敏感路径/受保护区：跳过该文件，不中断检索
+      }
+      fileCount += 1;
+      const fileStat = await import("node:fs/promises").then((fsModule) =>
+        fsModule.stat(resolvedPath),
+      );
+      if (fileStat.size > MAX_SEARCH_FILE_BYTES) {
+        continue;
+      }
+      let content: string;
+      try {
+        content = await readFile(resolvedPath, "utf8");
+      } catch {
+        continue;
+      }
+      if (content.includes("\u0000")) {
+        continue; // 二进制文件
+      }
+      const lines = content.split("\n");
+      for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+        const line = lines[lineIndex]!;
+        if (line.includes(pattern)) {
+          const relativePath = path.relative(workspaceRootPath, entryPath);
+          results.push(`${relativePath}:${lineIndex + 1}:${line.slice(0, 200)}`);
+          if (results.length >= MAX_SEARCH_RESULTS) {
+            return;
+          }
+        }
+      }
+    }
+  };
+
+  await visit(workspaceRootPath);
+  return results.length === 0
+    ? "（未找到匹配）"
+    : results.join("\n");
 }

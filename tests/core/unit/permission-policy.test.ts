@@ -119,7 +119,7 @@ describe("SessionAuthorizationManager", () => {
 });
 
 describe("PermissionDecider（实时读取当前模式）", () => {
-  it("降级后下一次调用使用新策略：Assist 授权 → Ponder 立即 deny", () => {
+  it("降级后下一次调用使用新策略：Assist 授权 → Ponder 立即 deny", async () => {
     const machine = new ModeMachine("assist");
     const manager = new SessionAuthorizationManager();
     const decider = new PermissionDecider(machine, manager);
@@ -127,7 +127,7 @@ describe("PermissionDecider（实时读取当前模式）", () => {
     manager.grant("writeFile", argumentHash, NOW_UNIX_SECONDS);
 
     expect(
-      decider.decide(
+      await decider.decide(
         { toolName: "writeFile", category: "restricted", argumentsJson: '{"path":"a.txt"}' },
         NOW_UNIX_SECONDS,
       ),
@@ -135,20 +135,20 @@ describe("PermissionDecider（实时读取当前模式）", () => {
 
     machine.transition("ponder", "degrade");
     expect(
-      decider.decide(
+      await decider.decide(
         { toolName: "writeFile", category: "restricted", argumentsJson: '{"path":"a.txt"}' },
         NOW_UNIX_SECONDS,
       ),
     ).toBe("deny");
   });
 
-  it("Assist 下受限工具授权后为 allow，未授权为 ask", () => {
+  it("Assist 下受限工具授权后为 allow，未授权为 ask", async () => {
     const machine = new ModeMachine("assist");
     const manager = new SessionAuthorizationManager();
     const decider = new PermissionDecider(machine, manager);
 
     expect(
-      decider.decide(
+      await decider.decide(
         { toolName: "writeFile", category: "restricted", argumentsJson: '{"path":"a.txt"}' },
         NOW_UNIX_SECONDS,
       ),
@@ -157,24 +157,24 @@ describe("PermissionDecider（实时读取当前模式）", () => {
     const argumentHash = hashToolArguments('{"path":"a.txt"}');
     manager.grant("writeFile", argumentHash, NOW_UNIX_SECONDS);
     expect(
-      decider.decide(
+      await decider.decide(
         { toolName: "writeFile", category: "restricted", argumentsJson: '{"path":"a.txt"}' },
         NOW_UNIX_SECONDS,
       ),
     ).toBe("allow");
   });
 
-  it("Assist 下只读工具无需询问，禁止工具一律拒绝", () => {
+  it("Assist 下只读工具无需询问，禁止工具一律拒绝", async () => {
     const machine = new ModeMachine("assist");
     const decider = new PermissionDecider(machine, new SessionAuthorizationManager());
     expect(
-      decider.decide(
+      await decider.decide(
         { toolName: "readFile", category: "readonly", argumentsJson: '{"path":"a.txt"}' },
         NOW_UNIX_SECONDS,
       ),
     ).toBe("allow");
     expect(
-      decider.decide(
+      await decider.decide(
         { toolName: "deleteFile", category: "forbidden", argumentsJson: '{"path":"a.txt"}' },
         NOW_UNIX_SECONDS,
       ),

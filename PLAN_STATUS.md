@@ -34,7 +34,7 @@
 | T05C | Agent 待办偏序集、任务包与状态工具 | re-verifying | 4E | 2026-08-13 完成；Batch 4E 检查点（471 测试全绿）；待 AR-04/AR-07 复验 |
 | T06 | 工具注册表与最小权限 | re-verifying | 4 | AR-00 重新验收中（AR-01 受保护存储） |
 | T06A | 工具内破坏性变更备份层 | re-verifying | 4C | AR-00 重新验收中（AR-01/AR-05/AR-06） |
-| T06B | Ponder 本地只读边界与敏感操作分类 | pending | 4F | 新增设计；须按 ADR-0014 实现和动态验收 |
+| T06B | Ponder 本地只读边界与敏感操作分类 | re-verifying | 4F | 2026-08-13 完成；Batch 4F 检查点（510 测试全绿）；待 AR 复验 |
 | T06C | 全模式本地敏感内容禁读 | pending | 4G | 新增设计；须按 ADR-0018 实现和动态验收 |
 | T06D | 高严谨性事实验证工具 | pending | 4I | 新增设计；须按 ADR-0016 实现和动态验收 |
 | T07 | Agent Runtime | re-verifying | 4 | AR-00 重新验收中 |
@@ -212,6 +212,25 @@ T14 产出：`README.md`（安装/三模式/Provider/状态目录/headless/反�
 - T11：`run/status/resume/cancel/doctor/config init` 全部实现；`--json` 模式 stdout 仅 JSON、日志走 stderr；退出码 0/1/2 稳定；11 项构建产物集成测试 + 17 项命令单元测试；反馈进程入口路径解析修复。
 
 遗留风险：TUI 键盘输入路径未做 PTY 自动化（T13 用 node-pty 补）；指标尚未接入编排循环（v0.1 头栏显示 0）。
+
+## Batch 4F（T06B 增补任务）检查点记录
+
+### 2026-08-13 — 通过
+
+验收命令与实际结果：
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `npm run check` | 0 | 44 文件 / 510 测试通过（typecheck/lint/build/test 全绿） |
+| `npm run test:coverage` | 0 | Stmts 92.70% / Branch 85.23% / Funcs 89.x% |
+
+T06B（Ponder 本地只读边界与敏感操作分类，ADR-0014）：
+
+- `LocalSensitiveOperationClassifier`：版本化确定性分类规则（`OPERATION_CLASSIFICATION_RULES_VERSION`），按工具名静态映射 + mutationKind + 名称模式分类文件/Git 变更、进程、网络、发布、凭据、备份与系统操作；纯本地执行，不发起云端分类；大小写不敏感。
+- `LocalToolPolicyEngine`：Ponder 白名单（readFile/listDirectory/searchProjectText/taskSequenceStatus/gitReadonlyView）双时点 fail-closed 校验——白名单 + 只读分类 + 声明一致（category/backupPolicy/mutationKind 伪造拒绝）+ 参数安全；敏感路径排除（.env/凭据/密钥/.git 凭证，兼容 Windows 反斜杠）；本地拒绝事件（工具 ID、规则版本、原因，不记录文件秘密）。
+- 新只读工具：`searchProjectText`（工作区递归检索，有界 500 文件/100 结果/512KB，跳过敏感与二进制文件）与 `gitReadonlyView`（固定视图 status/diff/log，参数由引擎构造，模型不可注入 git 参数，无 shell）。
+- `PermissionPolicy`/`PermissionDecider` 接入：Ponder 分支由本地引擎异步判定；每次裁决实时读取当前模式（降级后立即复检）；Ponder 下不查询会话授权（旧授权不沿用）；未装配引擎时 Ponder 一律 deny（与旧版一致）。
+- 反例覆盖：写工具/进程/网络/凭据/备份拒绝、伪造 readonly 声明、路径穿越/绝对逃逸/受保护区/敏感文件名、git 非法视图、未知工具与不可解析参数、降级复检、断网一致性（纯本地规则）。
 
 ## Batch 5（T08）检查点记录
 

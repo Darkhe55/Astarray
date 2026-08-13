@@ -9,7 +9,7 @@
 import { createHash } from "node:crypto";
 
 import { ASSIST_SESSION_AUTHORIZATION_TTL_MINUTES } from "./types.js";
-import type { AgentMode, PermissionResult, ToolCategory } from "./types.js";
+import type { AgentMode, PermissionResult, ToolCategory, ToolDescriptor } from "./types.js";
 import type { ModeMachine } from "./mode-machine.js";
 
 export interface SessionAuthorizationRecord {
@@ -55,13 +55,19 @@ export class SessionAuthorizationManager {
 }
 
 export class PermissionPolicy {
+  /**
+   * Ponder：本地只读白名单由 LocalToolPolicyEngine 判定（T06B），
+   * 策略矩阵本身不再"一律 deny"——可证明只读的白名单工具放行，
+   * 其余全部 deny。isPonderReadonlyAllowed 由引擎注入（本地确定性判定）。
+   */
   evaluate(
     category: ToolCategory,
     mode: AgentMode,
     isSessionAuthorized: boolean,
+    isPonderReadonlyAllowed: boolean = false,
   ): PermissionResult {
     if (mode === "ponder") {
-      return "deny";
+      return isPonderReadonlyAllowed ? "allow" : "deny";
     }
     if (mode === "devolve") {
       return "allow";
@@ -88,19 +94,55 @@ export interface ToolPermissionRequest {
 }
 
 /**
- * 组合裁决器：模式（来自 ModeMachine）+ 会话授权（来自 SessionAuthorizationManager）。
- * 保证"降级后的下一次调用使用新策略"：每次裁决实时读取当前模式。
+ * 组合裁决器：模式（来自 ModeMachine）+ 会话授权（来自 SessionAuthorizationManager）
+ * + Ponder 本地只读白名单（来自 LocalToolPolicyEngine，T06B）。
+ * 保证"降级后的下一次调用使用新策略"：每次裁决实时读取当前模式；
+ * Ponder 下不查询会话授权（降级后旧授权不能沿用）。
  */
 export class PermissionDecider {
   private readonly policy = new PermissionPolicy();
+  /** T06B：Ponder 只读判定器（异步本地校验；未注入时 Ponder 一律 deny）。 */
+  private readonly ponderReadonlyDecider:
+    | ((input: {
+        toolName: string;
+        descriptor: ToolDescriptor;
+        argumentsJson: string;
+      }) => Promise<boolean>)
+    | null;
 
   constructor(
     private readonly modeMachine: ModeMachine,
     private readonly sessionManager: SessionAuthorizationManager,
-  ) {}
+    ponderReadonlyDecider?: PermissionDecider["ponderReadonlyDecider"],
+  ) {
+    this.ponderReadonlyDecider = ponderReadonlyDecider ?? null;
+  }
 
-  decide(request: ToolPermissionRequest, nowUnixSeconds: number): PermissionResult {
+  async decide(
+    request: ToolPermissionRequest,
+    nowUnixSeconds: number,
+  ): Promise<PermissionResult> {
     const mode = this.modeMachine.getCurrentMode();
+    if (mode === "ponder") {
+      if (this.ponderReadonlyDecider === null) {
+        return "deny";
+      }
+      const isReadonlyAllowed = await this.ponderReadonlyDecider({
+        toolName: request.toolName,
+        descriptor: {
+          name: request.toolName,
+          summary: "",
+          category: request.category,
+          mutationKind: request.category === "readonly" ? "none" : "delete-content",
+          backupPolicy: "not-required",
+          authorizationPolicy: "standard",
+          supportedTaskTypes: [],
+          inputSchema: null,
+        },
+        argumentsJson: request.argumentsJson,
+      });
+      return isReadonlyAllowed ? "allow" : "deny";
+    }
     if (mode === "assist" && request.category === "restricted") {
       const argumentHash = hashToolArguments(request.argumentsJson);
       const isSessionAuthorized = this.sessionManager.isAuthorized(

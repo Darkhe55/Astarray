@@ -8,6 +8,7 @@ import { ModeMachine } from "../../../packages/core/src/core/mode-machine.js";
 import { executeBuiltinTool } from "../../../packages/core/src/tools/builtins.js";
 import { WorkspaceBoundary } from "../../../packages/core/src/tools/workspace-boundary.js";
 import { ProtectedStoragePolicy } from "../../../packages/core/src/tools/protected-storage-policy.js";
+import { LocalToolPolicyEngine } from "../../../packages/core/src/tools/local-tool-policy-engine.js";
 import {
   BackupDeletionAuditLog,
   BackupDeletionAuthorizationController,
@@ -396,5 +397,91 @@ describe("T06A 备份层内置工具", () => {
       ),
     ).rejects.toThrowError(/TOCTOU/);
     expect(await fs.readFile(targetPath, "utf8")).toBe("被第三方篡改");
+  });
+
+  it("searchProjectText：只读检索工作区文本，敏感路径跳过", async () => {
+    await fs.writeFile(path.join(workspaceDirectory, "doc.txt"), "目标关键字 123", "utf8");
+    await fs.writeFile(path.join(workspaceDirectory, ".env"), "目标关键字 secret", "utf8");
+    const localToolPolicyEngine = new LocalToolPolicyEngine({
+      workspaceBoundary: new WorkspaceBoundary(workspaceDirectory),
+      protectedStoragePolicy: new ProtectedStoragePolicy({
+        stateDirectoryPath: temporaryDirectory,
+      }),
+    });
+    const result = await executeBuiltinTool(
+      "searchProjectText",
+      JSON.stringify({ pattern: "目标关键字" }),
+      {
+        ...executionContext(),
+        localToolPolicyEngine,
+      },
+    );
+    expect(result.outputText).toContain("doc.txt:1");
+    expect(result.outputText).not.toContain(".env");
+  });
+
+  it("searchProjectText 未装配引擎报错；非法参数报错", async () => {
+    await expect(
+      executeBuiltinTool(
+        "searchProjectText",
+        JSON.stringify({ pattern: "x" }),
+        executionContext(),
+      ),
+    ).rejects.toThrowError(/未装配/);
+    await expect(
+      executeBuiltinTool(
+        "searchProjectText",
+        JSON.stringify({}),
+        {
+          ...executionContext(),
+          localToolPolicyEngine: new LocalToolPolicyEngine({
+            workspaceBoundary: new WorkspaceBoundary(workspaceDirectory),
+            protectedStoragePolicy: new ProtectedStoragePolicy({
+              stateDirectoryPath: temporaryDirectory,
+            }),
+          }),
+        },
+      ),
+    ).rejects.toThrowError(/pattern/);
+  });
+
+  it("gitReadonlyView：固定只读视图执行并返回输出", async () => {
+    const localToolPolicyEngine = new LocalToolPolicyEngine({
+      workspaceBoundary: new WorkspaceBoundary(workspaceDirectory),
+      protectedStoragePolicy: new ProtectedStoragePolicy({
+        stateDirectoryPath: temporaryDirectory,
+      }),
+    });
+    const result = await executeBuiltinTool(
+      "gitReadonlyView",
+      JSON.stringify({ view: "status" }),
+      {
+        ...executionContext(),
+        localToolPolicyEngine,
+        ponderGitRepositoryPath: process.cwd(),
+      },
+    );
+    // 状态目录本身是 git 仓库（本项目仓库）：输出为 git status 结果或"（无输出）"
+    expect(typeof result.outputText).toBe("string");
+    expect(result.isSideEffectFree).toBe(true);
+  });
+
+  it("gitReadonlyView 非法视图被本地策略拒绝", async () => {
+    const localToolPolicyEngine = new LocalToolPolicyEngine({
+      workspaceBoundary: new WorkspaceBoundary(workspaceDirectory),
+      protectedStoragePolicy: new ProtectedStoragePolicy({
+        stateDirectoryPath: temporaryDirectory,
+      }),
+    });
+    await expect(
+      executeBuiltinTool(
+        "gitReadonlyView",
+        JSON.stringify({ view: "reset" }),
+        {
+          ...executionContext(),
+          localToolPolicyEngine,
+        },
+      ),
+    ).rejects.toThrowError(/本地只读边界/);
   });
 });

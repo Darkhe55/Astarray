@@ -18,6 +18,7 @@ import type { WorkspaceBoundary } from "./workspace-boundary.js";
 import type { BackupDeletionAuthorizationController, BackupVault } from "./backup-vault.js";
 import type { ProtectedStoragePolicy } from "./protected-storage-policy.js";
 import type { TaskSequenceStatusController } from "../orchestration/task-sequence-controllers.js";
+import type { LocalToolPolicyEngine } from "./local-tool-policy-engine.js";
 import {
   executeBuiltinTool,
   BUILTIN_TOOL_DESCRIPTORS,
@@ -50,6 +51,13 @@ export interface PolicyWrapperOptions {
   protectedStoragePolicy: ProtectedStoragePolicy;
   /** T05C：任务序列状态控制面（只读工具；未装配时该工具调用报错）。 */
   taskSequenceStatusController?: TaskSequenceStatusController | null;
+  /**
+   * T06B：Ponder 本地只读边界引擎（装配后 Ponder 可调用白名单只读工具，
+   * 其余 fail-closed；未装配时 Ponder 一律 deny，与旧版一致）。
+   */
+  localToolPolicyEngine?: LocalToolPolicyEngine | null;
+  /** T06B：Ponder 只读 git 视图的工作仓库目录（默认工作区根）。 */
+  ponderGitRepositoryPath?: string | null;
 }
 
 export class PolicyWrapper implements ToolPort {
@@ -73,7 +81,7 @@ export class PolicyWrapper implements ToolPort {
     try {
       const descriptor = this.assertRegistered(toolName);
       this.assertWithinWorkerSubset(toolName);
-      const decision = this.decidePermission(descriptor, argumentsJson);
+      const decision = await this.decidePermission(descriptor, argumentsJson);
       if (decision === "ask") {
         this.recordAudit(descriptor, "ask", "受限工具需用户裁决");
         throw new DomainError(
@@ -139,10 +147,10 @@ export class PolicyWrapper implements ToolPort {
     }
   }
 
-  private decidePermission(
+  private async decidePermission(
     descriptor: ToolDescriptor,
     argumentsJson: string,
-  ): PermissionResult {
+  ): Promise<PermissionResult> {
     return this.options.permissionDecider.decide(
       {
         toolName: descriptor.name,
