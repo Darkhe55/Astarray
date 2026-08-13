@@ -25,6 +25,7 @@ import type { AgentWorkArchiveStore } from "./work-archive-store.js";
 import { AssistScheduler } from "./assist-scheduler.js";
 import { DevolveScheduler } from "./devolve-scheduler.js";
 import type { MissionManager } from "./mission-manager.js";
+import type { GitIntegrationOrchestrationOptions } from "./mission-orchestrator.js";
 
 export interface MainControllerOptions {
   modeMachine: ModeMachine;
@@ -66,6 +67,10 @@ export interface MainControllerOptions {
   backupDeletionController?: BackupDeletionAuthorizationController | null;
   /** T05A：Agent 工作存档（可选）。 */
   workArchiveStore?: AgentWorkArchiveStore | null;
+  /** T05B → T08：Git 集成装配（可选；缺省时编排行为与旧版一致）。 */
+  gitIntegration?: GitIntegrationOrchestrationOptions | null;
+  /** T05B：次级调度 Agent 具体实例 ID 工厂（每次 mission 不可复用）。 */
+  secondaryAgentInstanceIdFactory?: (missionId: string) => string;
 }
 
 export class MainController {
@@ -200,6 +205,10 @@ export class MainController {
       feedbackTransport: this.options.feedbackTransport,
       feedbackTransportFactory: async () => this.options.feedbackTransport,
       workArchiveStore: this.options.workArchiveStore ?? null,
+      secondaryAgentInstanceId:
+        this.options.secondaryAgentInstanceIdFactory?.(missionId) ??
+        `scheduler:${missionId}`,
+      gitIntegration: this.options.gitIntegration ?? null,
       workerFactories: {
         runtimeFactory: this.options.workerRuntimeFactory,
         toolPortFactory: (task) =>
@@ -238,6 +247,10 @@ export class MainController {
       maxLoopIterations: this.options.maxLoopIterations,
       feedbackTransportFactory: async () => this.options.feedbackTransport,
       workArchiveStore: this.options.workArchiveStore ?? null,
+      secondaryAgentInstanceId:
+        this.options.secondaryAgentInstanceIdFactory?.(missionId) ??
+        `scheduler:${missionId}`,
+      gitIntegration: this.options.gitIntegration ?? null,
       workerFactories: {
         runtimeFactory: this.options.workerRuntimeFactory,
         toolPortFactory: (task) =>

@@ -9,6 +9,11 @@
 > 2026-08-12 设计增补：T06A 增加 `backupVault` 读取/恢复工具和独立 `deleteBackup` 特权入口。协同模式删除会警告用户并暂停 Agent，逐次授权；放权模式不提醒但保留 HIGH 审计记录；采用 quarantine 两阶段删除防止递归与死锁。模式中文名统一为思索/协同/放权。
 > 2026-08-13 设计增补：新增 T05B。涉及 Git 写入的多 Agent 任务由次级 Agent 负责分支/worktree 分流、三级 Agent 提交审查、集成测试和受控合并；三级 Agent 只能提交自己的隔离分支。Git 历史不替代工具内自动备份，破坏性 Git 操作必须先创建受保护恢复点。
 > 2026-08-13 设计增补：新增 T05C。每个调度 Agent 在自己的记忆存档域维护独立待办任务偏序集，发布者可指定前驱/后继；用户任务默认优先级层级 0，Agent/system/工具任务只能层级 1 或以下。次级 Agent 可把一条链打包给三级 Agent，并提供无副作用状态查询工具。
+> 2026-08-13 设计增补：新增 T06B。Ponder 改为本地只读白名单，可查看普通项目文件、检索文本和查询只读状态；写入、进程、网络、凭据和备份工具由本地策略与 OS 边界硬禁用，敏感操作分类不依赖云端或 AI。
+> 2026-08-13 设计增补：新增 T07A。模型完成时必须返回版本化明确完成控制事件；本地验收通过后才结案。缺失/无效标识或输出早停时，从原子检查点最多自动续跑 3 次，并防止并行请求与重复非幂等副作用。
+> 2026-08-13 设计增补：新增 T06C。`.env`/`.env.*`、私钥、凭据库、能力令牌及本地 DLP 命中内容在 Ponder/Assist/Devolve 三种模式和全部工具通道中禁止模型读取，无授权例外。
+> 2026-08-13 设计增补：新增 T07B。同一具体 Agent/任务短时间重复读取未变化且已覆盖资源时返回读取回执；增加资源/工具环、Agent 回派乒乓、搜索换词和无进展重试的本地有界守卫。
+> 2026-08-13 设计增补：新增 T06D。高严谨性任务由本地规则强制调用事实验证工具；证据按“资料搜索 > 本地实验 > 纯推理”组织，只作为用户判断辅助，不自动判定合格。
 >
 > 2026-08-12 审计整改：外部验收发现 7 项阻断性问题，全部已修复并回归（详见"审计整改记录"）。修复涉及 S1 doctor 数据丢失、S2 反馈入池校验、S3 备份事务闭环、S4 授权绑定、S5 交互授权通道、S6 存档 provenance、S7 config 备份保护；另完成覆盖率与测试基建改善（S8/S9）。
 
@@ -29,8 +34,13 @@
 | T05C | Agent 待办偏序集、任务包与状态工具 | re-verifying | 4E | 2026-08-13 完成；Batch 4E 检查点（471 测试全绿）；待 AR-04/AR-07 复验 |
 | T06 | 工具注册表与最小权限 | re-verifying | 4 | AR-00 重新验收中（AR-01 受保护存储） |
 | T06A | 工具内破坏性变更备份层 | re-verifying | 4C | AR-00 重新验收中（AR-01/AR-05/AR-06） |
+| T06B | Ponder 本地只读边界与敏感操作分类 | pending | 4F | 新增设计；须按 ADR-0014 实现和动态验收 |
+| T06C | 全模式本地敏感内容禁读 | pending | 4G | 新增设计；须按 ADR-0018 实现和动态验收 |
+| T06D | 高严谨性事实验证工具 | pending | 4I | 新增设计；须按 ADR-0016 实现和动态验收 |
 | T07 | Agent Runtime | re-verifying | 4 | AR-00 重新验收中 |
-| T08 | 三级 Agent 编排 | re-verifying | 5 | AR-00 重新验收中（AR-04 身份一致性及次级 Git 集成） |
+| T07A | 明确完成协议与早停恢复 | pending | 4J | 新增设计；须按 ADR-0015 实现和动态验收 |
+| T07B | 反自指读取与通用活锁守卫 | pending | 4H | 新增设计；须按 ADR-0017 实现和动态验收 |
+| T08 | 三级 Agent 编排 | re-verifying | 5 | AR-04 复验：T05B→T08 Git 编排接入完成（Batch 5 增补检查点），待 AR-04 全项复验 |
 | T09 | 记忆、缓存与指标 | re-verifying | 6 | AR-00 重新验收中 |
 | T10 | TUI | re-verifying | 6 | AR-00 重新验收中（AR-02 授权交互） |
 | T11 | Headless CLI | re-verifying | 6 | AR-00 重新验收中 |
@@ -176,7 +186,7 @@ T14 产出：`README.md`（安装/三模式/Provider/状态目录/headless/反�
 - **真实漏洞修复 1**：`writeFileTemporary` 接受 `../` 穿越文件名 → 已加临时目录边界校验（`isPathWithinDirectory`）。
 - **真实漏洞修复 2**：Redactor 的 authorization 规则可跨行匹配（`\s+` 吞换行）且与自身占位符自匹配 → 规则改为 `[ \t]+` 并排除跨行；`containsSensitivePattern` 先剔除占位符再断言。
 - 无限 tool loop：Worker 达到 maxLoopIterations 后终止并上报失败（不挂死）。
-- Ponder 不产生任何状态文件（含任务链/概要）。
+- Ponder 不产生任何状态文件（含任务链/概要）；允许的本地只读工具不得改变此性质。
 - 不可写状态目录/缺失文件：TaskStore 与工具返回明确错误而非崩溃。
 - 路径穿越变体（`../`、反斜杠、绝对路径、UNC、多层）全部拒绝。
 - 工具分类不可绕过：大小写/包装命令/别名精确名称匹配。
@@ -202,6 +212,31 @@ T14 产出：`README.md`（安装/三模式/Provider/状态目录/headless/反�
 - T11：`run/status/resume/cancel/doctor/config init` 全部实现；`--json` 模式 stdout 仅 JSON、日志走 stderr；退出码 0/1/2 稳定；11 项构建产物集成测试 + 17 项命令单元测试；反馈进程入口路径解析修复。
 
 遗留风险：TUI 键盘输入路径未做 PTY 自动化（T13 用 node-pty 补）；指标尚未接入编排循环（v0.1 头栏显示 0）。
+
+## Batch 5（T08）检查点记录
+
+### 2026-08-13 — T05B→T08 编排接入增补通过
+
+验收命令与实际结果：
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `npm run check` | 0 | 43 文件 / 495 测试通过（typecheck/lint/build/test 全绿） |
+| `npm run test:coverage` | 0 | Stmts 93.04% / Branch 85.70% / Funcs 89.67% |
+
+T05B→T08 接入（AR-04 身份一致性及次级 Git 集成复验项）：
+
+- `MissionOrchestrator` 新增 `gitIntegration` 装配：首次调度前自动 `startIntegrationSession`（固定基线 + 集成分支）；写入型任务（taskType 在 allowedPathsByTaskType）自动分配隔离 worker 分支/worktree，Worker 工具端口指向 worktree。
+- Worker 成功后编排层在 worktree 提交（身份已绑定）→ 证据命令实际执行上报真实退出码 → `submitContribution` 审查；审查拒绝/提交异常 → 任务 blocked + escalation（禁止 unhandled rejection）。无改动视为无贡献直接放行。
+- Mission 完成时 `finalizeIntegration`：集成测试失败记录 unresolvedRisks 不合并；`isTargetBranchMergeAllowed` 门禁由装配方注入（Assist 需用户授权），通过才合入目标分支；审查结果写入次级 Agent 工作存档（decision 条目 + headCommit 引用）。
+- `MainController`/`AssistScheduler`/`DevolveScheduler` 透传 `gitIntegration` 与 `secondaryAgentInstanceIdFactory`（每次 mission 不可复用实例 ID）。
+- 实测发现并修复：
+  - git ref 名不接受 `:`/`~` → `encodeGitRefSegment`/`decodeGitRefSegment`（合法段原样 + `seg-<hex>` 编码，单射可逆）。
+  - 恢复点备份 ref 全名在 Windows 超路径限制（"Filename too long"）→ 备份 ref 改简短名 `refs/astarray-recovery/<mission>/<id>/b<i>`，referenceBackups 增加 `backupReferenceName` 字段。
+  - 越界修改必须整体提交后由审查 allowedPaths 拦截（仅暂存允许路径会让越界内容绕过审查）。
+- 集成测试（真实 git）：worktree 提交→审查→合并→门禁合入目标分支；越界修改被拒绝（任务 blocked、未合并、escalation）；未装配时行为与旧版一致；分配失败 escalation 且不启动 Worker。
+
+遗留：T05C 序列接入 Assist 调度器（待办偏序集与任务包派发）与 TUI/CLI 状态适配器留待后续批次。
 
 ## Batch 5（T08）检查点记录
 
@@ -247,7 +282,7 @@ T14 产出：`README.md`（安装/三模式/Provider/状态目录/headless/反�
 关键验收点与证据：
 
 - T05：环/缺失依赖/重复 ID 检测；并发上限（2/4 验证）；严格串行依赖；领取锁（同一任务不可双领）；失败传播 → 下游 blocked；retry/reassign/cancel/unblock；每轮调度后 revision 单调递增持久化；失败计数器（阈值 3、成功清零、分工具计数）。
-- T06：主 Agent 仅预览（无 schema）；子集按任务类型；Worker 子集外调用 deny；Ponder 全 deny；Assist readonly allow / restricted ask（会话授权后 allow，参数哈希变更失效）/forbidden deny；Devolve 注册工具 allow 但路径逃逸拒绝；审计事件；token 估算；shell/删除/安装/发布/付款默认未注册。
+- T06：主 Agent 仅预览（无 schema）；子集按任务类型；Worker 子集外调用 deny；旧基线为 Ponder 全 deny，已被新增 T06B/ADR-0014 的本地只读白名单设计替代；Assist readonly allow / restricted ask（会话授权后 allow，参数哈希变更失效）/forbidden deny；Devolve 注册工具 allow 但路径逃逸拒绝；审计事件；token 估算；shell/删除/安装/发布/付款默认未注册。
 - T07：ScriptedRuntime 确定性脚本（含中途取消）；OpenAICompatibleRuntime 流式解析/工具调用累积/finish_reason 分支/超时与取消；API key 不进入错误消息；ToolLoop 工具执行回填、最大迭代保护、取消传播、事件透传。
 
 遗留风险：跨进程 mission 锁与更多安全加固在 T12；OpenAI runtime 的 SSE 实现为整文本解析（生产可换流式，语义不变）。

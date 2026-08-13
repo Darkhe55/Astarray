@@ -18,6 +18,34 @@ import { writeAtomicJson } from "../infra/atomic-json.js";
 import { sanitizePathSegment } from "./work-archive-store.js";
 import { GitProcess } from "./git-process.js";
 
+/** git ref 段允许字符集（字母/数字/点/下划线/连字符）。 */
+const GIT_REF_SAFE_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+/**
+ * 将标识符编码为 git ref 安全段：全为合法字符时原样保留（可读），
+ * 含非法字符（如 `:`、`~`、空格）时编码为 `seg-<hex(utf8)>`（可逆）。
+ * 约定：标识符不得以 `seg-` 开头（与编码前缀区分）。
+ */
+export function encodeGitRefSegment(identifier: string): string {
+  if (GIT_REF_SAFE_PATTERN.test(identifier) && identifier !== "") {
+    return identifier;
+  }
+  return `seg-${Buffer.from(identifier, "utf8").toString("hex")}`;
+}
+
+/** 解码 git ref 段回原始标识符（编码前缀 + 偶数字节十六进制）。 */
+export function decodeGitRefSegment(encodedSegment: string): string {
+  const hexPart = encodedSegment.slice("seg-".length);
+  if (
+    encodedSegment.startsWith("seg-") &&
+    /^[0-9a-f]+$/.test(hexPart) &&
+    hexPart.length % 2 === 0
+  ) {
+    return Buffer.from(hexPart, "hex").toString("utf8");
+  }
+  return encodedSegment;
+}
+
 export interface GitWorktreeAllocatorOptions {
   baseDirectory: string;
   gitProcess?: GitProcess;
@@ -48,18 +76,23 @@ export class GitWorktreeAllocator {
     this.gitProcess = options.gitProcess ?? new GitProcess();
   }
 
+  /**
+   * worker 分支名：worker/<task>/<agent>。
+   * agent 实例 ID 与任务 ID 可能含 git ref 非法字符（如 `:`、`~`），
+   * 用 ref 段编码清洗（单射可逆），保证分支名可创建。
+   */
   static buildWorkerBranchName(
     taskId: string,
     tertiaryAgentInstanceId: string,
   ): string {
-    return `worker/${taskId}/${tertiaryAgentInstanceId}`;
+    return `worker/${encodeGitRefSegment(taskId)}/${encodeGitRefSegment(tertiaryAgentInstanceId)}`;
   }
 
   static buildIntegrationBranchName(
     missionId: string,
     integratingAgentInstanceId: string,
   ): string {
-    return `integration/${missionId}/${integratingAgentInstanceId}`;
+    return `integration/${encodeGitRefSegment(missionId)}/${encodeGitRefSegment(integratingAgentInstanceId)}`;
   }
 
   /**

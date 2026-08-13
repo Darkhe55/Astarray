@@ -20,7 +20,7 @@ import type { GitContributionVerifier } from "./git-contribution-verifier.js";
 import type { GitIntegrationReportStore } from "./git-integration-report-store.js";
 import { GitProcess } from "./git-process.js";
 import type { GitRecoveryPointService } from "./git-recovery-point-service.js";
-import { GitWorktreeAllocator } from "./git-worktree-allocator.js";
+import { GitWorktreeAllocator, decodeGitRefSegment } from "./git-worktree-allocator.js";
 
 export interface StartIntegrationSessionInput {
   missionId: string;
@@ -210,10 +210,14 @@ export class GitIntegrationCoordinator {
         .run(input.repositoryPath, ["checkout", "--detach", "HEAD"], `完成集成分支合并后脱离分支`)
         .catch(() => {});
     }
-    // 更新会话报告：读取既有会话记录（目标分支/集成者身份不可变），追加本次贡献
-    const integratingAgentInstanceId = allocation.integrationBranchName
+    // 更新会话报告：读取既有会话记录（目标分支/集成者身份不可变），追加本次贡献。
+    // 分支名末段为 git ref 段编码后的集成者 ID，需解码回原始实例 ID 以读取报告。
+    const encodedIntegratingAgentInstanceId = allocation.integrationBranchName
       .split("/")
       .at(-1)!;
+    const integratingAgentInstanceId = decodeGitRefSegment(
+      encodedIntegratingAgentInstanceId,
+    );
     const sessionReport = await this.options.reportStore.readReport(
       input.missionId,
       integratingAgentInstanceId,

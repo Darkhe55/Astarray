@@ -562,7 +562,12 @@ export interface GitRecoveryPointDocument {
   operationDescription: string;
   repositoryPath: string;
   affectedReferenceNames: string[];
-  referenceBackups: Array<{ referenceName: string; committedOid: string }>;
+  referenceBackups: Array<{
+    referenceName: string;
+    /** 受保护备份 ref（refs/astarray-recovery/<mission>/<id>/b<i>，简短以避免 Windows 路径超限）。 */
+    backupReferenceName: string;
+    committedOid: string;
+  }>;
   hasWorktreePreimage: boolean;
   untrackedFileEntries: Array<{ relativePath: string }>;
   restoredAtIso: string | null;

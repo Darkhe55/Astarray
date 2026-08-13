@@ -388,6 +388,7 @@ export const gitRecoveryPointDocumentSchema = z.object({
   referenceBackups: z.array(
     z.object({
       referenceName: z.string().min(1),
+      backupReferenceName: z.string().min(1),
       committedOid: z.string().regex(/^[0-9a-f]{40}$/),
     }),
   ),

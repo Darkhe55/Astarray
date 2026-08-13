@@ -91,8 +91,10 @@ export class GitRecoveryPointService {
 
     const referenceBackups: Array<{
       referenceName: string;
+      backupReferenceName: string;
       committedOid: string;
     }> = [];
+    let backupIndex = 0;
     for (const referenceName of input.affectedReferenceNames) {
       let committedOid: string | null = null;
       try {
@@ -111,19 +113,16 @@ export class GitRecoveryPointService {
       if (committedOid === null) {
         continue;
       }
-      const backupRefName =
-        RECOVERY_REF_PREFIX +
-        sanitizeRefSegment(input.missionId) +
-        "/" +
-        recoveryPointId +
-        "/" +
-        sanitizeRefSegment(referenceName);
+      // 备份 ref 使用简短名（refs/astarray-recovery/<mission>/<id>/b<i>），
+      // 避免完整引用名嵌套导致 Windows 路径长度超限（loose ref 文件）。
+      backupIndex += 1;
+      const backupRefName = `${RECOVERY_REF_PREFIX}${sanitizeRefSegment(input.missionId)}/${recoveryPointId}/b${backupIndex}`;
       await this.gitProcess.run(
         input.repositoryPath,
         ["update-ref", backupRefName, committedOid],
         `备份引用 ${referenceName} → ${backupRefName}`,
       );
-      referenceBackups.push({ referenceName, committedOid });
+      referenceBackups.push({ referenceName, backupReferenceName: backupRefName, committedOid });
     }
 
     let worktreePreimagePatch = "";
