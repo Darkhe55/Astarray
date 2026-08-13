@@ -376,3 +376,66 @@ export const agentTaskSequenceSnapshotSchema = z.object({
     }),
   ),
 });
+
+export const gitRecoveryPointDocumentSchema = z.object({
+  schemaVersion: z.number().int().min(1),
+  recoveryPointId: z.string().min(1),
+  missionId: z.string().min(1),
+  createdAtIso: z.iso.datetime(),
+  operationDescription: z.string().min(1),
+  repositoryPath: z.string().min(1),
+  affectedReferenceNames: z.array(z.string().min(1)),
+  referenceBackups: z.array(
+    z.object({
+      referenceName: z.string().min(1),
+      committedOid: z.string().regex(/^[0-9a-f]{40}$/),
+    }),
+  ),
+  hasWorktreePreimage: z.boolean(),
+  untrackedFileEntries: z.array(
+    z.object({ relativePath: z.string().min(1) }),
+  ),
+  restoredAtIso: z.iso.datetime().nullable(),
+});
+
+export const gitWorkerAllocationSchema = z.object({
+  allocationId: z.string().min(1),
+  missionId: z.string().min(1),
+  taskId: z.string().min(1),
+  tertiaryAgentInstanceId: z.string().min(1),
+  integrationBranchName: z.string().min(1),
+  workerBranchName: z.string().min(1),
+  worktreePath: z.string().min(1),
+  targetBaseCommit: z.string().regex(/^[0-9a-f]{40}$/),
+  allowedPaths: z.array(z.string().min(1)),
+  createdAtIso: z.iso.datetime(),
+});
+
+export const gitCheckExecutionRecordSchema = z.object({
+  command: z.string().min(1),
+  exitCode: z.number().int(),
+});
+
+export const gitContributionReviewRecordSchema = z.object({
+  taskId: z.string().min(1),
+  contributingAgentInstanceId: z.string().min(1),
+  workerBranchName: z.string().min(1),
+  baseCommit: z.string().regex(/^[0-9a-f]{40}$/),
+  headCommit: z.string().regex(/^[0-9a-f]{40}$/),
+  changedPaths: z.array(z.string().min(1)),
+  reviewDecision: z.enum(["accepted", "rejected", "needs-rework"]),
+  rejectionReason: z.string().min(1).nullable(),
+  executedChecks: z.array(gitCheckExecutionRecordSchema),
+});
+
+export const gitIntegrationReportSchema = z.object({
+  missionId: z.string().min(1),
+  integratingAgentInstanceId: z.string().min(1),
+  targetBranchName: z.string().min(1),
+  integrationBranchName: z.string().min(1),
+  targetBaseCommit: z.string().regex(/^[0-9a-f]{40}$/),
+  reviewedContributions: z.array(gitContributionReviewRecordSchema),
+  integrationCommit: z.string().regex(/^[0-9a-f]{40}$/).nullable(),
+  unresolvedRisks: z.array(z.string().min(1)),
+  createdAtIso: z.iso.datetime(),
+});

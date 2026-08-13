@@ -25,7 +25,7 @@
 | T03 | 原子任务链持久化 | re-verifying | 2 | AR-00 重新验收中 |
 | T04 | 独立反馈进程 | re-verifying | 3 | AR-00 重新验收中（AR-03 认证） |
 | T05 | DAG 调度器 | re-verifying | 4 | AR-00 重新验收中 |
-| T05B | 次级 Agent Git 分流、审查与合并 | pending | 4D | 2026-08-13 新设计；纳入 AR-04/AR-06 验收 |
+| T05B | 次级 Agent Git 分流、审查与合并 | re-verifying | 4D | 2026-08-13 完成；Batch 4D 检查点（491 测试全绿）；待 AR-04/AR-06 复验 |
 | T05C | Agent 待办偏序集、任务包与状态工具 | re-verifying | 4E | 2026-08-13 完成；Batch 4E 检查点（471 测试全绿）；待 AR-04/AR-07 复验 |
 | T06 | 工具注册表与最小权限 | re-verifying | 4 | AR-00 重新验收中（AR-01 受保护存储） |
 | T06A | 工具内破坏性变更备份层 | re-verifying | 4C | AR-00 重新验收中（AR-01/AR-05/AR-06） |
@@ -69,6 +69,29 @@
 | S7 | config init 无备份覆盖 | 覆盖前走 BackupVault 自动备份 + TOCTOU 校验 |
 
 另（S8/S9）：反馈进程分支覆盖提升（transport 100%、mailbox 90%+，entrypoint 受 v8 源映射偏移影响部分失真）；新增 TUI 启动路径测试；`pretest` 保证 dist 新鲜（消除 skipIf 静默跳过）；ADR 0007-0010 去重重编号（重复 0008/0009 删除）；`npm prune` 清理 extraneous 自副本；git 基线提交 `2ac838a`；Windows rename 瞬时 EPERM 加有界重试。
+
+## Batch 4D（T05B 增补任务）检查点记录
+
+### 2026-08-13 — 通过
+
+验收命令与实际结果：
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `npm run check` | 0 | 42 文件 / 491 测试通过（typecheck/lint/build/test 全绿） |
+| `npm run test:coverage` | 0 | Stmts 93.16% / Branch 85.30% / Funcs 90.16% |
+
+T05B（次级 Agent Git 分流、审查与合并，ADR-0012）：
+
+- `GitProcess`：受控 git 子进程执行器（spawn、GIT_TERMINAL_PROMPT=0、超时 SIGKILL 且等待进程退出释放句柄、结构化输出、GitProcessError）。
+- `GitRecoveryPointService`：reset/clean/checkout 覆盖/rebase/强制移动引用/删除分支前自动创建恢复点——引用 oid 备份到 `refs/astarray-recovery/` 受保护前缀 + 工作树未提交 pre-image（diff --binary + untracked 快照）；恢复前自动创建前置恢复点（恢复可撤销）；重复恢复拒绝；模型不可删除恢复引用。
+- `GitWorktreeAllocator`：固定基线创建集成分支 + 每个三级 Agent 独立 worker 分支/worktree；worktree 作用域 config（启用 `extensions.worktreeConfig`）绑定提交身份；分配记录持久化（mission/任务/Agent/基线/允许路径）。
+- `GitContributionVerifier`：合并前验证提交存在、祖先关系、提交作者 = 绑定 agentInstanceId、实际修改未越过允许路径、敏感信息扫描（凭据/私钥/令牌）、测试证据非空且成功；结构性问题 → rejected，仅证据不足 → needs-rework。
+- `GitIntegrationReportStore`：结构化分流/审查/拒绝/测试/合并记录，与次级 Agent 工作存档关联。
+- `GitIntegrationCoordinator`：startIntegrationSession（固定基线+集成分支）/submitContribution（验证通过 → `merge --no-ff` 保留来源，冲突抛 tool-execution-failed 并提示恢复点，禁止静默选边）/finalizeIntegration（集成测试失败记录 unresolvedRisks 不合并；模式/用户授权门禁通过才合入目标分支，合入前自动恢复点）。
+- 实测发现并修复：worktree 共享配置导致身份覆盖（启用 worktreeConfig 扩展）；集成测试命令以 shell 在仓库目录执行（不能透传为 git 参数）；恢复点恢复前先对齐工作树到备份提交再应用补丁。
+
+遗留：`git push`/PR/发布仍无工具（始终需要独立授权，符合 ADR-0012）；TUI/CLI 状态适配器留待后续。
 
 ## Batch 4E（T05C 增补任务）检查点记录
 

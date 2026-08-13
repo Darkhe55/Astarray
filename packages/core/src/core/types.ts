@@ -96,6 +96,7 @@ export const TASK_CHAIN_SCHEMA_VERSION = 1;
 export const AGENT_WORK_ARCHIVE_SCHEMA_VERSION = 1;
 export const DESTRUCTIVE_BACKUP_MANIFEST_SCHEMA_VERSION = 1;
 export const AGENT_TASK_SEQUENCE_SCHEMA_VERSION = 1;
+export const GIT_RECOVERY_POINT_SCHEMA_VERSION = 1;
 
 export const AGENT_MODE_DISPLAY_NAMES = {
   ponder: "思索模式",
@@ -548,4 +549,67 @@ export interface AgentTaskSequenceSnapshot {
   bundles: TaskBundleRecord[];
   /** 每个节点的顺序解释（可执行原因 / 阻塞原因 / 必要前驱提升）。 */
   orderExplanations: Array<{ taskId: string; explanation: string }>;
+}
+
+// ─── T05B：次级 Agent Git 分流、审查与合并（ADR-0012） ───────────────────
+
+/** 破坏性 Git 操作前自动创建的受保护恢复点文档。 */
+export interface GitRecoveryPointDocument {
+  schemaVersion: number;
+  recoveryPointId: string;
+  missionId: string;
+  createdAtIso: string;
+  operationDescription: string;
+  repositoryPath: string;
+  affectedReferenceNames: string[];
+  referenceBackups: Array<{ referenceName: string; committedOid: string }>;
+  hasWorktreePreimage: boolean;
+  untrackedFileEntries: Array<{ relativePath: string }>;
+  restoredAtIso: string | null;
+}
+
+/** worker 分支/worktree 分配记录（绑定 mission、任务、Agent、基线与允许路径）。 */
+export interface GitWorkerAllocation {
+  allocationId: string;
+  missionId: string;
+  taskId: string;
+  tertiaryAgentInstanceId: string;
+  integrationBranchName: string;
+  workerBranchName: string;
+  worktreePath: string;
+  targetBaseCommit: string;
+  allowedPaths: string[];
+  createdAtIso: string;
+}
+
+/** 审查执行过的检查项（测试命令与退出码）。 */
+export interface GitCheckExecutionRecord {
+  command: string;
+  exitCode: number;
+}
+
+/** 单个 worker 贡献的审查记录。 */
+export interface GitContributionReviewRecord {
+  taskId: string;
+  contributingAgentInstanceId: string;
+  workerBranchName: string;
+  baseCommit: string;
+  headCommit: string;
+  changedPaths: string[];
+  reviewDecision: "accepted" | "rejected" | "needs-rework";
+  rejectionReason: string | null;
+  executedChecks: GitCheckExecutionRecord[];
+}
+
+/** 结构化集成报告；与次级 Agent 工作存档关联。 */
+export interface GitIntegrationReport {
+  missionId: string;
+  integratingAgentInstanceId: string;
+  targetBranchName: string;
+  integrationBranchName: string;
+  targetBaseCommit: string;
+  reviewedContributions: GitContributionReviewRecord[];
+  integrationCommit: string | null;
+  unresolvedRisks: string[];
+  createdAtIso: string;
 }
