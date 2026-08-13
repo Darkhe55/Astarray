@@ -95,6 +95,7 @@ export const ASSIST_SESSION_AUTHORIZATION_TTL_MINUTES = 10;
 export const TASK_CHAIN_SCHEMA_VERSION = 1;
 export const AGENT_WORK_ARCHIVE_SCHEMA_VERSION = 1;
 export const DESTRUCTIVE_BACKUP_MANIFEST_SCHEMA_VERSION = 1;
+export const AGENT_TASK_SEQUENCE_SCHEMA_VERSION = 1;
 
 export const AGENT_MODE_DISPLAY_NAMES = {
   ponder: "思索模式",
@@ -452,4 +453,99 @@ export interface FeedbackProcessApi {
   replayPending(recipientId: string): Promise<number>;
   health(): Promise<TransportHealth>;
   shutdown(): Promise<void>;
+}
+
+// ─── T05C：Agent 待办任务偏序集（ADR-0013） ──────────────────────────────
+
+/** 任务发布者来源类型；工具来源只能由内部能力接口注入。 */
+export type TaskSourceKind = "user" | "agent" | "system" | "tool";
+
+/** 待办节点状态。cancelled 表示发布者显式取消；保留在历史中。 */
+export type AgentTaskStatus =
+  | "pending"
+  | "running"
+  | "blocked"
+  | "done"
+  | "failed"
+  | "cancelled";
+
+/**
+ * 待办偏序集节点。只保存调度信息、来源、优先级、状态、阻塞原因和可选外部引用；
+ * 项目任务文档、产出内容与产物追踪由项目自己的存储负责。
+ */
+export interface AgentTaskNode {
+  taskId: string;
+  title: string;
+  dependsOn: string[];
+  sourceKind: TaskSourceKind;
+  /** 具体发布者：用户标识 / agentInstanceId / 系统组件名 / 工具名。 */
+  publisherId: string;
+  /** 优先级层级，数值越小越优先；用户默认 0，Agent/system/工具只能 1 或以下。 */
+  priorityTier: number;
+  status: AgentTaskStatus;
+  blockReason: string | null;
+  /** 可选外部引用（如项目 mission/task id），不承载产出内容。 */
+  externalReference: string | null;
+  /** 创建序号（同层稳定排序，单调递增）。 */
+  sequenceOrdinal: number;
+  createdAtIso: string;
+}
+
+/** 任务包：绑定具体三级 Agent 与创建时序列 revision 的链式派发单位。 */
+export interface TaskBundleRecord {
+  bundleId: string;
+  boundAgentInstanceId: string;
+  /** 创建任务包时的序列 revision；序列变更后包仍可读但需重新验证。 */
+  sequenceRevision: number;
+  /** 必须构成链（相邻节点直接前驱关系）。 */
+  taskIds: string[];
+  status: "prepared" | "active" | "completed" | "failed";
+  createdAtIso: string;
+}
+
+/** 序列变更类型；删除、覆盖、改序、取消和压缩属于破坏性变更。 */
+export type TaskSequenceMutationKind =
+  | "publish"
+  | "insert"
+  | "reorder"
+  | "status-change"
+  | "cancel"
+  | "bundle-create"
+  | "bundle-status";
+
+/** 认证来源审计条目；发布、插入、状态迁移、打包和取消均记录。 */
+export interface TaskSequenceAuditEntry {
+  auditEntryId: string;
+  recordedAtIso: string;
+  mutationKind: TaskSequenceMutationKind;
+  actorSourceKind: TaskSourceKind;
+  actorId: string;
+  summary: string;
+}
+
+/**
+ * 版本化待办偏序集文档（T05C / ADR-0013）。
+ * 路径：.astarray/agent-memory/<agentInstanceId>/task-sequences/<taskSequenceId>.json
+ */
+export interface AgentTaskSequenceDocument {
+  schemaVersion: number;
+  sequenceId: string;
+  ownerAgentInstanceId: string;
+  revision: number;
+  updatedAtIso: string;
+  nodes: AgentTaskNode[];
+  bundles: TaskBundleRecord[];
+  auditEntries: TaskSequenceAuditEntry[];
+}
+
+/** 序列状态快照（taskSequenceStatus 只读工具返回，不改变任何状态）。 */
+export interface AgentTaskSequenceSnapshot {
+  sequenceId: string;
+  ownerAgentInstanceId: string;
+  revision: number;
+  nodes: AgentTaskNode[];
+  readyTaskIds: string[];
+  bundles: TaskBundleRecord[];
+  /** 每个节点的顺序解释（可执行原因 / 阻塞原因 / 必要前驱提升）。 */
+  orderExplanations: Array<{ taskId: string; explanation: string }>;
 }

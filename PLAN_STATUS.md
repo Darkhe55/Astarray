@@ -26,7 +26,7 @@
 | T04 | 独立反馈进程 | re-verifying | 3 | AR-00 重新验收中（AR-03 认证） |
 | T05 | DAG 调度器 | re-verifying | 4 | AR-00 重新验收中 |
 | T05B | 次级 Agent Git 分流、审查与合并 | pending | 4D | 2026-08-13 新设计；纳入 AR-04/AR-06 验收 |
-| T05C | Agent 待办偏序集、任务包与状态工具 | pending | 4E | 2026-08-13 新设计；独立于项目任务/产出存储，纳入 AR-04 验收 |
+| T05C | Agent 待办偏序集、任务包与状态工具 | re-verifying | 4E | 2026-08-13 完成；Batch 4E 检查点（471 测试全绿）；待 AR-04/AR-07 复验 |
 | T06 | 工具注册表与最小权限 | re-verifying | 4 | AR-00 重新验收中（AR-01 受保护存储） |
 | T06A | 工具内破坏性变更备份层 | re-verifying | 4C | AR-00 重新验收中（AR-01/AR-05/AR-06） |
 | T07 | Agent Runtime | re-verifying | 4 | AR-00 重新验收中 |
@@ -69,6 +69,29 @@
 | S7 | config init 无备份覆盖 | 覆盖前走 BackupVault 自动备份 + TOCTOU 校验 |
 
 另（S8/S9）：反馈进程分支覆盖提升（transport 100%、mailbox 90%+，entrypoint 受 v8 源映射偏移影响部分失真）；新增 TUI 启动路径测试；`pretest` 保证 dist 新鲜（消除 skipIf 静默跳过）；ADR 0007-0010 去重重编号（重复 0008/0009 删除）；`npm prune` 清理 extraneous 自副本；git 基线提交 `2ac838a`；Windows rename 瞬时 EPERM 加有界重试。
+
+## Batch 4E（T05C 增补任务）检查点记录
+
+### 2026-08-13 — 通过
+
+验收命令与实际结果：
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `npm run check` | 0 | 38 文件 / 471 测试通过 |
+| `npm run test:coverage` | 0 | Stmts 92.97% / Branch 85.08% / Funcs 90.37% |
+
+T05C（Agent 待办偏序集、任务包与状态工具，ADR-0013）：
+
+- `TaskSequencePartialOrder`：插入前驱/后继锚点（无锚点不自动追加队尾）、环检测（插入即回滚）、ready set 按 (priorityTier 升序, sequenceOrdinal 稳定序号) 排序、`explainOrder` 解释阻塞原因与"高优先任务必要前驱可先行"。
+- `TaskPriorityPolicy`：用户默认层级 0（可更低）；agent/system/tool 请求层级 0 一律硬拒绝（task-priority-denied）。
+- `AgentTaskSequenceStore`：`.astarray/agent-memory/<agentInstanceId>/task-sequences/<sequenceId>.json`，expected revision 原子更新、主文件损坏从备份恢复、写入前自动备份副本。
+- `TaskBundlePlanner`：链结构校验（相邻直接前驱）、优先层一致、首节点及包内节点必须 pending、绑定具体三级 `agentInstanceId` 与序列 revision。
+- `TaskSequenceManageController`：发布/插入/状态迁移/取消/打包/包状态推进，全部变更记录认证来源审计条目；越权改序拒绝。
+- `TaskSequenceStatusController` + `taskSequenceStatus` 只读工具：身份由 harness 注入（owner = 当前 Agent 实例，模型无法填他人 ID），返回一致 revision 快照（ready set/顺序解释/任务包），无副作用。
+- 序列文件只含调度信息，不含项目产出内容。
+
+遗留：TUI/CLI 状态适配器（分栏展示）待 Batch 6 后续接入；任务状态保持 `re-verifying` 待 AR-07 最终安全清单。
 
 ## Batch 4A/4C（T05A/T06A 增补任务）检查点记录
 

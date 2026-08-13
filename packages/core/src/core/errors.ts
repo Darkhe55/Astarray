@@ -26,6 +26,10 @@ export type DomainErrorCode =
   | "operation-not-idempotent"
   | "tool-execution-failed"
   | "path-escape-attempt"
+  | "task-sequence-not-found"
+  | "task-priority-denied"
+  | "task-bundle-invalid"
+  | "task-sequence-permission-denied"
   | "unknown";
 
 export class DomainError extends Error {

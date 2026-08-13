@@ -14,6 +14,7 @@ import type { BackupDeletionAuthorizationController } from "./backup-vault.js";
 import type { BackupVault } from "./backup-vault.js";
 import type { ProtectedStoragePolicy } from "./protected-storage-policy.js";
 import type { GenericToolFileOperation } from "./protected-storage-policy.js";
+import type { TaskSequenceStatusController } from "../orchestration/task-sequence-controllers.js";
 
 export interface BuiltinToolExecutionContext {
   workspaceBoundary: WorkspaceBoundary;
@@ -27,6 +28,12 @@ export interface BuiltinToolExecutionContext {
    * 调用 assertGenericToolAccessAllowed，列目录时过滤受保护条目。
    */
   protectedStoragePolicy: ProtectedStoragePolicy;
+  /**
+   * T05C：任务序列状态控制面（只读工具注入；未装配时调用报错）。
+   * 调用者身份由 harness 注入（requestingAgentInstanceId），模型无法填写
+   * 他人 ID 获得他人视图。
+   */
+  taskSequenceStatusController?: TaskSequenceStatusController | null;
 }
 
 export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
@@ -111,6 +118,19 @@ export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
       properties: {
         backupIdentifiers: { type: "array", items: { type: "string" } },
       },
+    },
+  },
+  {
+    name: "taskSequenceStatus",
+    summary: "只读查看本 Agent 待办任务序列快照（ready set/顺序解释/任务包状态）",
+    category: "readonly",
+    mutationKind: "none",
+    backupPolicy: "not-required",
+    authorizationPolicy: "standard",
+    supportedTaskTypes: ["data", "doc", "code"],
+    inputSchema: {
+      type: "object",
+      properties: { sequenceId: { type: "string" } },
     },
   },
 ];
@@ -229,6 +249,29 @@ export async function executeBuiltinTool(
     }
     case "deleteBackup": {
       return await executeDeleteBackup(args, executionContext);
+    }
+    case "taskSequenceStatus": {
+      const sequenceId = args["sequenceId"];
+      if (typeof sequenceId !== "string") {
+        throw new Error("taskSequenceStatus 参数 sequenceId 缺失或非法");
+      }
+      // 身份由 harness 注入：Agent 只能查看自己的序列（owner = 当前 Agent 实例）。
+      const statusController = executionContext.taskSequenceStatusController;
+      if (statusController === null || statusController === undefined) {
+        throw new Error("taskSequenceStatus 控制面未装配");
+      }
+      const snapshot = await statusController.getSnapshot({
+        ownerAgentInstanceId: executionContext.requestingAgentInstanceId,
+        sequenceId,
+        viewer: {
+          sourceKind: "agent",
+          actorId: executionContext.requestingAgentInstanceId,
+        },
+      });
+      return {
+        outputText: JSON.stringify(snapshot),
+        isSideEffectFree: true,
+      };
     }
     default:
       throw new Error(`未知内置工具: ${toolName}`);

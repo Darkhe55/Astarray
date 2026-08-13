@@ -17,6 +17,7 @@ import type { ToolRegistry } from "./registry.js";
 import type { WorkspaceBoundary } from "./workspace-boundary.js";
 import type { BackupDeletionAuthorizationController, BackupVault } from "./backup-vault.js";
 import type { ProtectedStoragePolicy } from "./protected-storage-policy.js";
+import type { TaskSequenceStatusController } from "../orchestration/task-sequence-controllers.js";
 import {
   executeBuiltinTool,
   BUILTIN_TOOL_DESCRIPTORS,
@@ -47,6 +48,8 @@ export interface PolicyWrapperOptions {
   requestingAgentInstanceId?: string;
   /** AR-01：受保护存储策略（普通工具执行前强制检查，必填）。 */
   protectedStoragePolicy: ProtectedStoragePolicy;
+  /** T05C：任务序列状态控制面（只读工具；未装配时该工具调用报错）。 */
+  taskSequenceStatusController?: TaskSequenceStatusController | null;
 }
 
 export class PolicyWrapper implements ToolPort {
@@ -187,6 +190,8 @@ export class PolicyWrapper implements ToolPort {
           vault: this.options.vault ?? null,
           deletionController: this.options.deletionController ?? null,
           protectedStoragePolicy: this.options.protectedStoragePolicy,
+          taskSequenceStatusController:
+            this.options.taskSequenceStatusController ?? null,
         });
         return {
           kind: "success",

@@ -299,3 +299,80 @@ export type RunConfig = z.infer<typeof runConfigSchema>;
 export type FeedbackMessageSchemaOutput = z.infer<
   typeof feedbackMessageSchema
 >;
+
+export const taskSourceKindSchema = z.enum(["user", "agent", "system", "tool"]);
+
+export const agentTaskStatusSchema = z.enum([
+  "pending",
+  "running",
+  "blocked",
+  "done",
+  "failed",
+  "cancelled",
+]);
+
+export const agentTaskNodeSchema = z.object({
+  taskId: z.string().min(1),
+  title: z.string().min(1),
+  dependsOn: z.array(z.string().min(1)),
+  sourceKind: taskSourceKindSchema,
+  publisherId: z.string().min(1),
+  priorityTier: z.number().int().min(0),
+  status: agentTaskStatusSchema,
+  blockReason: z.string().min(1).nullable(),
+  externalReference: z.string().min(1).nullable(),
+  sequenceOrdinal: z.number().int().min(1),
+  createdAtIso: z.iso.datetime(),
+});
+
+export const taskBundleRecordSchema = z.object({
+  bundleId: z.string().min(1),
+  boundAgentInstanceId: z.string().min(1),
+  sequenceRevision: z.number().int().min(1),
+  taskIds: z.array(z.string().min(1)).min(1),
+  status: z.enum(["prepared", "active", "completed", "failed"]),
+  createdAtIso: z.iso.datetime(),
+});
+
+export const taskSequenceAuditEntrySchema = z.object({
+  auditEntryId: z.string().min(1),
+  recordedAtIso: z.iso.datetime(),
+  mutationKind: z.enum([
+    "publish",
+    "insert",
+    "reorder",
+    "status-change",
+    "cancel",
+    "bundle-create",
+    "bundle-status",
+  ]),
+  actorSourceKind: taskSourceKindSchema,
+  actorId: z.string().min(1),
+  summary: z.string().min(1),
+});
+
+export const agentTaskSequenceDocumentSchema = z.object({
+  schemaVersion: z.number().int().min(1),
+  sequenceId: z.string().min(1),
+  ownerAgentInstanceId: z.string().min(1),
+  revision: z.number().int().min(1),
+  updatedAtIso: z.iso.datetime(),
+  nodes: z.array(agentTaskNodeSchema),
+  bundles: z.array(taskBundleRecordSchema),
+  auditEntries: z.array(taskSequenceAuditEntrySchema),
+});
+
+export const agentTaskSequenceSnapshotSchema = z.object({
+  sequenceId: z.string().min(1),
+  ownerAgentInstanceId: z.string().min(1),
+  revision: z.number().int().min(1),
+  nodes: z.array(agentTaskNodeSchema),
+  readyTaskIds: z.array(z.string().min(1)),
+  bundles: z.array(taskBundleRecordSchema),
+  orderExplanations: z.array(
+    z.object({
+      taskId: z.string().min(1),
+      explanation: z.string().min(1),
+    }),
+  ),
+});
