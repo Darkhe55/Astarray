@@ -45,6 +45,8 @@
 | 信息池持久化 | 独立反馈进程持有持久化 mailbox journal；投递成功并收到确认后才消费消息 |
 | 信息来源 | 每条反馈必须携带结构化原始来源（用户、具体 Agent 个体或系统组件）；Agent 来源必须具体到不可复用的 `agentInstanceId` |
 | Agent 工作存档 | 每个次级、三级 Agent 个体使用独立存档文件；上级发布任务或重新调用前可选择具体条目附加，默认不自动注入 |
+| Agent 待办任务序列 | 每个调度 Agent 在自己的记忆存档域维护独立的带优先级偏序集；发布者可指定前驱/后继插入位置；用户任务默认层级 0，Agent/工具任务只能层级 1 或以下 |
+| Git 分流与集成 | 涉及仓库写入的多 Agent 任务由次级 Agent 统一创建隔离分支/worktree、审查三级 Agent 提交、运行门禁并执行受控合并；三级 Agent 不得自行合并、变基、推送或删除分支 |
 | 破坏性变更备份 | 删除资源、删除内容、替换、截断和覆盖必须由执行工具自身先自动备份；自动创建过程不经过模型，后续读取/恢复只经受控工具 |
 | 备份工具 | `backupVault` 提供 list/read/restore；`deleteBackup` 是独立特权入口和 pre-image 规则的唯一递归例外 |
 | 删除备份模式策略 | 思索模式禁止；协同模式警告用户并强制暂停 Agent，逐次授权；放权模式无提示但写 HIGH 查阅优先级审计日志 |
@@ -136,7 +138,165 @@ type FeedbackMessageSource =
 - 默认只允许同一 mission 内附加；跨 mission 使用需按长期记忆读取规则和权限门禁处理。
 - 存档不得包含 secret、完整原始长输出或未经清洗的终端控制字符。
 
-### 2.5 工具内自动备份策略
+### 2.5 Agent 待办任务偏序集与优先调度
+
+Agent 待办任务序列与项目 DAG 是两个独立事实域：
+
+| 事实域 | 解决的问题 | 存储位置 |
+|---|---|---|
+| 项目任务链 | 某个项目如何交付、节点依赖、项目状态与产出引用 | `.astarray/missions/<missionId>/task-chain.json` |
+| Agent 待办任务序列 | 某个 Agent 还需处理哪些任务、由谁发布、插入位置、优先级、分配和阻塞情况 | `.astarray/agent-memory/<agentInstanceId>/task-sequences/<taskSequenceId>.json` |
+
+不得把 Agent 待办序列写回项目任务文档，也不得把项目产出复制进 Agent 序列。两者只能通过不可变外部引用显式关联。
+
+建议契约：
+
+```ts
+type TaskSequenceStatus =
+  | "pending"
+  | "ready"
+  | "assigned"
+  | "running"
+  | "blocked"
+  | "done"
+  | "failed"
+  | "cancelled";
+
+interface AgentPendingTaskNode {
+  taskIdentifier: string;
+  publisherSource: FeedbackMessageSource;
+  priorityTier: number;
+  directPredecessorTaskIdentifiers: string[];
+  directSuccessorTaskIdentifiers: string[];
+  publisherOrderKey: string | null;
+  creationSequenceNumber: number;
+  taskSummary: string;
+  status: TaskSequenceStatus;
+  assignedAgentInstanceId: string | null;
+  taskBundleIdentifier: string | null;
+  blockingReason: string | null;
+  priorityDependencyReason: string | null;
+  externalTaskReference: {
+    referenceType: string;
+    referenceIdentifier: string;
+    referencedRevision: number;
+  } | null;
+  createdAtIso: string;
+  updatedAtIso: string;
+}
+
+interface InsertPendingTaskRequest {
+  taskSequenceIdentifier: string;
+  taskIdentifier: string;
+  taskSummary: string;
+  requestedPriorityTier: number | null;
+  insertAfterTaskIdentifiers: string[];
+  insertBeforeTaskIdentifiers: string[];
+  publisherOrderKey: string | null;
+  externalTaskReference: AgentPendingTaskNode["externalTaskReference"];
+}
+```
+
+偏序与插入规则：
+
+- 任务序列使用有向无环图保存偏序关系。添加任务时，发布者可以指定直接前驱、直接后继或二者；执行层增加 `前驱 → 新任务 → 后继` 边并验证无环。
+- 指定的前驱/后继必须存在且对发布者可见；不能用未知节点探测其他发布者的任务。
+- 发布者不指定插入位置时，新节点与现有节点保持不可比，不自动尾接。
+- 插入不能暗中删除现有偏序边。若发布者要求“插入到现有边中间”，必须显式声明要替换的边，且该边属于其可变更范围；删边/改序在执行前自动备份旧序列。
+- 每次变更使用 expected revision、原子提交和运行时 schema 校验。成环、陈旧 revision、重复 ID、非法状态迁移和越权改序均 fail closed。
+
+优先级规则：
+
+- `priorityTier` 从 0 开始，数值越小优先级越高。
+- 认证来源为用户的任务默认层级 0；用户可明确请求层级 1 或以下。
+- 来源为 Agent、system 或工具的任务只能是层级 1 或以下。即使任务由用户任务派生，也不能继承层级 0；只有保留并认证原始用户发布意图的转发才仍视为用户发布。
+- 次级 Agent 分割用户任务时，原用户任务保留为层级 0 的根/聚合节点；Agent 生成的子任务使用层级 1 或以下并作为其必要前驱。调度器可因高优先根任务而先行执行这些前驱，但子任务自身来源和层级不变。
+- 调度先计算所有前驱均为 `done` 的 ready set，再按 `priorityTier`、`publisherOrderKey`、`creationSequenceNumber` 稳定选择。
+- 只要 ready set 中存在层级 0 节点，新的执行槽不得分配给层级 1 或以下节点。
+- 层级 0 节点若依赖尚未完成的低层前驱，可以优先执行该必要前驱，并保存可解释的 `priorityDependencyReason`。
+- 新到的高优先任务不强行中断正在执行的原子工具调用；在任务节点或任务包节点边界重新调度。显式 cancel 仍使用控制通道。
+
+任务包规则：
+
+- 次级 Agent 可以选取偏序集中的一条真实链，创建不可变 `TaskBundle` 并一次派给具体三级 Agent。
+- 默认只打包相同 `priorityTier`、相同权限边界、工具集合兼容且适合由同一 Agent 连续完成的节点；混合优先层任务包必须拒绝。
+- 任务包记录源序列 revision、节点顺序、每个节点状态和具体执行 `agentInstanceId`。
+- 三级 Agent 严格逐节点完成。某节点失败、阻塞或取消时，所有尚未满足前驱的包内后继保持 pending。
+- 新层级 0 任务到达时不打断当前原子节点；节点结束后，次级 Agent 可暂停尚未开始的包内后继并重新调度。
+
+发布与查询能力：
+
+- `taskSequenceManage` 是受控写工具，提供 `create-sequence / insert-task / create-bundle / cancel-task / reprioritize-user-task`。调用方身份由 harness 注入，不接受模型提供的来源字段。
+- `taskSequenceStatus` 是控制面只读工具，提供 `list-sequences / list-tasks / get-task / get-ready / explain-order / get-bundle`，返回同一 revision 的一致快照。用户可在任意模式从 TUI/CLI 调用；Ponder 模型本身仍保持零工具权限。
+- 用户可查看自己发布任务及其派生链；Agent 可查看自己发布、被分配或明确授权观察的任务；工具发布方经内部能力接口查询。
+- 查询显示来源、优先级、前驱/后继、阻塞原因、当前/分配 Agent、任务包和更新时间，不返回项目产出内容。
+- TUI/控制层可在任何模式展示只读快照，不打断 Agent。思索模式下模型仍不能调用工具或写持久化；用户若要新增/修改序列，应切换到协同或放权模式。
+- 插入、改序、取消、历史压缩和清理属于可能覆盖/删除既有调度信息的变更，必须由存储工具自动备份，模型不参与备份。
+
+### 2.6 次级 Agent 的 Git 分流、审查与合并
+
+涉及 Git 写入的多 Agent 任务必须指定一个具体次级 Agent 个体作为 Git 集成者。其职责不转移给主 Agent，也不得下放给三级 Agent。
+
+Git 拓扑：
+
+```text
+targetBranch @ targetBaseCommit
+  └─ integration/<mission>/<secondary-agent>       # 次级 Agent 独占写入
+       ├─ worker/<task>/<tertiary-agent-a>          # 三级 Agent A 独立 worktree
+       ├─ worker/<task>/<tertiary-agent-b>          # 三级 Agent B 独立 worktree
+       └─ conflict/<task>/<new-agent-instance>      # 必要时重新派发
+```
+
+分流规则：
+
+- 次级 Agent 派发前记录目标分支、固定 `targetBaseCommit`、集成分支和任务允许修改路径。
+- 每个写入型三级任务获得独立分支、独立 worktree 和不可复用的 `agentInstanceId`；分支元数据必须绑定 mission、task、Agent、基线提交和允许路径。
+- 同一文件默认只允许一个三级 Agent 写入。并行修改同一文件必须由次级 Agent 预先声明合并顺序和冲突责任。
+- 三级 Agent 只能新增提交到自己的分支，不得执行 merge、rebase、cherry-pick 到集成分支、push、force-update、分支删除或 worktree 清理。
+- 三级 Agent 完成后经独立反馈进程上报 `baseCommit`、`headCommit`、修改文件、差异摘要、测试命令/退出码和未决风险，来源绑定其 `agentInstanceId`。
+
+审查与合并规则：
+
+- 次级 Agent 是集成分支的唯一写入者；合并前验证提交存在、祖先关系正确、提交作者/Agent 绑定有效、实际修改未越过任务允许路径。
+- 审查必须覆盖：任务符合性、无关修改、敏感信息、可读命名、权限复检、自动备份合规、测试充分性、生成物和依赖变更。
+- 审查失败时保持提交未合并，通过反馈工具向原 Agent 下发修正；原 Agent 已回收时，用新 `agentInstanceId` 创建修复任务并按需显式附加旧存档条目。
+- 冲突不得通过 `ours`/`theirs`、强制重置或静默丢弃一侧内容解决。复杂冲突创建独立 conflict 任务，完成后重新走全套审查。
+- 审查通过后采用保留来源的合并提交或等价可追溯策略。不得在无法追踪原三级 Agent 提交的情况下 squash 多个不同 Agent 的工作。
+- 全部 worker 结果进入集成分支后，次级 Agent 运行目标测试、`npm run check` 和任务要求的专项验收，生成结构化 `GitIntegrationReport`。
+- 次级 Agent 只有在当前模式与用户授权允许时才能把集成分支合入用户目标分支。`git push`、远端 PR、发布、强制推送及受保护分支修改始终需要独立授权。
+- Ponder 不创建分支或提交。Devolve 可免应用层逐次询问，但多写入 Worker 仍要经过指定次级 Agent 的审查与集成。
+
+Git 与自动备份的关系：
+
+- Git 分支和 reflog 不视为工具内自动备份，也不得作为绕过备份保管库的理由。
+- checkout 覆盖、reset、clean、rebase、强制移动引用、删除分支/worktree、冲突处理中的内容删除等破坏性操作，必须由底层 Git 工具在执行前自动保存未提交内容 pre-image、相关引用和恢复元数据。
+- 备份过程不经过模型；跳过备份、强制合并或跳过审查不得成为模型可控参数。
+
+建议审查报告：
+
+```ts
+interface GitIntegrationReport {
+  missionId: string;
+  integratingAgentInstanceId: string;
+  targetBranchName: string;
+  integrationBranchName: string;
+  targetBaseCommit: string;
+  reviewedContributions: Array<{
+    taskId: string;
+    contributingAgentInstanceId: string;
+    workerBranchName: string;
+    baseCommit: string;
+    headCommit: string;
+    changedPaths: string[];
+    reviewDecision: "accepted" | "rejected" | "needs-rework";
+    executedChecks: Array<{ command: string; exitCode: number }>;
+  }>;
+  integrationCommit: string | null;
+  unresolvedRisks: string[];
+}
+```
+
+### 2.7 工具内自动备份策略
 
 以下操作一律属于破坏性变更：
 
@@ -510,6 +670,50 @@ node dist/cli.js --version
 - 超出 token 预算时明确截断或拒绝，并记录原因，不静默加载全部内容。
 - 跨 mission 附加默认拒绝，获得长期记忆读取许可后才允许。
 
+### T05B：次级 Agent Git 分流、审查与合并控制器
+
+实现：
+
+- `GitIntegrationCoordinator`：由具体次级 `agentInstanceId` 绑定 mission 集成会话，只有它能写集成分支。
+- `GitWorktreeAllocator`：从固定基线为每个三级 Agent 创建隔离分支/worktree，并记录任务允许路径。
+- `GitContributionVerifier`：验证提交祖先关系、身份绑定、实际修改路径、敏感信息、命名、备份规则和测试证据。
+- `GitIntegrationReportStore`：保存结构化分流、审查、拒绝、冲突、测试和合并记录，并与次级 Agent 工作存档关联。
+- 受控合并流程：审查通过 → 集成分支合并 → 集成测试 → 模式/用户门禁 → 目标分支合并。
+- 破坏性 Git 工具适配器：reset、clean、checkout 覆盖、rebase、强制移动引用、删除分支/worktree 前自动创建受保护恢复点。
+
+完成门槛：
+
+- 两个三级 Agent 可在独立 worktree 并行提交，互不污染工作区和索引。
+- 三级 Agent 无法写入集成/目标分支，无法自行 merge、rebase、push 或删除分支。
+- 次级 Agent 能拒绝越界文件、错误基线、伪造 Agent 身份、敏感信息和缺失测试证据的提交。
+- 冲突不会静默选边；修复任务可追溯到新 Agent 个体和原贡献提交。
+- 合并报告能从最终集成提交追溯到每个三级 Agent、任务、提交和测试证据。
+- 目标分支和远端操作按模式执行门禁；自动流程不得 push 或发布。
+- 破坏性 Git 操作失败时恢复点仍可用，且不会把恢复能力泄露给模型。
+
+### T05C：Agent 待办任务偏序集、任务包与状态工具
+
+实现：
+
+- `AgentTaskSequenceStore`：在 Agent 记忆存档域保存版本化偏序集，支持原子写入、expected revision、恢复和来源审计。
+- `TaskSequencePartialOrder`：插入前驱/后继、环检测、传递关系查询、ready set 和稳定优先级排序。
+- `TaskPriorityPolicy`：用户来源默认层级 0；Agent/system/工具来源硬限制为层级 1 或以下；用户来源通过认证控制通道注入。
+- `TaskBundlePlanner`：将同一执行者可完成的一条链冻结为任务包，验证优先层、工具、权限、任务范围和源 revision。
+- `TaskSequenceManageController`：发布、插入、改序、取消和创建任务包；任何删边、覆盖、改序或清理先走自动备份。
+- `TaskSequenceStatusController`：提供一致 revision 的只读快照、ready set、阻塞原因、顺序解释和任务包状态。
+- TUI/CLI 状态适配器：用户无需打断正在工作的 Agent 即可查看；项目任务/产出视图与 Agent 待办视图分栏展示。
+
+完成门槛：
+
+- 任意合法 DAG 插入保持无环；非法环、未知锚点、陈旧 revision 和越权改序全部拒绝。
+- 用户任务不指定优先级时为层级 0；Agent、system 和工具请求层级 0 时硬拒绝。
+- 调度只从 ready set 选择，优先层严格生效；同层排序确定且可重放。
+- 高优先任务的必要低层前驱可被提升执行，并能由 `explain-order` 解释原因。
+- 次级 Agent 可把完整链打包给一个三级 Agent；失败节点阻止包内后继，节点边界可因新用户任务重新调度。
+- 状态工具在任务执行期间返回一致、无副作用的快照，不更改 busy 状态、退避轮次或任务顺序。
+- Agent 序列文件不包含项目产出内容；项目任务状态不会因序列存储写入被隐式覆盖。
+- 任务序列插入、改序、取消和清理的破坏性分支均先自动备份。
+
 ### T06：工具注册表与最小权限
 
 工具描述至少包含：
@@ -623,28 +827,33 @@ interface AgentRuntime {
 
 Assist 次级 Agent：
 
+- 维护自己的待办任务偏序集；按 ready set 和优先级调度，并可把一条依赖链冻结成任务包派给三级 Agent。
 - 拆解 DAG，分配最小工具集合，调度 Worker。
+- 为写入型 Worker 创建独立 Git 分支/worktree；审查其提交、处理冲突、运行集成门禁并执行受控合并。
 - 处理 success、failure、ambiguous 和 instruction。
 - 无法裁决时向用户返回相关任务节点和反馈原文。
 
 三级 Agent：
 
 - 仅执行分配任务。
+- 代码任务只能在分配的隔离分支/worktree 内提交；不得自行合并、变基、推送、删除分支或清理 worktree。
 - 异常、模糊、完成均通过独立反馈进程上报。
 - 持续把结构化工作摘要追加到自己的独立存档。
 - 不得自主扩大任务或静默放弃。
 
 Devolve：
 
-- 主 Agent 直接承担调度职责。
+- 主 Agent 可以直接决定调度职责；多 Git 写入 Worker 场景仍指定一个次级 Agent 承担集成职责。
 - 复用同一 task store、反馈进程、Worker 和工具策略边界。
 
 完成门槛：
 
 - Worker 挂起时主 TUI 仍能接收消息。
 - 可同时查询进度和新建 mission。
+- 用户可随时通过状态视图查看 Agent 待办偏序集、顺序解释和任务包进度，而不打断 busy Agent。
 - 普通反馈不打断 busy Agent。
 - 上级选中的存档附件在任务输入中可追踪，未选择时不会产生隐藏注入。
+- 每个三级 Agent 的贡献在合并报告中可追溯；未经次级 Agent 审查的提交不能进入集成分支。
 - 显式 cancel 可中断 Provider 或工具的挂起调用。
 
 ### T09：记忆、缓存与指标
@@ -778,13 +987,15 @@ T00 → T01 → T02
 T02 → T03、T04、T06、T07
 T03 + T04 → T05
 T03 + T05 → T05A
-T05 + T05A + T06 + T06A + T07 → T08
+T05 + T05A → T05B
+T03 + T05A → T05C
+T05B + T05C + T06 + T06A + T07 → T08
 T08 → T09、T10、T11
 T09 + T10 + T11 → T12
 T12 → T13 → T14
 ```
 
-`T03`、`T04`、`T06`、`T07` 可以并行，但不得由多个执行单元同时修改同一公共类型文件。公共类型变更统一由负责 T02 的执行单元完成。
+`T03`、`T04`、`T06`、`T07` 可以并行，但不得由多个执行单元同时修改同一公共类型文件。公共类型变更统一由负责 T02 的执行单元完成。并行 Git 写入必须由次级 Agent 按 T05B 分配独立 worktree，并在集成分支集中审查合并。
 
 ---
 
@@ -802,6 +1013,8 @@ T12 → T13 → T14
 | Batch 4A | T05、T05A | 完成 DAG、Agent 工作存档和选择性附加 |
 | Batch 4B | T06–T07 | 完成工具边界和 Runtime |
 | Batch 4C | T06A | 单独完成高风险的工具内备份事务层 |
+| Batch 4D | T05B | 单独完成次级 Agent Git 分流、审查与合并控制器 |
+| Batch 4E | T05C | 单独完成 Agent 待办偏序集、任务包和状态工具 |
 | Batch 5 | T08 | 单独集成三级编排 |
 | Batch 6 | T09–T11 | 指标、TUI、Headless CLI；可分支并行 |
 | Batch 7 | T12 | 集中做故障注入、安全和恢复 |
@@ -811,7 +1024,7 @@ T12 → T13 → T14
 
 - 默认每次让 OpenCode完成 **1–2 个高度相关的原子任务**。
 - 只有依赖明确、文件改动不重叠时，单次最多并行 3 个任务。
-- `T04`、`T06A`、`T08`、`T12` 风险较高，每次只执行一个。
+- `T04`、`T05B`、`T05C`、`T06A`、`T08`、`T12` 风险较高，每次只执行一个。
 - 每批建议控制在约 5–15 个生产文件、同等数量级测试文件以内。
 - 若预计一次修改超过约 1,000 行生产代码，应继续拆分为接口、实现、集成三个检查点。
 - 同一批必须完成代码、测试、文档和状态记录，不能只写实现后把测试留到最后。
@@ -823,10 +1036,11 @@ T12 → T13 → T14
 1. 运行本批最小测试集。
 2. 运行 `npm run typecheck` 和 `npm run lint`。
 3. 检查 `git diff`，确认没有无关修改和敏感信息。
-4. 检查变量、函数、时间单位命名。
-5. 更新 `PLAN_STATUS.md`。
-6. 记录实际命令、退出码、失败原因和遗留风险。
-7. 当前批未通过时，不开始依赖它的下一批。
+4. 若有多个三级 Agent 贡献，检查次级 Agent 的 Git 集成报告、提交来源、分支边界和合并门禁证据。
+5. 检查变量、函数、时间单位命名。
+6. 更新 `PLAN_STATUS.md`。
+7. 记录实际命令、退出码、失败原因和遗留风险。
+8. 当前批未通过时，不开始依赖它的下一批。
 
 每完成 2 个普通批次，或者完成任一高风险任务后，再运行一次完整 `npm run check`。
 
@@ -853,6 +1067,7 @@ T12 → T13 → T14
 | FeedbackSource | 用户/Agent/系统来源、具体 Agent 个体、层级、缺失来源、伪造来源、转发不变性 |
 | AgentWorkArchive | 个体隔离、原子追加、revision、所有权、内容清洗、损坏恢复 |
 | ArchiveContextSelector | 默认不附加、条目选择、不可变快照、token 预算、冲突优先级 |
+| AgentTaskSequence | 偏序插入、环检测、ready set、用户层级 0、自动任务不得提权、稳定同级顺序、任务包、查询快照、项目存储隔离 |
 | DestructiveMutationGuard | 变更分类、pre-image、fail-closed、TOCTOU、恢复前备份、自动创建与受控读取隔离 |
 | BackupVaultTool | list/read/restore 权限、逻辑 ID、内容脱敏、恢复前备份 |
 | BackupDeletionController | 三模式矩阵、暂停/恢复、逐次授权、quarantine、无锁等待、审计优先级 |
@@ -879,6 +1094,8 @@ T12 → T13 → T14
 - 任意消息序列经 enqueue/deliver/ack 后不丢失、不重复确认。
 - 任意合法消息经持久化、重启、重放和转发后，其原始来源保持不变。
 - 任意两个不同 `agentInstanceId` 的工作存档不会互相覆盖或混入条目。
+- Agent 待办偏序集与项目任务/产出存储相互独立；任务发布者可指定合法插入位置并获得可解释状态。
+- 用户任务默认最高优先层，Agent/system/工具自动任务无法进入最高层。
 - 任意存档附件只包含显式选中的条目，且其内容哈希对应指定 revision。
 - 任意破坏性工具调用在目标变化前都存在完整 pre-image；备份失败时目标保持不变。
 - 自动备份不会把备份内容、路径、对象哈希或恢复凭据注入模型；只有显式授权的 `backupVault.read` 可返回业务内容。
@@ -994,7 +1211,7 @@ PLAN_STATUS.md。运行该批全部验收命令；未通过时不要开始 Batch
 ```text
 读取 @IMPLEMENTATION_PLAN.md 和 @PLAN_STATUS.md。
 检查上一批的实际测试证据，然后仅执行下一个未完成批次。
-高风险任务 T04、T08、T12 必须单独完成和验收。
+高风险任务 T04、T05B、T05C、T08、T12 必须单独完成和验收。
 ```
 
 ---
@@ -1006,6 +1223,9 @@ PLAN_STATUS.md。运行该批全部验收命令；未通过时不要开始 Batch
 - 进程间消息必须包含不可变的结构化原始来源；缺失或非法来源不得入池，转发不得覆盖来源。
 - Agent 来源必须明确到具体 `agentInstanceId`；“某次级 Agent”或角色名不能作为来源。
 - 次级、三级 Agent 各自维护独立工作存档；上级使用存档必须显式选择条目并记录 provenance，默认不得全量注入。
+- 涉及 Git 写入的多 Agent 任务由次级 Agent 统一分配隔离分支/worktree、审查三级 Agent 提交、运行集成门禁并执行合并；三级 Agent 禁止自行合并、变基、推送或删除分支。
+- Agent 待办任务序列是记忆存档域中的偏序集，与项目任务和产出追踪分离；用户任务默认层级 0，Agent/system/工具生成任务只能层级 1 或以下。
+- Git 历史不是自动备份；reset、clean、checkout 覆盖、rebase、强制移动引用和删除分支/worktree 等破坏性操作必须先由底层工具创建受保护恢复点。
 - 所有删除、文字删减和覆盖类操作由工具自身在修改前自动备份；备份数据与恢复能力绝不经过模型端。
 - 不要依赖进程退出时一定能执行清理逻辑；journal 和 ack 设计必须能恢复。
 - 3 小时是单轮退避上限，不是 TTL，也不能作为丢弃消息的理由。
