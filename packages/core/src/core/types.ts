@@ -164,6 +164,80 @@ export interface ReadBackupResult {
   content: string;
 }
 
+// ─── T06D：高严谨性事实验证（ADR-0016） ─────────────────────────────────
+
+/** 任务严谨性等级。 */
+export type RigorLevel = "standard" | "high";
+
+/** 证据关系（factVerification 输出允许的全部关系，无最终合格判定）。 */
+export type EvidenceRelation =
+  | "supported"
+  | "contradicted"
+  | "mixed"
+  | "insufficient"
+  | "unavailable";
+
+/** 资料来源类型（决定证据权重排序）。 */
+export type EvidenceSourceType =
+  | "official"
+  | "independent"
+  | "aggregator"
+  | "agent-self";
+
+export interface EvidenceSourceEntry {
+  entryType: "source";
+  claimIdentifier: string;
+  title: string;
+  publisherOrAuthor: string;
+  directLinkOrDocumentId: string;
+  publishedAtIso: string | null;
+  retrievedAtIso: string;
+  /** 相关摘录摘要（不得包含完整正文；正文以 contentHash 可追溯）。 */
+  relevantExcerptSummary: string;
+  contentHash: string;
+  sourceType: EvidenceSourceType;
+}
+
+export interface EvidenceLocalExperimentEntry {
+  entryType: "local-experiment";
+  claimIdentifier: string;
+  environmentSummary: string;
+  stepsOrCommands: string[];
+  inputSummary: string;
+  exitStatus: "success" | "failure" | "not-run";
+  observation: string;
+  artifactHash: string | null;
+  replayableLimitation: string | null;
+}
+
+export interface EvidenceReasoningEntry {
+  entryType: "reasoning";
+  claimIdentifier: string;
+  premises: string[];
+  uncertainty: string;
+}
+
+export type EvidenceBundleEntry =
+  | EvidenceSourceEntry
+  | EvidenceLocalExperimentEntry
+  | EvidenceReasoningEntry;
+
+/**
+ * 证据包（辅助材料）。即使覆盖门禁通过，也只能说明验证流程已执行，
+ * 不能替用户作业务、法律、安全或质量上的最终合格判断。
+ */
+export interface EvidenceBundle {
+  schemaVersion: number;
+  claimIdentifier: string;
+  /** Agent 生成的解释绑定具体 agentInstanceId；外部资料保留发布者与链接。 */
+  builderAgentInstanceId: string;
+  createdAtIso: string;
+  entries: EvidenceBundleEntry[];
+  relation: EvidenceRelation;
+  coverageNotes: string[];
+  limitations: string[];
+}
+
 /** 协同模式删除备份时发给用户的单次、精确授权请求。 */
 export interface BackupDeletionAuthorizationRequest {
   authorizationRequestId: string;

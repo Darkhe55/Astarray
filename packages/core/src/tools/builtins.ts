@@ -18,6 +18,9 @@ import type { TaskSequenceStatusController } from "../orchestration/task-sequenc
 import type { LocalToolPolicyEngine } from "./local-tool-policy-engine.js";
 import type { SensitiveContentAccessPolicy } from "./sensitive-content-access-policy.js";
 import type { ReadSuppressionLedger } from "./read-suppression-ledger.js";
+import type { EvidenceSearchAgentPort } from "./evidence-search-agent-port.js";
+import type { EvidenceQueryGuard } from "./evidence-search-agent-port.js";
+import type { EvidenceBundleBuilder } from "./evidence-bundle-builder.js";
 
 export interface BuiltinToolExecutionContext {
   workspaceBoundary: WorkspaceBoundary;
@@ -55,6 +58,17 @@ export interface BuiltinToolExecutionContext {
   readSuppressionLedger?: ReadSuppressionLedger | null;
   /** T07B：任务执行标识（与 agentInstanceId 共同构成读取来源键）。 */
   taskExecutionId?: string | null;
+  /**
+   * T06D：专用资料搜索代理（factVerification 注入；结构化查询，
+   * 不开放任意网络执行）。
+   */
+  evidenceSearchAgent?: EvidenceSearchAgentPort | null;
+  /** T06D：证据查询防护（指纹缓存/预算/敏感检查）。 */
+  evidenceQueryGuard?: EvidenceQueryGuard | null;
+  /** T06D：证据包构建器。 */
+  evidenceBundleBuilder?: EvidenceBundleBuilder | null;
+  /** T06D：当前主张（证据包聚合键）。 */
+  factVerificationClaimIdentifier?: string | null;
 }
 
 export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
@@ -180,6 +194,29 @@ export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
       properties: {
         view: { type: "string", enum: ["status", "diff", "log"] },
         limit: { type: "number" },
+      },
+    },
+  },
+  {
+    name: "factVerification",
+    summary: "高严谨性任务证据辅助：搜索资料/登记本地实验与推理/构建证据包（不提供合格判定）",
+    category: "restricted",
+    mutationKind: "none",
+    backupPolicy: "not-required",
+    authorizationPolicy: "standard",
+    supportedTaskTypes: ["data", "doc", "code"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: [
+            "search-sources",
+            "record-local-experiment",
+            "record-reasoning",
+            "build-evidence-bundle",
+          ],
+        },
       },
     },
   },
@@ -410,6 +447,9 @@ export async function executeBuiltinTool(
       }
       return { outputText, isSideEffectFree: true };
     }
+    case "factVerification": {
+      return await executeFactVerification(args, executionContext);
+    }
     default:
       throw new Error(`未知内置工具: ${toolName}`);
   }
@@ -459,8 +499,7 @@ async function executeBackupVaultAction(
 async function executeDeleteBackup(
   args: Record<string, unknown>,
   executionContext: BuiltinToolExecutionContext,
-): Promise<{ outputText: string; isSideEffectFree: boolean }> {
-  const backupIdentifiers = args["backupIdentifiers"];
+): Promise<{ outputText: string; isSideEffectFree: boolean }> {  const backupIdentifiers = args["backupIdentifiers"];
   if (
     !Array.isArray(backupIdentifiers) ||
     backupIdentifiers.some((identifier) => typeof identifier !== "string") ||
@@ -509,6 +548,128 @@ async function executeDeleteBackup(
     outputText: `已删除备份（隔离并清除）: ${purged.join(", ")}`,
     isSideEffectFree: false,
   };
+}
+
+/**
+ * T06D：factVerification 受控工具（ADR-0016）。
+ * search-sources / record-local-experiment / record-reasoning / build-evidence-bundle。
+ * 输出只含证据关系与覆盖/冲突/局限，不提供合格判定。
+ */
+async function executeFactVerification(
+  args: Record<string, unknown>,
+  executionContext: BuiltinToolExecutionContext,
+): Promise<{ outputText: string; isSideEffectFree: boolean }> {
+  const action = args["action"];
+  const claimIdentifier =
+    executionContext.factVerificationClaimIdentifier ?? "default-claim";
+  if (action === "search-sources") {
+    const structuredQuery = args["structuredQuery"];
+    if (typeof structuredQuery !== "string" || structuredQuery.length === 0) {
+      throw new Error("factVerification search-sources 需要 structuredQuery");
+    }
+    const searchAgent = executionContext.evidenceSearchAgent;
+    if (searchAgent === null || searchAgent === undefined) {
+      throw new Error("factVerification 搜索代理未装配（离线）");
+    }
+    const { EvidenceQueryGuard, buildNormalizedQueryFingerprint } = await import(
+      "./evidence-search-agent-port.js"
+    );
+    const queryGuard =
+      executionContext.evidenceQueryGuard ?? new EvidenceQueryGuard();
+    const { results, fromCache } = await queryGuard.searchSafely({
+      structuredQuery,
+      claimIdentifier,
+      agent: searchAgent,
+    });
+    // 查询泄密反例：本地再次验证查询本身不含敏感内容（防御性）
+    void buildNormalizedQueryFingerprint;
+    if (results.length === 0) {
+      return {
+        outputText: JSON.stringify({
+          relation: "unavailable",
+          fingerprint: buildNormalizedQueryFingerprint(structuredQuery),
+          message: "未取得可定位的资料正文（仅标题/摘要不算完整依据）",
+        }),
+        isSideEffectFree: true,
+      };
+    }
+    return {
+      outputText: JSON.stringify({
+        relation: "supported",
+        fromCache,
+        results: results.map((result) => ({
+          title: result.title,
+          publisherOrAuthor: result.publisherOrAuthor,
+          directLinkOrDocumentId: result.directLinkOrDocumentId,
+          publishedAtIso: result.publishedAtIso,
+          retrievedAtIso: result.retrievedAtIso,
+          excerptSummary: result.retrievedExcerptText.slice(0, 200),
+          sourceType: result.sourceType,
+        })),
+      }),
+      isSideEffectFree: true,
+    };
+  }
+  if (action === "record-local-experiment") {
+    const environmentSummary = args["environmentSummary"];
+    const stepsOrCommands = args["stepsOrCommands"];
+    const observation = args["observation"];
+    if (
+      typeof environmentSummary !== "string" ||
+      !Array.isArray(stepsOrCommands) ||
+      typeof observation !== "string"
+    ) {
+      throw new Error("factVerification record-local-experiment 参数缺失");
+    }
+    return {
+      outputText: JSON.stringify({
+        relation: "supported",
+        entryType: "local-experiment",
+        claimIdentifier,
+        environmentSummary,
+        stepsOrCommands,
+        observation,
+      }),
+      isSideEffectFree: true,
+    };
+  }
+  if (action === "record-reasoning") {
+    const premises = args["premises"];
+    const uncertainty = args["uncertainty"];
+    if (!Array.isArray(premises) || typeof uncertainty !== "string") {
+      throw new Error("factVerification record-reasoning 参数缺失");
+    }
+    return {
+      outputText: JSON.stringify({
+        relation: "insufficient",
+        entryType: "reasoning",
+        claimIdentifier,
+        premises,
+        uncertainty,
+      }),
+      isSideEffectFree: true,
+    };
+  }
+  if (action === "build-evidence-bundle") {
+    const bundleBuilder = executionContext.evidenceBundleBuilder;
+    if (bundleBuilder === null || bundleBuilder === undefined) {
+      throw new Error("factVerification 证据包构建器未装配");
+    }
+    const entries = args["entries"];
+    if (!Array.isArray(entries) || entries.length === 0) {
+      throw new Error("factVerification build-evidence-bundle 需要 entries");
+    }
+    const bundle = bundleBuilder.buildEvidenceBundle({
+      claimIdentifier,
+      builderAgentInstanceId: executionContext.requestingAgentInstanceId,
+      entries: entries as never,
+    });
+    return {
+      outputText: JSON.stringify(bundle),
+      isSideEffectFree: true,
+    };
+  }
+  throw new Error("factVerification 参数 action 非法");
 }
 
 function isPathWithinDirectory(directoryPath: string, candidatePath: string): boolean {

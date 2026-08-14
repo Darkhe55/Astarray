@@ -377,6 +377,65 @@ export const agentTaskSequenceSnapshotSchema = z.object({
   ),
 });
 
+export const rigorLevelSchema = z.enum(["standard", "high"]);
+
+export const evidenceRelationSchema = z.enum([
+  "supported",
+  "contradicted",
+  "mixed",
+  "insufficient",
+  "unavailable",
+]);
+
+export const evidenceSourceEntrySchema = z.object({
+  entryType: z.literal("source"),
+  claimIdentifier: z.string().min(1),
+  title: z.string().min(1),
+  publisherOrAuthor: z.string().min(1),
+  directLinkOrDocumentId: z.string().min(1),
+  publishedAtIso: z.iso.datetime().nullable(),
+  retrievedAtIso: z.iso.datetime(),
+  relevantExcerptSummary: z.string().min(1),
+  contentHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  sourceType: z.enum(["official", "independent", "aggregator", "agent-self"]),
+});
+
+export const evidenceLocalExperimentEntrySchema = z.object({
+  entryType: z.literal("local-experiment"),
+  claimIdentifier: z.string().min(1),
+  environmentSummary: z.string().min(1),
+  stepsOrCommands: z.array(z.string().min(1)),
+  inputSummary: z.string().min(1),
+  exitStatus: z.enum(["success", "failure", "not-run"]),
+  observation: z.string().min(1),
+  artifactHash: z.string().regex(/^sha256:[a-f0-9]{64}$/).nullable(),
+  replayableLimitation: z.string().min(1).nullable(),
+});
+
+export const evidenceReasoningEntrySchema = z.object({
+  entryType: z.literal("reasoning"),
+  claimIdentifier: z.string().min(1),
+  premises: z.array(z.string().min(1)).min(1),
+  uncertainty: z.string().min(1),
+});
+
+export const evidenceBundleEntrySchema = z.discriminatedUnion("entryType", [
+  evidenceSourceEntrySchema,
+  evidenceLocalExperimentEntrySchema,
+  evidenceReasoningEntrySchema,
+]);
+
+export const evidenceBundleSchema = z.object({
+  schemaVersion: z.number().int().min(1),
+  claimIdentifier: z.string().min(1),
+  builderAgentInstanceId: z.string().min(1),
+  createdAtIso: z.iso.datetime(),
+  entries: z.array(evidenceBundleEntrySchema),
+  relation: evidenceRelationSchema,
+  coverageNotes: z.array(z.string().min(1)),
+  limitations: z.array(z.string().min(1)),
+});
+
 export const gitRecoveryPointDocumentSchema = z.object({
   schemaVersion: z.number().int().min(1),
   recoveryPointId: z.string().min(1),

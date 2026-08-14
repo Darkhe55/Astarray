@@ -41,7 +41,7 @@
 | T06A | 工具内破坏性变更备份层 | re-verifying | 4C | AR-00 重新验收中（AR-01/AR-05/AR-06） |
 | T06B | Ponder 本地只读边界与敏感操作分类 | re-verifying | 4F | 2026-08-13 完成；Batch 4F 检查点（510 测试全绿）；待 AR 复验 |
 | T06C | 全模式本地敏感内容禁读 | re-verifying | 4G | 2026-08-13 完成；Batch 4G 检查点（524 测试全绿）；待 AR 复验 |
-| T06D | 高严谨性事实验证工具 | pending | 4I | 新增设计；须按 ADR-0016 实现和动态验收 |
+| T06D | 高严谨性事实验证工具 | re-verifying | 4I | 2026-08-13 完成；Batch 4I 检查点（562 测试全绿）；待 AR 复验 |
 | T06E | Assist 安装前置询问、独立开关与逐次授权 | pending | 6A | 新增设计；须按 ADR-0019 实现和动态验收 |
 | T06F | 可配置权限组与无限命名自定义模式 | pending | 6B | 新增设计；须按 ADR-0020 实现和动态验收 |
 | T06G | 主 Agent 永久只读、次级权限上限与会话临时提升 | pending | 6C | 新增设计；须按 ADR-0021 实现和动态验收 |
@@ -221,6 +221,26 @@ T14 产出：`README.md`（安装/三模式/Provider/状态目录/headless/反�
 - T11：`run/status/resume/cancel/doctor/config init` 全部实现；`--json` 模式 stdout 仅 JSON、日志走 stderr；退出码 0/1/2 稳定；11 项构建产物集成测试 + 17 项命令单元测试；反馈进程入口路径解析修复。
 
 遗留风险：TUI 键盘输入路径未做 PTY 自动化（T13 用 node-pty 补）；指标尚未接入编排循环（v0.1 头栏显示 0）。
+
+## Batch 4I（T06D 增补任务）检查点记录
+
+### 2026-08-13 — 通过
+
+验收命令与实际结果：
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `npm run check` | 0 | 47 文件 / 562 测试通过（typecheck/lint/build/test 全绿） |
+| `npm run test:coverage` | 0 | Stmts 92.1x% / Branch 85.11% |
+
+T06D（高严谨性事实验证工具，ADR-0016）：
+
+- `LocalRigorPolicyEngine`：版本化规则（RIGOR_RULES_VERSION）标记法律/医疗/财务/安全边界/破坏性操作/发布/身份权限/时效性/用户严格要求为 high；模型只能上调不能下调（下调拒绝）。
+- `EvidenceBundleBuilder`：按 claim 合并 source > local-experiment > reasoning 固定层级排序；矛盾/不可用关系显式保留并生成局限提示；输出只含 supported/contradicted/mixed/insufficient/unavailable，无 qualified/safe/pass 判定；schema 校验（EVIDENCE_BUNDLE_SCHEMA_VERSION）。
+- `EvidenceCompletionGate`：高严谨性任务未调用 factVerification、主张不一致、无覆盖或 unavailable → 未满足；仅纯推理（缺来源正文）不得宣称完成；门禁通过只说明验证流程已执行。
+- `EvidenceSearchAgentPort` + `EvidenceQueryGuard`：结构化查询（不开放任意 URL）；规范化查询指纹（等价查询一致）+ 结果缓存 + 每主张调用预算（换词活锁阻断）；查询敏感内容检查（凭据/私钥/连接串拒绝上传，不上传工作区正文/.env/提示词）。
+- `factVerification` 受控工具：search-sources（无资料 → unavailable，仅标题/摘要不算完整依据）/ record-local-experiment / record-reasoning（标记 insufficient）/ build-evidence-bundle。
+- 必测行为：高严谨性任务缺证据拒绝完成、普通任务不强制、Agent 自述不能冒充独立依据、离线/失败形成 unavailable 不虚报、查询泄密反例被本地阻断、指纹缓存与预算防换词。
 
 ## Batch 4H（T07B 增补任务）检查点记录
 
