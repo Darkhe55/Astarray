@@ -17,6 +17,7 @@ import type { GenericToolFileOperation } from "./protected-storage-policy.js";
 import type { TaskSequenceStatusController } from "../orchestration/task-sequence-controllers.js";
 import type { LocalToolPolicyEngine } from "./local-tool-policy-engine.js";
 import type { SensitiveContentAccessPolicy } from "./sensitive-content-access-policy.js";
+import type { ReadSuppressionLedger } from "./read-suppression-ledger.js";
 
 export interface BuiltinToolExecutionContext {
   workspaceBoundary: WorkspaceBoundary;
@@ -47,6 +48,13 @@ export interface BuiltinToolExecutionContext {
    * 未装配时跳过策略——由装配方保证注入）。
    */
   sensitiveContentAccessPolicy?: SensitiveContentAccessPolicy | null;
+  /**
+   * T07B：反自指读取账本（同源重复读取未变化内容时抑制；
+   * 敏感内容禁读优先于时间锁）。
+   */
+  readSuppressionLedger?: ReadSuppressionLedger | null;
+  /** T07B：任务执行标识（与 agentInstanceId 共同构成读取来源键）。 */
+  taskExecutionId?: string | null;
 }
 
 export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
@@ -192,10 +200,19 @@ export async function executeBuiltinTool(
       // 双层校验（AR-01）：预检 + 紧邻 IO 的复检，拦截"预检后目标被替换为链接"的 TOCTOU
       await resolveAndAssertAccess(executionContext, filePath, "read");
       const resolvedPath = await resolveAndAssertAccess(executionContext, filePath, "read");
-      // T06C：全模式敏感内容禁读（读取前 + 内容 DLP 双检）
+      // T06C：全模式敏感内容禁读（读取前 + 内容 DLP 双检）——优先于时间锁
       await assertSensitiveContentAllowed(executionContext, resolvedPath, null);
+      // T07B：反自指读取时间锁（同源窗口内未变化 → resource-already-read）
+      await assertNotAlreadyRead(executionContext, resolvedPath, "read");
       const content = await readFile(resolvedPath, "utf8");
       await assertSensitiveContentAllowed(executionContext, resolvedPath, content);
+      // 登记读取（内容指纹供未变化判定）
+      await registerReadForSuppression(
+        executionContext,
+        resolvedPath,
+        "read",
+        content,
+      );
       return { outputText: content, isSideEffectFree: true };
     }
     case "listDirectory": {
@@ -536,6 +553,62 @@ async function assertSensitiveContentAllowed(
   await sensitivePolicy.assertSensitiveContentReadAllowed({
     canonicalPath,
     content: content ?? undefined,
+  });
+}
+
+/**
+ * T07B：反自指读取时间锁——窗口内同源重复读取未变化内容 → 拒绝正文。
+ * 敏感禁读优先：调用方须先执行 assertSensitiveContentAllowed。
+ */
+async function assertNotAlreadyRead(
+  executionContext: BuiltinToolExecutionContext,
+  canonicalPath: string,
+  operationKind: "read" | "list" | "search",
+): Promise<void> {
+  const ledger = executionContext.readSuppressionLedger;
+  if (ledger === null || ledger === undefined) {
+    return;
+  }
+  const { buildReadParameterHash } = await import("./read-suppression-ledger.js");
+  const { buildReadSuppressionDenial } = await import("./read-suppression-ledger.js");
+  const decision = await ledger.querySuppression({
+    agentInstanceId: executionContext.requestingAgentInstanceId,
+    taskExecutionId: executionContext.taskExecutionId ?? null,
+    canonicalPath,
+    operationKind,
+    normalizedRange: "full",
+    parameterHash: buildReadParameterHash(canonicalPath),
+  });
+  if (decision.isSuppressed) {
+    throw buildReadSuppressionDenial({
+      readReceiptId: decision.readReceiptId!,
+      firstReadAtUnixMilliseconds: decision.firstReadAtUnixMilliseconds!,
+      retryAfterMilliseconds: decision.retryAfterMilliseconds,
+    });
+  }
+}
+
+/** T07B：登记一次成功读取（内容指纹供未变化判定）。 */
+async function registerReadForSuppression(
+  executionContext: BuiltinToolExecutionContext,
+  canonicalPath: string,
+  operationKind: "read" | "list" | "search",
+  content: string,
+): Promise<void> {
+  const ledger = executionContext.readSuppressionLedger;
+  if (ledger === null || ledger === undefined) {
+    return;
+  }
+  const { createHash } = await import("node:crypto");
+  const { buildReadParameterHash } = await import("./read-suppression-ledger.js");
+  await ledger.registerRead({
+    agentInstanceId: executionContext.requestingAgentInstanceId,
+    taskExecutionId: executionContext.taskExecutionId ?? null,
+    canonicalPath,
+    operationKind,
+    normalizedRange: "full",
+    parameterHash: buildReadParameterHash(canonicalPath),
+    contentFingerprint: `sha256:${createHash("sha256").update(content).digest("hex")}`,
   });
 }
 

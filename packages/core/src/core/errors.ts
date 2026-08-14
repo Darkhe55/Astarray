@@ -31,6 +31,8 @@ export type DomainErrorCode =
   | "task-bundle-invalid"
   | "task-sequence-permission-denied"
   | "sensitive-content-read-denied"
+  | "resource-already-read"
+  | "livelock-guard-triggered"
   | "unknown";
 
 export class DomainError extends Error {
