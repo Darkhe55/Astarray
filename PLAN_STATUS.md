@@ -46,7 +46,7 @@
 | T06F | 可配置权限组与无限命名自定义模式 | pending | 6B | 新增设计；须按 ADR-0020 实现和动态验收 |
 | T06G | 主 Agent 永久只读、次级权限上限与会话临时提升 | pending | 6C | 新增设计；须按 ADR-0021 实现和动态验收 |
 | T07 | Agent Runtime | re-verifying | 4 | AR-00 重新验收中 |
-| T07A | 明确完成协议与早停恢复 | pending | 4J | 新增设计；须按 ADR-0015 实现和动态验收 |
+| T07A | 明确完成协议与早停恢复 | re-verifying | 4J | 2026-08-13 完成；Batch 4J 检查点（583 测试全绿）；待 AR 复验 |
 | T07B | 反自指读取与通用活锁守卫 | re-verifying | 4H | 2026-08-13 完成；Batch 4H 检查点（539 测试全绿）；待 AR 复验 |
 | T08 | 三级 Agent 编排 | re-verifying | 5 | AR-04 复验：T05B→T08 Git 编排接入完成（Batch 5 增补检查点），待 AR-04 全项复验 |
 | T08A | 默认控制流、个体记忆隔离与三级 Agent 生命周期 | pending | 6D | 新增设计；须按 ADR-0022/0023 实现和动态验收 |
@@ -221,6 +221,26 @@ T14 产出：`README.md`（安装/三模式/Provider/状态目录/headless/反�
 - T11：`run/status/resume/cancel/doctor/config init` 全部实现；`--json` 模式 stdout 仅 JSON、日志走 stderr；退出码 0/1/2 稳定；11 项构建产物集成测试 + 17 项命令单元测试；反馈进程入口路径解析修复。
 
 遗留风险：TUI 键盘输入路径未做 PTY 自动化（T13 用 node-pty 补）；指标尚未接入编排循环（v0.1 头栏显示 0）。
+
+## Batch 4J（T07A 增补任务）检查点记录
+
+### 2026-08-13 — 通过
+
+验收命令与实际结果：
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `npm run check` | 0 | 48 文件 / 583 测试通过（typecheck/lint/build/test 全绿） |
+| `npm run test:coverage` | 0 | Stmts 92.47% / Branch 85.38% |
+
+T07A（明确完成协议与早停恢复，ADR-0015）：
+
+- `TaskCompletionEventV1` / `TaskBlockedEventV1` schema 与常量（watchdog 5s / 无进展 90s / 完成宽限 5s / 续跑上限 3）。
+- `CompletionControlParser`：结构化控制帧优先；文本兼容格式只接受最终独立末行（可容忍宽限期末尾非标识行）；正文中间/项目文件/普通输出中的同名字符串忽略；非法 JSON/schema 不符返回 none 不抛错。
+- `LocalCompletionVerifier`：八项验收条件——尝试 ID 防重放、任务 ID 匹配、revision 非陈旧、声明节点可完成且无未满足前驱、无未决工作项、产物/验收门禁证据、高严谨性证据门禁（接入 EvidenceCompletionGate）、循环守卫无活锁且预算未绕过、无未解决阻塞、Provider 流正常结束；accepted 只发生一次。
+- `AgentRunWatchdog`：无进展超时只触发健康探测；Provider 仍活跃 → stalled-activity-unknown（不取消不续跑）；运行中工具调用不算无进展；请求已失活 → stalled-inactive（可安全续跑）。
+- `ContinuationCoordinator`：先原子保存检查点再以新 completionAttemptId 续跑（保留幂等键）；旧请求停止状态不确定 → blocked 不并发续跑；达上限 → give-up 不机械重试；尝试 ID 记录防重放。
+- 确定性测试（无真实 Provider）：文本末行/伪造标识/结构化帧、验收全条件、看门狗三态、续跑上限/幂等/blocked。
 
 ## Batch 4I（T06D 增补任务）检查点记录
 
