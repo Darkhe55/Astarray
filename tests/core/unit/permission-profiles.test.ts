@@ -407,6 +407,42 @@ describe("CustomPermissionProfileController", () => {
     ).toBe(true);
   });
 
+  it("源自定义组不存在/重命名同名/删除不存在 → 稳定拒绝", async () => {
+    const { controller } = makeController();
+    const created = await controller.createProfile({
+      displayName: "异常路径组",
+      source: { kind: "blank" },
+    });
+    await expect(
+      controller.createProfile({
+        displayName: "副本",
+        source: { kind: "custom", permissionProfileId: "no-such-profile" },
+      }),
+    ).rejects.toMatchObject({ errorCode: "task-sequence-not-found" });
+    // 重命名为同名 → 原样返回（不报错不产生新 revision）
+    const renamed = await controller.renameProfile({
+      permissionProfileId: created.permissionProfileId,
+      newDisplayName: "异常路径组",
+      expectedRevision: 1,
+    });
+    expect(renamed.revision).toBe(1);
+    // 删除不存在的组 → 稳定拒绝（task-sequence-not-found）
+    await expect(
+      controller.deleteProfile({
+        permissionProfileId: "no-such-profile",
+        isCurrentlyActive: false,
+      }),
+    ).rejects.toMatchObject({ errorCode: "task-sequence-not-found" });
+    // 重置源不存在
+    await expect(
+      controller.resetProfile({
+        permissionProfileId: created.permissionProfileId,
+        source: { kind: "custom", permissionProfileId: "no-such-source" },
+        expectedRevision: 1,
+      }),
+    ).rejects.toMatchObject({ errorCode: "task-sequence-not-found" });
+  });
+
   it("无产品数量上限：连续创建 50 个自定义组（实现无计数分支）", async () => {
     const { controller } = setup();
     for (let index = 0; index < 50; index++) {

@@ -208,6 +208,34 @@ describe("ReadSuppressionLedger（重复读取时间锁）", () => {
       retryAfterMilliseconds: 900,
     });
   });
+
+  it("文件被删除/内容不可读时指纹判定为变化 → 立即放行重读", async () => {
+    const filePath = path.join(workspaceDirectory, "vanishing.txt");
+    await fs.writeFile(filePath, "v1", "utf8");
+    const ledger = new ReadSuppressionLedger({
+      nowUnixMilliseconds: fakeClock,
+    });
+    await ledger.registerRead({
+      agentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
+      canonicalPath: filePath,
+      operationKind: "read",
+      normalizedRange: "full",
+      parameterHash: "param",
+      contentFingerprint: "sha256:abc",
+    });
+    // 窗口内删除文件 → currentFingerprint 为 null → 视为变化 → 放行
+    await fs.rm(filePath, { force: true });
+    const decision = await ledger.querySuppression({
+      agentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
+      canonicalPath: filePath,
+      operationKind: "read",
+      normalizedRange: "full",
+      parameterHash: "param",
+    });
+    expect(decision.isSuppressed).toBe(false);
+  });
 });
 
 describe("LocalProgressAndCycleGuard", () => {

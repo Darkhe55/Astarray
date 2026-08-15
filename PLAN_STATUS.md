@@ -45,7 +45,7 @@
 | T06D | 高严谨性事实验证工具 | re-verifying | 4I | 2026-08-13 完成；Batch 4I 检查点（562 测试全绿）；待 AR 复验 |
 | T06E | Assist 安装前置询问、独立开关与逐次授权 | re-verifying | 6A | 2026-08-13 完成；Batch 6A 检查点（598 测试全绿）；待 AR 复验 |
 | T06F | 可配置权限组与无限命名自定义模式 | re-verifying | 6B | 2026-08-13 完成；Batch 6B 检查点（620 测试全绿）；待 AR 复验 |
-| T06G | 主 Agent 永久只读、次级权限上限与会话临时提升 | pending | 6C | 新增设计；须按 ADR-0021 实现和动态验收 |
+| T06G | 主 Agent 永久只读、次级权限上限与会话临时提升 | re-verifying | 6C | 2026-08-13 完成；Batch 6C 检查点（640 测试全绿）；待 AR 复验 |
 | T07 | Agent Runtime | re-verifying | 4 | AR-00 重新验收中 |
 | T07A | 明确完成协议与早停恢复 | re-verifying | 4J | 2026-08-13 完成；Batch 4J 检查点（583 测试全绿）；待 AR 复验 |
 | T07B | 反自指读取与通用活锁守卫 | re-verifying | 4H | 2026-08-13 完成；Batch 4H 检查点（539 测试全绿）；待 AR 复验 |
@@ -223,6 +223,27 @@ T14 产出：`README.md`（安装/三模式/Provider/状态目录/headless/反�
 - T11：`run/status/resume/cancel/doctor/config init` 全部实现；`--json` 模式 stdout 仅 JSON、日志走 stderr；退出码 0/1/2 稳定；11 项构建产物集成测试 + 17 项命令单元测试；反馈进程入口路径解析修复。
 
 遗留风险：TUI 键盘输入路径未做 PTY 自动化（T13 用 node-pty 补）；指标尚未接入编排循环（v0.1 头栏显示 0）。
+
+## Batch 6C（T06G 增补任务）检查点记录
+
+### 2026-08-13 — 通过
+
+验收命令与实际结果：
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `npm run check` | 0 | 51 文件 / 640 测试通过（typecheck/lint/build/test 全绿） |
+| `npm run test:coverage` | 0 | Stmts 92.3x% / Branch 85.01% |
+
+T06G（主 Agent 永久只读、次级权限上限与会话临时提升，ADR-0021）：
+
+- `MainAgentReadonlyToolProjection`：任意 profile/临时提升下主 Agent 工具投影只含读取类白名单（readFile/listDirectory/searchProjectText/taskSequenceStatus/gitReadonlyView/factVerification）；写入/进程/安装/Agent 管理/权限管理/导出工具一律不可见；空实例 ID 拒绝。
+- `SecondaryAgentSessionController`：可信本地控制面创建不可复用次级 agentInstanceId，绑定 session、基础 profile 引用与权限快照；不作为主 Agent 工具。
+- `SessionPermissionElevationStore/Controller`：会话级（全部现有及后续次级 Agent）与个体级提升记录，绑定 capability/资源范围/基础 profile revision/目录版本/会话权限 revision/原新决定/到期/用户裁决引用；提升方向必须更宽（deny→ask/allow、ask→allow）；撤销/批量撤销/个体回收撤销。
+- `EffectiveSecondaryPermissionResolver`：基础 profile + 会话覆盖 + 个体覆盖计算有效决定；到期、profile 切换（builtin↔custom、custom↔custom）、revision/目录版本变化、Agent 回收使覆盖失效。
+- `TertiaryPermissionDelegationGuard`：三态宽度 deny < ask < allow 求交；三级最终权限不得宽于次级有效权限（超出发放拒绝）。
+- `CurrentPermissionConfigurationExporter`：导出基础 profile + 会话级覆盖的公开有效配置；剥离 session/Agent 身份、elevation ID、用户裁决引用、到期计时器等内部字段；覆盖导出文件前自动备份；导入无授权效力。
+- `SessionShutdownCoordinator`：收敛在途调用 → 可选导出（失败只报告不阻塞）→ 无条件撤销全部提升并关闭会话；导出失败不延长权限租约。
 
 ## Batch 6B（T06F 增补任务）检查点记录
 
