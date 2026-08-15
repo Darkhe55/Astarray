@@ -184,6 +184,31 @@ const instructionPayloadSchema = z.object({
   instructionText: z.string().min(1),
 });
 
+const existingResourceInquiryPayloadSchema = z.object({
+  kind: z.literal("existing-resource-inquiry"),
+  inquiryId: z.string().min(1),
+  requiredCapabilitySummary: z.string().min(1),
+  intendedUse: z.string().min(1),
+  compatibleCandidateTypes: z.array(z.string().min(1)),
+});
+
+const assistInstallationRequestPayloadSchema = z.object({
+  kind: z.literal("assist-installation-request"),
+  authorizationRequestId: z.string().min(1),
+  nonce: z.string().min(1),
+  sourceUrlOrRegistry: z.string().min(1),
+  packageOrRepositoryIdentifier: z.string().min(1),
+  pinnedVersionOrCommit: z.string().min(1).nullable(),
+  integrityInformation: z.string().min(1).nullable(),
+  targetPathOrScope: z.string().min(1),
+  packageManager: z.string().min(1),
+  parametersJson: z.string().min(1),
+  requiresNetwork: z.boolean(),
+  hasInstallScripts: z.boolean(),
+  expectedChangesSummary: z.string().min(1),
+  canRememberForSession: z.literal(false),
+});
+
 export const feedbackMessagePayloadSchema = z.discriminatedUnion("kind", [
   successPayloadSchema,
   failurePayloadSchema,
@@ -191,6 +216,8 @@ export const feedbackMessagePayloadSchema = z.discriminatedUnion("kind", [
   backupDeletionWarningPayloadSchema,
   ambiguousPayloadSchema,
   instructionPayloadSchema,
+  existingResourceInquiryPayloadSchema,
+  assistInstallationRequestPayloadSchema,
 ]);
 
 export const feedbackMessageSourceSchema = z.discriminatedUnion(
@@ -254,6 +281,8 @@ const PRIORITY_OF_KIND: Record<string, string> = {
   "backup-deletion-warning": "backup-deletion-warning",
   ambiguous: "ambiguous",
   instruction: "instruction",
+  "existing-resource-inquiry": "instruction",
+  "assist-installation-request": "instruction",
 };
 
 export const feedbackMessageSchema = z

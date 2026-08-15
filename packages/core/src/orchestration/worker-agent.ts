@@ -314,6 +314,13 @@ function buildOutcomePayload(
 function payloadPriority(
   kind: FeedbackMessage["payload"]["kind"],
 ): FeedbackMessage["priority"] {
+  // 安装门禁类询问走 instruction 优先级（T06E）
+  if (
+    kind === "existing-resource-inquiry" ||
+    kind === "assist-installation-request"
+  ) {
+    return "instruction";
+  }
   return kind;
 }
 

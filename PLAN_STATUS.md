@@ -19,6 +19,7 @@
 > 2026-08-13 设计增补：新增 T06G。主 Agent 在所有模式下永久只读；权限组和当前会话临时提升只作用于次级 Agent（临时提升默认覆盖当前会话全部次级 Agent，也可限定具体个体），且构成其向三级 Agent 分发权限的严格上限。会话关闭时可导出当前公开有效权限配置，导出不携带会话授权能力。
 > 2026-08-13 设计增补：新增 T08A。默认工作流由主 Agent 持续交流/评估并经本地控制面向次级偏序集插入任务，次级 Agent 持续调度并负责三级生命周期与本地/远端项目集成，三级 Agent 一次激活只执行一条任务链。后台汇报只入主 Agent 报告索引，后续用户交流按需读取。
 > 2026-08-13 记忆隔离增补：主、次级、三级每个具体 Agent 均以不可复用 `agentInstanceId` 独占记忆、工作存档、上下文、缓存、读取回执和消息视图；禁止角色级或同级共享。跨 Agent 仅经本地控制器传递带来源和哈希、只对当前任务有效的不可变附件。
+> 2026-08-14 设计增补：新增 T08B。次级/三级 Agent 首次接收工具组时获得完整公开用法，同 revision 后续只收标准回访提醒；已分配工具直接按单工具回复，缺失能力逐级上报，三级默认先报所属次级。各层实例无产品数量配额；直属上级经授权可把直属低一级 Agent 的限定沟通句柄转交具体同级 Agent，但不转移任务、记忆、工具、Git 或权限。
 >
 > 2026-08-12 审计整改：外部验收发现 7 项阻断性问题，全部已修复并回归（详见"审计整改记录"）。修复涉及 S1 doctor 数据丢失、S2 反馈入池校验、S3 备份事务闭环、S4 授权绑定、S5 交互授权通道、S6 存档 provenance、S7 config 备份保护；另完成覆盖率与测试基建改善（S8/S9）。
 
@@ -42,7 +43,7 @@
 | T06B | Ponder 本地只读边界与敏感操作分类 | re-verifying | 4F | 2026-08-13 完成；Batch 4F 检查点（510 测试全绿）；待 AR 复验 |
 | T06C | 全模式本地敏感内容禁读 | re-verifying | 4G | 2026-08-13 完成；Batch 4G 检查点（524 测试全绿）；待 AR 复验 |
 | T06D | 高严谨性事实验证工具 | re-verifying | 4I | 2026-08-13 完成；Batch 4I 检查点（562 测试全绿）；待 AR 复验 |
-| T06E | Assist 安装前置询问、独立开关与逐次授权 | pending | 6A | 新增设计；须按 ADR-0019 实现和动态验收 |
+| T06E | Assist 安装前置询问、独立开关与逐次授权 | re-verifying | 6A | 2026-08-13 完成；Batch 6A 检查点（598 测试全绿）；待 AR 复验 |
 | T06F | 可配置权限组与无限命名自定义模式 | pending | 6B | 新增设计；须按 ADR-0020 实现和动态验收 |
 | T06G | 主 Agent 永久只读、次级权限上限与会话临时提升 | pending | 6C | 新增设计；须按 ADR-0021 实现和动态验收 |
 | T07 | Agent Runtime | re-verifying | 4 | AR-00 重新验收中 |
@@ -50,6 +51,7 @@
 | T07B | 反自指读取与通用活锁守卫 | re-verifying | 4H | 2026-08-13 完成；Batch 4H 检查点（539 测试全绿）；待 AR 复验 |
 | T08 | 三级 Agent 编排 | re-verifying | 5 | AR-04 复验：T05B→T08 Git 编排接入完成（Batch 5 增补检查点），待 AR-04 全项复验 |
 | T08A | 默认控制流、个体记忆隔离与三级 Agent 生命周期 | pending | 6D | 新增设计；须按 ADR-0022/0023 实现和动态验收 |
+| T08B | 工具说明回访、无产品数量配额与受权通信转交 | pending | 6E | 新增设计；须按 ADR-0024 实现和动态验收 |
 | T09 | 记忆、缓存与指标 | re-verifying | 6 | AR-00 重新验收中 |
 | T10 | TUI | re-verifying | 6 | AR-00 重新验收中（AR-02 授权交互） |
 | T11 | Headless CLI | re-verifying | 6 | AR-00 重新验收中 |
@@ -221,6 +223,25 @@ T14 产出：`README.md`（安装/三模式/Provider/状态目录/headless/反�
 - T11：`run/status/resume/cancel/doctor/config init` 全部实现；`--json` 模式 stdout 仅 JSON、日志走 stderr；退出码 0/1/2 稳定；11 项构建产物集成测试 + 17 项命令单元测试；反馈进程入口路径解析修复。
 
 遗留风险：TUI 键盘输入路径未做 PTY 自动化（T13 用 node-pty 补）；指标尚未接入编排循环（v0.1 头栏显示 0）。
+
+## Batch 6A（T06E 增补任务）检查点记录
+
+### 2026-08-13 — 通过
+
+验收命令与实际结果：
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `npm run check` | 0 | 49 文件 / 598 测试通过（typecheck/lint/build/test 全绿） |
+| `npm run test:coverage` | 0 | Stmts 92.2x% / Branch 85.02% |
+
+T06E（Assist 安装前置询问、独立开关与逐次授权，ADR-0019）：
+
+- `InstallationOperationClassifier`：按效果分类（不依赖可绕过的命令字符串）——npm/pnpm/yarn/pip/uv/poetry/cargo、系统包管理器（apt/brew/dnf 等）、git clone/归档下载（含 -b 版本提取）、插件/技能/模型（code --install-extension、gh extension）、运行时工具链（rustup/nvm 等）、生命周期脚本、lockfile/vendor 改写；包装 shell（sh/bash/cmd -c、powershell -Command）递归解析内嵌脚本不可绕；空命令 fail-closed。
+- `AssistInstallationSettingsStore`：独立布尔开关默认 false，单调 revision、写入自动备份、损坏从备份恢复、stale-revision 拒绝。
+- `ExistingResourceInquiryController`：安装前结构化询问（所需能力/用途/候选类型，不读敏感配置）；用户答已有 → 只读验证端口校验（版本/完整性/兼容性），验证失败返回差异继续等待用户决定，不得自动假定"没有"并安装；答没有 → 进入开关检查。AgentStatus 新增 `awaiting-existing-resource-answer`。
+- `AssistInstallationAuthorizationController`：开关开启才可生成 `assist-installation-request`（绑定 Agent/任务/来源/包/精确版本/完整性/目标/作用域/包管理器/参数/网络/脚本/变更摘要 + 一次性 nonce）；allow-once 不记忆不批量；执行前复检（模式仍 assist、设置 revision 未变、nonce 未消费未过期、参数哈希一致）通过即消费；重放/参数漂移/模式切换/revision 变化/过期全部 fail-closed。
+- 反馈协议新增 `existing-resource-inquiry` 与 `assist-installation-request` payload（走 instruction 优先级）。
 
 ## Batch 4J（T07A 增补任务）检查点记录
 

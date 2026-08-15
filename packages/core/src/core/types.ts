@@ -13,7 +13,8 @@ export type AgentStatus =
   | "idle"
   | "busy"
   | "blocked"
-  | "awaiting-user-authorization";
+  | "awaiting-user-authorization"
+  | "awaiting-existing-resource-answer";
 
 /** 任务状态迁移：pending → running → done | failed；blocked 用于等待人工裁决或非幂等不确定。 */
 export type TaskStatus = "pending" | "running" | "blocked" | "done" | "failed";
@@ -347,7 +348,30 @@ export type FeedbackMessagePayload =
       canRememberForSession: false;
     }
   | { kind: "ambiguous"; unclearPoints: string[]; requestedInformation: string }
-  | { kind: "instruction"; instructionText: string };
+  | { kind: "instruction"; instructionText: string }
+  | {
+      kind: "existing-resource-inquiry";
+      inquiryId: string;
+      requiredCapabilitySummary: string;
+      intendedUse: string;
+      compatibleCandidateTypes: string[];
+    }
+  | {
+      kind: "assist-installation-request";
+      authorizationRequestId: string;
+      nonce: string;
+      sourceUrlOrRegistry: string;
+      packageOrRepositoryIdentifier: string;
+      pinnedVersionOrCommit: string | null;
+      integrityInformation: string | null;
+      targetPathOrScope: string;
+      packageManager: string;
+      parametersJson: string;
+      requiresNetwork: boolean;
+      hasInstallScripts: boolean;
+      expectedChangesSummary: string;
+      canRememberForSession: false;
+    };
 
 /**
  * 反馈消息的原始信息来源。
