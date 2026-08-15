@@ -50,7 +50,7 @@
 | T07A | 明确完成协议与早停恢复 | re-verifying | 4J | 2026-08-13 完成；Batch 4J 检查点（583 测试全绿）；待 AR 复验 |
 | T07B | 反自指读取与通用活锁守卫 | re-verifying | 4H | 2026-08-13 完成；Batch 4H 检查点（539 测试全绿）；待 AR 复验 |
 | T08 | 三级 Agent 编排 | re-verifying | 5 | AR-04 复验：T05B→T08 Git 编排接入完成（Batch 5 增补检查点），待 AR-04 全项复验 |
-| T08A | 默认控制流、个体记忆隔离与三级 Agent 生命周期 | pending | 6D | 新增设计；须按 ADR-0022/0023 实现和动态验收 |
+| T08A | 默认控制流、个体记忆隔离与三级 Agent 生命周期 | re-verifying | 6D | 2026-08-13 完成；Batch 6D 检查点（654 测试全绿）；待 AR 复验 |
 | T08B | 工具说明回访、无产品数量配额与受权通信转交 | pending | 6E | 新增设计；须按 ADR-0024 实现和动态验收 |
 | T09 | 记忆、缓存与指标 | re-verifying | 6 | AR-00 重新验收中 |
 | T10 | TUI | re-verifying | 6 | AR-00 重新验收中（AR-02 授权交互） |
@@ -223,6 +223,27 @@ T14 产出：`README.md`（安装/三模式/Provider/状态目录/headless/反�
 - T11：`run/status/resume/cancel/doctor/config init` 全部实现；`--json` 模式 stdout 仅 JSON、日志走 stderr；退出码 0/1/2 稳定；11 项构建产物集成测试 + 17 项命令单元测试；反馈进程入口路径解析修复。
 
 遗留风险：TUI 键盘输入路径未做 PTY 自动化（T13 用 node-pty 补）；指标尚未接入编排循环（v0.1 头栏显示 0）。
+
+## Batch 6D（T08A 增补任务）检查点记录
+
+### 2026-08-13 — 通过
+
+验收命令与实际结果：
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `npm run check` | 0 | 52 文件 / 654 测试通过（typecheck/lint/build/test 全绿） |
+| `npm run test:coverage` | 0 | Stmts 92.3x% / Branch 85.23% |
+
+T08A（默认控制流、个体记忆隔离与三级 Agent 生命周期，ADR-0022/0023）：
+
+- `AgentIndividualMemoryStore` + `AgentMemoryNamespacePolicy`：个体以不可复用 agentInstanceId 独占记忆域（memory-archive.json）；角色级共享路径（main/secondary/tertiary/all-agents/shared）拒绝；运行时身份/目录/文档 owner 三处一致校验；观察记录保留原始来源与附件哈希。
+- `CrossAgentContextAttachmentController`：不可变附件（显式条目选择/脱敏/token 预算/内容哈希/来源校验），空选择与预算超限拒绝；verifyAttachment 防篡改。
+- `ConversationTaskInsertionController`：TaskInsertionProposal 来源校验（用户与认证用户一致；主 Agent 派生层级 0 硬拒绝）、锚点/revision/环由偏序集控制器校验；提交后主 Agent 立即回对话循环。
+- `TertiaryAgentAssignmentPlanner`：11 项复用条件逐项判定（存活/空闲/所属/兼容/未决/预算/冲突），create-new 带可解释原因。
+- `TertiarySingleChainExecutionGuard`：一次激活绑定不可变 taskBundleId 与任务链；链外领取与禁止能力（集成分支/远端项目控制/调度等）本地拒绝。
+- `TertiaryAgentLifecycleController`：九阶段受控收口（停止派发→收敛未确认调用→检查点→handoff→反馈→权限→mailbox→Git→进程），阶段失败保留状态可幂等重试，不允许杀进程代替收口。
+- `MainAgentReportArchiveIngestor` + `MainAgentReportReader`：终态汇报只写独立报告索引（来源校验/内容哈希防篡改），不唤醒主 Agent 不注入对话；后续轮次按任务引用与 token 预算只读选择。
 
 ## Batch 6C（T06G 增补任务）检查点记录
 
