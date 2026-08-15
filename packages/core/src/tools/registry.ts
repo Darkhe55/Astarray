@@ -9,14 +9,23 @@ import type {
   ToolDescriptorPreview,
 } from "../core/types.js";
 import { DESTRUCTIVE_TOOL_MUTATION_KINDS } from "../core/types.js";
+import { PermissionCapabilityCatalog } from "./permission-capability-catalog.js";
 
 export class ToolRegistry {
   private readonly descriptorsByName = new Map<string, ToolDescriptor>();
+  /** T06F：权限目录（工具注册校验；未映射工具拒绝注册/执行）。 */
+  private readonly capabilityCatalog: PermissionCapabilityCatalog;
+
+  constructor(capabilityCatalog?: PermissionCapabilityCatalog) {
+    this.capabilityCatalog = capabilityCatalog ?? new PermissionCapabilityCatalog();
+  }
 
   register(descriptor: ToolDescriptor): void {
     if (this.descriptorsByName.has(descriptor.name)) {
       throw new Error(`工具重复注册: ${descriptor.name}`);
     }
+    // T06F：未映射任何可配置权限的工具拒绝注册（未分类工具拒绝执行）
+    this.capabilityCatalog.assertToolMapped(descriptor);
     if (
       DESTRUCTIVE_TOOL_MUTATION_KINDS.includes(
         descriptor.mutationKind as (typeof DESTRUCTIVE_TOOL_MUTATION_KINDS)[number],

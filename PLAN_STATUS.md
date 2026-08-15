@@ -44,7 +44,7 @@
 | T06C | 全模式本地敏感内容禁读 | re-verifying | 4G | 2026-08-13 完成；Batch 4G 检查点（524 测试全绿）；待 AR 复验 |
 | T06D | 高严谨性事实验证工具 | re-verifying | 4I | 2026-08-13 完成；Batch 4I 检查点（562 测试全绿）；待 AR 复验 |
 | T06E | Assist 安装前置询问、独立开关与逐次授权 | re-verifying | 6A | 2026-08-13 完成；Batch 6A 检查点（598 测试全绿）；待 AR 复验 |
-| T06F | 可配置权限组与无限命名自定义模式 | pending | 6B | 新增设计；须按 ADR-0020 实现和动态验收 |
+| T06F | 可配置权限组与无限命名自定义模式 | re-verifying | 6B | 2026-08-13 完成；Batch 6B 检查点（620 测试全绿）；待 AR 复验 |
 | T06G | 主 Agent 永久只读、次级权限上限与会话临时提升 | pending | 6C | 新增设计；须按 ADR-0021 实现和动态验收 |
 | T07 | Agent Runtime | re-verifying | 4 | AR-00 重新验收中 |
 | T07A | 明确完成协议与早停恢复 | re-verifying | 4J | 2026-08-13 完成；Batch 4J 检查点（583 测试全绿）；待 AR 复验 |
@@ -223,6 +223,26 @@ T14 产出：`README.md`（安装/三模式/Provider/状态目录/headless/反�
 - T11：`run/status/resume/cancel/doctor/config init` 全部实现；`--json` 模式 stdout 仅 JSON、日志走 stderr；退出码 0/1/2 稳定；11 项构建产物集成测试 + 17 项命令单元测试；反馈进程入口路径解析修复。
 
 遗留风险：TUI 键盘输入路径未做 PTY 自动化（T13 用 node-pty 补）；指标尚未接入编排循环（v0.1 头栏显示 0）。
+
+## Batch 6B（T06F 增补任务）检查点记录
+
+### 2026-08-13 — 通过
+
+验收命令与实际结果：
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `npm run check` | 0 | 50 文件 / 620 测试通过（typecheck/lint/build/test 全绿） |
+| `npm run test:coverage` | 0 | Stmts 92.0x% / Branch 85.08% |
+
+T06F（可配置权限组与无限命名自定义模式，ADR-0020）：
+
+- `PermissionCapabilityCatalog`：44 项逐项权限（project/process/network/browser/connector/database/cloud/clipboard/environment/code-repository/dependency/extension/git/external/financial/system/backup/agent/task/memory），含 Devolve/Assist 默认值与工具映射；未映射工具拒绝注册/执行；多权限最严格裁决（任一 deny→deny，否则任一 ask→ask，全 allow→allow）；replaceFileContent 映射 project.modify + project.destructive-mutate（Assist 默认 deny）。
+- `PermissionProfileStore`：内置三组——Devolve 出厂全 allow、Assist 独立矩阵、Ponder 全 deny + 签名冻结（更新入口拒绝）；自定义组单调 revision、目录版本、原子持久化、.bak 自动备份、损坏恢复、stale-revision 拒绝、特殊字符 ID 路径段安全编码。
+- `CustomPermissionProfileController`：创建（空白/内置视图/自定义组复制）、重命名（ID 不变）、逐项三态、重置、导入（过滤未知权限与非法决定，不携带内部状态）、导出（仅可配置字段）、删除（当前使用组拒绝、删除前备份）；名称 Unicode 规范化 + 大小写折叠唯一，保留内置中英文名；进程内名称缓存避免 O(n²) 读盘；无产品数量上限（无计数分支）。
+- `ConfigurablePermissionPolicyEngine`：schema 暴露/执行前读取 profile 快照裁决；ask 授权绑定 profile revision + 目录版本 + 参数哈希；revision/参数/模式切换（内置↔自定义）/过期后旧授权失效；未映射工具返回稳定最小"操作不可用"（无规则类别泄露）。
+- `ToolRegistry` 接入目录校验：未映射工具拒绝注册。
+- 内部强制执行层不进入权限目录（目录无内部项）。
 
 ## Batch 6A（T06E 增补任务）检查点记录
 

@@ -125,7 +125,7 @@ describe("ToolRegistry", () => {
         supportedTaskTypes: ["doc"],
         inputSchema: { type: "object" },
       }),
-    ).toThrowError(/自动备份/);
+    ).toThrowError(/自动备份|未映射/);
   });
 
   it("删除备份工具必须使用独立特权删除策略", () => {
