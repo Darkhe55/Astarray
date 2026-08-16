@@ -1,7 +1,6 @@
 # Astarray
 
 > 愿星光破开迷途，
-> 指引我们穿越无垠的代码之海。
 
 仓库目录职责与最近一次整理记录见 [`ORGANIZATION.md`](./ORGANIZATION.md)。
 
