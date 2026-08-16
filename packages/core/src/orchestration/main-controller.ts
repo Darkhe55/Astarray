@@ -36,6 +36,15 @@ import type { SessionPermissionElevationController } from "../tools/session-perm
 import type { EffectiveSecondaryPermissionResolver } from "../tools/session-permission-elevation.js";
 import type { SessionShutdownCoordinator } from "../tools/session-shutdown-and-export.js";
 import type { CurrentPermissionConfigurationExporter } from "../tools/session-shutdown-and-export.js";
+import type { RegisteredAgentDirectory } from "./registered-agent-directory.js";
+import type { MainAgentReportArchiveIngestor } from "./main-agent-report-archive.js";
+import type { TertiaryTerminalReport } from "./main-agent-report-archive.js";
+import type { ConversationTaskInsertionController } from "./conversation-task-insertion-controller.js";
+import type { TaskInsertionProposal } from "./conversation-task-insertion-controller.js";
+import type { SecondaryContinuousDispatchLoop } from "./secondary-continuous-dispatch-loop.js";
+import type { TertiaryAgentLifecycleController } from "./tertiary-lifecycle.js";
+import type { AgentIndividualMemoryStore } from "./agent-individual-memory.js";
+import type { CrossAgentContextAttachmentController } from "./cross-agent-attachment-controller.js";
 
 export interface MainControllerOptions {
   modeMachine: ModeMachine;
@@ -95,6 +104,22 @@ export interface MainControllerOptions {
   sessionElevationResolver?: EffectiveSecondaryPermissionResolver | null;
   sessionShutdownCoordinator?: SessionShutdownCoordinator | null;
   sessionExporter?: CurrentPermissionConfigurationExporter | null;
+  /** B6R-09：Agent 注册目录（报告来源认证；不可复用身份）。 */
+  registeredAgentDirectory?: RegisteredAgentDirectory | null;
+  /** B6R-09：主 Agent 报告索引（只写不唤醒；来源认证）。 */
+  reportArchiveIngestor?: MainAgentReportArchiveIngestor | null;
+  /** B6R-09：对话任务插入控制面（主 Agent 提案；本地验证来源/优先级/锚点）。 */
+  conversationTaskInsertionController?: ConversationTaskInsertionController | null;
+  /** B6R-09：次级持续调度循环（生产装配；ready set 派发）。 */
+  secondaryDispatchLoop?: SecondaryContinuousDispatchLoop | null;
+  /** B6R-09：三级生命周期控制器（阶段持久化/幂等收口）。 */
+  tertiaryLifecycleController?: TertiaryAgentLifecycleController | null;
+  /** B6R-09：Worker 运行时组件（个体记忆/附件/生命周期；生产装配可达）。 */
+  tertiaryRuntimeComponents?: {
+    individualMemoryStore: AgentIndividualMemoryStore;
+    attachmentController: CrossAgentContextAttachmentController;
+    lifecycleController: TertiaryAgentLifecycleController;
+  } | null;
 }
 
 export class MainController {
@@ -396,6 +421,76 @@ export class MainController {
       exportPath: input.exportPath,
       exportSnapshot,
     });
+  }
+
+  // ─── B6R-09：编排接入（提案/报告/生命周期） ────────────────────────────
+
+  /** 主 Agent 提交任务插入提案（本地控制面验证；提交后立即回对话循环）。 */
+  async submitTaskInsertionProposal(
+    proposal: TaskInsertionProposal,
+  ): Promise<void> {
+    const insertionController = this.options.conversationTaskInsertionController;
+    if (insertionController === null || insertionController === undefined) {
+      throw new Error("对话任务插入控制面未装配");
+    }
+    await insertionController.submitProposal(proposal);
+  }
+
+  /** 登记 Agent（报告来源认证；不可复用身份）。 */
+  registerAgent(input: {
+    agentInstanceId: string;
+    agentRole: "secondary" | "tertiary";
+    missionId: string;
+    owningSecondaryAgentInstanceId: string | null;
+    boundTaskBundleId: string | null;
+  }): void {
+    const directory = this.options.registeredAgentDirectory;
+    if (directory === null || directory === undefined) {
+      throw new Error("Agent 注册目录未装配");
+    }
+    directory.registerAgent({
+      agentInstanceId: input.agentInstanceId,
+      agentRole: input.agentRole,
+      missionId: input.missionId,
+      owningSecondaryAgentInstanceId: input.owningSecondaryAgentInstanceId,
+      boundTaskBundleId: input.boundTaskBundleId,
+      registeredAtIso: new Date().toISOString(),
+    });
+  }
+
+  /** 三级终态报告只写主 Agent 报告索引（不唤醒主 Agent 模型/不注入对话）。 */
+  async ingestTertiaryTerminalReport(
+    report: TertiaryTerminalReport,
+  ): Promise<void> {
+    const ingestor = this.options.reportArchiveIngestor;
+    if (ingestor === null || ingestor === undefined) {
+      throw new Error("报告索引未装配");
+    }
+    await ingestor.ingestReport(report);
+  }
+
+  /** 读取报告索引（主 Agent 后续轮次只读选择用）。 */
+  async listReportIndex(missionId: string) {
+    const ingestor = this.options.reportArchiveIngestor;
+    if (ingestor === null || ingestor === undefined) {
+      return [];
+    }
+    return ingestor.readIndex(missionId);
+  }
+
+  /** 次级持续调度循环（生产装配可达性 + 编排接入点）。 */
+  getSecondaryDispatchLoop(): SecondaryContinuousDispatchLoop | null {
+    return this.options.secondaryDispatchLoop ?? null;
+  }
+
+  /** 三级生命周期控制器（生产装配可达性 + 受控收口接入点）。 */
+  getTertiaryLifecycleController(): TertiaryAgentLifecycleController | null {
+    return this.options.tertiaryLifecycleController ?? null;
+  }
+
+  /** Worker 运行时组件（个体记忆/附件控制器；生产装配可达性）。 */
+  getTertiaryRuntimeComponents() {
+    return this.options.tertiaryRuntimeComponents ?? null;
   }
 
   /** 向次级调度发送裁决指令（Assist，经反馈信箱）。 */

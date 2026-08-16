@@ -50,6 +50,17 @@ import {
   CurrentPermissionConfigurationExporter,
   SessionShutdownCoordinator,
 } from "../../../core/src/tools/session-shutdown-and-export.js";
+import { RegisteredAgentDirectory } from "../../../core/src/orchestration/registered-agent-directory.js";
+import { MainAgentReportArchiveIngestor } from "../../../core/src/orchestration/main-agent-report-archive.js";
+import { ConversationTaskInsertionController } from "../../../core/src/orchestration/conversation-task-insertion-controller.js";
+import { UnboundedAgentInstanceRegistry } from "../../../core/src/orchestration/unbounded-agent-registry.js";
+import { SecondaryContinuousDispatchLoop } from "../../../core/src/orchestration/secondary-continuous-dispatch-loop.js";
+import {
+  FileTertiaryLifecyclePhaseStore,
+  TertiaryAgentLifecycleController,
+} from "../../../core/src/orchestration/tertiary-lifecycle.js";
+import { AgentIndividualMemoryStore } from "../../../core/src/orchestration/agent-individual-memory.js";
+import { CrossAgentContextAttachmentController } from "../../../core/src/orchestration/cross-agent-attachment-controller.js";
 
 export interface CliBootstrap {
   controller: MainController;
@@ -176,6 +187,52 @@ export async function bootstrapCli(
     elevationStore: sessionElevationStore,
     backupPort: backupVault,
   });
+  // B6R-09：Agent 注册目录（报告来源认证）+ 主 Agent 报告索引 + 提案控制面
+  const registeredAgentDirectory = new RegisteredAgentDirectory();
+  const reportArchiveIngestor = new MainAgentReportArchiveIngestor({
+    baseDirectory: stateDirectory,
+    sourceAuthenticationPort: {
+      verifySource: (input) =>
+        Promise.resolve(registeredAgentDirectory.verifyReportSource(input)),
+    },
+  });
+  const conversationTaskInsertionController = new ConversationTaskInsertionController({
+    manageController: new (await import(
+      "../../../core/src/orchestration/task-sequence-controllers.js"
+    )).TaskSequenceManageController(
+      new (await import(
+        "../../../core/src/orchestration/agent-task-sequence-store.js"
+      )).AgentTaskSequenceStore({ baseDirectory: stateDirectory }),
+    ),
+    authenticatedUserId: "cli-user",
+  });
+  // B6R-09：次级持续调度循环（生产装配；派发链回调由编排层注入）
+  const dispatchRegistry = new UnboundedAgentInstanceRegistry({
+    maxConcurrentSlots: 4,
+    maxQueueLength: 32,
+    currentOccupiedSlots: () => 0,
+  });
+  const secondaryDispatchLoop = new SecondaryContinuousDispatchLoop({
+    registry: dispatchRegistry,
+    dispatchChain: async () => false,
+    currentOccupiedSlots: () => 0,
+  });
+  // B6R-09：三级生命周期控制器（阶段持久化 + 幂等收口；hooks 由编排层注入）
+  const tertiaryLifecyclePhaseStore = new FileTertiaryLifecyclePhaseStore(stateDirectory);
+  const tertiaryLifecycleController = new TertiaryAgentLifecycleController(
+    {},
+    { phaseStore: tertiaryLifecyclePhaseStore },
+  );
+  // B6R-09：个体记忆域 + 跨 Agent 附件控制器（Worker 运行时组件；生产装配）
+  const agentIndividualMemoryStore = new AgentIndividualMemoryStore({
+    baseDirectory: stateDirectory,
+  });
+  const crossAgentAttachmentController = new CrossAgentContextAttachmentController();
+  const tertiaryRuntimeComponents = {
+    individualMemoryStore: agentIndividualMemoryStore,
+    attachmentController: crossAgentAttachmentController,
+    lifecycleController: tertiaryLifecycleController,
+  };
 
   const controller = new MainController({
     modeMachine,
@@ -202,6 +259,12 @@ export async function bootstrapCli(
     sessionElevationResolver,
     sessionExporter,
     sessionShutdownCoordinator,
+    registeredAgentDirectory,
+    reportArchiveIngestor,
+    conversationTaskInsertionController,
+    secondaryDispatchLoop,
+    tertiaryLifecycleController,
+    tertiaryRuntimeComponents,
     mainRuntimeFactory: () =>
       new ScriptedRuntime([
         {
