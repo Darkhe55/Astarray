@@ -15,7 +15,7 @@ import { AstarrayApp } from "../../../packages/tui/src/ui/app.js";
 const NOOP_CONTROLLER = {
   getActiveMissionIds: () => [],
   queryMissionStatus: async () => {
-    throw new Error("无控制器");
+    throw new Error("无可用任务");
   },
   getMetricsSnapshot: () => null,
   handleUserMessage: async () => "ponder",
@@ -23,6 +23,9 @@ const NOOP_CONTROLLER = {
   sendSchedulerInstruction: () => {},
   grantSessionAuthorization: async () => {},
   transitionMode: (_mode: AgentMode) => {},
+  getCurrentPermissionProfileReference: async () => null,
+  listPermissionProfiles: async () => ({ profiles: [], total: 0, page: 1, pageSize: 20 }),
+  switchPermissionProfile: async () => {},
 } as never;
 
 function makeState(): AppState {
@@ -70,9 +73,13 @@ function withTerminalSize<T>(
   } finally {
     if (columnsDescriptor !== undefined) {
       Object.defineProperty(process.stdout, "columns", columnsDescriptor);
+    } else {
+      delete (process.stdout as { columns?: unknown }).columns;
     }
     if (rowsDescriptor !== undefined) {
       Object.defineProperty(process.stdout, "rows", rowsDescriptor);
+    } else {
+      delete (process.stdout as { rows?: unknown }).rows;
     }
   }
 }
@@ -209,6 +216,118 @@ describe("TUI 组件渲染", () => {
     );
     const frame = renderToStringFull(state);
     expect(frame).not.toContain("evil.example");
+  });
+});
+
+describe("B6R-04b 权限组面板", () => {
+  it("头栏显示当前权限组显示名", async () => {
+    const state = makeState();
+    state.setPermissionProfiles({
+      currentDisplayName: "生产组",
+      profiles: [
+        {
+          permissionProfileId: "profile-1",
+          displayName: "生产组",
+          isBuiltin: false,
+          revision: 2,
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    });
+    const frame = renderAtTerminalSize(state, 120, 40);
+    expect(frame).toContain("生产组");
+  });
+
+  it("面板展示权限组列表（当前组标记 *、内置标记、revision；120×40）", async () => {
+    const state = makeState();
+    state.setPermissionProfiles({
+      currentDisplayName: "Assist",
+      profiles: [
+        {
+          permissionProfileId: "assist",
+          displayName: "Assist",
+          isBuiltin: true,
+          revision: 1,
+        },
+        {
+          permissionProfileId: "profile-cn",
+          displayName: "生产组-长名称-中文-emoji-🚀",
+          isBuiltin: false,
+          revision: 3,
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      total: 2,
+    });
+    const frame = renderAtTerminalSize(state, 120, 40);
+    expect(frame).toContain("* Assist");
+    expect(frame).toContain("内置");
+    expect(frame).toContain("生产组-长名称-中文-emoji-🚀");
+    expect(frame).toContain("rev=3");
+  });
+
+  it("搜索过滤：无匹配时显示占位", async () => {
+    const state = makeState();
+    state.permissionProfileSearch = "不存在的组";
+    state.setPermissionProfiles({
+      currentDisplayName: null,
+      profiles: [
+        {
+          permissionProfileId: "assist",
+          displayName: "Assist",
+          isBuiltin: true,
+          revision: 1,
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    });
+    const frame = renderAtTerminalSize(state, 120, 40);
+    expect(frame).toContain("无匹配权限组");
+  });
+
+  it("分页信息与大量组截断渲染（虚拟行上限；120×40）", async () => {
+    const state = makeState();
+    const profiles = Array.from({ length: 40 }, (_value, index) => ({
+      permissionProfileId: `profile-${index}`,
+      displayName: `组-${index}`,
+      isBuiltin: false,
+      revision: 1,
+    }));
+    state.setPermissionProfiles({
+      currentDisplayName: null,
+      profiles,
+      page: 1,
+      pageSize: 20,
+      total: 40,
+    });
+    const frame = renderAtTerminalSize(state, 120, 40);
+    expect(frame).toContain("权限组（40）");
+    expect(frame).toContain("页 1/2");
+  });
+
+  it("80×24 小终端自动折叠权限组面板（次要面板）", async () => {
+    const state = makeState();
+    state.setPermissionProfiles({
+      currentDisplayName: "Assist",
+      profiles: [
+        {
+          permissionProfileId: "assist",
+          displayName: "Assist",
+          isBuiltin: true,
+          revision: 1,
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+    });
+    const frame = renderAtTerminalSize(state, 80, 24);
+    expect(frame).not.toContain("权限组（1）");
   });
 });
 

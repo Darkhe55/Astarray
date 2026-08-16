@@ -19,6 +19,7 @@ import {
   HelpModal,
   InputBox,
   PermissionModal,
+  PermissionProfilePanel,
   StatusLine,
 } from "./components/panels.js";
 
@@ -92,19 +93,23 @@ export function AstarrayApp(props: AstarrayAppProps): ReactNode {
   useEffect(() => {
     void refreshMissions(state, controller);
     void refreshMetrics(state, controller);
+    void refreshPermissionProfiles(state, controller);
     const pollTimer = setInterval(() => {
       void refreshMissions(state, controller);
       void refreshMetrics(state, controller);
+      void refreshPermissionProfiles(state, controller);
     }, 500);
     return () => clearInterval(pollTimer);
   }, [state, controller]);
 
   const visibleMissions = [...state.missions.values()];
+  const terminalWidth = process.stdout.columns ?? 80;
 
   return (
     <Box flexDirection="column">
       <Header
         mode={state.mode}
+        permissionProfile={state.currentPermissionProfileDisplayName}
         missionCount={state.missions.size}
         agentCount={state.agentStatuses.size}
         metrics={{
@@ -130,6 +135,18 @@ export function AstarrayApp(props: AstarrayAppProps): ReactNode {
           queueDepths={state.mailboxQueueDepths}
         />
       </Box>
+      {/* B6R-04b：权限组面板（独立行；小终端自动折叠次要面板） */}
+      {terminalWidth >= 100 ? (
+        <PermissionProfilePanel
+          currentDisplayName={state.currentPermissionProfileDisplayName}
+          profiles={state.permissionProfiles}
+          page={state.permissionProfilePage}
+          pageSize={state.permissionProfilePageSize}
+          total={state.permissionProfileTotal}
+          search={state.permissionProfileSearch}
+          focused={false}
+        />
+      ) : null}
       <InputBox
         value={state.inputText}
         placeholder="输入任务（Enter 提交）"
@@ -234,8 +251,7 @@ function modeName(mode: AgentMode): string {
   }
 }
 
-async function refreshMissions(state: AppState, controller: MainController): Promise<void> {
-  for (const missionId of controller.getActiveMissionIds()) {
+async function refreshMissions(state: AppState, controller: MainController): Promise<void> {  for (const missionId of controller.getActiveMissionIds()) {
     try {
       const missionStatus = await controller.queryMissionStatus(missionId);
       if (missionStatus.summary === null) {
@@ -275,5 +291,42 @@ async function refreshMetrics(state: AppState, controller: MainController): Prom
       cacheHits: metrics.cacheHits,
       cacheMisses: metrics.cacheMisses,
     });
+  }
+}
+
+/** B6R-04b：只读刷新权限组列表与当前组显示名（不打断输入）。 */
+async function refreshPermissionProfiles(
+  state: AppState,
+  controller: MainController,
+): Promise<void> {
+  try {
+    const [currentReference, profileList] = await Promise.all([
+      controller.getCurrentPermissionProfileReference(),
+      controller.listPermissionProfiles({
+        page: state.permissionProfilePage,
+        pageSize: state.permissionProfilePageSize,
+      }),
+    ]);
+    let currentDisplayName: string | null = null;
+    if (currentReference !== null) {
+      const currentProfile = profileList.profiles.find((profile) => {
+        if (currentReference.kind === "builtin") {
+          return profile.isBuiltin && profile.permissionProfileId === currentReference.profileId;
+        }
+        return (
+          !profile.isBuiltin && profile.permissionProfileId === currentReference.profileId
+        );
+      });
+      currentDisplayName = currentProfile?.displayName ?? null;
+    }
+    state.setPermissionProfiles({
+      currentDisplayName,
+      profiles: profileList.profiles,
+      page: profileList.page,
+      pageSize: profileList.pageSize,
+      total: profileList.total,
+    });
+  } catch {
+    // 设置控制面未装配：忽略（TUI 继续工作）
   }
 }

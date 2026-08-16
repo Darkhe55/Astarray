@@ -39,6 +39,7 @@ import { PermissionCapabilityCatalog } from "../../../core/src/tools/permission-
 import { PermissionProfileStore } from "../../../core/src/tools/permission-profile-store.js";
 import type { PermissionProfileReference } from "../../../core/src/tools/permission-profile-store.js";
 import { ConfigurablePermissionPolicyEngine } from "../../../core/src/tools/configurable-permission-policy-engine.js";
+import { CurrentPermissionSelectionStore } from "../../../core/src/tools/current-permission-selection.js";
 
 export interface CliBootstrap {
   controller: MainController;
@@ -147,6 +148,10 @@ export async function bootstrapCli(
       : options.mode === "assist"
         ? { kind: "builtin", profileId: "assist" }
         : { kind: "builtin", profileId: "devolve" };
+  // B6R-04b：认证设置控制面（当前权限组选择持久化）
+  const currentPermissionSelectionStore = new CurrentPermissionSelectionStore({
+    baseDirectory: stateDirectory,
+  });
 
   const controller = new MainController({
     modeMachine,
@@ -163,6 +168,10 @@ export async function bootstrapCli(
     backupVault,
     backupDeletionController,
     workArchiveStore,
+    permissionProfileStore,
+    permissionCapabilityCatalog: permissionCatalog,
+    currentPermissionSelectionStore,
+    currentPermissionProfileReference,
     mainRuntimeFactory: () =>
       new ScriptedRuntime([
         {

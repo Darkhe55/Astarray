@@ -5,14 +5,16 @@
 import { Box, Text } from "ink";
 import type { ReactNode } from "react";
 
-/** 头栏：模式 / mission / agent 数 / 调用与 token 指标。 */
+/** 头栏：模式 / 权限组 / mission / agent 数 / 调用与 token 指标。 */
 export function Header({
   mode,
+  permissionProfile,
   missionCount,
   agentCount,
   metrics,
 }: {
   mode: string;
+  permissionProfile: string | null;
   missionCount: number;
   agentCount: number;
   metrics: {
@@ -24,8 +26,62 @@ export function Header({
 }): ReactNode {
   return (
     <Text bold>
-      {` Astarray ─ mode: ${mode} ─ missions: ${missionCount} ─ agents: ${agentCount} ─ calls: ${metrics.toolCalls}/${metrics.providerCalls} ─ tokens(est): ${metrics.estimatedTokenCount} ─ cache: ${metrics.cacheHits}`}
+      {` Astarray ─ mode: ${mode}${permissionProfile !== null ? ` (${permissionProfile})` : ""} ─ missions: ${missionCount} ─ agents: ${agentCount} ─ calls: ${metrics.toolCalls}/${metrics.providerCalls} ─ tokens(est): ${metrics.estimatedTokenCount} ─ cache: ${metrics.cacheHits}`}
     </Text>
+  );
+}
+
+/** B6R-04b：权限组面板（分页/搜索/当前组标记；不显示内部执行层）。 */
+export function PermissionProfilePanel({
+  currentDisplayName,
+  profiles,
+  page,
+  pageSize,
+  total,
+  search,
+  focused,
+  maximumVisibleRows = 12,
+}: {
+  currentDisplayName: string | null;
+  profiles: Array<{
+    permissionProfileId: string;
+    displayName: string;
+    isBuiltin: boolean;
+    revision: number;
+  }>;
+  page: number;
+  pageSize: number;
+  total: number;
+  search: string;
+  focused: boolean;
+  maximumVisibleRows?: number;
+}): ReactNode {
+  const filteredProfiles = search.trim() === ""
+    ? profiles
+    : profiles.filter(
+        (profile) =>
+          profile.displayName.toLowerCase().includes(search.trim().toLowerCase()) ||
+          profile.permissionProfileId.toLowerCase().includes(search.trim().toLowerCase()),
+      );
+  const visibleRows = filteredProfiles.slice(0, maximumVisibleRows);
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  return (
+    <Box flexDirection="column" borderStyle={focused ? "bold" : "round"} paddingX={1}>
+      <Text bold>权限组（{total}） 搜索: {search.trim() === "" ? "-" : search} 页 {page}/{pageCount}</Text>
+      {visibleRows.length === 0 ? (
+        <Text dimColor>（无匹配权限组）</Text>
+      ) : (
+        visibleRows.map((profile) => {
+          const isCurrent =
+            currentDisplayName !== null && profile.displayName === currentDisplayName;
+          return (
+            <Text key={profile.permissionProfileId}>
+              {`${isCurrent ? "*" : " "} ${profile.displayName}${profile.isBuiltin ? "（内置）" : ""} rev=${profile.revision}`}
+            </Text>
+          );
+        })
+      )}
+    </Box>
   );
 }
 

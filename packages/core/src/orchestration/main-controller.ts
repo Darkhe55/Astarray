@@ -26,6 +26,10 @@ import { AssistScheduler } from "./assist-scheduler.js";
 import { DevolveScheduler } from "./devolve-scheduler.js";
 import type { MissionManager } from "./mission-manager.js";
 import type { GitIntegrationOrchestrationOptions } from "./mission-orchestrator.js";
+import type { PermissionProfileStore } from "../tools/permission-profile-store.js";
+import type { PermissionProfileReference } from "../tools/permission-profile-store.js";
+import type { PermissionCapabilityCatalog } from "../tools/permission-capability-catalog.js";
+import type { CurrentPermissionSelectionStore } from "../tools/current-permission-selection.js";
 
 export interface MainControllerOptions {
   modeMachine: ModeMachine;
@@ -71,6 +75,12 @@ export interface MainControllerOptions {
   gitIntegration?: GitIntegrationOrchestrationOptions | null;
   /** T05B：次级调度 Agent 具体实例 ID 工厂（每次 mission 不可复用）。 */
   secondaryAgentInstanceIdFactory?: (missionId: string) => string;
+  /** B6R-04b：认证设置控制面依赖（TUI/CLI 共用；非模型工具）。 */
+  permissionProfileStore?: PermissionProfileStore | null;
+  permissionCapabilityCatalog?: PermissionCapabilityCatalog | null;
+  currentPermissionSelectionStore?: CurrentPermissionSelectionStore | null;
+  /** B6R-03/04b：当前权限组引用（可信运行时提供）。 */
+  currentPermissionProfileReference?: PermissionProfileReference | null;
 }
 
 export class MainController {
@@ -154,6 +164,60 @@ export class MainController {
 
   getActiveMissionIds(): string[] {
     return [...this.activeOrchestrators.keys()];
+  }
+
+  // ─── B6R-04b：认证设置控制面（只读查询 + 切换；非模型工具） ───────────
+
+  /** 当前权限组引用（优先选择存储；否则运行时注入的默认）。 */
+  async getCurrentPermissionProfileReference(): Promise<PermissionProfileReference | null> {
+    const selectionStore = this.options.currentPermissionSelectionStore;
+    if (selectionStore !== null && selectionStore !== undefined) {
+      const selection = await selectionStore.readSelection();
+      if (selection !== null) {
+        return selection.selectedReference;
+      }
+    }
+    return this.options.currentPermissionProfileReference ?? null;
+  }
+
+  /** 权限组公开列表（内置三组 + 自定义组；分页）。 */
+  async listPermissionProfiles(input: { page: number; pageSize: number }) {
+    const profileStore = this.options.permissionProfileStore;
+    if (profileStore === null || profileStore === undefined) {
+      return { profiles: [], total: 0, page: input.page, pageSize: input.pageSize };
+    }
+    const builtinProfiles = ["ponder", "assist", "devolve"].map((profileId) =>
+      profileStore.buildBuiltinProfile(profileId as "ponder" | "assist" | "devolve"),
+    );
+    const customProfiles = await profileStore.listCustomProfiles();
+    const allProfiles = [...builtinProfiles, ...customProfiles];
+    const page = Math.max(1, input.page);
+    const pageSize = Math.max(1, input.pageSize);
+    const pageItems = allProfiles.slice((page - 1) * pageSize, page * pageSize);
+    return {
+      profiles: pageItems.map((profile) => ({
+        permissionProfileId: profile.permissionProfileId,
+        displayName: profile.displayName,
+        isBuiltin: profile.isBuiltin,
+        revision: profile.revision,
+      })),
+      total: allProfiles.length,
+      page,
+      pageSize,
+    };
+  }
+
+  /** 认证用户切换当前权限组（持久化；写入自动备份）。 */
+  async switchPermissionProfile(reference: PermissionProfileReference): Promise<void> {
+    const selectionStore = this.options.currentPermissionSelectionStore;
+    if (selectionStore === null || selectionStore === undefined) {
+      throw new Error("当前权限组选择存储未装配");
+    }
+    const current = await selectionStore.readSelection();
+    await selectionStore.switchSelection({
+      selectedReference: reference,
+      expectedRevision: current?.revision ?? 0,
+    });
   }
 
   /** 向次级调度发送裁决指令（Assist，经反馈信箱）。 */

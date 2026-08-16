@@ -5,6 +5,14 @@
 import type { AgentMode, AgentStatus, TaskDependencyNode } from "../../../../core/src/core/types.js";
 import { stripAnsiControlSequences } from "../../../../core/src/infra/ansi-sanitizer.js";
 
+/** B6R-04b：权限组公开摘要（TUI 面板数据）。 */
+export interface UiPermissionProfileSummary {
+  permissionProfileId: string;
+  displayName: string;
+  isBuiltin: boolean;
+  revision: number;
+}
+
 export type ConversationSource = "user" | "main" | "tool" | "feedback" | "system";
 
 export interface UiConversationEntry {
@@ -48,6 +56,15 @@ export class AppState {
   permissionAsk: UiPermissionAsk | null = null;
   showHelp = false;
   inputText = "";
+  /** B6R-04b：当前权限组引用显示名快照。 */
+  currentPermissionProfileDisplayName: string | null = null;
+  /** B6R-04b：权限组公开列表（分页）。 */
+  permissionProfiles: UiPermissionProfileSummary[] = [];
+  permissionProfilePage = 1;
+  permissionProfilePageSize = 20;
+  permissionProfileTotal = 0;
+  /** B6R-04b：权限组搜索过滤词（空 = 全部）。 */
+  permissionProfileSearch = "";
   metrics: UiMetricsSnapshot = {
     toolCalls: 0,
     providerCalls: 0,
@@ -124,5 +141,22 @@ export class AppState {
 
   setMetrics(snapshot: UiMetricsSnapshot): void {
     this.metrics = snapshot;
+  }
+
+  // ─── B6R-04b：权限组状态 ──────────────────────────────────────────────
+
+  setPermissionProfiles(input: {
+    currentDisplayName: string | null;
+    profiles: UiPermissionProfileSummary[];
+    page: number;
+    pageSize: number;
+    total: number;
+  }): void {
+    this.currentPermissionProfileDisplayName = input.currentDisplayName;
+    this.permissionProfiles = input.profiles;
+    this.permissionProfilePage = input.page;
+    this.permissionProfilePageSize = input.pageSize;
+    this.permissionProfileTotal = input.total;
+    this.notify();
   }
 }
