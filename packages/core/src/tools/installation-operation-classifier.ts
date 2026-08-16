@@ -66,6 +66,51 @@ const LIFECYCLE_SCRIPT_PATTERNS = [
   /package[\\/]?\.json["']?\s*$/i,
 ];
 
+/** 已知明确非安装的普通/只读命令（白名单；其余一律 fail-closed）。 */
+const KNOWN_NON_INSTALLATION_COMMANDS = new Set([
+  "ls",
+  "dir",
+  "cat",
+  "type",
+  "echo",
+  "pwd",
+  "cd",
+  "rm",
+  "del",
+  "mkdir",
+  "cp",
+  "copy",
+  "mv",
+  "move",
+  "touch",
+  "head",
+  "tail",
+  "grep",
+  "rg",
+  "find",
+  "node",
+  "nodejs",
+  "npm",
+  "pnpm",
+  "yarn",
+  "tsc",
+  "eslint",
+  "vitest",
+  "jest",
+  "prettier",
+  "git",
+  "date",
+  "whoami",
+  "env",
+  "printenv",
+  "uname",
+  "hostname",
+  "ps",
+  "tasklist",
+  "sleep",
+  "timeout",
+]);
+
 export class InstallationOperationClassifier {
   /**
    * 分类一条命令（argv 形式，已由调用方安全拆分——不经 shell 拼接）。
@@ -186,17 +231,36 @@ export class InstallationOperationClassifier {
     ) {
       const scriptContent = input.arguments[1];
       if (typeof scriptContent === "string" && scriptContent.trim() !== "") {
-        const nestedArguments = scriptContent.trim().split(/\s+/);
-        const nestedCommandName = nestedArguments.shift() ?? "";
-        const nestedClassification = this.classifyCommand({
-          commandName: nestedCommandName,
-          arguments: nestedArguments,
-          workingDirectoryPath: input.workingDirectoryPath,
-        });
-        if (nestedClassification.isInstallationAttempt) {
+        // 多命令脚本：按 ; 与 && 分段，任一段含安装 → 整体安装尝试
+        const segments = scriptContent.split(/[;&|]+/);
+        let hasEffectiveSegment = false;
+        for (const segment of segments) {
+          const segmentArguments = segment.trim().split(/\s+/);
+          const segmentCommandName = segmentArguments.shift() ?? "";
+          if (segmentCommandName === "") {
+            continue;
+          }
+          hasEffectiveSegment = true;
+          const nestedClassification = this.classifyCommand({
+            commandName: segmentCommandName,
+            arguments: segmentArguments,
+            workingDirectoryPath: input.workingDirectoryPath,
+          });
+          if (nestedClassification.isInstallationAttempt) {
+            return {
+              ...nestedClassification,
+              effectKind: "dependency-resolution-change",
+            };
+          }
+        }
+        // 全部段均明确非安装 → 非安装；无有效段（空/纯分隔符）→ fail-closed
+        if (hasEffectiveSegment) {
           return {
-            ...nestedClassification,
-            effectKind: "dependency-resolution-change",
+            isInstallationAttempt: false,
+            effectKind: "not-installation",
+            detectedTarget: null,
+            pinnedVersionOrCommit: null,
+            rulesVersion: INSTALLATION_RULES_VERSION,
           };
         }
       }
@@ -206,17 +270,34 @@ export class InstallationOperationClassifier {
       if (commandIndex !== -1) {
         const scriptContent = input.arguments[commandIndex + 1];
         if (typeof scriptContent === "string" && scriptContent.trim() !== "") {
-          const nestedArguments = scriptContent.trim().split(/\s+/);
-          const nestedCommandName = nestedArguments.shift() ?? "";
-          const nestedClassification = this.classifyCommand({
-            commandName: nestedCommandName,
-            arguments: nestedArguments,
-            workingDirectoryPath: input.workingDirectoryPath,
-          });
-          if (nestedClassification.isInstallationAttempt) {
+          const segments = scriptContent.split(/[;&|]+/);
+          let hasEffectiveSegment = false;
+          for (const segment of segments) {
+            const segmentArguments = segment.trim().split(/\s+/);
+            const segmentCommandName = segmentArguments.shift() ?? "";
+            if (segmentCommandName === "") {
+              continue;
+            }
+            hasEffectiveSegment = true;
+            const nestedClassification = this.classifyCommand({
+              commandName: segmentCommandName,
+              arguments: segmentArguments,
+              workingDirectoryPath: input.workingDirectoryPath,
+            });
+            if (nestedClassification.isInstallationAttempt) {
+              return {
+                ...nestedClassification,
+                effectKind: "dependency-resolution-change",
+              };
+            }
+          }
+          if (hasEffectiveSegment) {
             return {
-              ...nestedClassification,
-              effectKind: "dependency-resolution-change",
+              isInstallationAttempt: false,
+              effectKind: "not-installation",
+              detectedTarget: null,
+              pinnedVersionOrCommit: null,
+              rulesVersion: INSTALLATION_RULES_VERSION,
             };
           }
         }
@@ -242,20 +323,26 @@ export class InstallationOperationClassifier {
         rulesVersion: INSTALLATION_RULES_VERSION,
       };
     }
-    // 7) 未知命令：fail-closed 按安装尝试处理（由门禁决定，不静默放行）
-    if (normalizedName === "") {
+    // 7) 已知普通/只读命令：明确不是安装（白名单）。
+    if (
+      KNOWN_NON_INSTALLATION_COMMANDS.has(normalizedName) ||
+      (normalizedName === "git" && !input.arguments[0]?.startsWith("-"))
+    ) {
       return {
-        isInstallationAttempt: true,
-        effectKind: "dependency-resolution-change",
+        isInstallationAttempt: false,
+        effectKind: "not-installation",
         detectedTarget: null,
         pinnedVersionOrCommit: null,
         rulesVersion: INSTALLATION_RULES_VERSION,
       };
     }
+    // 8) 其余未知命令（含绝对路径可执行文件、大小写变体、间接脚本）：
+    //    副作用无法确定 → fail-closed 按安装尝试处理，由门禁拒绝或询问。
+    //    （B6R-01：未知非空命令不得返回 not-installation。）
     return {
-      isInstallationAttempt: false,
-      effectKind: "not-installation",
-      detectedTarget: null,
+      isInstallationAttempt: true,
+      effectKind: "dependency-resolution-change",
+      detectedTarget: input.commandName,
       pinnedVersionOrCommit: null,
       rulesVersion: INSTALLATION_RULES_VERSION,
     };

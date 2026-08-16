@@ -149,15 +149,37 @@ export interface ResourceReadonlyVerificationPort {
  * 安装前询问控制器：
  * - 发起询问并把 Agent 置为 awaiting-existing-resource-answer；
  * - 用户答"已有" → 只读验证；通过 → 可复用；不通过 → 返回差异继续等待；
- * - 用户答"没有" → 进入开关检查流程（返回 canProceedToInstallation=false
- *   与 settings 状态，由上层决定拒绝或发起授权请求）。
+ * - 用户答"没有" → 进入开关检查流程；
+ * - 每次回答生成带来源与 revision 的询问回执（B6R-01）：
+ *   只有用户明确回答"没有可用资源"的有效回执才能创建安装授权请求。
  */
+export interface ExistingResourceInquiryReceipt {
+  inquiryId: string;
+  /** 认证用户（harness 注入）。 */
+  authenticatedUserId: string;
+  /** 具体发起 Agent 实例（不可复用）。 */
+  requestingAgentInstanceId: string;
+  taskExecutionId: string;
+  requiredCapabilitySummary: string;
+  intendedUse: string;
+  compatibleCandidateTypes: string[];
+  answer: ExistingResourceAnswer | null;
+  /** revision（每次回答/变化 +1）。 */
+  revision: number;
+  answeredAtIso: string | null;
+}
+
 export class ExistingResourceInquiryController {
+  private readonly receiptsByInquiryId = new Map<string, ExistingResourceInquiryReceipt>();
+
   constructor(
     private readonly verificationPort: ResourceReadonlyVerificationPort | null,
   ) {}
 
   createInquiry(input: {
+    authenticatedUserId: string;
+    requestingAgentInstanceId: string;
+    taskExecutionId: string;
     requiredCapabilitySummary: string;
     intendedUse: string;
     compatibleCandidateTypes: string[];
@@ -171,15 +193,24 @@ export class ExistingResourceInquiryController {
     };
   }
 
+  /** 读取询问回执（不存在返回 null）。 */
+  readReceipt(inquiryId: string): ExistingResourceInquiryReceipt | null {
+    return this.receiptsByInquiryId.get(inquiryId) ?? null;
+  }
+
   /**
    * 处理用户回答。返回：
    * - has-resource 且验证通过 → resource-accepted；
    * - has-resource 且验证失败 → resource-rejected-with-differences
    *   （继续等待用户决定，不得自动安装）；
    * - no-resource → proceed-to-switch-check。
+   * 回答记录到回执（revision 递增）。
    */
   async handleAnswer(input: {
     inquiry: ExistingResourceInquiry;
+    authenticatedUserId: string;
+    requestingAgentInstanceId: string;
+    taskExecutionId: string;
     answer: ExistingResourceAnswer;
   }): Promise<
     | {
@@ -192,6 +223,20 @@ export class ExistingResourceInquiryController {
       }
     | { outcome: "proceed-to-switch-check" }
   > {
+    const currentReceipt = this.receiptsByInquiryId.get(input.inquiry.inquiryId);
+    const receipt: ExistingResourceInquiryReceipt = {
+      inquiryId: input.inquiry.inquiryId,
+      authenticatedUserId: input.authenticatedUserId,
+      requestingAgentInstanceId: input.requestingAgentInstanceId,
+      taskExecutionId: input.taskExecutionId,
+      requiredCapabilitySummary: input.inquiry.requiredCapabilitySummary,
+      intendedUse: input.inquiry.intendedUse,
+      compatibleCandidateTypes: [...input.inquiry.compatibleCandidateTypes],
+      answer: input.answer,
+      revision: (currentReceipt?.revision ?? 0) + 1,
+      answeredAtIso: new Date().toISOString(),
+    };
+    this.receiptsByInquiryId.set(input.inquiry.inquiryId, receipt);
     if (input.answer.answer === "no-resource") {
       return { outcome: "proceed-to-switch-check" };
     }
@@ -222,6 +267,8 @@ export interface AssistInstallationRequest {
   nonce: string;
   requestingAgentInstanceId: string;
   taskExecutionId: string;
+  inquiryReceiptId: string;
+  userDecisionReference: string;
   sourceUrlOrRegistry: string;
   packageOrRepositoryIdentifier: string;
   pinnedVersionOrCommit: string | null;
@@ -279,12 +326,15 @@ export class AssistInstallationAuthorizationController {
   }
 
   /**
-   * 开关开启后生成安装授权请求（不授权执行）。
-   * 开关关闭 → 拒绝（fail-closed）。
+   * 开关开启且存在"没有可用资源"的有效询问回执后生成安装授权请求。
+   * 开关关闭 → 拒绝（fail-closed）。回执必须绑定认证用户、发起 Agent、
+   * 任务与能力，且回答明确为 no-resource。
    */
   async createAuthorizationRequest(input: {
+    inquiryReceipt: ExistingResourceInquiryReceipt;
     requestingAgentInstanceId: string;
     taskExecutionId: string;
+    userDecisionReference: string;
     sourceUrlOrRegistry: string;
     packageOrRepositoryIdentifier: string;
     pinnedVersionOrCommit: string | null;
@@ -297,11 +347,22 @@ export class AssistInstallationAuthorizationController {
     expectedChangesSummary: string;
   }): Promise<
     | { outcome: "denied-settings-disabled" }
+    | { outcome: "denied-invalid-inquiry-receipt" }
     | { outcome: "request-created"; request: AssistInstallationRequest }
   > {
     const enabled = await this.isInstallationEnabled();
     if (!enabled) {
       return { outcome: "denied-settings-disabled" };
+    }
+    // 有效回执校验：绑定当前 Agent/任务、回答明确 no-resource
+    if (
+      input.inquiryReceipt.answer === null ||
+      input.inquiryReceipt.answer.answer !== "no-resource" ||
+      input.inquiryReceipt.requestingAgentInstanceId !==
+        input.requestingAgentInstanceId ||
+      input.inquiryReceipt.taskExecutionId !== input.taskExecutionId
+    ) {
+      return { outcome: "denied-invalid-inquiry-receipt" };
     }
     return {
       outcome: "request-created",
@@ -310,6 +371,8 @@ export class AssistInstallationAuthorizationController {
         nonce: `nonce-${randomUUID()}`,
         requestingAgentInstanceId: input.requestingAgentInstanceId,
         taskExecutionId: input.taskExecutionId,
+        inquiryReceiptId: input.inquiryReceipt.inquiryId,
+        userDecisionReference: input.userDecisionReference,
         sourceUrlOrRegistry: input.sourceUrlOrRegistry,
         packageOrRepositoryIdentifier: input.packageOrRepositoryIdentifier,
         pinnedVersionOrCommit: input.pinnedVersionOrCommit,
@@ -357,17 +420,24 @@ export class AssistInstallationAuthorizationController {
   }
 
   /**
-   * 执行前本地复检（ADR-0019 §6）：模式必须仍为 assist、设置 revision
-   * 未变、nonce 未消费未过期、绑定参数哈希一致。
+   * 执行前本地复检（ADR-0019 §6 / B6R-01）：
+   * - 模式必须仍为 assist（由可信运行时提供）；
+   * - 设置 revision 从可信设置存储读取（不信任调用方传参）；
+   * - nonce 未消费未过期；
+   * - 绑定参数哈希一致（含用户裁决、Agent、任务、询问回执、完整安装计划）。
    * 复检通过即消费授权（allow-once 一次有效）。
    */
   async verifyAndConsumeAuthorization(input: {
     request: AssistInstallationRequest;
     currentMode: string;
-    currentSettingsRevision: number;
   }): Promise<{ allowed: boolean; reason: string | null }> {
     if (input.currentMode !== "assist") {
       return { allowed: false, reason: `模式已非 assist（${input.currentMode}）` };
+    }
+    // 可信来源读取设置 revision（开关关闭立即拒绝）
+    const settings = await this.settingsStore.readSettings();
+    if (!settings.isAssistInstallationEnabled) {
+      return { allowed: false, reason: "安装开关已关闭，授权失效" };
     }
     const decision = this.grantedByNonce.get(input.request.nonce);
     if (decision === undefined) {
@@ -379,7 +449,7 @@ export class AssistInstallationAuthorizationController {
     if (new Date(decision.expiresAtIso).getTime() <= this.nowUnixMilliseconds()) {
       return { allowed: false, reason: "授权已过期" };
     }
-    if (decision.settingsRevision !== input.currentSettingsRevision) {
+    if (decision.settingsRevision !== settings.revision) {
       return { allowed: false, reason: "设置 revision 已变化，授权失效" };
     }
     const currentParametersHash = this.hashRequestParameters(input.request);
@@ -392,9 +462,13 @@ export class AssistInstallationAuthorizationController {
     return { allowed: true, reason: null };
   }
 
-  /** 参数哈希（绑定字段全集，变化即失效）。 */
+  /** 参数哈希（绑定字段全集：用户裁决/Agent/任务/询问回执/来源/包/版本/计划）。 */
   private hashRequestParameters(request: AssistInstallationRequest): string {
     const canonical = JSON.stringify({
+      userDecisionReference: request.userDecisionReference,
+      requestingAgentInstanceId: request.requestingAgentInstanceId,
+      taskExecutionId: request.taskExecutionId,
+      inquiryReceiptId: request.inquiryReceiptId,
       sourceUrlOrRegistry: request.sourceUrlOrRegistry,
       packageOrRepositoryIdentifier: request.packageOrRepositoryIdentifier,
       pinnedVersionOrCommit: request.pinnedVersionOrCommit,

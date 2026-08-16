@@ -20,6 +20,7 @@ import {
   AssistInstallationAuthorizationController,
   assistInstallationSettingsFilePath,
 } from "../../../packages/core/src/tools/assist-installation-gate.js";
+import type { ExistingResourceInquiryReceipt } from "../../../packages/core/src/tools/assist-installation-gate.js";
 
 let temporaryDirectory: string;
 
@@ -33,6 +34,38 @@ afterEach(async () => {
 
 function makeSettingsStore(): AssistInstallationSettingsStore {
   return new AssistInstallationSettingsStore({ baseDirectory: temporaryDirectory });
+}
+
+/** 生成"没有可用资源"的询问回执（B6R-01：创建授权请求的前置条件）。 */
+async function makeNoResourceReceipt(
+  overrides: { agent?: string; task?: string } = {},
+): Promise<ExistingResourceInquiryReceipt> {
+  const inquiryController = new ExistingResourceInquiryController(null);
+  const agent = overrides.agent ?? "agent-a";
+  const task = overrides.task ?? "task-1";
+  const inquiry = inquiryController.createInquiry({
+    authenticatedUserId: "user-1",
+    requestingAgentInstanceId: agent,
+    taskExecutionId: task,
+    requiredCapabilitySummary: "需要依赖 X",
+    intendedUse: "功能 Y",
+    compatibleCandidateTypes: [],
+  });
+  const result = await inquiryController.handleAnswer({
+    inquiry,
+    authenticatedUserId: "user-1",
+    requestingAgentInstanceId: agent,
+    taskExecutionId: task,
+    answer: { answer: "no-resource" },
+  });
+  if (result.outcome !== "proceed-to-switch-check") {
+    throw new Error("回执应生成");
+  }
+  const receipt = inquiryController.readReceipt(inquiry.inquiryId);
+  if (receipt === null) {
+    throw new Error("回执缺失");
+  }
+  return receipt;
 }
 
 describe("InstallationOperationClassifier", () => {
@@ -180,14 +213,14 @@ describe("InstallationOperationClassifier", () => {
         workingDirectoryPath: null,
       }).isInstallationAttempt,
     ).toBe(false);
-    // powershell 无 -Command 参数 → 不误报
+    // powershell 无 -Command 参数：解释器副作用无法确定 → fail-closed（安装尝试）
     expect(
       classifier.classifyCommand({
         commandName: "powershell",
         arguments: ["-NoProfile"],
         workingDirectoryPath: null,
       }).isInstallationAttempt,
-    ).toBe(false);
+    ).toBe(true);
     // 空命令名 fail-closed 视为安装尝试
     expect(
       classifier.classifyCommand({
@@ -196,11 +229,100 @@ describe("InstallationOperationClassifier", () => {
         workingDirectoryPath: null,
       }).isInstallationAttempt,
     ).toBe(true);
-    // 未知命令不误报
+    // 未知命令 fail-closed（B6R-01：副作用无法确定时不得放行）
     expect(
       classifier.classifyCommand({
         commandName: "totally-unknown-cmd",
         arguments: [],
+        workingDirectoryPath: null,
+      }).isInstallationAttempt,
+    ).toBe(true);
+  });
+
+  it("B6R-01 失败反例：未知命令/绝对路径可执行/大小写/多命令脚本 fail-closed", () => {
+    // 未知非空命令：副作用无法确定 → fail-closed（视为安装尝试，由门禁决定）
+    expect(
+      classifier.classifyCommand({
+        commandName: "mystery-tool-xyz",
+        arguments: ["run"],
+        workingDirectoryPath: null,
+      }).isInstallationAttempt,
+    ).toBe(true);
+    // 可执行文件绝对路径
+    expect(
+      classifier.classifyCommand({
+        commandName: "C:\\tools\\installer.exe",
+        arguments: ["--silent"],
+        workingDirectoryPath: null,
+      }).isInstallationAttempt,
+    ).toBe(true);
+    expect(
+      classifier.classifyCommand({
+        commandName: "/usr/local/bin/setup.sh",
+        arguments: [],
+        workingDirectoryPath: null,
+      }).isInstallationAttempt,
+    ).toBe(true);
+    // 大小写变体（NPM INSTALL）
+    expect(
+      classifier.classifyCommand({
+        commandName: "NPM",
+        arguments: ["INSTALL", "lodash"],
+        workingDirectoryPath: null,
+      }).isInstallationAttempt,
+    ).toBe(true);
+    // 多命令脚本：任一段包含安装 → 整体安装尝试
+    expect(
+      classifier.classifyCommand({
+        commandName: "sh",
+        arguments: ["-c", "git status; npm install lodash"],
+        workingDirectoryPath: null,
+      }).isInstallationAttempt,
+    ).toBe(true);
+    // 别名/间接脚本：包装后仍按效果分类
+    expect(
+      classifier.classifyCommand({
+        commandName: "bash",
+        arguments: ["-c", "alias ni='npm install'; ni react"],
+        workingDirectoryPath: null,
+      }).isInstallationAttempt,
+    ).toBe(true);
+    // 空/纯分隔符脚本 → 无有效段 → fail-closed（不得误判为非安装）
+    expect(
+      classifier.classifyCommand({
+        commandName: "sh",
+        arguments: ["-c", ";;"],
+        workingDirectoryPath: null,
+      }).isInstallationAttempt,
+    ).toBe(true);
+    expect(
+      classifier.classifyCommand({
+        commandName: "powershell",
+        arguments: ["-Command", "  "],
+        workingDirectoryPath: null,
+      }).isInstallationAttempt,
+    ).toBe(true);
+    // powershell 纯分隔符脚本 → 无有效段 → fail-closed
+    expect(
+      classifier.classifyCommand({
+        commandName: "powershell",
+        arguments: ["-Command", ";;"],
+        workingDirectoryPath: null,
+      }).isInstallationAttempt,
+    ).toBe(true);
+    // powershell 白名单命令脚本 → 非安装
+    expect(
+      classifier.classifyCommand({
+        commandName: "powershell",
+        arguments: ["-Command", "dir"],
+        workingDirectoryPath: null,
+      }).isInstallationAttempt,
+    ).toBe(false);
+    // 白名单普通命令包装（cmd /c dir 已测）与直接白名单命令
+    expect(
+      classifier.classifyCommand({
+        commandName: "ls",
+        arguments: ["-la"],
         workingDirectoryPath: null,
       }).isInstallationAttempt,
     ).toBe(false);
@@ -236,6 +358,12 @@ describe("AssistInstallationSettingsStore", () => {
     // 损坏主文件从备份恢复
     await fs.writeFile(settingsPath, "{ 损坏", "utf8");
     expect((await store.readSettings()).isAssistInstallationEnabled).toBe(true);
+    // 合法 JSON 但缺字段（schema 校验失败）→ journal-corrupted
+    await fs.writeFile(settingsPath, JSON.stringify({ schemaVersion: 1 }), "utf8");
+    await fs.writeFile(`${settingsPath}.bak`, JSON.stringify({ schemaVersion: 1 }), "utf8");
+    await expect(store.readSettings()).rejects.toMatchObject({
+      errorCode: "journal-corrupted",
+    });
   });
 });
 
@@ -249,6 +377,9 @@ describe("ExistingResourceInquiryController", () => {
       }),
     });
     const inquiry = controller.createInquiry({
+      authenticatedUserId: "user-1",
+      requestingAgentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
       requiredCapabilitySummary: "需要 Node.js 20 运行时",
       intendedUse: "运行测试",
       compatibleCandidateTypes: ["node-runtime"],
@@ -256,6 +387,9 @@ describe("ExistingResourceInquiryController", () => {
     expect(inquiry.inquiryId).toMatch(/^inquiry-/);
     const result = await controller.handleAnswer({
       inquiry,
+      authenticatedUserId: "user-1",
+      requestingAgentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
       answer: {
         answer: "has-resource",
         resourceReference: "C:/apps/node20",
@@ -274,12 +408,18 @@ describe("ExistingResourceInquiryController", () => {
       }),
     });
     const inquiry = controller.createInquiry({
+      authenticatedUserId: "user-1",
+      requestingAgentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
       requiredCapabilitySummary: "需要 Node.js 20",
       intendedUse: "构建",
       compatibleCandidateTypes: ["node-runtime"],
     });
     const result = await controller.handleAnswer({
       inquiry,
+      authenticatedUserId: "user-1",
+      requestingAgentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
       answer: {
         answer: "has-resource",
         resourceReference: "C:/apps/node18",
@@ -295,17 +435,27 @@ describe("ExistingResourceInquiryController", () => {
   it("用户明确回答没有资源 → 进入开关检查；验证端口未装配时不可确认", async () => {
     const controller = new ExistingResourceInquiryController(null);
     const inquiry = controller.createInquiry({
+      authenticatedUserId: "user-1",
+      requestingAgentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
       requiredCapabilitySummary: "需要依赖 X",
       intendedUse: "功能 Y",
       compatibleCandidateTypes: [],
     });
     const noResource = await controller.handleAnswer({
       inquiry,
+      authenticatedUserId: "user-1",
+      requestingAgentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
       answer: { answer: "no-resource" },
     });
     expect(noResource.outcome).toBe("proceed-to-switch-check");
+    expect(controller.readReceipt(inquiry.inquiryId)?.answer).toEqual({ answer: "no-resource" });
     const unverifiable = await controller.handleAnswer({
       inquiry,
+      authenticatedUserId: "user-1",
+      requestingAgentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
       answer: {
         answer: "has-resource",
         resourceReference: "x",
@@ -334,8 +484,10 @@ describe("AssistInstallationAuthorizationController", () => {
   it("开关默认关闭：开启开关前创建请求被拒绝（denied-settings-disabled）", async () => {
     const controller = makeController();
     const result = await controller.createAuthorizationRequest({
+      inquiryReceipt: await makeNoResourceReceipt(),
       requestingAgentInstanceId: "agent-a",
       taskExecutionId: "task-1",
+      userDecisionReference: "user-decision-1",
       sourceUrlOrRegistry: "https://registry.npmjs.org",
       packageOrRepositoryIdentifier: "lodash",
       pinnedVersionOrCommit: "4.17.21",
@@ -362,8 +514,10 @@ describe("AssistInstallationAuthorizationController", () => {
       authorizationTtlMilliseconds: 300_000,
     });
     const requestResult = await controller.createAuthorizationRequest({
+      inquiryReceipt: await makeNoResourceReceipt(),
       requestingAgentInstanceId: "agent-a",
       taskExecutionId: "task-1",
+      userDecisionReference: "user-decision-1",
       sourceUrlOrRegistry: "https://registry.npmjs.org",
       packageOrRepositoryIdentifier: "lodash",
       pinnedVersionOrCommit: "4.17.21",
@@ -390,14 +544,12 @@ describe("AssistInstallationAuthorizationController", () => {
     const verification = await controller.verifyAndConsumeAuthorization({
       request,
       currentMode: "assist",
-      currentSettingsRevision: 1,
     });
     expect(verification).toEqual({ allowed: true, reason: null });
     // 重放：同 nonce 再复检 → 拒绝
     const replay = await controller.verifyAndConsumeAuthorization({
       request,
       currentMode: "assist",
-      currentSettingsRevision: 1,
     });
     expect(replay.allowed).toBe(false);
   });
@@ -414,8 +566,10 @@ describe("AssistInstallationAuthorizationController", () => {
       authorizationTtlMilliseconds: 300_000,
     });
     const requestResult = await controller.createAuthorizationRequest({
+      inquiryReceipt: await makeNoResourceReceipt(),
       requestingAgentInstanceId: "agent-a",
       taskExecutionId: "task-1",
+      userDecisionReference: "user-decision-1",
       sourceUrlOrRegistry: "https://registry.npmjs.org",
       packageOrRepositoryIdentifier: "lodash",
       pinnedVersionOrCommit: "4.17.21",
@@ -436,14 +590,12 @@ describe("AssistInstallationAuthorizationController", () => {
     const drifted = await controller.verifyAndConsumeAuthorization({
       request: { ...request, pinnedVersionOrCommit: "5.0.0" },
       currentMode: "assist",
-      currentSettingsRevision: 1,
     });
     expect(drifted).toEqual({ allowed: false, reason: expect.stringContaining("参数已变化") });
     // 模式切换
     const wrongMode = await controller.verifyAndConsumeAuthorization({
       request,
       currentMode: "devolve",
-      currentSettingsRevision: 1,
     });
     expect(wrongMode.allowed).toBe(false);
     // 设置 revision 变化
@@ -454,13 +606,14 @@ describe("AssistInstallationAuthorizationController", () => {
     const revisionChanged = await controller.verifyAndConsumeAuthorization({
       request,
       currentMode: "assist",
-      currentSettingsRevision: 2,
     });
     expect(revisionChanged.allowed).toBe(false);
     // 过期（需要重新授权）
     const secondRequestResult = await controller.createAuthorizationRequest({
+      inquiryReceipt: await makeNoResourceReceipt(),
       requestingAgentInstanceId: "agent-a",
       taskExecutionId: "task-1",
+      userDecisionReference: "user-decision-1",
       sourceUrlOrRegistry: "https://registry.npmjs.org",
       packageOrRepositoryIdentifier: "lodash",
       pinnedVersionOrCommit: "4.17.21",
@@ -487,7 +640,6 @@ describe("AssistInstallationAuthorizationController", () => {
     const expired = await controller.verifyAndConsumeAuthorization({
       request: secondRequest,
       currentMode: "assist",
-      currentSettingsRevision: 2,
     });
     expect(expired.allowed).toBe(false);
   });
@@ -503,8 +655,10 @@ describe("AssistInstallationAuthorizationController", () => {
       nowUnixMilliseconds: () => clockMilliseconds,
     });
     const requestResult = await controller.createAuthorizationRequest({
+      inquiryReceipt: await makeNoResourceReceipt(),
       requestingAgentInstanceId: "agent-a",
       taskExecutionId: "task-1",
+      userDecisionReference: "user-decision-1",
       sourceUrlOrRegistry: "s",
       packageOrRepositoryIdentifier: "p",
       pinnedVersionOrCommit: "1.0.0",
@@ -527,8 +681,329 @@ describe("AssistInstallationAuthorizationController", () => {
     const verification = await controller.verifyAndConsumeAuthorization({
       request: requestResult.request,
       currentMode: "assist",
-      currentSettingsRevision: 1,
     });
     expect(verification).toEqual({ allowed: false, reason: expect.stringContaining("无对应授权") });
+  });
+
+  it("B6R-01：回执无效（未回答/非 no-resource/Agent 不匹配）→ 不能创建授权请求", async () => {
+    const settingsStore = makeSettingsStore();
+    await settingsStore.updateInstallationEnabled({
+      expectedRevision: 0,
+      isAssistInstallationEnabled: true,
+    });
+    const controller = new AssistInstallationAuthorizationController({
+      settingsStore,
+      nowUnixMilliseconds: () => clockMilliseconds,
+    });
+    // 已有资源回答的回执 → 拒绝
+    const inquiryController = new ExistingResourceInquiryController(null);
+    const inquiry = inquiryController.createInquiry({
+      authenticatedUserId: "user-1",
+      requestingAgentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
+      requiredCapabilitySummary: "需要依赖",
+      intendedUse: "功能",
+      compatibleCandidateTypes: [],
+    });
+    await inquiryController.handleAnswer({
+      inquiry,
+      authenticatedUserId: "user-1",
+      requestingAgentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
+      answer: {
+        answer: "has-resource",
+        resourceReference: "C:/apps/node",
+        providedResourceType: "node",
+      },
+    });
+    const hasResourceReceipt = inquiryController.readReceipt(inquiry.inquiryId)!;
+    const invalidResult = await controller.createAuthorizationRequest({
+      inquiryReceipt: hasResourceReceipt,
+      requestingAgentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
+      userDecisionReference: "u1",
+      sourceUrlOrRegistry: "s",
+      packageOrRepositoryIdentifier: "p",
+      pinnedVersionOrCommit: "1.0.0",
+      integrityInformation: null,
+      targetPathOrScope: "t",
+      packageManager: "npm",
+      parametersJson: "{}",
+      requiresNetwork: true,
+      hasInstallScripts: false,
+      expectedChangesSummary: "s",
+    });
+    expect(invalidResult.outcome).toBe("denied-invalid-inquiry-receipt");
+    // 回执 Agent 与请求 Agent 不匹配 → 拒绝
+    const otherAgentReceipt = await makeNoResourceReceipt({ agent: "agent-b" });
+    const agentMismatch = await controller.createAuthorizationRequest({
+      inquiryReceipt: otherAgentReceipt,
+      requestingAgentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
+      userDecisionReference: "u1",
+      sourceUrlOrRegistry: "s",
+      packageOrRepositoryIdentifier: "p",
+      pinnedVersionOrCommit: "1.0.0",
+      integrityInformation: null,
+      targetPathOrScope: "t",
+      packageManager: "npm",
+      parametersJson: "{}",
+      requiresNetwork: true,
+      hasInstallScripts: false,
+      expectedChangesSummary: "s",
+    });
+    expect(agentMismatch.outcome).toBe("denied-invalid-inquiry-receipt");
+  });
+
+  it("B6R-01：同一 nonce 只被原 Agent/任务的原计划消费；双 Agent/双任务隔离", async () => {
+    const settingsStore = makeSettingsStore();
+    await settingsStore.updateInstallationEnabled({
+      expectedRevision: 0,
+      isAssistInstallationEnabled: true,
+    });
+    const controller = new AssistInstallationAuthorizationController({
+      settingsStore,
+      nowUnixMilliseconds: () => clockMilliseconds,
+    });
+    const requestAgentA = await controller.createAuthorizationRequest({
+      inquiryReceipt: await makeNoResourceReceipt({ agent: "agent-a", task: "task-1" }),
+      requestingAgentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
+      userDecisionReference: "user-decision-1",
+      sourceUrlOrRegistry: "https://registry.npmjs.org",
+      packageOrRepositoryIdentifier: "lodash",
+      pinnedVersionOrCommit: "4.17.21",
+      integrityInformation: null,
+      targetPathOrScope: "./node_modules",
+      packageManager: "npm",
+      parametersJson: "{}",
+      requiresNetwork: true,
+      hasInstallScripts: false,
+      expectedChangesSummary: "安装 lodash",
+    });
+    if (requestAgentA.outcome !== "request-created") {
+      throw new Error("请求 A 应创建成功");
+    }
+    const requestA = requestAgentA.request;
+    await controller.authorizeAllowOnce({ request: requestA, decision: "allow-once" });
+    // Agent B 修改字段借用 nonce → 参数哈希不匹配 → 拒绝
+    const hijacked = await controller.verifyAndConsumeAuthorization({
+      request: { ...requestA, requestingAgentInstanceId: "agent-b" },
+      currentMode: "assist",
+    });
+    expect(hijacked.allowed).toBe(false);
+    // 任务字段修改 → 拒绝
+    const taskDrifted = await controller.verifyAndConsumeAuthorization({
+      request: { ...requestA, taskExecutionId: "task-other" },
+      currentMode: "assist",
+    });
+    expect(taskDrifted.allowed).toBe(false);
+    // 用户裁决引用修改 → 拒绝
+    const decisionDrifted = await controller.verifyAndConsumeAuthorization({
+      request: { ...requestA, userDecisionReference: "user-decision-evil" },
+      currentMode: "assist",
+    });
+    expect(decisionDrifted.allowed).toBe(false);
+    // 原 Agent/任务/计划 → 允许一次
+    const consumed = await controller.verifyAndConsumeAuthorization({
+      request: requestA,
+      currentMode: "assist",
+    });
+    expect(consumed.allowed).toBe(true);
+    // 重放 → 拒绝
+    const replay = await controller.verifyAndConsumeAuthorization({
+      request: requestA,
+      currentMode: "assist",
+    });
+    expect(replay.allowed).toBe(false);
+    // 并发消费：两个同时复检同一 nonce → 只有一个成功
+    const concurrentRequest = await controller.createAuthorizationRequest({
+      inquiryReceipt: await makeNoResourceReceipt({ agent: "agent-a", task: "task-1" }),
+      requestingAgentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
+      userDecisionReference: "user-decision-2",
+      sourceUrlOrRegistry: "https://registry.npmjs.org",
+      packageOrRepositoryIdentifier: "lodash",
+      pinnedVersionOrCommit: "4.17.21",
+      integrityInformation: null,
+      targetPathOrScope: "./node_modules",
+      packageManager: "npm",
+      parametersJson: "{}",
+      requiresNetwork: true,
+      hasInstallScripts: false,
+      expectedChangesSummary: "安装 lodash",
+    });
+    if (concurrentRequest.outcome !== "request-created") {
+      throw new Error("并发请求应创建成功");
+    }
+    const concurrent = concurrentRequest.request;
+    await controller.authorizeAllowOnce({ request: concurrent, decision: "allow-once" });
+    const results = await Promise.all([
+      controller.verifyAndConsumeAuthorization({
+        request: concurrent,
+        currentMode: "assist",
+      }),
+      controller.verifyAndConsumeAuthorization({
+        request: concurrent,
+        currentMode: "assist",
+      }),
+    ]);
+    expect(results.filter((result) => result.allowed).length).toBe(1);
+  });
+
+  it("B6R-01：开关关闭后已授权请求立即失效（复检读取可信设置存储）", async () => {
+    const settingsStore = makeSettingsStore();
+    await settingsStore.updateInstallationEnabled({
+      expectedRevision: 0,
+      isAssistInstallationEnabled: true,
+    });
+    const controller = new AssistInstallationAuthorizationController({
+      settingsStore,
+      nowUnixMilliseconds: () => clockMilliseconds,
+    });
+    const requestResult = await controller.createAuthorizationRequest({
+      inquiryReceipt: await makeNoResourceReceipt(),
+      requestingAgentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
+      userDecisionReference: "user-decision-1",
+      sourceUrlOrRegistry: "s",
+      packageOrRepositoryIdentifier: "p",
+      pinnedVersionOrCommit: "1.0.0",
+      integrityInformation: null,
+      targetPathOrScope: "t",
+      packageManager: "npm",
+      parametersJson: "{}",
+      requiresNetwork: true,
+      hasInstallScripts: false,
+      expectedChangesSummary: "s",
+    });
+    if (requestResult.outcome !== "request-created") {
+      throw new Error("请求应创建成功");
+    }
+    const request = requestResult.request;
+    await controller.authorizeAllowOnce({ request, decision: "allow-once" });
+    // 开关关闭（revision 变化）→ 复检拒绝（即使 nonce 未过期）
+    await settingsStore.updateInstallationEnabled({
+      expectedRevision: 1,
+      isAssistInstallationEnabled: false,
+    });
+    const disabled = await controller.verifyAndConsumeAuthorization({
+      request,
+      currentMode: "assist",
+    });
+    expect(disabled).toEqual({ allowed: false, reason: expect.stringContaining("开关已关闭") });
+  });
+
+  it("B6R-01：开关仍开启但 revision 变化/过期/已消费授权全部 fail-closed", async () => {
+    const settingsStore = makeSettingsStore();
+    await settingsStore.updateInstallationEnabled({
+      expectedRevision: 0,
+      isAssistInstallationEnabled: true,
+    });
+    const controller = new AssistInstallationAuthorizationController({
+      settingsStore,
+      nowUnixMilliseconds: () => clockMilliseconds,
+      authorizationTtlMilliseconds: 300_000,
+    });
+    const requestResult = await controller.createAuthorizationRequest({
+      inquiryReceipt: await makeNoResourceReceipt(),
+      requestingAgentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
+      userDecisionReference: "user-decision-1",
+      sourceUrlOrRegistry: "s",
+      packageOrRepositoryIdentifier: "p",
+      pinnedVersionOrCommit: "1.0.0",
+      integrityInformation: null,
+      targetPathOrScope: "t",
+      packageManager: "npm",
+      parametersJson: "{}",
+      requiresNetwork: true,
+      hasInstallScripts: false,
+      expectedChangesSummary: "s",
+    });
+    if (requestResult.outcome !== "request-created") {
+      throw new Error("请求应创建成功");
+    }
+    const request = requestResult.request;
+    await controller.authorizeAllowOnce({ request, decision: "allow-once" });
+    // 开关仍开启但 revision 变化（重新保存）→ 拒绝
+    await settingsStore.updateInstallationEnabled({
+      expectedRevision: 1,
+      isAssistInstallationEnabled: true,
+    });
+    const revisionChanged = await controller.verifyAndConsumeAuthorization({
+      request,
+      currentMode: "assist",
+    });
+    expect(revisionChanged).toEqual({
+      allowed: false,
+      reason: expect.stringContaining("revision 已变化"),
+    });
+    // 新请求：授权后消费 → 已消费 nonce 再次授权返回 null；过期 → 拒绝
+    const secondResult = await controller.createAuthorizationRequest({
+      inquiryReceipt: await makeNoResourceReceipt(),
+      requestingAgentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
+      userDecisionReference: "user-decision-2",
+      sourceUrlOrRegistry: "s",
+      packageOrRepositoryIdentifier: "p",
+      pinnedVersionOrCommit: "1.0.0",
+      integrityInformation: null,
+      targetPathOrScope: "t",
+      packageManager: "npm",
+      parametersJson: "{}",
+      requiresNetwork: false,
+      hasInstallScripts: false,
+      expectedChangesSummary: "s",
+    });
+    if (secondResult.outcome !== "request-created") {
+      throw new Error("请求应创建成功");
+    }
+    const secondRequest = secondResult.request;
+    await controller.authorizeAllowOnce({
+      request: secondRequest,
+      decision: "allow-once",
+    });
+    await controller.verifyAndConsumeAuthorization({
+      request: secondRequest,
+      currentMode: "assist",
+    });
+    // 已消费 nonce 再次 authorize → null
+    const reAuthorize = await controller.authorizeAllowOnce({
+      request: secondRequest,
+      decision: "allow-once",
+    });
+    expect(reAuthorize).toBeNull();
+    // 过期
+    const thirdResult = await controller.createAuthorizationRequest({
+      inquiryReceipt: await makeNoResourceReceipt(),
+      requestingAgentInstanceId: "agent-a",
+      taskExecutionId: "task-1",
+      userDecisionReference: "user-decision-3",
+      sourceUrlOrRegistry: "s",
+      packageOrRepositoryIdentifier: "p",
+      pinnedVersionOrCommit: "1.0.0",
+      integrityInformation: null,
+      targetPathOrScope: "t",
+      packageManager: "npm",
+      parametersJson: "{}",
+      requiresNetwork: false,
+      hasInstallScripts: false,
+      expectedChangesSummary: "s",
+    });
+    if (thirdResult.outcome !== "request-created") {
+      throw new Error("请求应创建成功");
+    }
+    const thirdRequest = thirdResult.request;
+    await controller.authorizeAllowOnce({
+      request: thirdRequest,
+      decision: "allow-once",
+    });
+    clockMilliseconds += 400_000;
+    const expired = await controller.verifyAndConsumeAuthorization({
+      request: thirdRequest,
+      currentMode: "assist",
+    });
+    expect(expired).toEqual({ allowed: false, reason: expect.stringContaining("过期") });
   });
 });
