@@ -1,9 +1,44 @@
+# 依赖与构建
 node_modules/
 dist/
 coverage/
-.tmp/
+*.tsbuildinfo
+
+# 运行状态与临时数据
 .astarray/
+.tmp/
+*.tmp
+*.bak
+*.swp
+*.swo
+
+# 打包产物
 *.tgz
+
+# 日志
 *.log
+npm-debug.log*
+
+# 环境变量与凭据（任何变体一律不入库）
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+id_rsa
+id_rsa.pub
+*.cer
+*.crt
+
+# 编辑器/IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# 操作系统
 .DS_Store
+Thumbs.db
+Desktop.ini

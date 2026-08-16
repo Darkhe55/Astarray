@@ -18,6 +18,8 @@ Accepted — 2026-08-12
 
 来源在消息首次进入反馈系统时确定，并在入池、持久化、投递、重放和转发全过程保持不变。转发 Agent 不能把原始来源改写为自己。反馈进程必须在入池前校验来源结构，并结合已注册的 IPC 客户端身份检查具体 `agentInstanceId` 的来源声明；不合法或疑似伪造的消息被拒绝并写入审计记录。
 
+经 `DelegatedAgentCommunicationGrant` 建立的跨同级—下级直连仍遵循相同规则：消息来源是实际发送 Agent，grant 只决定可达路由，不允许 recipient、grantor 或 target 改写来源。独立反馈进程在投递前同时校验 sender IPC 身份、grant 三元组、消息范围、revision、到期与撤销状态。
+
 TUI、headless JSON、日志和审计事件必须保留来源，但不得用来源字段存储邮箱、API key 等不必要的敏感信息。
 
 ## 结果

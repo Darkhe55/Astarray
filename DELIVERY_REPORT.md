@@ -2,6 +2,8 @@
 
 > 生成日期：2026-08-12（含审计整改后复验）
 > 目标：T00–T14 全部计划任务 + T05A/T06A 增补 + 外部审计整改
+>
+> 状态更正（2026-08-14）：本报告是新增设计前的历史交付快照，不再代表当前最终完成状态。ADR-0014–0024 新增的安全、权限、Agent 控制流、个体记忆隔离和工具说明回访/通信转交任务仍在实现或复验中，其中 T06E–T06G/T08A/T08B 为 pending；完成对应验收和新 tarball 隔离验收前，不得宣称最新设计已经交付。
 
 ## 1. 任务完成情况
 
@@ -16,7 +18,14 @@
 | T06 | 工具注册表与最小权限 | ✅ done | 4 | 预览/子集/越权拒绝/审计/token 估算 |
 | T06A | 工具内破坏性变更备份层 | ✅ done | 4C | 自动 pre-image、quarantine 两阶段删除、删除授权控制、HIGH 审计链 |
 | T07 | Agent Runtime | ✅ done | 4 | Scripted + OpenAI 兼容（流式/工具/取消/超时/脱敏） |
+| T06B | Ponder 本地只读边界与敏感操作分类 | ⏳ pending | 4F | 待 ADR-0014 / AR-06A 动态验收 |
+| T06C | 全模式本地敏感内容禁读 | ⏳ pending | 4G | 待 ADR-0018 动态验收 |
+| T07B | 反自指读取与通用活锁守卫 | ⏳ pending | 4H | 待 ADR-0017 动态验收 |
+| T06D | 高严谨性事实验证工具 | ⏳ pending | 4I | 待 ADR-0016 动态验收 |
+| T07A | 明确完成协议与早停恢复 | ⏳ pending | 4J | 待 ADR-0015 / AR-06B 动态验收 |
 | T08 | 三级 Agent 编排 | ✅ done | 5 | 成功路径/失败重试/权限询问/unblock/非阻塞/cancel/Devolve |
+| T08A | 默认控制流、个体记忆隔离与三级 Agent 生命周期 | ⏳ pending | 6D | 待 ADR-0022/0023 / AR-06I 动态验收 |
+| T08B | 工具说明回访、无产品数量配额与受权通信转交 | ⏳ pending | 6E | 待 ADR-0024 / AR-06J 动态验收 |
 | T09 | 记忆、缓存与指标 | ✅ done | 6 | DiskCache（stale-reject/bypass）、MetricsRegistry、ANSI 清洗 |
 | T10 | TUI | ✅ done | 6 | Ink 组件测试（尺寸/CJK/emoji/超长/NO_COLOR/注入清洗） |
 | T11 | Headless CLI | ✅ done | 6 | 构建产物集成测试（stdout 纯 JSON/退出码稳定） |
@@ -68,6 +77,7 @@
 
 ## 6. 已知风险
 
+0. **新增设计尚未实现**：现有 tarball 不包含 T06B/T06C/T06D/T07A/T07B，Ponder 本地只读、全模式敏感禁读、事实验证、反自指/活锁和早停自动续跑均不能按已交付能力使用。
 1. **跨进程 mission 锁**：多 CLI 实例并发写同一 mission 由 revision 校验兜底（stale-revision 拒绝），无跨进程互斥锁。
 2. **LLM 任务分解**：主控制器使用确定性单任务分解；真实 LLM 分解需接入 OpenAI 兼容运行时（环境变量配置）。
 3. **指标未接入编排**：MetricsRegistry 已实现，`getMetricsSnapshot` 暂返回 null，TUI 头栏显示基线值。
