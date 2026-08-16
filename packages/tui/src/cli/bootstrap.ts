@@ -27,6 +27,14 @@ import {
 import { ProtectedStoragePolicy } from "../../../core/src/tools/protected-storage-policy.js";
 import { AgentWorkArchiveStore } from "../../../core/src/orchestration/work-archive-store.js";
 import { InteractiveBackupDeletionAuthorizationPort } from "./backup-deletion-port.js";
+import { InteractiveInstallationGatePort } from "./install-decision-port.js";
+import { InstallationOperationClassifier } from "../../../core/src/tools/installation-operation-classifier.js";
+import {
+  AssistInstallationAuthorizationController,
+  AssistInstallationSettingsStore,
+  ExistingResourceInquiryController,
+} from "../../../core/src/tools/assist-installation-gate.js";
+import { InstallationGateGuard } from "../../../core/src/tools/installation-gate-guard.js";
 
 export interface CliBootstrap {
   controller: MainController;
@@ -96,6 +104,28 @@ export async function bootstrapCli(
     baseDirectory: stateDirectory,
   });
 
+  // B6R-02：T06E 安装门禁（分类器/设置/询问/逐次授权 + 交互端口）
+  const installationClassifier = new InstallationOperationClassifier();
+  const installationSettingsStore = new AssistInstallationSettingsStore({
+    baseDirectory: stateDirectory,
+  });
+  const installationInquiryController = new ExistingResourceInquiryController(null);
+  const installationAuthorizationController =
+    new AssistInstallationAuthorizationController({
+      settingsStore: installationSettingsStore,
+    });
+  const interactiveInstallationPort = new InteractiveInstallationGatePort({
+    isInteractive: () => process.stdin.isTTY === true,
+  });
+  const installationGateGuard = new InstallationGateGuard({
+    classifier: installationClassifier,
+    inquiryController: installationInquiryController,
+    authorizationController: installationAuthorizationController,
+    userPort: interactiveInstallationPort,
+    authenticatedUserId: "cli-user",
+    getCurrentMode: () => modeMachine.getCurrentMode(),
+  });
+
   const controller = new MainController({
     modeMachine,
     sessionManager,
@@ -139,6 +169,8 @@ export async function bootstrapCli(
         deletionController: backupDeletionController,
         requestingAgentInstanceId: `worker:${task.id}`,
         protectedStoragePolicy,
+        installationGateGuard,
+        taskExecutionId: `task-exec:${task.id}`,
       }),
     buildPermissionExplanation: (toolName: string) =>
       `执行任务需要调用工具 ${toolName}`,

@@ -19,6 +19,7 @@ import type { BackupDeletionAuthorizationController, BackupVault } from "./backu
 import type { ProtectedStoragePolicy } from "./protected-storage-policy.js";
 import type { TaskSequenceStatusController } from "../orchestration/task-sequence-controllers.js";
 import type { LocalToolPolicyEngine } from "./local-tool-policy-engine.js";
+import { InstallationGateGuard } from "./installation-gate-guard.js";
 import {
   executeBuiltinTool,
   BUILTIN_TOOL_DESCRIPTORS,
@@ -58,6 +59,11 @@ export interface PolicyWrapperOptions {
   localToolPolicyEngine?: LocalToolPolicyEngine | null;
   /** T06B：Ponder 只读 git 视图的工作仓库目录（默认工作区根）。 */
   ponderGitRepositoryPath?: string | null;
+  /** B6R-02：T06E 安装门禁执行守卫（所有安装类调用在实际执行前经过
+   * 分类 → 已有资源询问 → 开关 → allow-once 授权；未装配时不拦截）。 */
+  installationGateGuard?: InstallationGateGuard | null;
+  /** B6R-02：任务执行标识（安装门禁绑定用）。 */
+  taskExecutionId?: string | null;
 }
 
 export class PolicyWrapper implements ToolPort {
@@ -81,6 +87,19 @@ export class PolicyWrapper implements ToolPort {
     try {
       const descriptor = this.assertRegistered(toolName);
       this.assertWithinWorkerSubset(toolName);
+      // B6R-02：安装类调用执行前先经 T06E 两阶段门禁（分类/询问/开关/allow-once）
+      const installationGate = this.options.installationGateGuard;
+      if (installationGate !== null && installationGate !== undefined) {
+        const gateDecision = await installationGate.assertInstallationAllowed({
+          commandName: toolName,
+          arguments: [argumentsJson],
+          requestingAgentInstanceId: this.options.requestingAgentInstanceId ?? "unknown-agent",
+          taskExecutionId: this.options.taskExecutionId ?? "",
+        });
+        if (!gateDecision.allowed) {
+          throw InstallationGateGuard.buildDenial(gateDecision.reason);
+        }
+      }
       const decision = await this.decidePermission(descriptor, argumentsJson);
       if (decision === "ask") {
         this.recordAudit(descriptor, "ask", "受限工具需用户裁决");

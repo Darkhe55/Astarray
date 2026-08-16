@@ -294,3 +294,29 @@ export async function executeConfigInitCommand(
 }
 
 export { defaultStateDirectory };
+
+/** B6R-02：认证用户设置控制面——独立安装开关（默认 false；不授予安装）。 */
+export interface ConfigInstallEnabledCommandOptions {
+  stateDirectory: string;
+  isEnabled: boolean;
+}
+
+export async function executeConfigInstallEnabledCommand(
+  options: ConfigInstallEnabledCommandOptions,
+): Promise<number> {
+  const { AssistInstallationSettingsStore } = await import(
+    "../../../core/src/tools/assist-installation-gate.js"
+  );
+  const settingsStore = new AssistInstallationSettingsStore({
+    baseDirectory: options.stateDirectory,
+  });
+  const current = await settingsStore.readSettings();
+  const next = await settingsStore.updateInstallationEnabled({
+    expectedRevision: current.revision,
+    isAssistInstallationEnabled: options.isEnabled,
+  });
+  process.stdout.write(
+    `assist-installation-enabled=${next.isAssistInstallationEnabled} revision=${next.revision}\n`,
+  );
+  return EXIT_CODES.SUCCESS;
+}

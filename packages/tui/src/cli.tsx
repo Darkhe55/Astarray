@@ -7,6 +7,7 @@ import { executeRunCommand } from "./cli/run-command.js";
 import {
   executeCancelCommand,
   executeConfigInitCommand,
+  executeConfigInstallEnabledCommand,
   executeDoctorCommand,
   executeResumeCommand,
   executeStatusCommand,
@@ -82,6 +83,21 @@ configCommand
   .action(async () => {
     process.exitCode = await executeConfigInitCommand({
       stateDirectory: defaultStateDirectory(),
+    });
+  });
+configCommand
+  .command("install-enabled")
+  .description("设置 Assist 安装独立开关（true/false；开启不等于授权）")
+  .argument("<enabled>", "true 或 false")
+  .action(async (enabled: string) => {
+    if (enabled.toLowerCase() !== "true" && enabled.toLowerCase() !== "false") {
+      process.stderr.write("install-enabled 参数必须为 true 或 false\n");
+      process.exitCode = 2;
+      return;
+    }
+    process.exitCode = await executeConfigInstallEnabledCommand({
+      stateDirectory: defaultStateDirectory(),
+      isEnabled: enabled.toLowerCase() === "true",
     });
   });
 
