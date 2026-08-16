@@ -35,6 +35,10 @@ import {
   ExistingResourceInquiryController,
 } from "../../../core/src/tools/assist-installation-gate.js";
 import { InstallationGateGuard } from "../../../core/src/tools/installation-gate-guard.js";
+import { PermissionCapabilityCatalog } from "../../../core/src/tools/permission-capability-catalog.js";
+import { PermissionProfileStore } from "../../../core/src/tools/permission-profile-store.js";
+import type { PermissionProfileReference } from "../../../core/src/tools/permission-profile-store.js";
+import { ConfigurablePermissionPolicyEngine } from "../../../core/src/tools/configurable-permission-policy-engine.js";
 
 export interface CliBootstrap {
   controller: MainController;
@@ -126,6 +130,24 @@ export async function bootstrapCli(
     getCurrentMode: () => modeMachine.getCurrentMode(),
   });
 
+  // B6R-03：可配置权限引擎（执行前按当前 profile 快照裁决）
+  const permissionCatalog = new PermissionCapabilityCatalog();
+  const permissionProfileStore = new PermissionProfileStore({
+    baseDirectory: stateDirectory,
+    catalog: permissionCatalog,
+  });
+  const configurablePermissionPolicyEngine = new ConfigurablePermissionPolicyEngine({
+    catalog: permissionCatalog,
+    profileStore: permissionProfileStore,
+  });
+  /** 当前权限组引用（可信运行时按模式提供；自定义组由认证设置控制面切换）。 */
+  const currentPermissionProfileReference: PermissionProfileReference =
+    options.mode === "ponder"
+      ? { kind: "builtin", profileId: "ponder" }
+      : options.mode === "assist"
+        ? { kind: "builtin", profileId: "assist" }
+        : { kind: "builtin", profileId: "devolve" };
+
   const controller = new MainController({
     modeMachine,
     sessionManager,
@@ -171,6 +193,8 @@ export async function bootstrapCli(
         protectedStoragePolicy,
         installationGateGuard,
         taskExecutionId: `task-exec:${task.id}`,
+        configurablePermissionPolicyEngine,
+        currentPermissionProfileReference,
       }),
     buildPermissionExplanation: (toolName: string) =>
       `执行任务需要调用工具 ${toolName}`,

@@ -20,6 +20,8 @@ import type { ProtectedStoragePolicy } from "./protected-storage-policy.js";
 import type { TaskSequenceStatusController } from "../orchestration/task-sequence-controllers.js";
 import type { LocalToolPolicyEngine } from "./local-tool-policy-engine.js";
 import { InstallationGateGuard } from "./installation-gate-guard.js";
+import type { ConfigurablePermissionPolicyEngine } from "./configurable-permission-policy-engine.js";
+import type { PermissionProfileReference } from "./permission-profile-store.js";
 import {
   executeBuiltinTool,
   BUILTIN_TOOL_DESCRIPTORS,
@@ -64,6 +66,14 @@ export interface PolicyWrapperOptions {
   installationGateGuard?: InstallationGateGuard | null;
   /** B6R-02：任务执行标识（安装门禁绑定用）。 */
   taskExecutionId?: string | null;
+  /**
+   * B6R-03：可配置权限策略引擎（装配后实际执行前按当前 profile 快照裁决；
+   * profile revision/映射/参数变化使旧 ask 授权失效；未装配时回退旧
+   * PermissionDecider）。
+   */
+  configurablePermissionPolicyEngine?: ConfigurablePermissionPolicyEngine | null;
+  /** B6R-03：当前权限组引用（可信运行时提供；配合引擎使用）。 */
+  currentPermissionProfileReference?: PermissionProfileReference | null;
 }
 
 export class PolicyWrapper implements ToolPort {
@@ -170,6 +180,29 @@ export class PolicyWrapper implements ToolPort {
     descriptor: ToolDescriptor,
     argumentsJson: string,
   ): Promise<PermissionResult> {
+    // B6R-03：装配可配置权限引擎时，实际执行前按当前 profile 快照裁决；
+    // 派发预检不能替代执行前检查。未装配回退旧 PermissionDecider。
+    const configurableEngine = this.options.configurablePermissionPolicyEngine;
+    const profileReference = this.options.currentPermissionProfileReference;
+    if (
+      configurableEngine !== null &&
+      configurableEngine !== undefined &&
+      profileReference !== null &&
+      profileReference !== undefined
+    ) {
+      const decision = await configurableEngine.decide({
+        toolName: descriptor.name,
+        profileReference,
+        argumentsJson,
+      });
+      if (decision.decision === "deny") {
+        return "deny";
+      }
+      if (decision.decision === "ask") {
+        return "ask";
+      }
+      return "allow";
+    }
     return this.options.permissionDecider.decide(
       {
         toolName: descriptor.name,
@@ -178,6 +211,31 @@ export class PolicyWrapper implements ToolPort {
       },
       this.options.nowUnixSeconds(),
     );
+  }
+
+  /**
+   * B6R-03：用户裁决后授予（绑定当前 profile revision）。
+   * 供认证控制面调用；旧授权在 profile revision/参数变化后失效。
+   */
+  async grantConfigurableSessionAuthorization(input: {
+    toolName: string;
+    argumentsJson: string;
+  }): Promise<void> {
+    const configurableEngine = this.options.configurablePermissionPolicyEngine;
+    const profileReference = this.options.currentPermissionProfileReference;
+    if (
+      configurableEngine === null ||
+      configurableEngine === undefined ||
+      profileReference === null ||
+      profileReference === undefined
+    ) {
+      throw new Error("可配置权限引擎未装配，无法授予");
+    }
+    await configurableEngine.grantSessionAuthorization({
+      toolName: input.toolName,
+      profileReference,
+      argumentsJson: input.argumentsJson,
+    });
   }
 
   private recordAudit(

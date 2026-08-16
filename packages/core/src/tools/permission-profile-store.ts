@@ -14,6 +14,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import { DomainError } from "../core/errors.js";
+import { AsyncMutex } from "../infra/async-mutex.js";
 import { PermissionCapabilityCatalog } from "./permission-capability-catalog.js";
 import type { PermissionDecision } from "./permission-capability-catalog.js";
 
@@ -66,6 +67,8 @@ export const BUILTIN_PROFILE_DISPLAY_NAMES = [
 export class PermissionProfileStore {
   private readonly profilesRootDirectory: string;
   private readonly catalog: PermissionCapabilityCatalog;
+  /** B6R-03：profile 级进程内互斥（并发更新 revision 冲突不丢更新）。 */
+  private readonly profileMutexes = new Map<string, AsyncMutex>();
 
   constructor(options: PermissionProfileStoreOptions) {
     this.profilesRootDirectory = path.join(
@@ -73,6 +76,15 @@ export class PermissionProfileStore {
       "permission-profiles",
     );
     this.catalog = options.catalog ?? new PermissionCapabilityCatalog();
+  }
+
+  private getProfileMutex(permissionProfileId: string): AsyncMutex {
+    let mutex = this.profileMutexes.get(permissionProfileId);
+    if (mutex === undefined) {
+      mutex = new AsyncMutex();
+      this.profileMutexes.set(permissionProfileId, mutex);
+    }
+    return mutex;
   }
 
   /** 生成内置 profile 文档（不落盘；内置组定义随目录版本）。 */
@@ -173,7 +185,7 @@ export class PermissionProfileStore {
     return document;
   }
 
-  /** 保存自定义组（自动备份；expected revision 冲突检测）。 */
+  /** 保存自定义组（自动备份；expected revision 冲突检测；进程内互斥）。 */
   async saveCustomProfile(input: {
     document: PermissionProfileDocument;
     expectedRevision: number;
@@ -190,35 +202,39 @@ export class PermissionProfileStore {
         "签名冻结的权限组不可修改",
       );
     }
-    const current = await this.readCustomProfile(
-      input.document.permissionProfileId,
+    return this.getProfileMutex(input.document.permissionProfileId).runExclusive(
+      async () => {
+        const current = await this.readCustomProfile(
+          input.document.permissionProfileId,
+        );
+        if (current !== null && current.revision !== input.expectedRevision) {
+          throw new DomainError(
+            "stale-revision",
+            `权限组 revision 不匹配: 现有 ${current.revision}，期望 ${input.expectedRevision}`,
+          );
+        }
+        if (current !== null && input.document.revision <= current.revision) {
+          throw new DomainError(
+            "stale-revision",
+            `旧 revision 覆盖被拒绝: 现有 ${current.revision}，试图写入 ${input.document.revision}`,
+          );
+        }
+        const parsed = permissionProfileDocumentSchema.safeParse(input.document);
+        if (!parsed.success) {
+          throw new DomainError(
+            "invalid-task-chain",
+            `权限组文档非法: ${parsed.error.message}`,
+          );
+        }
+        const { writeAtomicJson, backupExistingFile } = await import("../infra/atomic-json.js");
+        await writeAtomicJson(this.profileFilePath(input.document.permissionProfileId), parsed.data);
+        await backupExistingFile(
+          this.profileFilePath(input.document.permissionProfileId),
+          this.backupFilePath(input.document.permissionProfileId),
+        );
+        return parsed.data;
+      },
     );
-    if (current !== null && current.revision !== input.expectedRevision) {
-      throw new DomainError(
-        "stale-revision",
-        `权限组 revision 不匹配: 现有 ${current.revision}，期望 ${input.expectedRevision}`,
-      );
-    }
-    if (current !== null && input.document.revision <= current.revision) {
-      throw new DomainError(
-        "stale-revision",
-        `旧 revision 覆盖被拒绝: 现有 ${current.revision}，试图写入 ${input.document.revision}`,
-      );
-    }
-    const parsed = permissionProfileDocumentSchema.safeParse(input.document);
-    if (!parsed.success) {
-      throw new DomainError(
-        "invalid-task-chain",
-        `权限组文档非法: ${parsed.error.message}`,
-      );
-    }
-    const { writeAtomicJson, backupExistingFile } = await import("../infra/atomic-json.js");
-    await writeAtomicJson(this.profileFilePath(input.document.permissionProfileId), parsed.data);
-    await backupExistingFile(
-      this.profileFilePath(input.document.permissionProfileId),
-      this.backupFilePath(input.document.permissionProfileId),
-    );
-    return parsed.data;
   }
 
   /** 列出自定义组 ID（目录名即安全编码后的 ID）。 */
