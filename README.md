@@ -1,7 +1,7 @@
 # Astarray
 
 > 愿星光破开迷途，
-> May the starlight array cleave the way,
+> May starlight lead the astray array,
 
 仓库目录职责与最近一次整理记录见 [`ORGANIZATION.md`](./ORGANIZATION.md)。
 
