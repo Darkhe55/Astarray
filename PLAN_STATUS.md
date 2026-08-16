@@ -43,14 +43,14 @@
 | T06B | Ponder 本地只读边界与敏感操作分类 | re-verifying | 4F | 2026-08-13 完成；Batch 4F 检查点（510 测试全绿）；待 AR 复验 |
 | T06C | 全模式本地敏感内容禁读 | re-verifying | 4G | 2026-08-13 完成；Batch 4G 检查点（524 测试全绿）；待 AR 复验 |
 | T06D | 高严谨性事实验证工具 | re-verifying | 4I | 2026-08-13 完成；Batch 4I 检查点（562 测试全绿）；待 AR 复验 |
-| T06E | Assist 安装前置询问、独立开关与逐次授权 | re-verifying | 6A | 2026-08-13 完成；Batch 6A 检查点（598 测试全绿）；待 AR 复验 |
-| T06F | 可配置权限组与无限命名自定义模式 | re-verifying | 6B | 2026-08-13 完成；Batch 6B 检查点（620 测试全绿）；待 AR 复验 |
-| T06G | 主 Agent 永久只读、次级权限上限与会话临时提升 | re-verifying | 6C | 2026-08-13 完成；Batch 6C 检查点（640 测试全绿）；待 AR 复验 |
+| T06E | Assist 安装前置询问、独立开关与逐次授权 | rework | 6A | 返修中（B6R-00 基线冻结；B6R-01/02 待执行） |
+| T06F | 可配置权限组与无限命名自定义模式 | rework | 6B | 返修中（B6R-03/04 待执行） |
+| T06G | 主 Agent 永久只读、次级权限上限与会话临时提升 | rework | 6C | 返修中（B6R-05/06 待执行） |
 | T07 | Agent Runtime | re-verifying | 4 | AR-00 重新验收中 |
 | T07A | 明确完成协议与早停恢复 | re-verifying | 4J | 2026-08-13 完成；Batch 4J 检查点（583 测试全绿）；待 AR 复验 |
 | T07B | 反自指读取与通用活锁守卫 | re-verifying | 4H | 2026-08-13 完成；Batch 4H 检查点（539 测试全绿）；待 AR 复验 |
 | T08 | 三级 Agent 编排 | re-verifying | 5 | AR-04 复验：T05B→T08 Git 编排接入完成（Batch 5 增补检查点），待 AR-04 全项复验 |
-| T08A | 默认控制流、个体记忆隔离与三级 Agent 生命周期 | re-verifying | 6D | 2026-08-13 完成；Batch 6D 检查点（654 测试全绿）；待 AR 复验 |
+| T08A | 默认控制流、个体记忆隔离与三级 Agent 生命周期 | rework | 6D | 返修中（B6R-07/08/09 待执行） |
 | T08B | 工具说明回访、无产品数量配额与受权通信转交 | re-verifying | 6E | 2026-08-13 完成；Batch 6E 检查点（665 测试全绿）；待 AR 复验 |
 | T09 | 记忆、缓存与指标 | re-verifying | 6 | AR-00 重新验收中 |
 | T10 | TUI | re-verifying | 6 | AR-00 重新验收中（AR-02 授权交互） |
