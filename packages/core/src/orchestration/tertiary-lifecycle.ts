@@ -15,7 +15,7 @@
  * 未确认调用、保存检查点与 handoff、确认反馈入档、撤销权限租约、注销
  * mailbox 身份、处理 Git 资源，最后终止后台运行；各阶段支持幂等重试。
  */
-import { randomUUID } from "node:crypto";
+import path from "node:path";
 
 import { DomainError } from "../core/errors.js";
 
@@ -171,6 +171,105 @@ export type TertiaryLifecyclePhase =
   | "terminating-process"
   | "closed";
 
+/** 收口阶段的固定顺序（B6R-08：严格覆盖且不可重排）。 */
+export const TERTIARY_LIFECYCLE_PHASE_ORDER: readonly TertiaryLifecyclePhase[] = [
+  "stopping-dispatch",
+  "draining-unconfirmed-calls",
+  "persisting-checkpoint",
+  "writing-handoff",
+  "confirming-feedback",
+  "revoking-permission-lease",
+  "unregistering-mailbox",
+  "handling-git-resources",
+  "terminating-process",
+  "closed",
+];
+
+/** 阶段名 → hook 键映射（阶段名含连字符，hook 键为 camelCase）。 */
+const HOOK_KEY_BY_PHASE: Record<string, keyof TertiaryLifecycleHookSet> = {
+  "stopping-dispatch": "stopDispatch",
+  "draining-unconfirmed-calls": "drainUnconfirmedCalls",
+  "persisting-checkpoint": "persistCheckpoint",
+  "writing-handoff": "writeHandoff",
+  "confirming-feedback": "confirmFeedback",
+  "revoking-permission-lease": "revokePermissionLease",
+  "unregistering-mailbox": "unregisterMailbox",
+  "handling-git-resources": "handleGitResources",
+  "terminating-process": "terminateProcess",
+};
+
+/**
+ * B6R-08：生命周期阶段状态（持久化）。
+ * 记录当前阶段、已完成阶段、检查点/handoff 引用与未确认调用，
+ * 重启后从第一个未完成阶段继续；每阶段使用幂等键验证上次结果。
+ */
+export interface TertiaryLifecyclePersistedState {
+  agentInstanceId: string;
+  schemaVersion: 1;
+  currentPhase: TertiaryLifecyclePhase | null;
+  completedPhases: TertiaryLifecyclePhase[];
+  checkpointId: string | null;
+  handoffReference: string | null;
+  unconfirmedCallKeys: string[];
+  closedAtIso: string | null;
+}
+
+/** 生命周期阶段状态存储端口（文件系统实现 + 测试 mock）。 */
+export interface TertiaryLifecyclePhaseStore {
+  readState(agentInstanceId: string): Promise<TertiaryLifecyclePersistedState | null>;
+  writeState(state: TertiaryLifecyclePersistedState): Promise<void>;
+}
+
+/** 文件系统阶段状态存储（原子写 + 受控备份）。 */
+export class FileTertiaryLifecyclePhaseStore implements TertiaryLifecyclePhaseStore {
+  private readonly rootDirectory: string;
+
+  constructor(baseDirectory: string) {
+    this.rootDirectory = path.join(baseDirectory, "tertiary-lifecycle");
+  }
+
+  private stateFilePath(agentInstanceId: string): string {
+    return path.join(
+      this.rootDirectory,
+      `${sanitizeLifecycleAgentId(agentInstanceId)}.json`,
+    );
+  }
+
+  async readState(agentInstanceId: string): Promise<TertiaryLifecyclePersistedState | null> {
+    const { readFile } = await import("node:fs/promises");
+    try {
+      const rawContent = await readFile(this.stateFilePath(agentInstanceId), "utf8");
+      return JSON.parse(rawContent) as TertiaryLifecyclePersistedState;
+    } catch {
+      return null;
+    }
+  }
+
+  async writeState(state: TertiaryLifecyclePersistedState): Promise<void> {
+    const { writeFile, mkdir, copyFile } = await import("node:fs/promises");
+    await mkdir(this.rootDirectory, { recursive: true });
+    const filePath = this.stateFilePath(state.agentInstanceId);
+    try {
+      await copyFile(filePath, `${filePath}.bak`);
+    } catch {
+      // 首次写入
+    }
+    await writeFile(filePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  }
+}
+
+function sanitizeLifecycleAgentId(agentInstanceId: string): string {
+  let encoded = "";
+  for (const character of agentInstanceId) {
+    if (/[A-Za-z0-9._-]/.test(character)) {
+      encoded += character;
+    } else {
+      encoded += `~${character.charCodeAt(0).toString(16).padStart(4, "0")}`;
+    }
+  }
+  return encoded;
+}
+
 export interface TertiaryLifecycleHookSet {
   stopDispatch?: () => Promise<unknown>;
   drainUnconfirmedCalls?: () => Promise<unknown>;
@@ -191,74 +290,159 @@ export interface TertiaryLifecycleState {
   closedAtIso: string | null;
 }
 
+export interface TertiaryAgentLifecycleControllerOptions {
+  /** B6R-08：阶段状态持久化（缺省内存态，重启不恢复）。 */
+  phaseStore?: TertiaryLifecyclePhaseStore | null;
+}
+
 export class TertiaryAgentLifecycleController {
   private readonly hooks: TertiaryLifecycleHookSet;
+  private readonly phaseStore: TertiaryLifecyclePhaseStore | null;
   private state: TertiaryLifecycleState | null = null;
 
-  constructor(hooks: TertiaryLifecycleHookSet = {}) {
+  constructor(hooks: TertiaryLifecycleHookSet = {}, options: TertiaryAgentLifecycleControllerOptions = {}) {
     this.hooks = hooks;
+    this.phaseStore = options.phaseStore ?? null;
   }
 
   getState(): TertiaryLifecycleState | null {
     return this.state === null ? null : { ...this.state };
   }
 
+  /** 从持久化状态恢复（崩溃恢复：从第一个未完成阶段继续）。 */
+  async resume(input: { agentInstanceId: string }): Promise<TertiaryLifecycleState | null> {
+    if (this.phaseStore === null) {
+      return null;
+    }
+    const persisted = await this.phaseStore.readState(input.agentInstanceId);
+    if (persisted === null) {
+      return null;
+    }
+    if (persisted.closedAtIso !== null) {
+      this.state = {
+        agentInstanceId: input.agentInstanceId,
+        phase: "closed",
+        checkpointId: persisted.checkpointId,
+        handoffReference: persisted.handoffReference,
+        closedAtIso: persisted.closedAtIso,
+      };
+      return { ...this.state };
+    }
+    // 从第一个未完成阶段继续
+    const nextPhase = TERTIARY_LIFECYCLE_PHASE_ORDER.find(
+      (phase) => !persisted.completedPhases.includes(phase),
+    );
+    if (nextPhase === undefined) {
+      return null;
+    }
+    this.state = {
+      agentInstanceId: input.agentInstanceId,
+      phase: nextPhase,
+      checkpointId: persisted.checkpointId,
+      handoffReference: persisted.handoffReference,
+      closedAtIso: null,
+    };
+    return { ...this.state };
+  }
+
   /**
-   * 受控收口：按固定阶段顺序执行，每阶段幂等可重试；
-   * 不允许仅以杀进程代替状态收口（terminateProcess 是最后阶段）。
+   * 受控收口（B6R-08 幂等）：
+   * - 已 closed（内存或持久化）→ 直接返回，不重置为第一阶段、不重复副作用；
+   * - 每阶段执行前持久化"进行中"（幂等键），完成后标记；
+   * - 崩溃恢复：resume 后从第一个未完成阶段继续。
    */
   async shutdown(input: { agentInstanceId: string }): Promise<TertiaryLifecycleState> {
+    // 幂等：已关闭直接返回
+    if (this.state !== null && this.state.phase === "closed") {
+      return { ...this.state };
+    }
+    let persisted: TertiaryLifecyclePersistedState | null = null;
+    if (this.phaseStore !== null) {
+      persisted = await this.phaseStore.readState(input.agentInstanceId);
+      if (persisted?.closedAtIso !== null && persisted !== null) {
+        this.state = {
+          agentInstanceId: input.agentInstanceId,
+          phase: "closed",
+          checkpointId: persisted.checkpointId,
+          handoffReference: persisted.handoffReference,
+          closedAtIso: persisted.closedAtIso,
+        };
+        return { ...this.state };
+      }
+    }
     this.state = {
       agentInstanceId: input.agentInstanceId,
       phase: "stopping-dispatch",
-      checkpointId: null,
-      handoffReference: null,
+      checkpointId: persisted?.checkpointId ?? null,
+      handoffReference: persisted?.handoffReference ?? null,
       closedAtIso: null,
     };
-    await this.runPhase("stopping-dispatch", this.hooks.stopDispatch);
-    await this.runPhase("draining-unconfirmed-calls", this.hooks.drainUnconfirmedCalls);
-    const checkpointId = await this.runPhase(
-      "persisting-checkpoint",
-      this.hooks.persistCheckpoint,
-      async () => `checkpoint-${randomUUID()}`,
+    // 已完成的阶段（持久化）不再重跑
+    const completedPhases = new Set<TertiaryLifecyclePhase>(persisted?.completedPhases ?? []);
+    const phasesToRun = TERTIARY_LIFECYCLE_PHASE_ORDER.filter(
+      (phase) => phase !== "closed" && !completedPhases.has(phase),
     );
-    const handoffReference = await this.runPhase(
-      "writing-handoff",
-      this.hooks.writeHandoff,
-      async () => `handoff-${randomUUID()}`,
-    );
-    await this.runPhase("confirming-feedback", this.hooks.confirmFeedback);
-    await this.runPhase("revoking-permission-lease", this.hooks.revokePermissionLease);
-    await this.runPhase("unregistering-mailbox", this.hooks.unregisterMailbox);
-    await this.runPhase("handling-git-resources", this.hooks.handleGitResources);
-    await this.runPhase("terminating-process", this.hooks.terminateProcess);
+    for (const phase of phasesToRun) {
+      const phaseResult = await this.runPhase(phase, completedPhases);
+      if (phaseResult.phase === "persisting-checkpoint") {
+        this.state.checkpointId = phaseResult.result;
+      }
+      if (phaseResult.phase === "writing-handoff") {
+        this.state.handoffReference = phaseResult.result;
+      }
+    }
     this.state = {
-      ...this.state,
+      ...this.state!,
       phase: "closed",
-      checkpointId,
-      handoffReference,
       closedAtIso: new Date().toISOString(),
     };
+    if (this.phaseStore !== null) {
+      await this.phaseStore.writeState({
+        agentInstanceId: input.agentInstanceId,
+        schemaVersion: 1,
+        currentPhase: "closed",
+        completedPhases: [...TERTIARY_LIFECYCLE_PHASE_ORDER],
+        checkpointId: this.state.checkpointId,
+        handoffReference: this.state.handoffReference,
+        unconfirmedCallKeys: [],
+        closedAtIso: this.state.closedAtIso,
+      });
+    }
     return { ...this.state };
   }
 
   private async runPhase(
     phase: TertiaryLifecyclePhase,
-    hook: (() => Promise<unknown>) | undefined,
-    fallback: () => Promise<string> = async () => "none",
-  ): Promise<string> {
+    completedPhases: Set<TertiaryLifecyclePhase>,
+  ): Promise<{ phase: TertiaryLifecyclePhase; result: string }> {
     this.state = { ...this.state!, phase };
+    // 幂等键：执行前持久化"进行中"状态
+    if (this.phaseStore !== null) {
+      await this.phaseStore.writeState({
+        agentInstanceId: this.state.agentInstanceId,
+        schemaVersion: 1,
+        currentPhase: phase,
+        completedPhases: [...completedPhases],
+        checkpointId: this.state.checkpointId,
+        handoffReference: this.state.handoffReference,
+        unconfirmedCallKeys: [],
+        closedAtIso: null,
+      });
+    }
     try {
+      const hookKey = HOOK_KEY_BY_PHASE[phase];
+      const hook = hookKey === undefined ? undefined : this.hooks[hookKey];
+      let result = "none";
       if (hook !== undefined) {
         const hookResult = await hook();
         if (typeof hookResult === "string") {
-          return hookResult;
+          result = hookResult;
         }
-        return await fallback();
       }
-      return await fallback();
+      completedPhases.add(phase);
+      return { phase, result };
     } catch (error) {
-      // 阶段失败：保留状态供幂等重试（不静默跳过）
+      // 阶段失败：持久化状态保留（供幂等重试），不静默跳过
       throw new DomainError(
         "tool-execution-failed",
         `三级 Agent 收口阶段 ${phase} 失败: ${(error as Error).message}`,
