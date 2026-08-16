@@ -41,21 +41,36 @@ export interface MainAgentReportIndexEntry {
 
 export interface MainAgentReportArchiveOptions {
   baseDirectory: string;
+  /**
+   * B6R-07：报告来源认证端口（与 Agent 注册表/所属次级/mission/任务包匹配）。
+   * 非空字符串不是认证；未注入端口时由装配方保证来源可信。
+   */
+  sourceAuthenticationPort?: {
+    verifySource(input: {
+      reportingAgentInstanceId: string;
+      missionId: string;
+      taskBundleId: string;
+    }): Promise<{ valid: boolean; reason: string | null }>;
+  } | null;
 }
 
 export class MainAgentReportArchiveIngestor {
   private readonly archiveRootDirectory: string;
+  private readonly sourceAuthenticationPort: MainAgentReportArchiveOptions["sourceAuthenticationPort"];
 
   constructor(options: MainAgentReportArchiveOptions) {
     this.archiveRootDirectory = path.join(
       options.baseDirectory,
       "main-agent-reports",
     );
+    this.sourceAuthenticationPort = options.sourceAuthenticationPort ?? null;
   }
 
   /**
-   * 写入报告（来源校验：报告 Agent 必须非空且是具体实例）。
-   * 只写索引，不回调主 Agent 模型。
+   * 写入报告（B6R-07）：
+   * - 来源经认证端口注入并校验（Agent/所属/mission/任务包匹配）；
+   * - 同一 report ID 幂等重放必须内容哈希一致；不同内容拒绝覆盖；
+   * - 只写索引，不回调主 Agent 模型。
    */
   async ingestReport(report: TertiaryTerminalReport): Promise<void> {
     if (report.reportingAgentInstanceId === "") {
@@ -63,6 +78,20 @@ export class MainAgentReportArchiveIngestor {
         "invalid-task-chain",
         "报告来源 agentInstanceId 不能为空",
       );
+    }
+    // B6R-07：来源认证（非空字符串不是认证）
+    if (this.sourceAuthenticationPort !== null && this.sourceAuthenticationPort !== undefined) {
+      const verification = await this.sourceAuthenticationPort.verifySource({
+        reportingAgentInstanceId: report.reportingAgentInstanceId,
+        missionId: report.missionId,
+        taskBundleId: report.taskBundleId,
+      });
+      if (!verification.valid) {
+        throw new DomainError(
+          "task-sequence-permission-denied",
+          `报告来源认证失败: ${verification.reason ?? "未知原因"}`,
+        );
+      }
     }
     const { createHash } = await import("node:crypto");
     // 规范化内容（剔除 contentHash 字段后哈希，读回验证口径一致）
@@ -80,7 +109,32 @@ export class MainAgentReportArchiveIngestor {
       missionDirectory,
       `${sanitizePathSegment(report.reportId)}.json`,
     );
+    // B6R-07：幂等重放——同 report ID 已存在时校验内容哈希一致；不同内容拒绝覆盖
+    let existingRawContent: string | null;
+    try {
+      existingRawContent = await fs.readFile(reportFilePath, "utf8");
+    } catch {
+      existingRawContent = null;
+    }
+    if (existingRawContent !== null) {
+      const existingReport = JSON.parse(existingRawContent) as TertiaryTerminalReport;
+      const existingCanonical = canonicalizeReport(existingReport);
+      const existingHash = `sha256:${createHash("sha256").update(existingCanonical).digest("hex")}`;
+      if (existingHash !== contentHash) {
+        throw new DomainError(
+          "journal-corrupted",
+          `同一 report ID 幂等重放内容不一致，拒绝覆盖: ${report.reportId}`,
+        );
+      }
+      return; // 幂等重放：内容一致，不重复写
+    }
     await fs.mkdir(missionDirectory, { recursive: true });
+    // B6R-07：写前受控备份（备份路径不进入 Agent 上下文）
+    try {
+      await fs.copyFile(reportFilePath, `${reportFilePath}.bak`);
+    } catch {
+      // 首次写入
+    }
     await fs.writeFile(
       reportFilePath,
       `${JSON.stringify(verifiedReport, null, 2)}\n`,

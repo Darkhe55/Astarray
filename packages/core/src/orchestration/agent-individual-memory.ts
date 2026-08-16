@@ -13,8 +13,10 @@
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 import { DomainError } from "../core/errors.js";
+import { AsyncMutex } from "../infra/async-mutex.js";
 import { z } from "zod";
 import { sanitizePathSegment } from "./work-archive-store.js";
 
@@ -89,12 +91,23 @@ export class AgentMemoryNamespacePolicy {
 export class AgentIndividualMemoryStore {
   private readonly agentMemoryRootDirectory: string;
   private readonly namespacePolicy = new AgentMemoryNamespacePolicy();
+  /** B6R-07：个体级进程内互斥（并发追加不丢更新/不重复 ID）。 */
+  private readonly memoryMutexes = new Map<string, AsyncMutex>();
 
   constructor(options: AgentIndividualMemoryStoreOptions) {
     this.agentMemoryRootDirectory = path.join(
       options.baseDirectory,
       "agent-memory",
     );
+  }
+
+  private getMemoryMutex(agentInstanceId: string): AsyncMutex {
+    let mutex = this.memoryMutexes.get(agentInstanceId);
+    if (mutex === undefined) {
+      mutex = new AsyncMutex();
+      this.memoryMutexes.set(agentInstanceId, mutex);
+    }
+    return mutex;
   }
 
   /** 个体记忆目录（完整无碰撞编码的 agentInstanceId）。 */
@@ -153,40 +166,61 @@ export class AgentIndividualMemoryStore {
     summary: string;
     sourceAgentInstanceId: string | null;
     sourceAttachmentHash: string | null;
+    /** B6R-07：expected revision（并发写者陈旧 revision 拒绝；缺省跳过校验）。 */
+    expectedRevision?: number;
   }): Promise<AgentMemoryArchiveDocument> {
-    const directoryName = sanitizePathSegment(input.runtimeAgentInstanceId);
-    if (!this.namespacePolicy.isIndividualNamespaceDirectory(directoryName)) {
-      throw new DomainError(
-        "task-sequence-permission-denied",
-        `非法的个体记忆命名空间: ${input.runtimeAgentInstanceId}`,
+    return this.getMemoryMutex(input.runtimeAgentInstanceId).runExclusive(async () => {
+      const directoryName = sanitizePathSegment(input.runtimeAgentInstanceId);
+      if (!this.namespacePolicy.isIndividualNamespaceDirectory(directoryName)) {
+        throw new DomainError(
+          "task-sequence-permission-denied",
+          `非法的个体记忆命名空间: ${input.runtimeAgentInstanceId}`,
+        );
+      }
+      const current = await this.readMemoryArchive(input.runtimeAgentInstanceId);
+      if (
+        input.expectedRevision !== undefined &&
+        (current?.revision ?? 0) !== input.expectedRevision
+      ) {
+        throw new DomainError(
+          "stale-revision",
+          `记忆 revision 不匹配: 现有 ${current?.revision ?? 0}，期望 ${input.expectedRevision}`,
+        );
+      }
+      const nextRevision = (current?.revision ?? 0) + 1;
+      const nextDocument: AgentMemoryArchiveDocument = {
+        schemaVersion: AGENT_MEMORY_ARCHIVE_SCHEMA_VERSION,
+        ownerAgentInstanceId: input.runtimeAgentInstanceId,
+        revision: nextRevision,
+        updatedAtIso: new Date().toISOString(),
+        observations: [
+          ...(current?.observations ?? []),
+          {
+            // B6R-07：不可复用 observation ID（随机 UUID，删除/并发不重用）
+            observationId: `observation-${randomUUID()}`,
+            recordedAtIso: new Date().toISOString(),
+            summary: input.summary,
+            sourceAgentInstanceId: input.sourceAgentInstanceId,
+            sourceAttachmentHash: input.sourceAttachmentHash,
+          },
+        ],
+      };
+      const memoryDirectory = this.memoryDirectoryPath(input.runtimeAgentInstanceId);
+      await fs.mkdir(memoryDirectory, { recursive: true });
+      const archiveFilePath = this.memoryArchiveFilePath(input.runtimeAgentInstanceId);
+      // B6R-07：写前受控备份（备份路径不进入 Agent 上下文）
+      try {
+        await fs.copyFile(archiveFilePath, `${archiveFilePath}.bak`);
+      } catch {
+        // 首次写入无既有文件
+      }
+      await fs.writeFile(
+        archiveFilePath,
+        `${JSON.stringify(nextDocument, null, 2)}\n`,
+        "utf8",
       );
-    }
-    const current = await this.readMemoryArchive(input.runtimeAgentInstanceId);
-    const nextDocument: AgentMemoryArchiveDocument = {
-      schemaVersion: AGENT_MEMORY_ARCHIVE_SCHEMA_VERSION,
-      ownerAgentInstanceId: input.runtimeAgentInstanceId,
-      revision: (current?.revision ?? 0) + 1,
-      updatedAtIso: new Date().toISOString(),
-      observations: [
-        ...(current?.observations ?? []),
-        {
-          observationId: `observation-${current?.observations.length ?? 0 + 1}`,
-          recordedAtIso: new Date().toISOString(),
-          summary: input.summary,
-          sourceAgentInstanceId: input.sourceAgentInstanceId,
-          sourceAttachmentHash: input.sourceAttachmentHash,
-        },
-      ],
-    };
-    await fs.mkdir(this.memoryDirectoryPath(input.runtimeAgentInstanceId), {
-      recursive: true,
+      return nextDocument;
     });
-    await fs.writeFile(
-      this.memoryArchiveFilePath(input.runtimeAgentInstanceId),
-      `${JSON.stringify(nextDocument, null, 2)}\n`,
-      "utf8",
-    );
-    return nextDocument;
   }
 
   /** 列出现有个体记忆命名空间目录（供契约测试断言无角色级共享路径）。 */
