@@ -68,7 +68,7 @@ export class CurrentPermissionConfigurationExporter {
       let effectiveDecision = decision;
       let resourceScope = "workspace";
       if (input.agentInstanceId !== null) {
-        effectiveDecision = input.resolver.resolveEffectiveDecision({
+        effectiveDecision = await input.resolver.resolveEffectiveDecision({
           agentInstanceId: input.agentInstanceId,
           sessionId: input.sessionId,
           capabilityId,
@@ -80,21 +80,21 @@ export class CurrentPermissionConfigurationExporter {
           currentSessionPermissionRevision: input.currentSessionPermissionRevision,
           requestedResourceScope: resourceScope,
         });
-        const record = input.elevationStore
-          .listRecords(input.sessionId)
-          .find(
-            (candidate) =>
-              candidate.capabilityId === capabilityId &&
-              candidate.scope.scope === "specific-secondary-agent" &&
-              candidate.scope.agentInstanceId === input.agentInstanceId &&
-              this.isRecordStillValid(candidate, input),
-          );
+        const record = (
+          await input.elevationStore.listRecords(input.sessionId)
+        ).find(
+          (candidate) =>
+            candidate.capabilityId === capabilityId &&
+            candidate.scope.scope === "specific-secondary-agent" &&
+            candidate.scope.agentInstanceId === input.agentInstanceId &&
+            this.isRecordStillValid(candidate, input),
+        );
         resourceScope = record?.resourceScope ?? "workspace";
       } else {
         // 会话级导出：应用仍有效的会话级覆盖（all-secondary-agents-in-session）
-        const sessionLevelRecords = input.elevationStore
-          .listRecords(input.sessionId)
-          .filter(
+        const sessionLevelRecords = (
+          await input.elevationStore.listRecords(input.sessionId)
+        ).filter(
             (record) =>
               record.capabilityId === capabilityId &&
               record.scope.scope === "all-secondary-agents-in-session" &&
@@ -190,22 +190,40 @@ export interface SessionShutdownResult {
 export interface SessionShutdownCoordinatorOptions {
   elevationStore: SessionPermissionElevationStore;
   nowUnixMilliseconds?: () => number;
+  /**
+   * B6R-06：受控备份服务（导出覆盖已有文件前必须走受控备份层，
+   * 不以普通相邻 .bak 代替）。
+   */
+  backupPort?: {
+    createPreMutationBackup(input: {
+      toolName: string;
+      targetPath: string;
+      mutationKind: "overwrite";
+    }): Promise<{ targetFingerprintBeforeMutation: string }>;
+    verifyTargetUnchanged(
+      targetPath: string,
+      expectedFingerprint: string,
+    ): Promise<boolean>;
+  } | null;
 }
 
 export class SessionShutdownCoordinator {
   private readonly elevationStore: SessionPermissionElevationStore;
   private readonly nowUnixMilliseconds: () => number;
+  private readonly backupPort: SessionShutdownCoordinatorOptions["backupPort"];
 
   constructor(options: SessionShutdownCoordinatorOptions) {
     this.elevationStore = options.elevationStore;
     this.nowUnixMilliseconds =
       options.nowUnixMilliseconds ?? (() => Date.now());
+    this.backupPort = options.backupPort ?? null;
   }
 
   /**
    * 关闭会话：停止新派发（isAcceptingNewDispatches 由调用方置 false）、
    * 收敛在途调用（drainInFlightCalls）、可选导出（失败只报告不阻塞）、
    * 无条件撤销全部临时覆盖。导出失败不得延长覆盖寿命。
+   * B6R-06：导出覆盖已有文件前经受控备份服务 + TOCTOU 校验。
    */
   async shutdownSession(input: {
     sessionId: string;
@@ -219,10 +237,28 @@ export class SessionShutdownCoordinator {
     if (input.exportPath !== null && input.exportSnapshot !== null) {
       try {
         await fs.mkdir(path.dirname(input.exportPath), { recursive: true });
-        try {
-          await fs.copyFile(input.exportPath, `${input.exportPath}.bak`);
-        } catch {
-          // 目标不存在
+        const targetExists = await fs
+          .access(input.exportPath)
+          .then(() => true)
+          .catch(() => false);
+        if (targetExists) {
+          // 受控备份（B6R-06）：先备份 + TOCTOU 校验，再覆盖
+          if (this.backupPort !== null && this.backupPort !== undefined) {
+            const receipt = await this.backupPort.createPreMutationBackup({
+              toolName: "session-export",
+              targetPath: input.exportPath,
+              mutationKind: "overwrite",
+            });
+            const isUnchanged = await this.backupPort.verifyTargetUnchanged(
+              input.exportPath,
+              receipt.targetFingerprintBeforeMutation,
+            );
+            if (!isUnchanged) {
+              throw new Error("导出目标在备份后被修改（TOCTOU 防护）");
+            }
+          } else {
+            await fs.copyFile(input.exportPath, `${input.exportPath}.bak`);
+          }
         }
         await fs.writeFile(
           input.exportPath,
@@ -235,7 +271,7 @@ export class SessionShutdownCoordinator {
       }
     }
     // 无条件撤销全部临时覆盖（导出成功/失败/跳过均执行）
-    const revokedElevationCount = this.elevationStore.revokeAllForSession(
+    const revokedElevationCount = await this.elevationStore.revokeAllForSession(
       input.sessionId,
     );
     void this.nowUnixMilliseconds;

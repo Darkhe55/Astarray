@@ -72,7 +72,7 @@ describe("B6R-05 失败反例（先红）", () => {
       makeElevationInput() as never,
     );
     // 会话权限 revision 变化（新提升/撤销后 revision=2）→ 旧提升（revision=1）应失效
-    const result = resolver.resolveEffectiveDecision({
+    const result = await resolver.resolveEffectiveDecision({
       agentInstanceId: "secondary-a",
       sessionId: "session-1",
       capabilityId: "backup.read",
@@ -97,7 +97,7 @@ describe("B6R-05 失败反例（先红）", () => {
     elevationController.createElevation(
       makeElevationInput({ resourceScope: "database-a" }) as never,
     );
-    const result = resolver.resolveEffectiveDecision({
+    const result = await resolver.resolveEffectiveDecision({
       agentInstanceId: "secondary-a",
       sessionId: "session-1",
       capabilityId: "backup.read",
@@ -143,7 +143,7 @@ describe("B6R-05 接入后（先红后绿）", () => {
     );
     // revision=1 时生效
     expect(
-      resolver.resolveEffectiveDecision({
+      await resolver.resolveEffectiveDecision({
         ...baseInput,
         capabilityId: "backup.read",
         currentSessionPermissionRevision: 1,
@@ -152,7 +152,7 @@ describe("B6R-05 接入后（先红后绿）", () => {
     ).toBe("allow");
     // 会话 revision=2（新提升）→ 旧记录失效 → 基础 ask
     expect(
-      resolver.resolveEffectiveDecision({
+      await resolver.resolveEffectiveDecision({
         ...baseInput,
         capabilityId: "backup.read",
         currentSessionPermissionRevision: 2,
@@ -167,7 +167,7 @@ describe("B6R-05 接入后（先红后绿）", () => {
       }) as never,
     );
     expect(
-      resolver.resolveEffectiveDecision({
+      await resolver.resolveEffectiveDecision({
         ...baseInput,
         capabilityId: "backup.read",
         currentSessionPermissionRevision: 2,
@@ -186,7 +186,7 @@ describe("B6R-05 接入后（先红后绿）", () => {
       makeElevationInput({ resourceScope: "database-a" }) as never,
     );
     expect(
-      resolver.resolveEffectiveDecision({
+      await resolver.resolveEffectiveDecision({
         ...baseInput,
         capabilityId: "backup.read",
         currentSessionPermissionRevision: 1,
@@ -194,7 +194,7 @@ describe("B6R-05 接入后（先红后绿）", () => {
       }),
     ).toBe("ask");
     expect(
-      resolver.resolveEffectiveDecision({
+      await resolver.resolveEffectiveDecision({
         ...baseInput,
         capabilityId: "backup.read",
         currentSessionPermissionRevision: 1,
@@ -217,7 +217,7 @@ describe("B6R-05 接入后（先红后绿）", () => {
       }) as never,
     );
     const resolver = new EffectiveSecondaryPermissionResolver();
-    const resultForB = resolver.resolveEffectiveDecision({
+    const resultForB = await resolver.resolveEffectiveDecision({
       agentInstanceId: "secondary-b",
       sessionId: "session-1",
       capabilityId: "git.write-local",

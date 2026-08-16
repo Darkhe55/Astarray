@@ -40,6 +40,16 @@ import { PermissionProfileStore } from "../../../core/src/tools/permission-profi
 import type { PermissionProfileReference } from "../../../core/src/tools/permission-profile-store.js";
 import { ConfigurablePermissionPolicyEngine } from "../../../core/src/tools/configurable-permission-policy-engine.js";
 import { CurrentPermissionSelectionStore } from "../../../core/src/tools/current-permission-selection.js";
+import { MainAgentReadonlyToolProjection } from "../../../core/src/tools/main-agent-readonly-projection.js";
+import {
+  EffectiveSecondaryPermissionResolver,
+  SessionPermissionElevationController,
+  SessionPermissionElevationStore,
+} from "../../../core/src/tools/session-permission-elevation.js";
+import {
+  CurrentPermissionConfigurationExporter,
+  SessionShutdownCoordinator,
+} from "../../../core/src/tools/session-shutdown-and-export.js";
 
 export interface CliBootstrap {
   controller: MainController;
@@ -152,6 +162,20 @@ export async function bootstrapCli(
   const currentPermissionSelectionStore = new CurrentPermissionSelectionStore({
     baseDirectory: stateDirectory,
   });
+  // B6R-06：主 Agent 永久只读投影 + 会话提升控制面 + 关闭协调器
+  const mainAgentReadonlyProjection = new MainAgentReadonlyToolProjection();
+  const sessionElevationStore = new SessionPermissionElevationStore({
+    baseDirectory: stateDirectory,
+  });
+  const sessionElevationController = new SessionPermissionElevationController(
+    sessionElevationStore,
+  );
+  const sessionElevationResolver = new EffectiveSecondaryPermissionResolver();
+  const sessionExporter = new CurrentPermissionConfigurationExporter();
+  const sessionShutdownCoordinator = new SessionShutdownCoordinator({
+    elevationStore: sessionElevationStore,
+    backupPort: backupVault,
+  });
 
   const controller = new MainController({
     modeMachine,
@@ -172,6 +196,12 @@ export async function bootstrapCli(
     permissionCapabilityCatalog: permissionCatalog,
     currentPermissionSelectionStore,
     currentPermissionProfileReference,
+    mainAgentReadonlyProjection,
+    sessionElevationStore,
+    sessionElevationController,
+    sessionElevationResolver,
+    sessionExporter,
+    sessionShutdownCoordinator,
     mainRuntimeFactory: () =>
       new ScriptedRuntime([
         {

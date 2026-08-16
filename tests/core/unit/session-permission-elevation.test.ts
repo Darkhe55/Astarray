@@ -157,10 +157,10 @@ describe("SessionPermissionElevation", () => {
     } as SessionPermissionElevationRecord;
   }
 
-  it("提升方向必须更宽（deny→ask/allow、ask→allow）", () => {
+  it("提升方向必须更宽（deny→ask/allow、ask→allow）", async () => {
     const store = new SessionPermissionElevationStore();
     const controller = new SessionPermissionElevationController(store);
-    const created = controller.createElevation(
+    const created = await controller.createElevation(
       makeElevation({
         originalDecision: "deny",
         elevatedDecision: "allow",
@@ -169,22 +169,22 @@ describe("SessionPermissionElevation", () => {
     expect(created.elevationId).toMatch(/^elevation-/);
     expect(created.originalDecision).toBe("deny");
     expect(created.elevatedDecision).toBe("allow");
-    expect(() =>
+    await expect(
       controller.createElevation(
         makeElevation({
           originalDecision: "allow",
           elevatedDecision: "deny",
         }),
       ),
-    ).toThrowError(/更宽/);
-    expect(() =>
+    ).rejects.toThrowError(/更宽/);
+    await expect(
       controller.createElevation(
         makeElevation({
           originalDecision: "ask",
           elevatedDecision: "ask",
         }),
       ),
-    ).toThrowError(/更宽/);
+    ).rejects.toThrowError(/更宽/);
   });
 
   it("会话级覆盖应用于全部现有及后续次级 Agent；个体覆盖隔离", async () => {
@@ -204,7 +204,7 @@ describe("SessionPermissionElevation", () => {
         elevatedDecision: "allow",
       }),
     );
-    const effectiveAgentA = resolver.resolveEffectiveDecision({
+    const effectiveAgentA = await resolver.resolveEffectiveDecision({
       agentInstanceId: "secondary-a",
       sessionId: "session-1",
       capabilityId: "backup.read",
@@ -218,7 +218,7 @@ describe("SessionPermissionElevation", () => {
     });
     expect(effectiveAgentA).toBe("allow");
     // 后续次级 Agent 同样生效
-    const effectiveAgentB = resolver.resolveEffectiveDecision({
+    const effectiveAgentB = await resolver.resolveEffectiveDecision({
       agentInstanceId: "secondary-b",
       sessionId: "session-1",
       capabilityId: "backup.read",
@@ -232,7 +232,7 @@ describe("SessionPermissionElevation", () => {
     });
     expect(effectiveAgentB).toBe("allow");
     // 个体提升只影响指定 Agent（用需提升的能力：git.write-local ask → allow）
-    elevationController.createElevation(
+    await elevationController.createElevation(
       makeElevation({
         scope: {
           scope: "specific-secondary-agent",
@@ -243,7 +243,7 @@ describe("SessionPermissionElevation", () => {
         elevatedDecision: "allow",
       }),
     );
-    const agentAWrite = resolver.resolveEffectiveDecision({
+    const agentAWrite = await resolver.resolveEffectiveDecision({
       agentInstanceId: "secondary-a",
       sessionId: "session-1",
       capabilityId: "git.write-local",
@@ -256,7 +256,7 @@ describe("SessionPermissionElevation", () => {
       requestedResourceScope: "workspace",
     });
     expect(agentAWrite).toBe("allow");
-    const agentBWrite = resolver.resolveEffectiveDecision({
+    const agentBWrite = await resolver.resolveEffectiveDecision({
       agentInstanceId: "secondary-b",
       sessionId: "session-1",
       capabilityId: "git.write-local",
@@ -290,7 +290,7 @@ describe("SessionPermissionElevation", () => {
     );
     // 未到期生效
     expect(
-      resolver.resolveEffectiveDecision({
+      await resolver.resolveEffectiveDecision({
         agentInstanceId: "secondary-a",
         sessionId: "session-1",
         capabilityId: "git.remote-write",
@@ -306,7 +306,7 @@ describe("SessionPermissionElevation", () => {
     // 到期后失效
     clockMilliseconds += 120_000;
     expect(
-      resolver.resolveEffectiveDecision({
+      await resolver.resolveEffectiveDecision({
         agentInstanceId: "secondary-a",
         sessionId: "session-1",
         capabilityId: "git.remote-write",
@@ -333,7 +333,7 @@ describe("SessionPermissionElevation", () => {
       }),
     );
     expect(
-      resolver.resolveEffectiveDecision({
+      await resolver.resolveEffectiveDecision({
         agentInstanceId: "secondary-retired",
         sessionId: "session-1",
         capabilityId: "git.write-local",
@@ -347,7 +347,7 @@ describe("SessionPermissionElevation", () => {
       }),
     ).toBe("allow");
     expect(
-      resolver.resolveEffectiveDecision({
+      await resolver.resolveEffectiveDecision({
         agentInstanceId: "secondary-retired",
         sessionId: "session-1",
         capabilityId: "git.write-local",
@@ -362,22 +362,22 @@ describe("SessionPermissionElevation", () => {
     ).toBe("ask");
   });
 
-  it("撤销不存在/会话级批量撤销/个体回收撤销计数正确", () => {
+  it("撤销不存在/会话级批量撤销/个体回收撤销计数正确", async () => {
     const elevationStore = new SessionPermissionElevationStore();
     const elevationController = new SessionPermissionElevationController(
       elevationStore,
     );
-    const created = elevationController.createElevation(
+    const created = await elevationController.createElevation(
       makeElevation({ capabilityId: "backup.read" }),
     );
-    elevationController.createElevation(
+    await elevationController.createElevation(
       makeElevation({
         capabilityId: "git.write-local",
         originalDecision: "ask",
         elevatedDecision: "allow",
       }),
     );
-    elevationController.createElevation(
+    await elevationController.createElevation(
       makeElevation({
         scope: {
           scope: "specific-secondary-agent",
@@ -390,19 +390,19 @@ describe("SessionPermissionElevation", () => {
     );
     // 撤销不存在的 ID
     expect(
-      elevationController.revokeElevation({
+      await elevationController.revokeElevation({
         sessionId: "session-1",
         elevationId: "no-such-elevation",
       }),
     ).toBe(false);
     // 个体回收撤销个体覆盖
     expect(
-      elevationStore.revokeIndividualRecordsForAgent("secondary-retired"),
+      await elevationStore.revokeIndividualRecordsForAgent("secondary-retired"),
     ).toBe(1);
     // 会话关闭批量撤销
-    expect(elevationStore.revokeAllForSession("session-1")).toBe(2);
-    expect(elevationStore.listRecords("session-1")).toHaveLength(0);
-    expect(elevationStore.listAllRecords()).toHaveLength(0);
+    expect(await elevationStore.revokeAllForSession("session-1")).toBe(2);
+    expect(await elevationStore.listRecords("session-1")).toHaveLength(0);
+    expect(await elevationStore.listAllRecords()).toHaveLength(0);
     void created;
   });
 
@@ -436,7 +436,7 @@ describe("SessionPermissionElevation", () => {
         sessionPermissionRevision: 1,
       }),
     );
-    const effective = resolver.resolveEffectiveDecision({
+    const effective = await resolver.resolveEffectiveDecision({
       agentInstanceId: "secondary-a",
       sessionId: "session-1",
       capabilityId: "backup.read",
@@ -451,7 +451,7 @@ describe("SessionPermissionElevation", () => {
     expect(effective).toBe("allow");
     // 切换到内置 profile → 提升失效（custom 引用不匹配）
     const assistProfile = store.buildBuiltinProfile("assist");
-    const switched = resolver.resolveEffectiveDecision({
+    const switched = await resolver.resolveEffectiveDecision({
       agentInstanceId: "secondary-a",
       sessionId: "session-1",
       capabilityId: "backup.read",
@@ -473,7 +473,7 @@ describe("SessionPermissionElevation", () => {
       elevationStore,
     );
     const resolver = new EffectiveSecondaryPermissionResolver();
-    const created = elevationController.createElevation(
+    const created = await elevationController.createElevation(
       makeElevation({
         capabilityId: "git.write-local",
         originalDecision: "ask",
@@ -481,7 +481,7 @@ describe("SessionPermissionElevation", () => {
       }),
     );
     expect(
-      resolver.resolveEffectiveDecision({
+      await resolver.resolveEffectiveDecision({
         agentInstanceId: "secondary-a",
         sessionId: "session-1",
         capabilityId: "git.write-local",
@@ -495,13 +495,13 @@ describe("SessionPermissionElevation", () => {
       }),
     ).toBe("allow");
     expect(
-      elevationController.revokeElevation({
+      await elevationController.revokeElevation({
         sessionId: "session-1",
         elevationId: created.elevationId,
       }),
     ).toBe(true);
     expect(
-      resolver.resolveEffectiveDecision({
+      await resolver.resolveEffectiveDecision({
         agentInstanceId: "secondary-a",
         sessionId: "session-1",
         capabilityId: "git.write-local",
@@ -830,7 +830,7 @@ describe("Exporter 与 ShutdownCoordinator", () => {
     expect(result.exportWrote).toBe(false);
     expect(result.exportFailedReason).not.toBeNull();
     expect(result.revokedElevationCount).toBe(1);
-    expect(elevationStore.listRecords("session-1")).toHaveLength(0);
+    expect(await elevationStore.listRecords("session-1")).toHaveLength(0);
   });
 
   it("关闭会话成功导出时撤销全部提升", async () => {

@@ -21,6 +21,10 @@ import {
   executeProfileShowCommand,
   executeProfileSwitchCommand,
   executeResumeCommand,
+  executeSessionElevateCommand,
+  executeSessionElevationListCommand,
+  executeSessionRevokeElevationCommand,
+  executeSessionShutdownCommand,
   executeStatusCommand,
 } from "./cli/commands.js";
 
@@ -249,6 +253,84 @@ profileCommand
       isJsonOutput: options.json === true,
     });
   });
+
+// B6R-06：会话提升控制面（认证设置控制面；不提供"提升主 Agent"）
+const sessionCommand = program.command("session").description("会话提升与关闭导出（认证设置控制面）");
+sessionCommand
+  .command("elevation-list")
+  .description("查看会话级/个体级临时提升")
+  .argument("<sessionId>", "会话 ID")
+  .option("--json", "JSON 输出")
+  .action(async (sessionId: string, options: { json?: boolean }) => {
+    process.exitCode = await executeSessionElevationListCommand({
+      stateDirectory: defaultStateDirectory(),
+      sessionId,
+      isJsonOutput: options.json === true,
+    });
+  });
+sessionCommand
+  .command("elevate")
+  .description("认证用户创建会话/个体提升（不提供提升主 Agent）")
+  .argument("<sessionId>", "会话 ID")
+  .argument("<capabilityId>", "权限 ID")
+  .argument("<decision>", "allow|ask（提升方向必须更宽）")
+  .option("--agent <agentInstanceId>", "具体次级 Agent（缺省=会话级）")
+  .option("--ttl-seconds <n>", "到期秒数（缺省=不过期）")
+  .action(
+    async (
+      sessionId: string,
+      capabilityId: string,
+      decision: string,
+      options: { agent?: string; ttlSeconds?: string },
+    ) => {
+      if (decision !== "allow" && decision !== "ask") {
+        process.stderr.write("decision 必须为 allow|ask\n");
+        process.exitCode = 2;
+        return;
+      }
+      const ttlSeconds = options.ttlSeconds;
+      const expiresAtIso =
+        ttlSeconds === undefined
+          ? null
+          : new Date(Date.now() + Number.parseInt(ttlSeconds, 10) * 1000).toISOString();
+      process.exitCode = await executeSessionElevateCommand({
+        stateDirectory: defaultStateDirectory(),
+        sessionId,
+        capabilityId,
+        elevatedDecision: decision,
+        agentInstanceId: options.agent ?? null,
+        expiresAtIso,
+      });
+    },
+  );
+sessionCommand
+  .command("revoke-elevation")
+  .description("撤销指定临时提升")
+  .argument("<sessionId>", "会话 ID")
+  .argument("<elevationId>", "提升 ID")
+  .action(async (sessionId: string, elevationId: string) => {
+    process.exitCode = await executeSessionRevokeElevationCommand({
+      stateDirectory: defaultStateDirectory(),
+      sessionId,
+      elevationId,
+    });
+  });
+sessionCommand
+  .command("shutdown")
+  .description("关闭会话：收敛 → 可选导出（受控备份）→ 无条件撤销全部提升")
+  .argument("<sessionId>", "会话 ID")
+  .option("--export <path>", "导出公开有效配置路径")
+  .option("--json", "JSON 输出")
+  .action(
+    async (sessionId: string, options: { export?: string; json?: boolean }) => {
+      process.exitCode = await executeSessionShutdownCommand({
+        stateDirectory: defaultStateDirectory(),
+        sessionId,
+        exportPath: options.export ?? null,
+        isJsonOutput: options.json === true,
+      });
+    },
+  );
 
 program
   .command("doctor")

@@ -632,8 +632,118 @@ function parseProfileReference(reference: string) {
   return { kind: "custom" as const, profileId: reference };
 }
 
-/** B6R-02：认证用户设置控制面——独立安装开关（默认 false；不授予安装）。 */
-export interface ConfigInstallEnabledCommandOptions {
+/** B6R-06：会话提升控制面与关闭导出（认证设置控制面；非模型工具）。 */
+async function loadSessionInfra(stateDirectory: string) {
+  const { MainController } = await import(
+    "../../../core/src/orchestration/main-controller.js"
+  );
+  void MainController;
+  const { bootstrapCli } = await import("./bootstrap.js");
+  return bootstrapCli({
+    mode: "assist",
+    stateDirectory,
+    concurrency: 1,
+    failureThreshold: 3,
+    maxLoopIterations: 1,
+    useFeedbackProcess: false,
+    streamOutput: () => {},
+  });
+}
+
+/** session elevation-list：查看会话级/个体级提升。 */
+export async function executeSessionElevationListCommand(
+  options: ProfileCommandOptions & { sessionId: string },
+): Promise<number> {
+  const bootstrap = await loadSessionInfra(options.stateDirectory);
+  const elevations = await bootstrap.controller.listSessionElevations(options.sessionId);
+  if (options.isJsonOutput === true) {
+    process.stdout.write(`${JSON.stringify(elevations)}\n`);
+  } else {
+    process.stdout.write(
+      elevations.length === 0
+        ? "（无提升）\n"
+        : elevations
+            .map(
+              (elevation) =>
+                `${elevation.elevationId}\t${elevation.capabilityId}\t${elevation.originalDecision}→${elevation.elevatedDecision}\t${elevation.scope.scope}`,
+            )
+            .join("\n") + "\n",
+    );
+  }
+  await bootstrap.shutdown();
+  return 0;
+}
+
+/** session elevate：认证用户创建会话/个体提升（不提供提升主 Agent）。 */
+export async function executeSessionElevateCommand(
+  options: ProfileCommandOptions & {
+    sessionId: string;
+    capabilityId: string;
+    elevatedDecision: "allow" | "ask";
+    agentInstanceId: string | null;
+    expiresAtIso: string | null;
+  },
+): Promise<number> {
+  const bootstrap = await loadSessionInfra(options.stateDirectory);
+  const result = await bootstrap.controller.createSessionElevation({
+    sessionId: options.sessionId,
+    agentInstanceId: options.agentInstanceId,
+    capabilityId: options.capabilityId,
+    resourceScope: "workspace",
+    elevatedDecision: options.elevatedDecision,
+    expiresAtIso: options.expiresAtIso,
+    userDecisionReference: `cli-elevate-${Date.now()}`,
+    currentSessionPermissionRevision: 1,
+  });
+  process.stdout.write(
+    `elevated ${result.elevationId}\t${options.capabilityId}\t${result.originalDecision}→${result.elevatedDecision}\n`,
+  );
+  await bootstrap.shutdown();
+  return 0;
+}
+
+/** session revoke-elevation：撤销指定提升。 */
+export async function executeSessionRevokeElevationCommand(
+  options: ProfileCommandOptions & { sessionId: string; elevationId: string },
+): Promise<number> {
+  const bootstrap = await loadSessionInfra(options.stateDirectory);
+  const revoked = await bootstrap.controller.revokeSessionElevation({
+    sessionId: options.sessionId,
+    elevationId: options.elevationId,
+  });
+  process.stdout.write(revoked ? `revoked ${options.elevationId}\n` : "（未找到）\n");
+  await bootstrap.shutdown();
+  return 0;
+}
+
+/** session shutdown：收敛 → 可选导出（受控备份）→ 无条件撤销全部提升。 */
+export async function executeSessionShutdownCommand(
+  options: ProfileCommandOptions & {
+    sessionId: string;
+    exportPath: string | null;
+  },
+): Promise<number> {
+  const bootstrap = await loadSessionInfra(options.stateDirectory);
+  const result = await bootstrap.controller.shutdownSession({
+    sessionId: options.sessionId,
+    exportPath: options.exportPath,
+  });
+  if (options.isJsonOutput === true) {
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  } else {
+    process.stdout.write(
+      `closed=${result.closed} revoked=${result.revokedElevationCount} exportWrote=${result.exportWrote}` +
+        (result.exportFailedReason !== null
+          ? ` exportFailed=${result.exportFailedReason}`
+          : "") +
+        "\n",
+    );
+  }
+  await bootstrap.shutdown();
+  return 0;
+}
+
+/** B6R-02：认证用户设置控制面——独立安装开关（默认 false；不授予安装）。 */export interface ConfigInstallEnabledCommandOptions {
   stateDirectory: string;
   isEnabled: boolean;
 }

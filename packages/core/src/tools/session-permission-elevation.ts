@@ -14,6 +14,7 @@
  * 三态宽度 deny < ask < allow；三级最终权限不得宽于次级有效权限。
  */
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 
 import { DomainError } from "../core/errors.js";
 import type { PermissionDecision } from "./permission-capability-catalog.js";
@@ -46,30 +47,118 @@ export interface SessionPermissionElevationRecord {
 
 export interface SessionPermissionElevationStoreOptions {
   nowUnixMilliseconds?: () => number;
+  /** B6R-06：持久化目录（<base>/session-elevations/<sessionId>.json；缺省纯内存）。 */
+  baseDirectory?: string;
 }
 
 export class SessionPermissionElevationStore {
   private readonly records: SessionPermissionElevationRecord[] = [];
   private readonly nowUnixMilliseconds: () => number;
+  private readonly baseDirectory: string | null;
 
   constructor(options: SessionPermissionElevationStoreOptions = {}) {
     this.nowUnixMilliseconds =
       options.nowUnixMilliseconds ?? (() => Date.now());
+    this.baseDirectory = options.baseDirectory ?? null;
   }
 
-  listRecords(sessionId: string): SessionPermissionElevationRecord[] {
+  private async loadRecords(sessionId: string): Promise<void> {
+    if (this.baseDirectory === null) {
+      return;
+    }
+    const { readFile } = await import("node:fs/promises");
+    const filePath = this.sessionFilePath(sessionId);
+    try {
+      const rawContent = await readFile(filePath, "utf8");
+      const parsed = JSON.parse(rawContent) as SessionPermissionElevationRecord[];
+      this.records.length = 0;
+      this.records.push(...parsed.filter((record) => record.sessionId === sessionId));
+    } catch {
+      this.records.length = 0;
+    }
+  }
+
+  private async persistRecords(): Promise<void> {
+    if (this.baseDirectory === null) {
+      return;
+    }
+    const { writeFile, readdir, rm, mkdir } = await import("node:fs/promises");
+    await mkdir(this.elevationsRootDirectory, { recursive: true });
+    const sessionIds = new Set(this.records.map((record) => record.sessionId));
+    try {
+      const existingFiles = await readdir(this.elevationsRootDirectory);
+      for (const fileName of existingFiles.filter((name) => name.endsWith(".json"))) {
+        const sessionId = fileName.slice(0, -".json".length);
+        if (!sessionIds.has(sessionId)) {
+          await rm(path.join(this.elevationsRootDirectory, fileName), { force: true });
+        }
+      }
+    } catch {
+      // 目录不存在
+    }
+    for (const sessionId of sessionIds) {
+      const records = this.records.filter(
+        (record) => record.sessionId === sessionId,
+      );
+      if (records.length === 0) {
+        continue;
+      }
+      const filePath = this.sessionFilePath(sessionId);
+      await writeFile(filePath, `${JSON.stringify(records, null, 2)}\n`, "utf8");
+    }
+  }
+
+  private get elevationsRootDirectory(): string {
+    return path.join(this.baseDirectory ?? ".", "session-elevations");
+  }
+
+  private sessionFilePath(sessionId: string): string {
+    return path.join(
+      this.elevationsRootDirectory,
+      `${sanitizeElevationSessionId(sessionId)}.json`,
+    );
+  }
+
+  async listRecords(sessionId: string): Promise<SessionPermissionElevationRecord[]> {
+    await this.loadRecords(sessionId);
     return this.records.filter((record) => record.sessionId === sessionId);
   }
 
-  listAllRecords(): SessionPermissionElevationRecord[] {
+  async listAllRecords(): Promise<SessionPermissionElevationRecord[]> {
+    if (this.baseDirectory !== null) {
+      const { readdir, readFile } = await import("node:fs/promises");
+      try {
+        const files = await readdir(this.elevationsRootDirectory);
+        const allRecords: SessionPermissionElevationRecord[] = [];
+        for (const fileName of files.filter((name) => name.endsWith(".json"))) {
+          try {
+            const rawContent = await readFile(
+              path.join(this.elevationsRootDirectory, fileName),
+              "utf8",
+            );
+            allRecords.push(
+              ...(JSON.parse(rawContent) as SessionPermissionElevationRecord[]),
+            );
+          } catch {
+            // 忽略损坏文件（防御）
+          }
+        }
+        return allRecords;
+      } catch {
+        return [...this.records];
+      }
+    }
     return [...this.records];
   }
 
-  addRecord(record: SessionPermissionElevationRecord): void {
+  async addRecord(record: SessionPermissionElevationRecord): Promise<void> {
+    await this.loadRecords(record.sessionId);
     this.records.push(record);
+    await this.persistRecords();
   }
 
-  revokeRecord(elevationId: string, sessionId: string): boolean {
+  async revokeRecord(elevationId: string, sessionId: string): Promise<boolean> {
+    await this.loadRecords(sessionId);
     const index = this.records.findIndex(
       (record) =>
         record.elevationId === elevationId && record.sessionId === sessionId,
@@ -78,37 +167,71 @@ export class SessionPermissionElevationStore {
       return false;
     }
     this.records.splice(index, 1);
+    await this.persistRecords();
     return true;
   }
 
-  revokeAllForSession(sessionId: string): number {
-    const before = this.records.length;
+  async revokeAllForSession(sessionId: string): Promise<number> {
+    await this.loadRecords(sessionId);
+    const before = this.records.filter(
+      (record) => record.sessionId === sessionId,
+    ).length;
     const remaining = this.records.filter(
       (record) => record.sessionId !== sessionId,
     );
     this.records.length = 0;
     this.records.push(...remaining);
-    return before - remaining.length;
+    await this.persistRecords();
+    return before;
   }
 
   /** 具体次级 Agent 回收时额外撤销其个体覆盖。 */
-  revokeIndividualRecordsForAgent(agentInstanceId: string): number {
-    const before = this.records.length;
-    const remaining = this.records.filter(
-      (record) =>
-        !(
-          record.scope.scope === "specific-secondary-agent" &&
-          record.scope.agentInstanceId === agentInstanceId
-        ),
+  async revokeIndividualRecordsForAgent(agentInstanceId: string): Promise<number> {
+    const allRecords =
+      this.baseDirectory !== null ? await this.listAllRecords() : this.records;
+    const affectedSessionIds = new Set(
+      allRecords
+        .filter(
+          (record) =>
+            record.scope.scope === "specific-secondary-agent" &&
+            record.scope.agentInstanceId === agentInstanceId,
+        )
+        .map((record) => record.sessionId),
     );
-    this.records.length = 0;
-    this.records.push(...remaining);
-    return before - remaining.length;
+    let revoked = 0;
+    for (const sessionId of affectedSessionIds) {
+      await this.loadRecords(sessionId);
+      const before = this.records.length;
+      const remaining = this.records.filter(
+        (record) =>
+          !(
+            record.scope.scope === "specific-secondary-agent" &&
+            record.scope.agentInstanceId === agentInstanceId
+          ),
+      );
+      this.records.length = 0;
+      this.records.push(...remaining);
+      revoked += before - remaining.length;
+      await this.persistRecords();
+    }
+    return revoked;
   }
 
   getNowUnixMilliseconds(): number {
     return this.nowUnixMilliseconds();
   }
+}
+
+function sanitizeElevationSessionId(sessionId: string): string {
+  let encoded = "";
+  for (const character of sessionId) {
+    if (/[A-Za-z0-9._-]/.test(character)) {
+      encoded += character;
+    } else {
+      encoded += `~${character.charCodeAt(0).toString(16).padStart(4, "0")}`;
+    }
+  }
+  return encoded;
 }
 
 /** 三态宽度排序：deny(0) < ask(1) < allow(2)。 */
@@ -131,7 +254,7 @@ export class EffectiveSecondaryPermissionResolver {
    * 计算次级 Agent 当前有效决定：基础 profile 决定 + 仍有效的会话/个体覆盖。
    * 覆盖失效条件：到期、profile/revision/目录版本变化。
    */
-  resolveEffectiveDecision(input: {
+  async resolveEffectiveDecision(input: {
     agentInstanceId: string;
     sessionId: string;
     capabilityId: string;
@@ -145,12 +268,12 @@ export class EffectiveSecondaryPermissionResolver {
     currentSessionPermissionRevision: number;
     /** B6R-05：请求的规范化资源身份（记录资源范围不匹配则失效）。 */
     requestedResourceScope: string;
-  }): PermissionDecision {
+  }): Promise<PermissionDecision> {
     const baseDecision =
       input.baseProfile.capabilityDecisions[input.capabilityId] ??
       input.baseProfile.fallbackDecision;
-    const applicableRecords = input.elevationStore
-      .listRecords(input.sessionId)
+    const sessionRecords = await input.elevationStore.listRecords(input.sessionId);
+    const applicableRecords = sessionRecords
       .filter((record) => {
         if (record.capabilityId !== input.capabilityId) {
           return false;
@@ -231,9 +354,9 @@ export class SessionPermissionElevationController {
    * 校验：提升方向必须更宽（deny→ask/allow、ask→allow）；
    * 创建后递增会话权限 revision（使未执行调用重新鉴权）。
    */
-  createElevation(
+  async createElevation(
     input: CreateElevationInput,
-  ): SessionPermissionElevationRecord {
+  ): Promise<SessionPermissionElevationRecord> {
     if (
       DECISION_WIDTH[input.elevatedDecision] <=
       DECISION_WIDTH[input.originalDecision]
@@ -259,20 +382,20 @@ export class SessionPermissionElevationController {
       userDecisionReference: input.userDecisionReference,
       sessionPermissionRevision: input.sessionPermissionRevision,
     };
-    this.store.addRecord(record);
+    await this.store.addRecord(record);
     return record;
   }
 
   /** 认证用户撤销提升（返回是否撤销成功）。 */
-  revokeElevation(input: {
+  async revokeElevation(input: {
     sessionId: string;
     elevationId: string;
-  }): boolean {
+  }): Promise<boolean> {
     return this.store.revokeRecord(input.elevationId, input.sessionId);
   }
 
   /** 撤销会话全部提升（会话关闭时）。 */
-  revokeAllForSession(sessionId: string): number {
+  async revokeAllForSession(sessionId: string): Promise<number> {
     return this.store.revokeAllForSession(sessionId);
   }
 }

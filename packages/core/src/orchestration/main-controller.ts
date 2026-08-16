@@ -30,6 +30,12 @@ import type { PermissionProfileStore } from "../tools/permission-profile-store.j
 import type { PermissionProfileReference } from "../tools/permission-profile-store.js";
 import type { PermissionCapabilityCatalog } from "../tools/permission-capability-catalog.js";
 import type { CurrentPermissionSelectionStore } from "../tools/current-permission-selection.js";
+import type { MainAgentReadonlyToolProjection } from "../tools/main-agent-readonly-projection.js";
+import type { SessionPermissionElevationStore } from "../tools/session-permission-elevation.js";
+import type { SessionPermissionElevationController } from "../tools/session-permission-elevation.js";
+import type { EffectiveSecondaryPermissionResolver } from "../tools/session-permission-elevation.js";
+import type { SessionShutdownCoordinator } from "../tools/session-shutdown-and-export.js";
+import type { CurrentPermissionConfigurationExporter } from "../tools/session-shutdown-and-export.js";
 
 export interface MainControllerOptions {
   modeMachine: ModeMachine;
@@ -81,6 +87,14 @@ export interface MainControllerOptions {
   currentPermissionSelectionStore?: CurrentPermissionSelectionStore | null;
   /** B6R-03/04b：当前权限组引用（可信运行时提供）。 */
   currentPermissionProfileReference?: PermissionProfileReference | null;
+  /** B6R-06：主 Agent 永久只读投影（任意 profile/提升下不变）。 */
+  mainAgentReadonlyProjection?: MainAgentReadonlyToolProjection | null;
+  /** B6R-06：会话临时提升控制面（TUI/CLI 认证设置控制面；非模型工具）。 */
+  sessionElevationStore?: SessionPermissionElevationStore | null;
+  sessionElevationController?: SessionPermissionElevationController | null;
+  sessionElevationResolver?: EffectiveSecondaryPermissionResolver | null;
+  sessionShutdownCoordinator?: SessionShutdownCoordinator | null;
+  sessionExporter?: CurrentPermissionConfigurationExporter | null;
 }
 
 export class MainController {
@@ -217,6 +231,170 @@ export class MainController {
     await selectionStore.switchSelection({
       selectedReference: reference,
       expectedRevision: current?.revision ?? 0,
+    });
+  }
+
+  // ─── B6R-06：主 Agent 永久只读 + 会话提升控制面 ───────────────────────
+
+  /** 主 Agent 可用工具名（任意 profile/提升下恒为只读白名单）。 */
+  getMainAgentToolProjection(): string[] {
+    const projection = this.options.mainAgentReadonlyProjection;
+    if (projection === null || projection === undefined) {
+      return [];
+    }
+    return projection.projectTools(
+      this.options.registry.getPreviewDescriptors().map((descriptor) => descriptor.name),
+    );
+  }
+
+  /** 会话级/个体级提升列表（公开字段）。 */
+  async listSessionElevations(sessionId: string) {
+    const elevationStore = this.options.sessionElevationStore;
+    if (elevationStore === null || elevationStore === undefined) {
+      return [];
+    }
+    return (await elevationStore.listRecords(sessionId)).map((record) => ({
+      elevationId: record.elevationId,
+      scope: record.scope,
+      capabilityId: record.capabilityId,
+      resourceScope: record.resourceScope,
+      originalDecision: record.originalDecision,
+      elevatedDecision: record.elevatedDecision,
+      createdAtIso: record.createdAtIso,
+      expiresAtIso: record.expiresAtIso,
+    }));
+  }
+
+  /** 认证用户创建会话/个体提升（不提供"提升主 Agent"）。 */
+  async createSessionElevation(input: {
+    sessionId: string;
+    agentInstanceId: string | null;
+    capabilityId: string;
+    resourceScope: string;
+    elevatedDecision: "allow" | "ask";
+    expiresAtIso: string | null;
+    userDecisionReference: string;
+    currentSessionPermissionRevision: number;
+  }): Promise<{
+    elevationId: string;
+    originalDecision: string;
+    elevatedDecision: string;
+  }> {
+    const elevationController = this.options.sessionElevationController;
+    const profileStore = this.options.permissionProfileStore;
+    if (
+      elevationController === null ||
+      elevationController === undefined ||
+      profileStore === null ||
+      profileStore === undefined
+    ) {
+      throw new Error("会话提升控制面未装配");
+    }
+    // 基础决定从当前 profile 快照读取（可信来源）
+    const reference = await this.getCurrentPermissionProfileReference();
+    if (reference === null) {
+      throw new Error("未选择当前权限组");
+    }
+    const profile = await profileStore.readProfile(reference);
+    const originalDecision =
+      profile.capabilityDecisions[input.capabilityId] ?? profile.fallbackDecision;
+    if (originalDecision === "allow" && input.elevatedDecision === "ask") {
+      throw new Error("提升方向必须更宽");
+    }
+    const scope =
+      input.agentInstanceId === null
+        ? { scope: "all-secondary-agents-in-session" as const }
+        : {
+            scope: "specific-secondary-agent" as const,
+            agentInstanceId: input.agentInstanceId,
+          };
+    const record = await elevationController.createElevation({
+      sessionId: input.sessionId,
+      scope,
+      capabilityId: input.capabilityId,
+      resourceScope: input.resourceScope,
+      baseProfileReference: reference,
+      baseProfileRevision: profile.revision,
+      catalogVersion: profile.catalogVersion,
+      originalDecision,
+      elevatedDecision: input.elevatedDecision,
+      expiresAtIso: input.expiresAtIso,
+      userDecisionReference: input.userDecisionReference,
+      sessionPermissionRevision: input.currentSessionPermissionRevision,
+    });
+    return {
+      elevationId: record.elevationId,
+      originalDecision: record.originalDecision,
+      elevatedDecision: record.elevatedDecision,
+    };
+  }
+
+  /** 认证用户撤销提升。 */
+  async revokeSessionElevation(input: {
+    sessionId: string;
+    elevationId: string;
+  }): Promise<boolean> {
+    const elevationController = this.options.sessionElevationController;
+    if (elevationController === null || elevationController === undefined) {
+      throw new Error("会话提升控制面未装配");
+    }
+    return elevationController.revokeElevation({
+      sessionId: input.sessionId,
+      elevationId: input.elevationId,
+    });
+  }
+
+  /** 关闭会话（收敛 → 可选导出 → 无条件撤销全部提升）。 */
+  async shutdownSession(input: {
+    sessionId: string;
+    exportPath: string | null;
+  }): Promise<{
+    closed: boolean;
+    revokedElevationCount: number;
+    exportWrote: boolean;
+    exportFailedReason: string | null;
+  }> {
+    const shutdownCoordinator = this.options.sessionShutdownCoordinator;
+    const elevationStore = this.options.sessionElevationStore;
+    const exporter = this.options.sessionExporter;
+    const profileStore = this.options.permissionProfileStore;
+    if (
+      shutdownCoordinator === null ||
+      shutdownCoordinator === undefined ||
+      elevationStore === null ||
+      elevationStore === undefined
+    ) {
+      throw new Error("会话关闭协调器未装配");
+    }
+    let exportSnapshot = null;
+    if (
+      input.exportPath !== null &&
+      exporter !== null &&
+      exporter !== undefined &&
+      profileStore !== null &&
+      profileStore !== undefined
+    ) {
+      const currentReference = await this.getCurrentPermissionProfileReference();
+      if (currentReference !== null) {
+        const baseProfile = await profileStore.readProfile(currentReference);
+        exportSnapshot = await exporter.exportEffectiveConfiguration({
+          sessionId: input.sessionId,
+          agentInstanceId: null,
+          baseProfile,
+          currentProfileReference: currentReference,
+          elevationStore,
+          resolver: this.options.sessionElevationResolver ?? (null as never),
+          nowUnixMilliseconds: Date.now(),
+          isAgentRetired: () => false,
+          currentSessionPermissionRevision: 1,
+        });
+      }
+    }
+    return shutdownCoordinator.shutdownSession({
+      sessionId: input.sessionId,
+      drainInFlightCalls: async () => {},
+      exportPath: input.exportPath,
+      exportSnapshot,
     });
   }
 
