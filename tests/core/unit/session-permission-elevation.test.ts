@@ -213,6 +213,8 @@ describe("SessionPermissionElevation", () => {
       elevationStore,
       nowUnixMilliseconds: clockMilliseconds,
       isAgentRetired: false,
+      currentSessionPermissionRevision: 1,
+      requestedResourceScope: "workspace",
     });
     expect(effectiveAgentA).toBe("allow");
     // 后续次级 Agent 同样生效
@@ -225,6 +227,8 @@ describe("SessionPermissionElevation", () => {
       elevationStore,
       nowUnixMilliseconds: clockMilliseconds,
       isAgentRetired: false,
+      currentSessionPermissionRevision: 1,
+      requestedResourceScope: "workspace",
     });
     expect(effectiveAgentB).toBe("allow");
     // 个体提升只影响指定 Agent（用需提升的能力：git.write-local ask → allow）
@@ -248,6 +252,8 @@ describe("SessionPermissionElevation", () => {
       elevationStore,
       nowUnixMilliseconds: clockMilliseconds,
       isAgentRetired: false,
+      currentSessionPermissionRevision: 1,
+      requestedResourceScope: "workspace",
     });
     expect(agentAWrite).toBe("allow");
     const agentBWrite = resolver.resolveEffectiveDecision({
@@ -259,6 +265,8 @@ describe("SessionPermissionElevation", () => {
       elevationStore,
       nowUnixMilliseconds: clockMilliseconds,
       isAgentRetired: false,
+      currentSessionPermissionRevision: 1,
+      requestedResourceScope: "workspace",
     });
     expect(agentBWrite).toBe("ask");
   });
@@ -291,6 +299,8 @@ describe("SessionPermissionElevation", () => {
         elevationStore,
         nowUnixMilliseconds: clockMilliseconds,
         isAgentRetired: false,
+        currentSessionPermissionRevision: 1,
+        requestedResourceScope: "workspace",
       }),
     ).toBe("allow");
     // 到期后失效
@@ -305,6 +315,8 @@ describe("SessionPermissionElevation", () => {
         elevationStore,
         nowUnixMilliseconds: clockMilliseconds,
         isAgentRetired: false,
+        currentSessionPermissionRevision: 1,
+        requestedResourceScope: "workspace",
       }),
     ).toBe("deny");
     // 个体覆盖在 Agent 回收后失效
@@ -330,6 +342,8 @@ describe("SessionPermissionElevation", () => {
         elevationStore,
         nowUnixMilliseconds: clockMilliseconds,
         isAgentRetired: false,
+        currentSessionPermissionRevision: 1,
+        requestedResourceScope: "workspace",
       }),
     ).toBe("allow");
     expect(
@@ -342,6 +356,8 @@ describe("SessionPermissionElevation", () => {
         elevationStore,
         nowUnixMilliseconds: clockMilliseconds,
         isAgentRetired: true,
+        currentSessionPermissionRevision: 1,
+        requestedResourceScope: "workspace",
       }),
     ).toBe("ask");
   });
@@ -429,6 +445,8 @@ describe("SessionPermissionElevation", () => {
       elevationStore,
       nowUnixMilliseconds: clockMilliseconds,
       isAgentRetired: false,
+      currentSessionPermissionRevision: 1,
+      requestedResourceScope: "workspace",
     });
     expect(effective).toBe("allow");
     // 切换到内置 profile → 提升失效（custom 引用不匹配）
@@ -442,6 +460,8 @@ describe("SessionPermissionElevation", () => {
       elevationStore,
       nowUnixMilliseconds: clockMilliseconds,
       isAgentRetired: false,
+      currentSessionPermissionRevision: 1,
+      requestedResourceScope: "workspace",
     });
     expect(switched).toBe("ask");
   });
@@ -470,6 +490,8 @@ describe("SessionPermissionElevation", () => {
         elevationStore,
         nowUnixMilliseconds: clockMilliseconds,
         isAgentRetired: false,
+        currentSessionPermissionRevision: 1,
+        requestedResourceScope: "workspace",
       }),
     ).toBe("allow");
     expect(
@@ -488,6 +510,8 @@ describe("SessionPermissionElevation", () => {
         elevationStore,
         nowUnixMilliseconds: clockMilliseconds,
         isAgentRetired: false,
+        currentSessionPermissionRevision: 1,
+        requestedResourceScope: "workspace",
       }),
     ).toBe("ask");
   });
@@ -562,6 +586,7 @@ describe("Exporter 与 ShutdownCoordinator", () => {
       resolver: new EffectiveSecondaryPermissionResolver(),
       nowUnixMilliseconds: 1_000_000,
       isAgentRetired: () => false,
+      currentSessionPermissionRevision: 1,
     });
     expect(snapshot.capabilityDecisions["backup.read"]).toBe("allow");
     expect(snapshot.capabilityDecisions["git.remote-write"]).toBe("deny");
@@ -617,6 +642,7 @@ describe("Exporter 与 ShutdownCoordinator", () => {
       resolver: new EffectiveSecondaryPermissionResolver(),
       nowUnixMilliseconds: 1_000_000,
       isAgentRetired: () => false,
+      currentSessionPermissionRevision: 1,
     });
     // 自定义组不包含 backup.read（提升绑定 assist，未扩散到其他 profile）
     expect(switchedSnapshot.capabilityDecisions["backup.read"]).toBeUndefined();
@@ -634,6 +660,7 @@ describe("Exporter 与 ShutdownCoordinator", () => {
       resolver: new EffectiveSecondaryPermissionResolver(),
       nowUnixMilliseconds: 1_000_000,
       isAgentRetired: () => false,
+      currentSessionPermissionRevision: 1,
     });
     expect(bumpedSnapshot.capabilityDecisions["backup.read"]).toBe("ask");
   });
@@ -681,6 +708,7 @@ describe("Exporter 与 ShutdownCoordinator", () => {
       resolver: new EffectiveSecondaryPermissionResolver(),
       nowUnixMilliseconds: 1_000_000,
       isAgentRetired: () => false,
+      currentSessionPermissionRevision: 1,
     });
     expect(snapshot.capabilityDecisions["backup.delete"]).toBe("ask");
   });
@@ -734,6 +762,7 @@ describe("Exporter 与 ShutdownCoordinator", () => {
       resolver: new EffectiveSecondaryPermissionResolver(),
       nowUnixMilliseconds: 1_000_000,
       isAgentRetired: () => false,
+      currentSessionPermissionRevision: 1,
     });
     expect(snapshot.capabilityDecisions["backup.read"]).toBeUndefined();
   });

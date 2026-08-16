@@ -141,6 +141,10 @@ export class EffectiveSecondaryPermissionResolver {
     nowUnixMilliseconds: number;
     /** 具体次级 Agent 是否已回收（回收后个体覆盖失效）。 */
     isAgentRetired: boolean;
+    /** B6R-05：当前会话权限 revision（记录快照不匹配则失效）。 */
+    currentSessionPermissionRevision: number;
+    /** B6R-05：请求的规范化资源身份（记录资源范围不匹配则失效）。 */
+    requestedResourceScope: string;
   }): PermissionDecision {
     const baseDecision =
       input.baseProfile.capabilityDecisions[input.capabilityId] ??
@@ -149,6 +153,14 @@ export class EffectiveSecondaryPermissionResolver {
       .listRecords(input.sessionId)
       .filter((record) => {
         if (record.capabilityId !== input.capabilityId) {
+          return false;
+        }
+        // B6R-05：会话权限 revision 快照不匹配 → 旧提升失效
+        if (record.sessionPermissionRevision !== input.currentSessionPermissionRevision) {
+          return false;
+        }
+        // B6R-05：资源范围不匹配 → 提升不应用
+        if (record.resourceScope !== input.requestedResourceScope) {
           return false;
         }
         if (record.baseProfileReference.kind !== input.currentProfileReference.kind) {
@@ -273,6 +285,7 @@ export interface TertiaryDelegationInput {
 /**
  * 三级权限分发守卫：三级最终权限不得宽于次级有效权限。
  * 求交规则：narrower(secondary, requested)。
+ * B6R-05：三态/资源范围/期限逐项求交（属性测试证明 tertiary <= secondary）。
  */
 export class TertiaryPermissionDelegationGuard {
   /** 返回三级实际允许的决定（求交后）。 */
@@ -283,6 +296,27 @@ export class TertiaryPermissionDelegationGuard {
       input.secondaryEffectiveDecision,
       input.requestedDelegatedDecision,
     );
+  }
+
+  /** 资源范围求交：三级请求范围 ⊆ 次级允许范围。 */
+  computeDelegatedResourceScope(input: {
+    secondaryAllowedResourceScopes: string[];
+    requestedResourceScopes: string[];
+  }): string[] {
+    const secondarySet = new Set(input.secondaryAllowedResourceScopes);
+    return input.requestedResourceScopes.filter((scope) => secondarySet.has(scope));
+  }
+
+  /** 期限求交：三级请求期限不得晚于次级有效期限（取更早）。 */
+  computeDelegatedExpiry(input: {
+    secondaryExpiresAtIso: string;
+    requestedExpiresAtIso: string;
+  }): string {
+    const secondaryTime = new Date(input.secondaryExpiresAtIso).getTime();
+    const requestedTime = new Date(input.requestedExpiresAtIso).getTime();
+    return secondaryTime <= requestedTime
+      ? input.secondaryExpiresAtIso
+      : input.requestedExpiresAtIso;
   }
 
   /** 校验请求的分发决定是否在次级上限内（超出即拒绝分发）。 */

@@ -57,6 +57,8 @@ export class CurrentPermissionConfigurationExporter {
     resolver: EffectiveSecondaryPermissionResolver;
     nowUnixMilliseconds: number;
     isAgentRetired: (agentInstanceId: string) => boolean;
+    /** B6R-05：当前会话权限 revision（与运行时同源解析）。 */
+    currentSessionPermissionRevision: number;
   }): Promise<EffectivePermissionSnapshot> {
     const capabilityDecisions: Record<string, PermissionDecision> = {};
     const resourceScopes: Record<string, string> = {};
@@ -75,6 +77,8 @@ export class CurrentPermissionConfigurationExporter {
           elevationStore: input.elevationStore,
           nowUnixMilliseconds: input.nowUnixMilliseconds,
           isAgentRetired: input.isAgentRetired(input.agentInstanceId),
+          currentSessionPermissionRevision: input.currentSessionPermissionRevision,
+          requestedResourceScope: resourceScope,
         });
         const record = input.elevationStore
           .listRecords(input.sessionId)
@@ -82,7 +86,8 @@ export class CurrentPermissionConfigurationExporter {
             (candidate) =>
               candidate.capabilityId === capabilityId &&
               candidate.scope.scope === "specific-secondary-agent" &&
-              candidate.scope.agentInstanceId === input.agentInstanceId,
+              candidate.scope.agentInstanceId === input.agentInstanceId &&
+              this.isRecordStillValid(candidate, input),
           );
         resourceScope = record?.resourceScope ?? "workspace";
       } else {
@@ -126,9 +131,14 @@ export class CurrentPermissionConfigurationExporter {
       baseProfile: PermissionProfileDocument;
       currentProfileReference: PermissionProfileReference;
       nowUnixMilliseconds: number;
+      currentSessionPermissionRevision: number;
     },
   ): boolean {
     if (record.sessionId !== input.sessionId) {
+      return false;
+    }
+    // B6R-05：与运行时同源——会话权限 revision 快照不匹配 → 失效
+    if (record.sessionPermissionRevision !== input.currentSessionPermissionRevision) {
       return false;
     }
     if (record.baseProfileReference.kind !== input.currentProfileReference.kind) {
