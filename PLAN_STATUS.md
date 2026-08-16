@@ -51,7 +51,7 @@
 | T07B | 反自指读取与通用活锁守卫 | re-verifying | 4H | 2026-08-13 完成；Batch 4H 检查点（539 测试全绿）；待 AR 复验 |
 | T08 | 三级 Agent 编排 | re-verifying | 5 | AR-04 复验：T05B→T08 Git 编排接入完成（Batch 5 增补检查点），待 AR-04 全项复验 |
 | T08A | 默认控制流、个体记忆隔离与三级 Agent 生命周期 | re-verifying | 6D | 2026-08-13 完成；Batch 6D 检查点（654 测试全绿）；待 AR 复验 |
-| T08B | 工具说明回访、无产品数量配额与受权通信转交 | pending | 6E | 新增设计；须按 ADR-0024 实现和动态验收 |
+| T08B | 工具说明回访、无产品数量配额与受权通信转交 | re-verifying | 6E | 2026-08-13 完成；Batch 6E 检查点（665 测试全绿）；待 AR 复验 |
 | T09 | 记忆、缓存与指标 | re-verifying | 6 | AR-00 重新验收中 |
 | T10 | TUI | re-verifying | 6 | AR-00 重新验收中（AR-02 授权交互） |
 | T11 | Headless CLI | re-verifying | 6 | AR-00 重新验收中 |
@@ -223,6 +223,25 @@ T14 产出：`README.md`（安装/三模式/Provider/状态目录/headless/反�
 - T11：`run/status/resume/cancel/doctor/config init` 全部实现；`--json` 模式 stdout 仅 JSON、日志走 stderr；退出码 0/1/2 稳定；11 项构建产物集成测试 + 17 项命令单元测试；反馈进程入口路径解析修复。
 
 遗留风险：TUI 键盘输入路径未做 PTY 自动化（T13 用 node-pty 补）；指标尚未接入编排循环（v0.1 头栏显示 0）。
+
+## Batch 6E（T08B 增补任务）检查点记录
+
+### 2026-08-13 — 通过
+
+验收命令与实际结果：
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `npm run check` | 0 | 53 文件 / 665 测试通过（typecheck/lint/build/test 全绿） |
+| `npm run test:coverage` | 0 | Stmts 92.3x% / Branch 85.23% |
+
+T08B（工具说明回访、无产品数量配额与受权通信转交，ADR-0024）：
+
+- `ToolDocumentationReceiptStore` + `ToolDocumentationRecallInjector`：个体按 agentInstanceId + toolGroupIdentifier + revision 保存回执（内容哈希）；首次完整注入已分配工具说明；同 revision 连续激活只发固定提醒（ASTARRAY_TOOL_HELP_REQUEST_V1 标准格式）；revision 变化发可验证 delta（无法证明完整则完整重发）；新个体不继承、同级不共享。
+- `ToolHelpRequestSchema`/`validateToolHelpRequest`：usage-help 必须带已分配 toolIdentifier 且阻塞原因限 forgot-usage/schema-uncertain/response-uncertain；missing-capability 允许 null 工具并限 not-in-assigned-tool-set/no-known-match；身份/层级/直属上级/mission/revision/来源由 harness 注入。
+- `ToolDocumentationRecallController`：已分配工具直接返回单工具完整用法（usage-provided，不重复整组）；未分配/权限不足 → known-but-not-usable（不泄露 schema）+ escalation；无匹配 → missing-tool escalation；request ID 幂等去重、陈旧 revision 返回 stale-request、换词循环预算超限 rejected；isAuthorizationGranted 恒 false（不授予工具/权限/安装）。
+- `UnboundedAgentInstanceRegistry`：历史实例总数不产生拒绝（10,000 实例创建/回收验证）；并发槽满 → 排队/暂停（资源限制非数量配额）；回收需允许且已回收实例不可复用。
+- `AgentCommunicationDelegationController` + `DelegatedAgentCommunicationGrantStore`：target 必须恰好低一级、recipient 必须与 grantor 同级、target 存活；不透明 communicationHandleIdentifier（无 IPC/凭据暴露）；投递前失效检查全条件（用户撤销/target 回收/父子变化/mission 结束/到期/消息类型/instruction 未授权/在途超限/句柄不存在）；grant 不可转授；Agent 相关撤销批量生效。
 
 ## Batch 6D（T08A 增补任务）检查点记录
 
