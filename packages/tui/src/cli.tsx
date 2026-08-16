@@ -9,6 +9,17 @@ import {
   executeConfigInitCommand,
   executeConfigInstallEnabledCommand,
   executeDoctorCommand,
+  executeProfileCopyCommand,
+  executeProfileCreateCommand,
+  executeProfileDeleteCommand,
+  executeProfileExportCommand,
+  executeProfileImportCommand,
+  executeProfileListCommand,
+  executeProfileRenameCommand,
+  executeProfileResetCommand,
+  executeProfileSetCapabilityCommand,
+  executeProfileShowCommand,
+  executeProfileSwitchCommand,
   executeResumeCommand,
   executeStatusCommand,
 } from "./cli/commands.js";
@@ -98,6 +109,144 @@ configCommand
     process.exitCode = await executeConfigInstallEnabledCommand({
       stateDirectory: defaultStateDirectory(),
       isEnabled: enabled.toLowerCase() === "true",
+    });
+  });
+
+// B6R-04：认证用户设置控制面——权限组生命周期
+const profileCommand = program.command("profile").description("权限组管理（认证设置控制面）");
+profileCommand
+  .command("list")
+  .description("列出全部权限组（分页；无产品数量上限）")
+  .option("--json", "JSON 输出")
+  .option("--page <n>", "页码", "1")
+  .option("--page-size <n>", "每页数量", "50")
+  .action(async (options: { json?: boolean; page?: string; pageSize?: string }) => {
+    process.exitCode = await executeProfileListCommand({
+      stateDirectory: defaultStateDirectory(),
+      isJsonOutput: options.json === true,
+      page: Number.parseInt(options.page ?? "1", 10),
+      pageSize: Number.parseInt(options.pageSize ?? "50", 10),
+    });
+  });
+profileCommand
+  .command("create")
+  .description("创建自定义权限组（来源 blank/assist/devolve/ponder/custom:<id>）")
+  .argument("<name>", "显示名称")
+  .option("--from <source>", "创建来源", "blank")
+  .action(async (name: string, options: { from?: string }) => {
+    process.exitCode = await executeProfileCreateCommand({
+      stateDirectory: defaultStateDirectory(),
+      displayName: name,
+      source: options.from ?? "blank",
+    });
+  });
+profileCommand
+  .command("rename")
+  .description("重命名自定义权限组（ID 不变）")
+  .argument("<profileId>", "权限组 ID")
+  .argument("<newName>", "新名称")
+  .action(async (profileId: string, newName: string) => {
+    process.exitCode = await executeProfileRenameCommand({
+      stateDirectory: defaultStateDirectory(),
+      permissionProfileId: profileId,
+      newDisplayName: newName,
+    });
+  });
+profileCommand
+  .command("copy")
+  .description("复制自定义权限组")
+  .argument("<profileId>", "权限组 ID")
+  .argument("<newName>", "新名称")
+  .action(async (profileId: string, newName: string) => {
+    process.exitCode = await executeProfileCopyCommand({
+      stateDirectory: defaultStateDirectory(),
+      permissionProfileId: profileId,
+      newDisplayName: newName,
+    });
+  });
+profileCommand
+  .command("reset")
+  .description("重置为来源（blank/assist/devolve/ponder/custom:<id>）")
+  .argument("<profileId>", "权限组 ID")
+  .option("--to <source>", "重置来源", "blank")
+  .action(async (profileId: string, options: { to?: string }) => {
+    process.exitCode = await executeProfileResetCommand({
+      stateDirectory: defaultStateDirectory(),
+      permissionProfileId: profileId,
+      source: options.to ?? "blank",
+    });
+  });
+profileCommand
+  .command("set-capability")
+  .description("逐项三态设置（allow/ask/deny）")
+  .argument("<profileId>", "权限组 ID")
+  .argument("<capabilityId>", "权限 ID")
+  .argument("<decision>", "allow|ask|deny")
+  .action(async (profileId: string, capabilityId: string, decision: string) => {
+    if (decision !== "allow" && decision !== "ask" && decision !== "deny") {
+      process.stderr.write("decision 必须为 allow|ask|deny\n");
+      process.exitCode = 2;
+      return;
+    }
+    process.exitCode = await executeProfileSetCapabilityCommand({
+      stateDirectory: defaultStateDirectory(),
+      permissionProfileId: profileId,
+      capabilityId,
+      decision,
+    });
+  });
+profileCommand
+  .command("export")
+  .description("导出公开可配置字段（剥离内部字段；覆盖前自动备份）")
+  .argument("<reference>", "builtin 或 profile ID")
+  .option("--out <path>", "输出文件")
+  .action(async (reference: string, options: { out?: string }) => {
+    process.exitCode = await executeProfileExportCommand({
+      stateDirectory: defaultStateDirectory(),
+      reference,
+      outputPath: options.out ?? null,
+    });
+  });
+profileCommand
+  .command("import")
+  .description("导入公开配置（只接受可配置目录字段）")
+  .argument("<file>", "JSON 文件")
+  .action(async (file: string) => {
+    process.exitCode = await executeProfileImportCommand({
+      stateDirectory: defaultStateDirectory(),
+      inputPath: file,
+    });
+  });
+profileCommand
+  .command("delete")
+  .description("删除自定义权限组（当前使用组必须先切换）")
+  .argument("<profileId>", "权限组 ID")
+  .action(async (profileId: string) => {
+    process.exitCode = await executeProfileDeleteCommand({
+      stateDirectory: defaultStateDirectory(),
+      permissionProfileId: profileId,
+    });
+  });
+profileCommand
+  .command("switch")
+  .description("认证用户选择当前权限组（持久化；写入自动备份）")
+  .argument("<reference>", "builtin 或 profile ID")
+  .action(async (reference: string) => {
+    process.exitCode = await executeProfileSwitchCommand({
+      stateDirectory: defaultStateDirectory(),
+      reference,
+    });
+  });
+profileCommand
+  .command("show")
+  .description("显示当前/指定权限组公开详情")
+  .argument("[reference]", "builtin 或 profile ID（缺省为当前选择）")
+  .option("--json", "JSON 输出")
+  .action(async (reference: string | undefined, options: { json?: boolean }) => {
+    process.exitCode = await executeProfileShowCommand({
+      stateDirectory: defaultStateDirectory(),
+      reference: reference ?? null,
+      isJsonOutput: options.json === true,
     });
   });
 

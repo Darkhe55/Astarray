@@ -295,6 +295,343 @@ export async function executeConfigInitCommand(
 
 export { defaultStateDirectory };
 
+/** B6R-04：认证用户设置控制面——权限组生命周期命令（Headless 契约）。 */
+
+export interface ProfileCommandOptions {
+  stateDirectory: string;
+  isJsonOutput?: boolean;
+}
+
+function failWithCode(message: string, exitCode = 2): never {
+  process.stderr.write(`${message}\n`);
+  process.exitCode = exitCode;
+  throw new Error(message);
+}
+
+async function loadProfileInfra(stateDirectory: string) {
+  const { PermissionCapabilityCatalog } = await import(
+    "../../../core/src/tools/permission-capability-catalog.js"
+  );
+  const { PermissionProfileStore } = await import(
+    "../../../core/src/tools/permission-profile-store.js"
+  );
+  const { CustomPermissionProfileController } = await import(
+    "../../../core/src/tools/custom-permission-profile-controller.js"
+  );
+  const { CurrentPermissionSelectionStore } = await import(
+    "../../../core/src/tools/current-permission-selection.js"
+  );
+  const catalog = new PermissionCapabilityCatalog();
+  const profileStore = new PermissionProfileStore({
+    baseDirectory: stateDirectory,
+    catalog,
+  });
+  const controller = new CustomPermissionProfileController(profileStore, catalog);
+  const selectionStore = new CurrentPermissionSelectionStore({
+    baseDirectory: stateDirectory,
+  });
+  return { catalog, profileStore, controller, selectionStore };
+}
+
+/** profile list：分页列出全部权限组（含内置；无产品数量上限）。 */
+export async function executeProfileListCommand(
+  options: ProfileCommandOptions & { page?: number; pageSize?: number },
+): Promise<number> {
+  const { profileStore, selectionStore } = await loadProfileInfra(
+    options.stateDirectory,
+  );
+  const builtinProfiles = ["ponder", "assist", "devolve"].map((profileId) =>
+    profileStore.buildBuiltinProfile(profileId as "ponder" | "assist" | "devolve"),
+  );
+  const customProfiles = await profileStore.listCustomProfiles();
+  const allProfiles = [...builtinProfiles, ...customProfiles];
+  const page = Math.max(1, options.page ?? 1);
+  const pageSize = Math.max(1, options.pageSize ?? 50);
+  const pageItems = allProfiles.slice((page - 1) * pageSize, page * pageSize);
+  const currentSelection = await selectionStore.readSelection();
+  if (options.isJsonOutput === true) {
+    process.stdout.write(
+      JSON.stringify({
+        profiles: pageItems.map((profile) => ({
+          permissionProfileId: profile.permissionProfileId,
+          displayName: profile.displayName,
+          isBuiltin: profile.isBuiltin,
+          revision: profile.revision,
+        })),
+        page,
+        pageSize,
+        total: allProfiles.length,
+        currentSelection: currentSelection?.selectedReference ?? null,
+      }) + "\n",
+    );
+    return 0;
+  }
+  process.stdout.write(
+    pageItems
+      .map((profile) => {
+        const isCurrent =
+          currentSelection !== null &&
+          currentSelection.selectedReference.kind ===
+            (profile.isBuiltin ? "builtin" : "custom") &&
+          ((profile.isBuiltin &&
+            currentSelection.selectedReference.kind === "builtin" &&
+            currentSelection.selectedReference.profileId ===
+              profile.permissionProfileId) ||
+            (!profile.isBuiltin &&
+              currentSelection.selectedReference.kind === "custom" &&
+              currentSelection.selectedReference.profileId ===
+                profile.permissionProfileId));
+        return `${isCurrent ? "*" : " "} ${profile.permissionProfileId}\t${profile.displayName}\trevision=${profile.revision}`;
+      })
+      .join("\n") + "\n",
+  );
+  return 0;
+}
+
+/** profile create：创建自定义组（来源：blank/assist/devolve/ponder/custom:<id>）。 */
+export async function executeProfileCreateCommand(
+  options: ProfileCommandOptions & { displayName: string; source: string },
+): Promise<number> {
+  const { controller } = await loadProfileInfra(options.stateDirectory);
+  const source = parseProfileSource(options.source);
+  const profile = await controller.createProfile({
+    displayName: options.displayName,
+    source,
+  });
+  process.stdout.write(
+    `created ${profile.permissionProfileId}\t${profile.displayName}\n`,
+  );
+  return 0;
+}
+
+/** profile rename / copy / reset / set-capability。 */
+export async function executeProfileRenameCommand(
+  options: ProfileCommandOptions & {
+    permissionProfileId: string;
+    newDisplayName: string;
+  },
+): Promise<number> {
+  const { profileStore, controller } = await loadProfileInfra(options.stateDirectory);
+  const document = await profileStore.readCustomProfile(options.permissionProfileId);
+  if (document === null) {
+    failWithCode(`权限组不存在: ${options.permissionProfileId}`);
+  }
+  await controller.renameProfile({
+    permissionProfileId: options.permissionProfileId,
+    newDisplayName: options.newDisplayName,
+    expectedRevision: document.revision,
+  });
+  process.stdout.write(`renamed ${options.permissionProfileId}\n`);
+  return 0;
+}
+
+export async function executeProfileCopyCommand(
+  options: ProfileCommandOptions & {
+    permissionProfileId: string;
+    newDisplayName: string;
+  },
+): Promise<number> {
+  const { controller } = await loadProfileInfra(options.stateDirectory);
+  const profile = await controller.createProfile({
+    displayName: options.newDisplayName,
+    source: { kind: "custom", permissionProfileId: options.permissionProfileId },
+  });
+  process.stdout.write(`copied ${profile.permissionProfileId}\t${profile.displayName}\n`);
+  return 0;
+}
+
+export async function executeProfileResetCommand(
+  options: ProfileCommandOptions & {
+    permissionProfileId: string;
+    source: string;
+  },
+): Promise<number> {
+  const { profileStore, controller } = await loadProfileInfra(options.stateDirectory);
+  const document = await profileStore.readCustomProfile(options.permissionProfileId);
+  if (document === null) {
+    failWithCode(`权限组不存在: ${options.permissionProfileId}`);
+  }
+  await controller.resetProfile({
+    permissionProfileId: options.permissionProfileId,
+    source: parseProfileSource(options.source),
+    expectedRevision: document.revision,
+  });
+  process.stdout.write(`reset ${options.permissionProfileId}\n`);
+  return 0;
+}
+
+export async function executeProfileSetCapabilityCommand(
+  options: ProfileCommandOptions & {
+    permissionProfileId: string;
+    capabilityId: string;
+    decision: "allow" | "ask" | "deny";
+  },
+): Promise<number> {
+  const { profileStore, controller } = await loadProfileInfra(options.stateDirectory);
+  const document = await profileStore.readCustomProfile(options.permissionProfileId);
+  if (document === null) {
+    failWithCode(`权限组不存在: ${options.permissionProfileId}`);
+  }
+  await controller.updateCapabilityDecision({
+    permissionProfileId: options.permissionProfileId,
+    capabilityId: options.capabilityId,
+    decision: options.decision,
+    expectedRevision: document.revision,
+  });
+  process.stdout.write(
+    `set ${options.capabilityId}=${options.decision} @ ${options.permissionProfileId}\n`,
+  );
+  return 0;
+}
+
+/** profile export：只导出公开可配置字段（剥离内部字段）。 */
+export async function executeProfileExportCommand(
+  options: ProfileCommandOptions & {
+    reference: string;
+    outputPath: string | null;
+  },
+): Promise<number> {
+  const { controller } = await loadProfileInfra(options.stateDirectory);
+  const reference = parseProfileReference(options.reference);
+  const exported = await controller.exportProfile(reference);
+  if (options.outputPath !== null) {
+    await fs.mkdir(path.dirname(options.outputPath), { recursive: true });
+    try {
+      await fs.copyFile(options.outputPath, `${options.outputPath}.bak`);
+    } catch {
+      // 目标不存在
+    }
+    await fs.writeFile(
+      options.outputPath,
+      `${JSON.stringify(exported.exportedDocument, null, 2)}\n`,
+      "utf8",
+    );
+    process.stdout.write(`exported → ${options.outputPath}\n`);
+  } else {
+    process.stdout.write(`${JSON.stringify(exported.exportedDocument, null, 2)}\n`);
+  }
+  return 0;
+}
+
+/** profile import：只接受公开可配置字段。 */
+export async function executeProfileImportCommand(
+  options: ProfileCommandOptions & { inputPath: string },
+): Promise<number> {
+  const { controller } = await loadProfileInfra(options.stateDirectory);
+  const rawContent = await fs.readFile(options.inputPath, "utf8");
+  const exportedDocument = JSON.parse(rawContent) as Record<string, unknown>;
+  const profile = await controller.importProfile({ exportedDocument });
+  process.stdout.write(`imported ${profile.permissionProfileId}\t${profile.displayName}\n`);
+  return 0;
+}
+
+/** profile delete：当前使用组必须先切换。 */
+export async function executeProfileDeleteCommand(
+  options: ProfileCommandOptions & { permissionProfileId: string },
+): Promise<number> {
+  const { controller, selectionStore } = await loadProfileInfra(
+    options.stateDirectory,
+  );
+  const currentSelection = await selectionStore.readSelection();
+  const isCurrentlyActive =
+    currentSelection !== null &&
+    currentSelection.selectedReference.kind === "custom" &&
+    currentSelection.selectedReference.profileId === options.permissionProfileId;
+  if (isCurrentlyActive) {
+    failWithCode("当前使用中的权限组不能直接删除，请先 switch 到其他组");
+  }
+  await controller.deleteProfile({
+    permissionProfileId: options.permissionProfileId,
+    isCurrentlyActive: false,
+  });
+  process.stdout.write(`deleted ${options.permissionProfileId}\n`);
+  return 0;
+}
+
+/** profile switch：认证用户选择当前权限组（持久化）。 */
+export async function executeProfileSwitchCommand(
+  options: ProfileCommandOptions & { reference: string },
+): Promise<number> {
+  const { selectionStore } = await loadProfileInfra(options.stateDirectory);
+  const reference = parseProfileReference(options.reference);
+  const current = await selectionStore.readSelection();
+  const selection = await selectionStore.switchSelection({
+    selectedReference: reference,
+    expectedRevision: current?.revision ?? 0,
+  });
+  process.stdout.write(
+    `switched → ${JSON.stringify(selection.selectedReference)}\n`,
+  );
+  return 0;
+}
+
+/** profile show：当前/指定 profile 详情（公开字段）。 */
+export async function executeProfileShowCommand(
+  options: ProfileCommandOptions & { reference: string | null },
+): Promise<number> {
+  const { profileStore, selectionStore } = await loadProfileInfra(options.stateDirectory);
+  let reference;
+  if (options.reference !== null) {
+    reference = parseProfileReference(options.reference);
+  } else {
+    const currentSelection = await selectionStore.readSelection();
+    if (currentSelection === null) {
+      failWithCode("未选择权限组（请先 profile switch）");
+    }
+    reference = currentSelection.selectedReference;
+  }
+  const profile = await profileStore.readProfile(reference);
+  if (options.isJsonOutput === true) {
+    process.stdout.write(
+      JSON.stringify({
+        permissionProfileId: profile.permissionProfileId,
+        displayName: profile.displayName,
+        isBuiltin: profile.isBuiltin,
+        revision: profile.revision,
+        capabilityDecisions: profile.capabilityDecisions,
+      }) + "\n",
+    );
+    return 0;
+  }
+  process.stdout.write(
+    `${profile.permissionProfileId}\t${profile.displayName}\trevision=${profile.revision}\n` +
+      Object.entries(profile.capabilityDecisions)
+        .map(([capabilityId, decision]) => `  ${capabilityId}=${decision}`)
+        .join("\n") +
+      "\n",
+  );
+  return 0;
+}
+
+function parseProfileSource(source: string) {
+  if (source === "blank") {
+    return { kind: "blank" as const };
+  }
+  if (source === "assist" || source === "devolve" || source === "ponder") {
+    return {
+      kind: "builtin" as const,
+      profileId: source as "assist" | "devolve" | "ponder",
+    };
+  }
+  if (source.startsWith("custom:")) {
+    return { kind: "custom" as const, permissionProfileId: source.slice(7) };
+  }
+  failWithCode(`非法来源: ${source}（blank|assist|devolve|ponder|custom:<id>）`);
+}
+
+function parseProfileReference(reference: string) {
+  if (reference === "ponder" || reference === "assist" || reference === "devolve") {
+    return {
+      kind: "builtin" as const,
+      profileId: reference as "ponder" | "assist" | "devolve",
+    };
+  }
+  if (reference.startsWith("custom:")) {
+    return { kind: "custom" as const, profileId: reference.slice(7) };
+  }
+  return { kind: "custom" as const, profileId: reference };
+}
+
 /** B6R-02：认证用户设置控制面——独立安装开关（默认 false；不授予安装）。 */
 export interface ConfigInstallEnabledCommandOptions {
   stateDirectory: string;
