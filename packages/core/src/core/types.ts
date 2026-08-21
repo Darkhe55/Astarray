@@ -79,8 +79,12 @@ export const MESSAGE_PRIORITY_ORDER = [
 ] as const;
 export type MessagePriority = (typeof MESSAGE_PRIORITY_ORDER)[number];
 
-/** Agent 层级。agentInstanceId 用于标识该层级中的具体 Agent 个体。 */
-export type AgentRole = "main" | "secondary" | "tertiary";
+/**
+ * Agent 层级。agentInstanceId 用于标识该层级中的具体 Agent 个体。
+ * T08C 扩展四层：main（战略主 Agent）→ secondary（次级调度/集成）
+ * → tertiary（任务执行）→ quaternary（三级委派的严格子链执行者）。
+ */
+export type AgentRole = "main" | "secondary" | "tertiary" | "quaternary";
 
 /** 反馈进程 IPC 协议版本。版本不兼容时必须拒绝通信（T04）。 */
 export const FEEDBACK_PROTOCOL_VERSION = 1;

@@ -296,6 +296,8 @@ export class AgentCommunicationDelegationController {
         return 1;
       case "tertiary":
         return 2;
+      case "quaternary":
+        return 3;
     }
   }
 }

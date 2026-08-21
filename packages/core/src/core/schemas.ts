@@ -230,7 +230,7 @@ export const feedbackMessageSourceSchema = z.discriminatedUnion(
     z.object({
       sourceType: z.literal("agent"),
       agentInstanceId: z.string().min(1),
-      agentRole: z.enum(["main", "secondary", "tertiary"]),
+      agentRole: z.enum(["main", "secondary", "tertiary", "quaternary"]),
     }),
     z.object({
       sourceType: z.literal("system"),
