@@ -19,6 +19,7 @@ export type DomainErrorCode =
   | "feedback-process-unavailable"
   | "provider-timeout"
   | "provider-cancelled"
+  | "provider-protocol-error"
   | "mission-not-found"
   | "mission-locked"
   | "stale-revision"
