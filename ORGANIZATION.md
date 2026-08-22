@@ -109,6 +109,10 @@ astarray/
 - 工具说明回访、Agent 数量语义和受权通信转交属于高风险任务 T08B，必须在 T08A 后单独实现和验收。
 - 主对话独占下的次级直投、项目侦察、测试/验收任命和四级委派属于高风险任务 T08C；独立模型/Provider 和任务预设属于高风险任务 T07C，两者都必须单独实现和验收。
 - 阶段性“工匠”预设属于高风险任务 T08D，必须在 T08C 后、T07C 前独立实现和验收；完整顺序更新为 T08C → T08D → T07C。
+- 多 Provider 原生协议、真实流式传输、CLI/TUI 装配、Public SDK 和独立工作助手纵向闭环属于高风险任务 T07D；任务卡位于 `docs/tasks/T07D_PROVIDER_RUNTIME_AND_STANDALONE_AGENT_TASK_CARD.md`。T07C 只完成选择策略，T07D 必须在 T07C 后、T12 前单独验收；完整顺序更新为 T08C → T08D → T07C → T07D → T12。
+- `docs/tasks/README.md` 提供任务卡定位索引，任务实际状态仍以 `PLAN_STATUS.md` 和动态验收证据为准。
+- 人工与 Agent 并行编码使用 T05D 独立任务卡；默认10文件工作集预算使用 T07E 独立任务卡；中断后的统一检查点与外部状态对账使用 T12A 独立任务卡。三者分别位于 `docs/tasks/T05D_HUMAN_AGENT_CONCURRENT_CHANGE_TASK_CARD.md`、`docs/tasks/T07E_AGENT_WORKING_SET_READ_BUDGET_TASK_CARD.md` 和 `docs/tasks/T12A_SESSION_RECOVERY_RECONCILIATION_TASK_CARD.md`。
+- T08C 后形成三条偏序分支：T08D→T07C、T05D、T07E；三路都通过后才能执行T07D，随后按T12A→T12→T13→T14收口。
 - Ponder 本地只读、全模式敏感禁读、反自指/活锁、事实验证和完成协议/早停恢复都属于高风险任务，必须分别单批实现和验收，不得在同一轮编码。
 - 普通批次建议控制在 5–15 个生产文件及同等数量级测试文件；预计超过约 1,000 行生产代码时继续拆分。
 - 每一批都必须同时完成实现、测试、文档和 `PLAN_STATUS.md`，当前批未通过不得开始依赖它的下一批。

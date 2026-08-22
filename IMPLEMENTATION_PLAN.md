@@ -1683,3 +1683,55 @@ PLAN_STATUS.md。运行该批全部验收命令；未通过时不要开始 Batch
 - 任一等待/退避量 `pn` 的单次上限为 3 小时；连续三次同因失败后停止机械重试并记录证据。
 - 生产变量和函数使用完整可读名称；布尔值使用 `is/has/can/should` 前缀，时间量显式携带单位。
 - 每个检查点必须同时提交实现、测试、文档和 `PLAN_STATUS.md` 证据；前一检查点未通过不得领取依赖节点。
+
+---
+
+## 13. 2026-08-18 独立 Harness 与多 Provider 生产化增补
+
+现有 T07C 只处理模型/Provider 目录、允许列表、任务类型预设和切换策略，不能替代厂商协议适配、真实流式传输、CLI/TUI 装配、公开 SDK 和真实工作辅助闭环。新增高风险任务 `T07D`，详细任务卡为：
+
+- `docs/tasks/T07D_PROVIDER_RUNTIME_AND_STANDALONE_AGENT_TASK_CARD.md`
+
+T07D 必须补齐：
+
+1. 稳定的 Provider 协议、认证、传输、能力和规范事件接口。
+2. 真正增量的流读取、取消、超时、背压和稳定错误映射。
+3. OpenAI Responses/Chat Completions、Anthropic Messages、Gemini、Azure OpenAI、Amazon Bedrock 及通用 OpenAI-compatible 的分协议适配和支持等级。
+4. CLI/TUI/doctor 的真实 Provider 装配；mock 继续作为离线测试路径。
+5. 从 npm tarball 启动的只读项目分析和 Assist 小型编码纵向闭环。
+6. npm 公开 `exports`、稳定应用 facade 和隔离消费者 SDK 验收，使 Astarray 不依赖其他 harness 即可独立运行和嵌入。
+
+依赖顺序在本增补后统一为：
+
+```text
+T08C → T08D → T07C → T07D → T12 → T13 → T14
+```
+
+T07D 每轮只执行一个检查点，每个检查点预计不超过 3 小时；超过时继续拆卡。T07D 是高风险任务，不能与 T07C、T08C、T08D、T12 或 GUI 编码合批。没有真实产品路径和 tarball 证据时，不得仅凭适配器类或 fake fixture 宣称主流 Provider 已可用。
+
+---
+
+## 14. 2026-08-19 人工并行、读取工作集与统一恢复增补
+
+新增三项彼此独立的高风险任务：
+
+- `T05D`：人工与 Agent 并行编码、陈旧写入拒绝、文本/契约/行为冲突协调及次级受控合并。任务卡：`docs/tasks/T05D_HUMAN_AGENT_CONCURRENT_CHANGE_TASK_CARD.md`。
+- `T07E`：每个具体 Agent默认10个项目内容文件的活动工作集预算，同时限制字节/token，支持侦察拆分和范围化扩展。任务卡：`docs/tasks/T07E_AGENT_WORKING_SET_READ_BUDGET_TASK_CARD.md`。
+- `T12A`：统一检查点、启动只读对账、未知副作用阻塞、Agent身份/handoff、反馈、Provider、Git和读取预算恢复。任务卡：`docs/tasks/T12A_SESSION_RECOVERY_RECONCILIATION_TASK_CARD.md`。
+
+有效依赖偏序更新为：
+
+```text
+T08C ─┬→ T08D → T07C ───────────┐
+      ├→ T05D ──────────────────┼→ T07D → T12A → T12 → T13 → T14
+      └→ T07E ──────────────────┘
+```
+
+冻结解释：
+
+1. 人工工作树不由 Agent占用或强制锁定；人工变化后 Agent必须在写入前检测并拒绝陈旧覆盖。
+2. 默认10文件是本地执行的效率预算，不是敏感安全权限。第11个不同项目内容文件在打开正文前被拒绝，优先拆分侦察任务；合法范围化扩展仍不能放宽敏感禁读或权限边界。
+3. 强制治理文档使用独立预算，不占10个普通项目内容文件槽；聚合、归档、搜索片段、Git内容和OCR/PDF按原始来源计数，不能绕过。
+4. 重启、换Agent、换模型、早停续跑或handoff不能清零任务链累计读取、循环、失败和副作用状态。
+5. 恢复开始时先只读对账；非幂等副作用或旧Provider请求状态不确定时必须blocked。一次性授权和会话临时提升不得在新进程中静默恢复。
+6. T05D、T07E、T12A 每轮各只执行一个检查点，每个检查点预计不超过3小时；三项不得互相合批，也不得与T07D/T12/GUI编码合批。
