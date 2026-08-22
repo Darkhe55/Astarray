@@ -72,13 +72,11 @@ npx astarray run "分析当前项目" --mode assist --runtime mock --json
 
 ## Provider 配置
 
-v0.1 CLI 仅内置 `mock` 运行时（确定性、无凭据、可离线验证）。`openai-compatible` 运行时已实现（`packages/core/src/runtime/openai-compatible-runtime.ts`，流式 + 工具调用 + 超时/取消），通过环境变量接入：
+当前状态（T07D-00 审计，2026-08-22）：**仅 `mock` 运行时处于产品可用路径**（确定性、无凭据、可离线验证，`npm run check` 与 tarball 隔离安装全绿）。
 
-```powershell
-ASTARRAY_PROVIDER_BASE_URL=https://api.openai.com/v1/chat/completions
-ASTARRAY_PROVIDER_API_KEY=sk-...
-ASTARRAY_MODEL=gpt-4o
-```
+`openai-compatible` 适配器仅存在代码（`packages/core/src/runtime/openai-compatible-runtime.ts`），支持等级为 **adapter-only**：尚未通过 fake-server 契约测试、非增量流式（缓冲全流解析）、未进入 CLI/TUI 产品路径、无生产代码读取环境变量。**当前不可宣称支持**。README 中既往的环境变量示例不构成可用配置。
+
+真实 Provider 接入按 `docs/tasks/T07D_PROVIDER_RUNTIME_AND_STANDALONE_AGENT_TASK_CARD.md` 检查点推进（协议端口 → 增量流 → 厂商适配 → 产品装配 → 纵向闭环 → Public SDK）。支持矩阵与验证证据见 `docs/tasks/T07D00_PROVIDER_AUDIT.md`。
 
 API key 永不进入日志、错误、快照或交付报告（脱敏层见 `packages/core/src/infra/redaction.ts`）。
 
