@@ -1012,3 +1012,186 @@ const outcome = await disclosureController.evaluateAndDisclose({
   }
   return EXIT_CODES.SUCCESS;
 }
+
+/** T07C-06：模型目录/解析与预设列表（CLI 入口；公开 DTO 无凭据）。 */
+
+async function loadModelInfra() {
+  const { ModelProviderCatalog } = await import(
+    "../../../core/src/orchestration/model-provider-catalog.js"
+  );
+  const { ModelSelectionPolicyResolver } = await import(
+    "../../../core/src/orchestration/model-selection-policy-resolver.js"
+  );
+  const { TaskAgentPresetController } = await import(
+    "../../../core/src/orchestration/task-agent-preset-controller.js"
+  );
+  // 本地受保护凭据存储：演示用引用（不暴露内容）
+  const localCredentialReferences = new Set(["cred-ref-openai-1", "cred-ref-anthropic-1"]);
+  const catalog = new ModelProviderCatalog({
+    protectedCredentialStore: {
+      doesReferenceExist: async (referenceId) => localCredentialReferences.has(referenceId),
+      readCredential: async () => null,
+    },
+  });
+  const presetController = new TaskAgentPresetController({
+    toolPermissionPort: { isToolAllowed: () => true },
+  });
+  const resolver = new ModelSelectionPolicyResolver();
+  return { catalog, presetController, resolver, localCredentialReferences };
+}
+
+export interface ModelCatalogCommandOptions {
+  isJsonOutput: boolean;
+  /** 预置登记示例（演示用；凭据引用存在才登记）。 */
+  seedDemoEntries: boolean;
+}
+
+/** model catalog：登记演示条目并列出公开 DTO（剥离凭据）。 */
+export async function executeModelCatalogCommand(
+  options: ModelCatalogCommandOptions,
+): Promise<number> {
+  const { catalog, localCredentialReferences } = await loadModelInfra();
+  if (options.seedDemoEntries) {
+    for (const [providerProfileId, modelProfileId, displayName] of [
+      ["openai", "gpt-4o", "GPT-4o"],
+      ["anthropic", "claude-3", "Claude 3"],
+    ] as const) {
+      const referenceId =
+        providerProfileId === "openai" ? "cred-ref-openai-1" : "cred-ref-anthropic-1";
+      if (localCredentialReferences.has(referenceId)) {
+        await catalog.upsertEntry({
+          providerProfileId,
+          modelProfileId,
+          displayName,
+          modelIdentifier: `${providerProfileId}/${modelProfileId}`,
+          capabilities: ["text", "tool-calling"],
+          contextWindowTokens: 128_000,
+          supportsToolCalling: true,
+          supportsVision: false,
+          costTier: "medium",
+          regionLabel: "us-east",
+          healthState: "healthy",
+          protectedCredentialReferenceId: referenceId,
+        });
+      }
+    }
+  }
+const publicDtos = catalog.listPublicDtos();
+  const { ModelProviderCatalog: ModelProviderCatalogModule } = await import(
+    "../../../core/src/orchestration/model-provider-catalog.js"
+  );
+  for (const dto of publicDtos) {
+    ModelProviderCatalogModule.assertPublicDtoHasNoCredentialContent(dto);
+  }
+  if (options.isJsonOutput) {
+    process.stdout.write(`${JSON.stringify({ entries: publicDtos })}\n`);
+  } else {
+    process.stdout.write(
+      publicDtos
+        .map(
+          (entry) =>
+            `${entry.modelProfileId}\t${entry.displayName}\t${entry.healthState}`,
+        )
+        .join("\n") + "\n",
+    );
+  }
+  return EXIT_CODES.SUCCESS;
+}
+
+export interface ModelResolveCommandOptions {
+  isJsonOutput: boolean;
+}
+
+/** model resolve：按六级层级解析当前选择（确定性；列表耗尽 fail-closed）。 */
+export async function executeModelResolveCommand(
+  options: ModelResolveCommandOptions,
+): Promise<number> {
+  const { catalog, resolver, localCredentialReferences } = await loadModelInfra();
+  // 与 catalog 命令一致的演示条目（凭据引用存在才登记）
+  for (const [providerProfileId, modelProfileId, displayName] of [
+    ["openai", "gpt-4o", "GPT-4o"],
+    ["anthropic", "claude-3", "Claude 3"],
+  ] as const) {
+    const referenceId =
+      providerProfileId === "openai" ? "cred-ref-openai-1" : "cred-ref-anthropic-1";
+    if (localCredentialReferences.has(referenceId)) {
+      await catalog.upsertEntry({
+        providerProfileId,
+        modelProfileId,
+        displayName,
+        modelIdentifier: `${providerProfileId}/${modelProfileId}`,
+        capabilities: ["text", "tool-calling"],
+        contextWindowTokens: 128_000,
+        supportsToolCalling: true,
+        supportsVision: false,
+        costTier: "medium",
+        regionLabel: "us-east",
+        healthState: "healthy",
+        protectedCredentialReferenceId: referenceId,
+      });
+    }
+  }
+  const resolution = resolver.resolveModelSelection({
+    layers: [
+      { modelProfileIds: [], strategy: null, policyRevision: 1 },
+      { modelProfileIds: [], strategy: null, policyRevision: 1 },
+      { modelProfileIds: [], strategy: null, policyRevision: 1 },
+      { modelProfileIds: ["openai/gpt-4o", "anthropic/claude-3"], strategy: "ordered-fallback", policyRevision: 1 },
+      { modelProfileIds: [], strategy: null, policyRevision: 1 },
+      { modelProfileIds: [], strategy: null, policyRevision: 1 },
+    ],
+    requiredCapabilities: ["text", "tool-calling"],
+    catalogPort: { listPublicDtos: () => catalog.listPublicDtos() },
+  });
+  if (options.isJsonOutput) {
+    process.stdout.write(`${JSON.stringify(resolution)}\n`);
+  } else {
+    if (resolution.outcome === "selected") {
+      process.stdout.write(
+        `selected: ${resolution.selectedModelProfileId ?? resolution.candidateModelProfileIds.join(",")}\n`,
+      );
+    } else {
+      process.stdout.write(`blocked: ${resolution.blockedReason}\n`);
+    }
+  }
+  return EXIT_CODES.SUCCESS;
+}
+
+export interface PresetListCommandOptions {
+  isJsonOutput: boolean;
+}
+
+/** preset list：列出全部预设（内置 + 自定义；数量不设上限）。 */
+export async function executePresetListCommand(
+  options: PresetListCommandOptions,
+): Promise<number> {
+  const { presetController } = await loadModelInfra();
+  const { AgentModelAssignmentController } = await import(
+    "../../../core/src/orchestration/agent-model-assignment-controller.js"
+  );
+  const { BoundedProviderFallbackGuard } = await import(
+    "../../../core/src/orchestration/bounded-provider-fallback-guard.js"
+  );
+  const presets = presetController.listPresets();
+  const componentsReady = {
+    assignmentController: AgentModelAssignmentController !== null,
+    fallbackGuard: BoundedProviderFallbackGuard !== null,
+  };
+  if (options.isJsonOutput) {
+    process.stdout.write(
+      `${JSON.stringify({ presets, totalCount: presets.length, componentsReady })}\n`,
+    );
+  } else {
+    process.stdout.write(
+      presets
+        .map(
+          (preset) =>
+            `${preset.presetId}\t${preset.displayName}\t用途 ${preset.targetAgentUsage}`,
+        )
+        .join("\n") +
+        `\n分配控制器: ${componentsReady.assignmentController ? "已装配" : "未装配"}\n` +
+        `fallback 守卫: ${componentsReady.fallbackGuard ? "已装配" : "未装配"}\n`,
+    );
+  }
+  return EXIT_CODES.SUCCESS;
+}
