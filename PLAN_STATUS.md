@@ -55,7 +55,7 @@
 | T07 | Agent Runtime | re-verifying | 4 | AR-00 重新验收中 |
 | T07A | 明确完成协议与早停恢复 | re-verifying | 4J | 2026-08-13 完成；Batch 4J 检查点（583 测试全绿）；待 AR 复验 |
 | T07B | 反自指读取与通用活锁守卫 | re-verifying | 4H | 2026-08-13 完成；Batch 4H 检查点（539 测试全绿）；待 AR 复验 |
-| T07C | Agent 独立模型/Provider 策略与任务类型预设 | in_progress | 6H | T07C-01/02/03 完成（934 测试全绿）；待 T07C-04~06 按检查点推进 |
+| T07C | Agent 独立模型/Provider 策略与任务类型预设 | in_progress | 6H | T07C-01~04 完成（941 测试全绿）；待 T07C-05/06 按检查点推进 |
 | T07D | 多 Provider 生产运行时与独立 Agent 工作助手 | pending | 6I | 待 T07C/T05D/T07E 通过后按检查点单独实现；见独立任务卡 |
 | T07E | Agent 工作集与默认10文件读取预算 | pending | pre-T07D | 待 T07B/T08A/T08C 通过；见独立任务卡 |
 | T08 | 三级 Agent 编排 | re-verifying | 5 | AR-04 复验：T05B→T08 Git 编排接入完成（Batch 5 增补检查点），待 AR-04 全项复验 |
