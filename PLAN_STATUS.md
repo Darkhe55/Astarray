@@ -62,7 +62,7 @@
 | T08A | 默认控制流、个体记忆隔离与三级 Agent 生命周期 | re-verifying | 6D | B6R-07/08/09 已返修完成；待终验（跨平台矩阵） |
 | T08B | 工具说明回访、无产品数量配额与受权通信转交 | re-verifying | 6E | 2026-08-13 完成；Batch 6E 检查点（665 测试全绿）；待 AR 复验 |
 | T08C | 主对话独占、次级直投、项目侦察/验收与四级委派 | re-verifying | 6F | T08C-01~07 全部完成（858 测试全绿；dist 可达 + smoke-install 通过）；T08D 可开始 |
-| T08D | 阶段性“工匠”三级 Agent与工作流定制 | in_progress | 6G | T08D-01/02/03 完成（892 测试全绿）；待 T08D-04~06 按检查点推进 |
+| T08D | 阶段性“工匠”三级 Agent与工作流定制 | in_progress | 6G | T08D-01~04 完成（898 测试全绿）；待 T08D-05/06 按检查点推进 |
 | T09 | 记忆、缓存与指标 | re-verifying | 6 | AR-00 重新验收中 |
 | T10 | TUI | re-verifying | 6 | AR-00 重新验收中（AR-02 授权交互） |
 | T11 | Headless CLI | re-verifying | 6 | AR-00 重新验收中 |
