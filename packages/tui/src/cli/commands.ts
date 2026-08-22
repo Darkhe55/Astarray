@@ -767,3 +767,115 @@ export async function executeConfigInstallEnabledCommand(
   );
   return EXIT_CODES.SUCCESS;
 }
+
+/** T08C-07：小任务直投次级（主会话内投递动作；不切换聊天对象）。 */
+export interface DirectDispatchCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+  targetSecondaryAgentInstanceId: string;
+  scopeDescription: string;
+  originalUserInstruction: string;
+  acceptanceCriteria: string;
+  /** 用户显式确认（force-dispatch 时必填确认文本）。 */
+  forceDispatchConfirmation: string | null;
+}
+
+export async function executeDirectDispatchCommand(
+  options: DirectDispatchCommandOptions,
+): Promise<number> {
+  const bootstrap = await loadSessionInfra(options.stateDirectory);
+  const facade = bootstrap.controller.getT08cRoutingFacade();
+  if (facade === null) {
+    throw new Error("四层路由控制面未装配");
+  }
+  const result = await facade.directDispatchController.dispatchDirectTask({
+    envelope: {
+      schemaVersion: 1,
+      envelopeId: `envelope-${Date.now()}`,
+      authenticatedUserId: "cli-user",
+      targetSecondaryAgentInstanceId: options.targetSecondaryAgentInstanceId,
+      scopeDescription: options.scopeDescription,
+      originalUserInstruction: options.originalUserInstruction,
+      priorityTier: 0,
+      anchor: { predecessorTaskIds: [], successorTaskIds: [] },
+      acceptanceCriteria: options.acceptanceCriteria,
+      attachedContextReferenceHashes: [`sha256:${"0".repeat(64)}`],
+      createdAtIso: new Date().toISOString(),
+      revision: 1,
+    },
+    userRouteDecision:
+      options.forceDispatchConfirmation !== null
+        ? {
+            kind: "force-dispatch",
+            confirmationText: options.forceDispatchConfirmation,
+          }
+        : { kind: "follow-policy-suggestion" },
+    expectedSequenceRevision: 1,
+    eligibilityCharacteristics: {
+      requiresDesignDiscussion: false,
+      modifiesArchitectureOrPublicContract: false,
+      hasUnresolvedHighRiskRuling: false,
+      requiresCrossProjectCoordination: false,
+    },
+  });
+  await bootstrap.shutdown();
+  if (options.isJsonOutput) {
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  } else {
+    if (result.outcome === "dispatched") {
+      process.stdout.write(
+        `dispatched → ${result.targetSequenceId}（结果将由主 Agent 解释反馈）\n`,
+      );
+    } else {
+      process.stdout.write(
+        `returned-to-main-agent: ${result.reason}\n`,
+      );
+    }
+  }
+  return EXIT_CODES.SUCCESS;
+}
+
+/** T08C-07：四层 Agent 状态视图（主 Agent 对话目标提示清晰；只读）。 */
+export interface AgentTreeCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+}
+
+export async function executeAgentTreeCommand(
+  options: AgentTreeCommandOptions,
+): Promise<number> {
+  const bootstrap = await loadSessionInfra(options.stateDirectory);
+  const facade = bootstrap.controller.getT08cRoutingFacade();
+  if (facade === null) {
+    throw new Error("四层路由控制面未装配");
+  }
+  const view = {
+    conversationTarget: {
+      role: "main",
+      displayName: "主 Agent（唯一连续对话对象）",
+      agentInstanceId: "main-agent-cli",
+    },
+    routes: {
+      directDispatchAvailable: true,
+      summaryChannel: "SECONDARY_USER_FACING_SUMMARY_V1",
+      reconnaissanceChannel: "PROJECT_CONTEXT_DIGEST_V1",
+    },
+    gates: {
+      appointmentRegistryActive: true,
+      acceptanceVerdictGateActive: true,
+      quaternaryLifecycleActive: true,
+    },
+  };
+  await bootstrap.shutdown();
+  if (options.isJsonOutput) {
+    process.stdout.write(`${JSON.stringify(view)}\n`);
+  } else {
+    process.stdout.write(
+      `对话对象: ${view.conversationTarget.role}（${view.conversationTarget.displayName}）\n` +
+        `直投: ${view.routes.directDispatchAvailable ? "可用" : "不可用"}\n` +
+        `摘要通道: ${view.routes.summaryChannel}\n` +
+        `侦察通道: ${view.routes.reconnaissanceChannel}\n`,
+    );
+  }
+  return EXIT_CODES.SUCCESS;
+}

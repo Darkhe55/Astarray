@@ -45,6 +45,12 @@ import type { SecondaryContinuousDispatchLoop } from "./secondary-continuous-dis
 import type { TertiaryAgentLifecycleController } from "./tertiary-lifecycle.js";
 import type { AgentIndividualMemoryStore } from "./agent-individual-memory.js";
 import type { CrossAgentContextAttachmentController } from "./cross-agent-attachment-controller.js";
+import type { DirectDispatchController } from "./direct-dispatch-controller.js";
+import type { SecondaryUserFacingSummaryController } from "./secondary-user-facing-summary-controller.js";
+import type { ProjectReconnaissanceController } from "./project-reconnaissance-controller.js";
+import type { AgentAppointmentRegistry } from "./agent-appointment-registry.js";
+import type { AcceptanceVerdictGate } from "./acceptance-verdict-gate.js";
+import type { QuaternaryLifecycleController } from "./quaternary-lifecycle-controller.js";
 
 export interface MainControllerOptions {
   modeMachine: ModeMachine;
@@ -120,6 +126,18 @@ export interface MainControllerOptions {
     attachmentController: CrossAgentContextAttachmentController;
     lifecycleController: TertiaryAgentLifecycleController;
   } | null;
+  /** T08C-07：四层路由控制面（直投/摘要/侦察/任命裁决/四级；三入口共用）。 */
+  t08cRoutingFacade?: T08cRoutingFacade | null;
+}
+
+/** T08C-07：四层路由控制面聚合（CLI/TUI/GUI 投递与状态视图共用）。 */
+export interface T08cRoutingFacade {
+  directDispatchController: DirectDispatchController;
+  secondarySummaryController: SecondaryUserFacingSummaryController;
+  reconnaissanceController: ProjectReconnaissanceController;
+  appointmentRegistry: AgentAppointmentRegistry;
+  acceptanceVerdictGate: AcceptanceVerdictGate;
+  quaternaryLifecycleController: QuaternaryLifecycleController;
 }
 
 export class MainController {
@@ -491,6 +509,11 @@ export class MainController {
   /** Worker 运行时组件（个体记忆/附件控制器；生产装配可达性）。 */
   getTertiaryRuntimeComponents() {
     return this.options.tertiaryRuntimeComponents ?? null;
+  }
+
+  /** T08C-07：四层路由控制面（直投/摘要/侦察/任命裁决/四级；三入口共用）。 */
+  getT08cRoutingFacade(): T08cRoutingFacade | null {
+    return this.options.t08cRoutingFacade ?? null;
   }
 
   /** 向次级调度发送裁决指令（Assist，经反馈信箱）。 */

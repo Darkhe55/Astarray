@@ -233,6 +233,106 @@ export async function bootstrapCli(
     attachmentController: crossAgentAttachmentController,
     lifecycleController: tertiaryLifecycleController,
   };
+  // T08C-07：四层路由控制面装配（直投/摘要/侦察/任命裁决/四级；CLI/TUI/GUI 共用）
+  const { SmallTaskEligibilityPolicy } = await import(
+    "../../../core/src/orchestration/small-task-eligibility-policy.js"
+  );
+  const { DirectDispatchController } = await import(
+    "../../../core/src/orchestration/direct-dispatch-controller.js"
+  );
+  const { SecondaryUserFacingSummaryController } = await import(
+    "../../../core/src/orchestration/secondary-user-facing-summary-controller.js"
+  );
+  const { ProjectReconnaissanceDigestStore } = await import(
+    "../../../core/src/orchestration/project-reconnaissance-digest-store.js"
+  );
+  const { ProjectReconnaissanceController } = await import(
+    "../../../core/src/orchestration/project-reconnaissance-controller.js"
+  );
+  const { AgentAppointmentRegistry } = await import(
+    "../../../core/src/orchestration/agent-appointment-registry.js"
+  );
+  const { AcceptanceVerdictGate } = await import(
+    "../../../core/src/orchestration/acceptance-verdict-gate.js"
+  );
+  const { QuaternaryLifecycleController } = await import(
+    "../../../core/src/orchestration/quaternary-lifecycle-controller.js"
+  );
+  const { QuaternaryGitBranchPolicy } = await import(
+    "../../../core/src/orchestration/quaternary-boundary-guards.js"
+  );
+  const sequenceManageController = new (await import(
+    "../../../core/src/orchestration/task-sequence-controllers.js"
+  )).TaskSequenceManageController(
+    new (await import(
+      "../../../core/src/orchestration/agent-task-sequence-store.js"
+    )).AgentTaskSequenceStore({ baseDirectory: stateDirectory }),
+  );
+  const directDispatchController = new DirectDispatchController({
+    authenticatedUserId: "cli-user",
+    eligibilityPolicy: new SmallTaskEligibilityPolicy(),
+    sequenceManageController,
+    doesSecondaryAgentExist: (agentInstanceId) =>
+      registeredAgentDirectory.verifyReportSource({
+        reportingAgentInstanceId: agentInstanceId,
+        missionId: "mission-cli",
+        taskBundleId: "bundle-cli",
+      }).valid,
+  });
+  const t08cSummaryController = new SecondaryUserFacingSummaryController({
+    authenticatedMainAgentInstanceId: "main-agent-cli",
+    reportIndexPort: {
+      insertSummaryEntry: async () => undefined,
+    },
+    sourceAuthenticationPort: {
+      isRegisteredSecondary: async (agentInstanceId) =>
+        registeredAgentDirectory.verifyReportSource({
+          reportingAgentInstanceId: agentInstanceId,
+          missionId: "mission-cli",
+          taskBundleId: "bundle-cli",
+        }).valid,
+    },
+    detailQueryPort: {
+      requestDetail: async () => ({ kind: "unknown", reason: "CLI 未连接具体次级" }),
+    },
+  });
+  const reconnaissanceDigestStore = new ProjectReconnaissanceDigestStore({
+    baseDirectory: stateDirectory,
+  });
+  const reconnaissanceController = new ProjectReconnaissanceController({
+    digestStore: reconnaissanceDigestStore,
+    sensitivePathMatchPort: {
+      matchSensitivePathName: (filePath) =>
+        filePath.includes(".env") || filePath.includes("credential")
+          ? "sensitive-path"
+          : null,
+    },
+    sourceAuthenticationPort: {
+      isRegisteredReconnaissance: async (agentInstanceId) =>
+        registeredAgentDirectory.verifyReportSource({
+          reportingAgentInstanceId: agentInstanceId,
+          missionId: "mission-cli",
+          taskBundleId: "bundle-cli",
+        }).valid,
+    },
+  });
+  const appointmentRegistry = new AgentAppointmentRegistry();
+  const acceptanceVerdictGate = new AcceptanceVerdictGate({
+    appointmentRegistry,
+  });
+  const quaternaryLifecycleController = new QuaternaryLifecycleController({
+    isTertiaryAgentActive: () => true,
+  });
+  const quaternaryGitBranchPolicy = new QuaternaryGitBranchPolicy();
+  const t08cRoutingFacade = {
+    directDispatchController,
+    secondarySummaryController: t08cSummaryController,
+    reconnaissanceController,
+    appointmentRegistry,
+    acceptanceVerdictGate,
+    quaternaryLifecycleController,
+    quaternaryGitBranchPolicy,
+  };
 
   const controller = new MainController({
     modeMachine,
@@ -265,6 +365,7 @@ export async function bootstrapCli(
     secondaryDispatchLoop,
     tertiaryLifecycleController,
     tertiaryRuntimeComponents,
+    t08cRoutingFacade,
     mainRuntimeFactory: () =>
       new ScriptedRuntime([
         {
