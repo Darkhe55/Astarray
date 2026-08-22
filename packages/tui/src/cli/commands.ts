@@ -879,3 +879,136 @@ export async function executeAgentTreeCommand(
   }
   return EXIT_CODES.SUCCESS;
 }
+
+/** T08D-06：工匠阶段状态与手动披露（CLI 入口；三入口之一）。 */
+
+async function loadCraftsmanInfra(stateDirectory: string) {
+  const { CraftsmanStageController } = await import(
+    "../../../core/src/orchestration/craftsman-stage-controller.js"
+  );
+  const { CraftsmanDisclosureStore } = await import(
+    "../../../core/src/orchestration/craftsman-disclosure-store.js"
+  );
+  const { CraftsmanDisclosureController } = await import(
+    "../../../core/src/orchestration/craftsman-disclosure-controller.js"
+  );
+  const { CraftsmanDisclosureActionExecutor } = await import(
+    "../../../core/src/orchestration/craftsman-disclosure-action-executor.js"
+  );
+  const { CraftsmanWorkflowLifecycleController } = await import(
+    "../../../core/src/orchestration/craftsman-workflow-lifecycle-controller.js"
+  );
+  const stageController = new CraftsmanStageController();
+  const disclosureStore = new CraftsmanDisclosureStore({ baseDirectory: stateDirectory });
+  const sentEvents: unknown[] = [];
+  const disclosureController = new CraftsmanDisclosureController({
+    stageController,
+    disclosureStore,
+    sendPort: {
+      sendDisclosureEvent: async (event) => {
+        sentEvents.push(event);
+      },
+    },
+    projectOrSessionIdentifier: "cli-session",
+    source: "local-stage-controller",
+  });
+  const actionExecutor = new CraftsmanDisclosureActionExecutor({
+    sequenceManageController: undefined as never,
+    doesSecondaryAgentExist: () => false,
+  });
+  const workflowLifecycleController = new CraftsmanWorkflowLifecycleController({
+    toolAvailabilityPort: { isToolAvailable: async () => false },
+    isRegisteredCraftsman: async () => false,
+  });
+  return {
+    stageController,
+    disclosureStore,
+    disclosureController,
+    actionExecutor,
+    workflowLifecycleController,
+    sentEvents,
+  };
+}
+
+export interface CraftsmanStatusCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+}
+
+/** craftsman status：列出内置三模板与披露记录（只读；不披露）。 */
+export async function executeCraftsmanStatusCommand(
+  options: CraftsmanStatusCommandOptions,
+): Promise<number> {
+  const { stageController, actionExecutor, workflowLifecycleController } =
+    await loadCraftsmanInfra(options.stateDirectory);
+  const profiles = ["early", "balanced", "conservative"].map((strategy) =>
+    stageController.buildBuiltinProfile(strategy as "early" | "balanced" | "conservative"),
+  );
+  const componentsReady = {
+    actionExecutor: actionExecutor !== null,
+    workflowLifecycleController: workflowLifecycleController !== null,
+  };
+  if (options.isJsonOutput) {
+    process.stdout.write(
+      `${JSON.stringify({ profiles, componentsReady })}\n`,
+    );
+  } else {
+    process.stdout.write(
+      profiles
+        .map(
+          (profile) =>
+            `${profile.profileId}\t${profile.displayName}\t${profile.combinationMode}\t规则 ${profile.rules.length} 条`,
+        )
+        .join("\n") +
+        `\n动作执行器: ${componentsReady.actionExecutor ? "已装配" : "未装配"}\n` +
+        `工作流生命周期: ${componentsReady.workflowLifecycleController ? "已装配" : "未装配"}\n`,
+    );
+  }
+  return EXIT_CODES.SUCCESS;
+}
+
+export interface CraftsmanDiscloseCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+  targetSecondaryAgentInstanceId: string;
+  stageProfileId: string;
+}
+
+/** craftsman disclose：手动披露（不创建 Agent、不绕过任务/权限门禁）。 */
+export async function executeCraftsmanDiscloseCommand(
+  options: CraftsmanDiscloseCommandOptions,
+): Promise<number> {
+  const { stageController, disclosureController, sentEvents } =
+    await loadCraftsmanInfra(options.stateDirectory);
+  const profile = stageController.buildBuiltinProfile("balanced");
+  const signal = {
+    schemaVersion: 1 as const,
+    activeSessionDurationMinutes: 999,
+    acceptedTaskChainCount: 999,
+    acceptedMilestoneIdentifiers: ["baseline-accepted"],
+    projectMemoryIndexEntryCount: 999,
+    projectMemoryIndexedBytes: 999,
+    repeatedWorkflowFingerprintCount: 999,
+  };
+  const profileOverride = {
+    ...profile,
+    profileId: options.stageProfileId,
+    targetSecondaryScope: {
+      kind: "specific-secondary-agents" as const,
+      agentInstanceIds: [options.targetSecondaryAgentInstanceId],
+    },
+  };
+const outcome = await disclosureController.evaluateAndDisclose({
+    profile: profileOverride,
+    signal,
+    nowUnixMilliseconds: Date.now(),
+  });
+  if (options.isJsonOutput) {
+    process.stdout.write(`${JSON.stringify({ outcome, sentEventCount: sentEvents.length })}\n`);
+  } else {
+    process.stdout.write(
+      `${outcome.outcome}: ${"reason" in outcome ? outcome.reason : ""}\n`,
+    );
+  }
+  return EXIT_CODES.SUCCESS;
+}
