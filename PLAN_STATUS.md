@@ -43,7 +43,7 @@
 | T05 | DAG 调度器 | re-verifying | 4 | AR-00 重新验收中 |
 | T05B | 次级 Agent Git 分流、审查与合并 | re-verifying | 4D | 2026-08-13 完成；Batch 4D 检查点（491 测试全绿）；待 AR-04/AR-06 复验 |
 | T05C | Agent 待办偏序集、任务包与状态工具 | re-verifying | 4E | 2026-08-13 完成；Batch 4E 检查点（471 测试全绿）；待 AR-04/AR-06I/AR-07 复验 |
-| T05D | 人工与 Agent 并行编码、冲突协调及受控合并 | in_progress | pre-T07D | T05D-01 契约完成（ADR-0028；1034 测试全绿）；T05D-02 起按检查点推进 |
+| T05D | 人工与 Agent 并行编码、冲突协调及受控合并 | in_progress | pre-T07D | T05D-01/02 完成（1040 测试全绿）；T05D-03 起按检查点推进 |
 | T06 | 工具注册表与最小权限 | re-verifying | 4 | AR-00 重新验收中（AR-01 受保护存储） |
 | T06A | 工具内破坏性变更备份层 | re-verifying | 4C | AR-00 重新验收中（AR-01/AR-05/AR-06） |
 | T06B | Ponder 本地只读边界与敏感操作分类 | re-verifying | 4F | 2026-08-13 完成；Batch 4F 检查点（510 测试全绿）；待 AR 复验 |

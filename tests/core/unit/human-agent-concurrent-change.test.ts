@@ -100,12 +100,11 @@ describe("HumanChangeObservation schema（人工来源伪造防护）", () => {
     ).toBe(false);
   });
 
-  it("失败先行：变化路径为空 → 拒绝；指纹非法 → 拒绝", () => {
+  it("失败先行：指纹非法 → 拒绝；变化路径为空合法（已提交修改观察）", () => {
     expect(
-      humanChangeObservationSchema.safeParse(
-        makeObservation({ changedPaths: [] }),
-      ).success,
-    ).toBe(false);
+      humanChangeObservationSchema.safeParse(makeObservation({ changedPaths: [] }))
+        .success,
+    ).toBe(true);
     expect(
       humanChangeObservationSchema.safeParse(
         makeObservation({

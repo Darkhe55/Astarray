@@ -63,8 +63,9 @@ export const humanChangeObservationSchema = z.object({
   authenticatedUserSourceIdentifier: z.string().min(1),
   /** 观察到的提交（未提交修改为 null）。 */
   observedCommitIdentifier: z.string().min(1).nullable(),
-  changedPaths: z.array(z.string().min(1)).min(1),
-  /** 变化后规范资源指纹（按路径）。 */
+  /** 变化路径（已提交修改/HEAD 前进时可为空；未提交修改时非空）。 */
+  changedPaths: z.array(z.string().min(1)),
+  /** 变化后规范资源指纹（按路径；文件被删除/重命名时可为空记录）。 */
   changedResourceFingerprintsByPath: z.record(z.string(), resourceFingerprintSchema),
   observedAtIso: z.iso.datetime(),
   observationRevision: z.number().int().min(1),
