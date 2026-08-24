@@ -34,6 +34,7 @@ export type DomainErrorCode =
   | "sensitive-content-read-denied"
   | "resource-already-read"
   | "livelock-guard-triggered"
+  | "stale-human-change"
   | "unknown";
 
 export class DomainError extends Error {
