@@ -56,7 +56,7 @@
 | T07A | 明确完成协议与早停恢复 | re-verifying | 4J | 2026-08-13 完成；Batch 4J 检查点（583 测试全绿）；待 AR 复验 |
 | T07B | 反自指读取与通用活锁守卫 | re-verifying | 4H | 2026-08-13 完成；Batch 4H 检查点（539 测试全绿）；待 AR 复验 |
 | T07C | Agent 独立模型/Provider 策略与任务类型预设 | re-verifying | 6H | T07C-01~06 全部完成（957 测试全绿；dist 可达 + smoke-install 通过）；T07D 可开始 |
-| T07D | 多 Provider 生产运行时与独立 Agent 工作助手 | in_progress | 6I | T07D-00~04 完成（1007 测试全绿）；T07D-05 起按检查点推进 |
+| T07D | 多 Provider 生产运行时与独立 Agent 工作助手 | in_progress | 6I | T07D-00~05 完成（1015 测试全绿）；T07D-06 起按检查点推进 |
 | T07E | Agent 工作集与默认10文件读取预算 | pending | pre-T07D | 待 T07B/T08A/T08C 通过；见独立任务卡 |
 | T08 | 三级 Agent 编排 | re-verifying | 5 | AR-04 复验：T05B→T08 Git 编排接入完成（Batch 5 增补检查点），待 AR-04 全项复验 |
 | T08A | 默认控制流、个体记忆隔离与三级 Agent 生命周期 | re-verifying | 6D | B6R-07/08/09 已返修完成；待终验（跨平台矩阵） |
