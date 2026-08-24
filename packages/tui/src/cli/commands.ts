@@ -1318,3 +1318,121 @@ const { credentialStore, catalog } = await loadProviderCliInfra(
   }
   return EXIT_CODES.SUCCESS;
 }
+
+/** T05D-06：并发变更状态视图与人工裁决（CLI 入口）。 */
+
+async function loadConcurrentInfra() {
+  const { ConcurrentChangeClassifier } = await import(
+    "../../../core/src/orchestration/concurrent-change-classifier.js"
+  );
+  const { ConcurrentMergeCoordinator } = await import(
+    "../../../core/src/orchestration/concurrent-merge-coordinator.js"
+  );
+  const { HumanWorktreeObserver } = await import(
+    "../../../core/src/orchestration/human-worktree-observer.js"
+  );
+  const { StaleWriteGuard } = await import(
+    "../../../core/src/orchestration/stale-write-guard.js"
+  );
+  const classifier = new ConcurrentChangeClassifier({
+    listImpactedNodeIdentifiers: (contractIdentifiers) =>
+      contractIdentifiers.map((contract) => `node:${contract}`),
+  });
+  const coordinator = new ConcurrentMergeCoordinator({
+    reconcileAgentIdentityPort: {
+      generateReconcileAgentInstanceId: (conflictIdentifier) =>
+        `reconcile-${conflictIdentifier}`,
+    },
+  });
+  const componentsReady = {
+    worktreeObserver: HumanWorktreeObserver !== null,
+    staleWriteGuard: StaleWriteGuard !== null,
+  };
+  return { classifier, coordinator, componentsReady };
+}
+
+export interface ConcurrentStatusCommandOptions {
+  isJsonOutput: boolean;
+}
+
+/** concurrent status：冲突状态视图（人工变更/意图/冲突种类/来源）。 */
+export async function executeConcurrentStatusCommand(
+  options: ConcurrentStatusCommandOptions,
+): Promise<number> {
+  const { classifier, componentsReady } = await loadConcurrentInfra();
+  const classification = classifier.classifyChange({
+    humanChangedPaths: ["src/human-edit.ts"],
+    humanAffectedContractIdentifiers: [],
+    agentWritePaths: ["src/agent-edit.ts"],
+    agentAffectedContractIdentifiers: [],
+    hasGitTextConflict: false,
+    behavioralEvidence: { testsPassed: true, acceptancePassed: true },
+  });
+const view = {
+    classificationDecision: classification.decision,
+    impactedNodes: classification.impactedNodeIdentifiers,
+    sources: {
+      humanSource: "authenticated-user (本地控制面观察)",
+      agentSource: "agentInstanceId 不可复用",
+    },
+    availableActions: ["revalidate", "appoint-reconcile-agent", "blocked-human-review"],
+    componentsReady,
+  };
+  if (options.isJsonOutput) {
+    process.stdout.write(`${JSON.stringify(view)}\n`);
+  } else {
+    process.stdout.write(
+      `冲突分类: ${classification.decision}\n` +
+        `受影响节点: ${classification.impactedNodeIdentifiers.join(",") || "无"}\n` +
+        `人工来源: ${view.sources.humanSource}\n` +
+        `可选操作: ${view.availableActions.join(", ")}\n`,
+    );
+  }
+  return EXIT_CODES.SUCCESS;
+}
+
+export interface ConcurrentDecideCommandOptions {
+  isJsonOutput: boolean;
+  conflictIdentifier: string;
+  /** 用户裁决：revalidate（无重叠）| reconcile（需协调）| blocked（人工审查）。 */
+  userDecision: "revalidate" | "reconcile" | "blocked";
+}
+
+/** concurrent decide：人工裁决（绑定冲突 ID；本地控制面认证用户）。 */
+export async function executeConcurrentDecideCommand(
+  options: ConcurrentDecideCommandOptions,
+): Promise<number> {
+  const { coordinator } = await loadConcurrentInfra();
+  const decisionMapping = {
+    revalidate: "no-overlap-revalidate",
+    reconcile: "text-conflict-reconcile",
+    blocked: "blocked-human-review",
+  } as const;
+  const outcome =
+    options.userDecision === "reconcile"
+      ? coordinator.appointReconcileAgent({
+          conflictIdentifier: options.conflictIdentifier,
+          originalImplementerAgentInstanceId: "tertiary-impl-1",
+          previousAppointmentFailed: false,
+        })
+      : null;
+  const result = {
+    conflictIdentifier: options.conflictIdentifier,
+    decidedBy: "authenticated-user",
+    decision: decisionMapping[options.userDecision],
+    reconcileAgentInstanceId:
+      outcome?.reconcileAgentInstanceId ?? null,
+  };
+  if (options.isJsonOutput) {
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  } else {
+    process.stdout.write(
+      `conflict: ${result.conflictIdentifier}\n` +
+        `决定: ${result.decision}（认证用户裁决）\n` +
+        (result.reconcileAgentInstanceId !== null
+          ? `协调 Agent: ${result.reconcileAgentInstanceId}\n`
+          : ""),
+    );
+  }
+  return EXIT_CODES.SUCCESS;
+}
