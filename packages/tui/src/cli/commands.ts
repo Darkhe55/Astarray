@@ -1195,3 +1195,126 @@ export async function executePresetListCommand(
   }
   return EXIT_CODES.SUCCESS;
 }
+
+/** T07D-06：Provider 配置装配命令（config provider list/show、doctor --provider）。 */
+
+async function loadProviderCliInfra(stateDirectory: string) {
+  const { FileProviderCredentialStore, ProviderCliCatalog } = await import(
+    "./provider-cli.js"
+  );
+  const credentialStore = new FileProviderCredentialStore(stateDirectory);
+  const catalog = new ProviderCliCatalog(stateDirectory);
+  return { credentialStore, catalog };
+}
+
+export interface ProviderListCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+}
+
+/** config provider list：列出已登记 Provider（公开 DTO；无凭据）。 */
+export async function executeProviderListCommand(
+  options: ProviderListCommandOptions,
+): Promise<number> {
+  const { catalog } = await loadProviderCliInfra(options.stateDirectory);
+  const registrations = await catalog.listRegistrations();
+  if (options.isJsonOutput) {
+    process.stdout.write(
+      `${JSON.stringify({ providers: registrations.map((registration) => ({
+        providerProfileId: registration.providerProfileId,
+        protocolName: registration.protocolName,
+        apiVersion: registration.apiVersion,
+        supportLevel: registration.supportLevel,
+      })) })}\n`,
+    );
+  } else {
+    process.stdout.write(
+      registrations
+        .map(
+          (registration) =>
+            `${registration.providerProfileId}\t${registration.protocolName}\t${registration.supportLevel}`,
+        )
+        .join("\n") + "\n",
+    );
+  }
+  return EXIT_CODES.SUCCESS;
+}
+
+export interface ProviderShowCommandOptions {
+  stateDirectory: string;
+  providerProfileId: string;
+  isJsonOutput: boolean;
+}
+
+/** config provider show <id>：显示协议/能力/支持等级（无凭据、无响应正文）。 */
+export async function executeProviderShowCommand(
+  options: ProviderShowCommandOptions,
+): Promise<number> {
+const { catalog } = await loadProviderCliInfra(options.stateDirectory);
+  const registration = await catalog.getRegistration(options.providerProfileId);
+  if (registration === null) {
+    throw new Error(`Provider 未登记: ${options.providerProfileId}`);
+  }
+  if (options.isJsonOutput) {
+    process.stdout.write(
+      `${JSON.stringify({
+        providerProfileId: registration.providerProfileId,
+        protocolName: registration.protocolName,
+        apiVersion: registration.apiVersion,
+        capabilities: registration.capabilities,
+        supportLevel: registration.supportLevel,
+        verifiedAtIso: registration.verifiedAtIso,
+      })}\n`,
+    );
+  } else {
+    process.stdout.write(
+      `${registration.providerProfileId}\t协议 ${registration.protocolName}@${registration.apiVersion}\n` +
+        `支持等级: ${registration.supportLevel}\t验证: ${registration.verifiedAtIso ?? "未验证"}\n`,
+    );
+  }
+  return EXIT_CODES.SUCCESS;
+}
+
+export interface DoctorProviderCommandOptions {
+  stateDirectory: string;
+  providerProfileId: string;
+  isJsonOutput: boolean;
+}
+
+/** doctor --provider <id>：只报告配置/凭据引用/支持等级（不探测网络、不回显）。 */
+export async function executeDoctorProviderCommand(
+  options: DoctorProviderCommandOptions,
+): Promise<number> {
+const { credentialStore, catalog } = await loadProviderCliInfra(
+    options.stateDirectory,
+  );
+  const registration = await catalog.getRegistration(options.providerProfileId);
+  if (registration === null) {
+    throw new Error(`Provider 未登记: ${options.providerProfileId}`);
+  }
+  const credentialReferenceResolved =
+    await credentialStore.doesReferenceExist(
+      registration.protectedCredentialReferenceId,
+    );
+  if (options.isJsonOutput) {
+    process.stdout.write(
+      `${JSON.stringify({
+        providerProfileId: registration.providerProfileId,
+        protocolName: registration.protocolName,
+        credentialReferenceResolved,
+        supportLevel: registration.supportLevel,
+        isVerified: registration.verifiedAtIso !== null,
+        isReadyForProductPath: registration.supportLevel === "product-path-verified",
+      })}\n`,
+    );
+  } else {
+    process.stdout.write(
+      `provider: ${registration.providerProfileId}\n` +
+        `协议: ${registration.protocolName}\n` +
+        `凭据引用: ${credentialReferenceResolved ? "已解析" : "缺失"}\n` +
+        `支持等级: ${registration.supportLevel}\n` +
+        `连通状态: 未执行网络探测（本地检查）\n`,
+    );
+  }
+  return EXIT_CODES.SUCCESS;
+}
