@@ -1436,3 +1436,106 @@ export async function executeConcurrentDecideCommand(
   }
   return EXIT_CODES.SUCCESS;
 }
+
+/** T07E-06：工作集状态与预算视图（CLI 入口）。 */
+
+async function loadWorksetInfra() {
+  const { WorkingSetBudgetTracker } = await import(
+    "../../../core/src/orchestration/working-set-budget-tracker.js"
+  );
+  const { WorkingSetBudgetController } = await import(
+    "../../../core/src/orchestration/working-set-budget-controller.js"
+  );
+  const { TaskChainCumulativeBudgetController } = await import(
+    "../../../core/src/orchestration/task-chain-cumulative-budget.js"
+  );
+  const { BudgetExpansionCoordinator } = await import(
+    "../../../core/src/orchestration/budget-expansion-coordinator.js"
+  );
+  return {
+    WorkingSetBudgetTracker,
+    WorkingSetBudgetController,
+    TaskChainCumulativeBudgetController,
+    BudgetExpansionCoordinator,
+  };
+}
+
+export interface WorksetStatusCommandOptions {
+  isJsonOutput: boolean;
+}
+
+/** workset status：工作集多维预算状态（文件数/字节/token/任务链累计）。 */
+export async function executeWorksetStatusCommand(
+  options: WorksetStatusCommandOptions,
+): Promise<number> {
+  const { WorkingSetBudgetTracker, WorkingSetBudgetController } =
+    await loadWorksetInfra();
+  const tracker = new WorkingSetBudgetTracker({
+    canonicalIdentityPort: { canonicalize: async (filePath) => filePath },
+    sensitivePathPort: { isSensitivePath: () => false },
+  });
+  const controller = new WorkingSetBudgetController({
+    budgetTracker: tracker,
+    tokenEstimationPort: { estimateTokenCount: (contentBytes) => contentBytes / 4 },
+  });
+  const view = {
+    defaults: {
+      maximumDistinctProjectContentFilesPerAgentActivation: 10,
+      workingSetWarningThresholdFileCount: 8,
+    },
+    budgetState: controller.getBudgetSnapshot({
+      agentInstanceId: "main-agent-cli",
+      taskChainIdentifier: "cli-session",
+    }),
+    expansionAvailable: true,
+  };
+  if (options.isJsonOutput) {
+    process.stdout.write(`${JSON.stringify(view)}\n`);
+  } else {
+    process.stdout.write(
+      `默认预算: ${view.defaults.maximumDistinctProjectContentFilesPerAgentActivation} 文件/Agent` +
+        `（提醒阈值 ${view.defaults.workingSetWarningThresholdFileCount}）\n` +
+        `当前文件数: ${view.budgetState.distinctProjectContentFileCount}\n` +
+        `累计字节: ${view.budgetState.modelVisibleProjectContentBytes}\n` +
+        `估算 token: ${view.budgetState.estimatedProjectContentTokenCount}\n`,
+    );
+  }
+  return EXIT_CODES.SUCCESS;
+}
+
+export interface WorksetBudgetCommandOptions {
+  isJsonOutput: boolean;
+}
+
+/** workset budget：预算配置与扩展边界视图。 */
+export async function executeWorksetBudgetCommand(
+  options: WorksetBudgetCommandOptions,
+): Promise<number> {
+  const { BudgetExpansionCoordinator } = await loadWorksetInfra();
+  const coordinator = new BudgetExpansionCoordinator({
+    userConfiguredBounds: {
+      maximumAdditionalFilesPerAgent: 20,
+      allowedPathPrefixes: ["src/"],
+      requiresHumanConfirmationBeyondBounds: true,
+    },
+  });
+  const view = {
+    expansionBounds: {
+      maximumAdditionalFilesPerAgent: 20,
+      allowedPathPrefixes: ["src/"],
+      requiresHumanConfirmationBeyondBounds: true,
+    },
+    expansionCoordinatorReady: coordinator !== null,
+    budgetDecisions: ["allowed", "warned", "denied", "split", "expanded"],
+  };
+  if (options.isJsonOutput) {
+    process.stdout.write(`${JSON.stringify(view)}\n`);
+  } else {
+    process.stdout.write(
+      `扩展边界: 每 Agent 最多 +${view.expansionBounds.maximumAdditionalFilesPerAgent} 文件` +
+        `（路径 ${view.expansionBounds.allowedPathPrefixes.join(",")}；超界需人工确认）\n` +
+        `预算决定: ${view.budgetDecisions.join(", ")}\n`,
+    );
+  }
+  return EXIT_CODES.SUCCESS;
+}
