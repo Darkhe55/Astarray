@@ -67,7 +67,7 @@
 | T10 | TUI | re-verifying | 6 | AR-00 重新验收中（AR-02 授权交互） |
 | T11 | Headless CLI | re-verifying | 6 | AR-00 重新验收中 |
 | T12 | 恢复、安全与异常加固 | re-verifying | 7 | AR-00 重新验收中 |
-| T12A | 统一会话恢复、任务续接与外部状态对账 | pending | pre-T12 | 待 T05D/T07E/T07D/T08A 通过；见独立任务卡 |
+| T12A | 统一会话恢复、任务续接与外部状态对账 | in_progress | pre-T12 | T12A-01 契约完成（ADR-0030；1126 测试全绿）；T12A-02 起按检查点推进 |
 | T13 | npm 打包与隔离安装 | re-verifying | 8 | AR-00 重新验收中（AR-07 终验） |
 | T14 | 文档与最终报告 | re-verifying | 8 | AR-00 重新验收中（AR-07 文档对齐） |
 
