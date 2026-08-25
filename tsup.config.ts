@@ -4,6 +4,7 @@ export default defineConfig({
   entry: {
     cli: "packages/tui/src/cli.tsx",
     "feedback-process-entry": "packages/core/src/feedback-process/child-bootstrap.ts",
+    "public-sdk": "packages/core/src/public-sdk.ts",
   },
   format: ["esm"],
   target: "node20",

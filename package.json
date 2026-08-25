@@ -10,6 +10,11 @@
   "bin": {
     "astarray": "dist/cli.js"
   },
+  "exports": {
+    ".": {
+      "import": "./dist/public-sdk.js"
+    }
+  },
   "files": [
     "dist",
     "README.md",
