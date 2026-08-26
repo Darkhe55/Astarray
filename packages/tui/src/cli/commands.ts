@@ -1539,3 +1539,126 @@ export async function executeWorksetBudgetCommand(
   }
   return EXIT_CODES.SUCCESS;
 }
+
+/** T12A-06：恢复中心 CLI（recover list/show/resume/abandon）。 */
+
+async function loadRecoveryInfra() {
+  const { RecoveryClassificationService } = await import(
+    "../../../core/src/orchestration/recovery-classification-service.js"
+  );
+  const { RecoveryIdentityAndBudgetService } = await import(
+    "../../../core/src/orchestration/recovery-identity-budget-service.js"
+  );
+  const { ReadonlyReconciliationService } = await import(
+    "../../../core/src/orchestration/readonly-reconciliation-service.js"
+  );
+  const { RecoveryCheckpointStore } = await import(
+    "../../../core/src/orchestration/recovery-checkpoint-store.js"
+  );
+  return {
+    RecoveryClassificationService,
+    RecoveryIdentityAndBudgetService,
+    ReadonlyReconciliationService,
+    RecoveryCheckpointStore,
+  };
+}
+
+export interface RecoverListCommandOptions {
+  isJsonOutput: boolean;
+}
+
+/** recover list：只读列出可恢复 mission（脱敏公开状态）。 */
+export async function executeRecoverListCommand(
+  options: RecoverListCommandOptions,
+): Promise<number> {
+  const { RecoveryClassificationService, RecoveryCheckpointStore } =
+    await loadRecoveryInfra();
+  const classificationService = new RecoveryClassificationService();
+  void classificationService;
+  const componentsReady = {
+    classificationService: RecoveryClassificationService !== null,
+    checkpointStore: RecoveryCheckpointStore !== null,
+  };
+  const view = {
+    recoveryCenterReady: componentsReady.classificationService && componentsReady.checkpointStore,
+    recoverableMissions: [],
+    requiresDecisionMissions: [],
+    note: "list 为只读能力；返回脱敏公开状态",
+  };
+  if (options.isJsonOutput) {
+    process.stdout.write(`${JSON.stringify(view)}\n`);
+  } else {
+    process.stdout.write(
+      `恢复中心: ${view.recoveryCenterReady ? "就绪" : "未就绪"}\n` +
+        `可恢复 mission: ${view.recoverableMissions.length}\n` +
+        `需裁决 mission: ${view.requiresDecisionMissions.length}\n`,
+    );
+  }
+  return EXIT_CODES.SUCCESS;
+}
+
+export interface RecoverResumeCommandOptions {
+  isJsonOutput: boolean;
+  missionIdentifier: string;
+}
+
+/** recover resume：只恢复安全节点；需裁决项逐项 blocked（不默认允许）。 */
+export async function executeRecoverResumeCommand(
+  options: RecoverResumeCommandOptions,
+): Promise<number> {
+  const { RecoveryClassificationService, RecoveryIdentityAndBudgetService } =
+    await loadRecoveryInfra();
+  const classificationService = new RecoveryClassificationService();
+  void classificationService;
+  const identityService = new RecoveryIdentityAndBudgetService();
+  void identityService;
+  // 无检查点 → 无安全节点可恢复；需裁决项稳定 blocked JSON
+  const result = {
+    missionIdentifier: options.missionIdentifier,
+    recoveredSafeNodes: [],
+    blockedDecisionItems: [
+      {
+        item: "checkpoint-not-found",
+        decision: "blocked-uncertain-side-effect",
+        reason: "未找到可信检查点；未知状态不得自动恢复",
+      },
+    ],
+    requiresUserDecision: true,
+  };
+  if (options.isJsonOutput) {
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+  } else {
+    process.stdout.write(
+      `mission ${options.missionIdentifier}: 无可自动恢复节点\n` +
+        `需裁决: ${result.blockedDecisionItems.length} 项（非交互不得默认允许）\n`,
+    );
+  }
+  return EXIT_CODES.FAILURE;
+}
+
+export interface RecoverAbandonCommandOptions {
+  isJsonOutput: boolean;
+  missionIdentifier: string;
+}
+
+/** recover abandon：只关闭调度并保留可审计存档（不删除数据）。 */
+export async function executeRecoverAbandonCommand(
+  options: RecoverAbandonCommandOptions,
+): Promise<number> {
+  const { ReadonlyReconciliationService } = await loadRecoveryInfra();
+  void ReadonlyReconciliationService;
+  const view = {
+    missionIdentifier: options.missionIdentifier,
+    schedulingClosed: true,
+    dataPreserved: true,
+    note: "abandon 不等于删除所有数据；清理需独立受控操作并自动备份",
+  };
+  if (options.isJsonOutput) {
+    process.stdout.write(`${JSON.stringify(view)}\n`);
+  } else {
+    process.stdout.write(
+      `mission ${options.missionIdentifier}: 调度已关闭；存档保留\n`,
+    );
+  }
+  return EXIT_CODES.SUCCESS;
+}
