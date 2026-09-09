@@ -25,6 +25,7 @@
 > 2026-08-17 设计增补：新增 T08D。“工匠”是阶段性显现的三级 Agent预设，只用已有已授权基础工具定制可复用工作流。会话开始时不向次级注入说明；活跃时长、已验收任务、里程碑、记忆索引规模或重复工作指纹达到本地策略后才披露。用户可配置无限阶段模板及给次级自动安排的提示词，自动节点只能位于优先级层级 1 或以下。
 > 2026-08-18 设计增补：新增 T07D。T07C 只负责模型/Provider 策略；T07D 单独负责主流 Provider 原生协议、真正增量流、CLI/TUI 产品装配、稳定 Public SDK，以及从 npm tarball 完成项目分析和小型编码/测试/验收的独立工作助手纵向闭环。顺序更新为 T08C → T08D → T07C → T07D → T12。
 > 2026-08-19 设计增补：新增 T05D、T07E、T12A。T05D 保护人工与 Agent并行编码并由次级协调冲突合并；T07E 对每个具体 Agent默认执行10个项目内容文件工作集预算并允许受控拆分/扩展；T12A 负责中断后统一检查点、只读外部状态对账和未知副作用阻塞。有效偏序为 T08C 后分别推进 T08D→T07C、T05D、T07E，三路通过后执行 T07D→T12A→T12。
+> 2026-09-09 设计增补：新增 T09A。历史上下文拆分为版本化全局决策和每 Agent 独占的局部上下文偏序图；已验收闭包生成关闭胶囊并退出普通提示词，按结构化请求分级回访。Assist 默认阻塞人工验收但可设置为延迟核验，Devolve 默认非阻塞并自动建立层级 1+ 的人工核验任务。任务实现后必须回归 T12A/T12 的恢复与安全路径。
 >
 > 2026-08-26 进度更新：T12A-01~07 完成后开始 T12 综合安全加固（新版任务卡 `docs/tasks/T12_SECURITY_HARDENING_TASK_CARD.md`）。T12-01 跨进程 mission 活动租约完成：`MissionLeaseStore`（排他创建 + 心跳续约 + 过期显式接管 + revision CAS + 损坏 fail-closed）；先红灯 11 测试后实现，`npm run check` exit 0（1172 测试全绿）。T12-02 编排会话租约接入完成：运行会话申请/半周期续约/终局释放、同 mission 跨进程 start 拒绝 mission-locked、cancel/resume CLI 跨进程门禁；先红灯 3 测试后实现，`npm run check` exit 0（1176 测试全绿）。T12-03 反馈孤儿收口修复完成：发现并修复监督器从未发送心跳（正常长会话 2× 超时后子进程误判失联自退）——`sendHeartbeat` + 半周期心跳循环；子进程断线自退/心跳看门狗与 TUI SIGINT/SIGTERM → shutdown 收口构成双保险；先红灯 1 测试后实现，`npm run check` exit 0（1177 测试全绿）。T12-04 只读状态与 doctor 一致性完成：`MissionManager.probeMissionDirectory`（损坏容错探针）、status --json 列表新增 `missionViews`（损坏/租约标注，兼容旧 `missions` 契约）、doctor 新增状态目录一致性扫描（损坏计数 + 活动/过期租约计数，损坏即 health failed）；先红灯/直接测试后实现，`npm run check` exit 0（1183 测试全绿）。T12-05 破坏性调用盘点与静态架构门禁完成：新增 `tests/architecture/destructive-file-api-guard.test.ts`（扫描 packages/core|tui/src，21 个带逐项理由的白名单模块 + 每文件最小令牌集，违规即失败；扫描器自带捕获单测）；Git 破坏性操作恢复点由 git-recovery-point/git-coordinator-branches 集成套件动态复核（随 check 全绿）。`npm run check` exit 0（1185 测试全绿）。T12-06 综合终验完成：`npm run check` exit 0（125 文件 / 1185 测试全绿）；`npm pack`（159 文件）+ verify-package + smoke-install（隔离安装/CLI/全局 shim/feedback-entry）全通过；npm audit（--audit-level=high exit 0，4 项 dev 工具链低/中危）；覆盖率实测全局分支 83.07%（<85%）如实记录为 AR-07 收尾必补项。T12 卡状态 `done`，剩余风险见卡 §6 并移交 AR-07/T14。
 >
@@ -66,6 +67,7 @@
 | T08C | 主对话独占、次级直投、项目侦察/验收与四级委派 | re-verifying | 6F | T08C-01~07 全部完成（858 测试全绿；dist 可达 + smoke-install 通过）；T08D 可开始 |
 | T08D | 阶段性“工匠”三级 Agent与工作流定制 | re-verifying | 6G | T08D-01~06 全部完成（910 测试全绿；dist 可达 + smoke-install 通过）；T07C 可开始 |
 | T09 | 记忆、缓存与指标 | re-verifying | 6 | AR-00 重新验收中 |
+| T09A | 全局决策提升、局部上下文节点关闭与分级回访 | pending | post-T12增补 | 任务卡已建立；每轮一个检查点，完成后回归 T12A/T12 |
 | T10 | TUI | re-verifying | 6 | AR-00 重新验收中（AR-02 授权交互） |
 | T11 | Headless CLI | re-verifying | 6 | AR-00 重新验收中 |
 | T12 | 恢复、安全与异常加固 | re-verifying | 7 | 新版 T12 卡 `done`（T12-01~06）：1185 测试全绿 + npm pack/verify/smoke-install 终验通过；整体状态仍待 AR-07 全项目收尾（含覆盖率补强） |
