@@ -41,6 +41,15 @@ describe("recover list 命令", () => {
     expect(serialized).not.toContain("nonce");
     expect(serialized).not.toContain("apiKey");
   });
+
+  it("文本模式输出恢复中心摘要（覆盖文本分支）", async () => {
+    const exitCode = await executeRecoverListCommand({ isJsonOutput: false });
+    expect(exitCode).toBe(0);
+    const text = stdoutBuffer.join("");
+    expect(text).toContain("恢复中心:");
+    expect(text).toContain("可恢复 mission:");
+    expect(text).toContain("需裁决 mission:");
+  });
 });
 
 describe("recover resume 命令", () => {
@@ -59,6 +68,17 @@ describe("recover resume 命令", () => {
       "blocked-uncertain-side-effect",
     );
   });
+
+  it("文本模式输出需裁决说明（覆盖文本分支）", async () => {
+    const exitCode = await executeRecoverResumeCommand({
+      isJsonOutput: false,
+      missionIdentifier: "mission-1",
+    });
+    expect(exitCode).not.toBe(0);
+    const text = stdoutBuffer.join("");
+    expect(text).toContain("无可自动恢复节点");
+    expect(text).toContain("需裁决:");
+  });
 });
 
 describe("recover abandon 命令", () => {
@@ -74,6 +94,15 @@ describe("recover abandon 命令", () => {
     };
     expect(parsed.schedulingClosed).toBe(true);
     expect(parsed.dataPreserved).toBe(true);
+  });
+
+  it("文本模式输出调度已关闭（覆盖文本分支）", async () => {
+    const exitCode = await executeRecoverAbandonCommand({
+      isJsonOutput: false,
+      missionIdentifier: "mission-1",
+    });
+    expect(exitCode).toBe(0);
+    expect(stdoutBuffer.join("")).toContain("调度已关闭");
   });
 });
 

@@ -61,6 +61,13 @@ describe("workset budget 命令", () => {
     expect(parsed.expansionBounds.maximumAdditionalFilesPerAgent).toBe(20);
     expect(parsed.budgetDecisions).toHaveLength(5);
   });
+
+  it("文本模式输出扩展边界与预算决定（覆盖文本分支）", async () => {
+    await executeWorksetBudgetCommand({ isJsonOutput: false });
+    const text = stdoutBuffer.join("");
+    expect(text).toContain("扩展边界:");
+    expect(text).toContain("预算决定:");
+  });
 });
 
 describe("T07E dist 可达性", () => {
