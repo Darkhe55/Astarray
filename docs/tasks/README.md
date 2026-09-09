@@ -12,6 +12,7 @@
 | T05D | `T05D_HUMAN_AGENT_CONCURRENT_CHANGE_TASK_CARD.md` | 人工与 Agent 并行编码、变化保护、冲突协调和次级受控合并 |
 | T07E | `T07E_AGENT_WORKING_SET_READ_BUDGET_TASK_CARD.md` | 每 Agent默认10个项目内容文件工作集、拆分与范围化扩展 |
 | T12A | `T12A_SESSION_RECOVERY_RECONCILIATION_TASK_CARD.md` | 中断后统一检查点、外部状态对账、身份/任务安全恢复 |
+| T12 | `T12_SECURITY_HARDENING_TASK_CARD.md` | T12A 后的综合安全加固（跨进程并发写保护/孤儿收口/只读一致性/静态门禁） |
 | GUI-01 | `GUI_MVP_CODING_TASK_CARD.md` | 本地浏览器 GUI MVP |
 
 当前有效偏序为：

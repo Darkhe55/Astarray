@@ -26,6 +26,8 @@
 > 2026-08-18 设计增补：新增 T07D。T07C 只负责模型/Provider 策略；T07D 单独负责主流 Provider 原生协议、真正增量流、CLI/TUI 产品装配、稳定 Public SDK，以及从 npm tarball 完成项目分析和小型编码/测试/验收的独立工作助手纵向闭环。顺序更新为 T08C → T08D → T07C → T07D → T12。
 > 2026-08-19 设计增补：新增 T05D、T07E、T12A。T05D 保护人工与 Agent并行编码并由次级协调冲突合并；T07E 对每个具体 Agent默认执行10个项目内容文件工作集预算并允许受控拆分/扩展；T12A 负责中断后统一检查点、只读外部状态对账和未知副作用阻塞。有效偏序为 T08C 后分别推进 T08D→T07C、T05D、T07E，三路通过后执行 T07D→T12A→T12。
 >
+> 2026-08-26 进度更新：T12A-01~07 完成后开始 T12 综合安全加固（新版任务卡 `docs/tasks/T12_SECURITY_HARDENING_TASK_CARD.md`）。T12-01 跨进程 mission 活动租约完成：`MissionLeaseStore`（排他创建 + 心跳续约 + 过期显式接管 + revision CAS + 损坏 fail-closed）；先红灯 11 测试后实现，`npm run check` exit 0（1172 测试全绿）。T12-02（编排/CLI 接入 run/resume/recover）待续。
+>
 > 2026-08-12 审计整改：外部验收发现 7 项阻断性问题，全部已修复并回归（详见"审计整改记录"）。修复涉及 S1 doctor 数据丢失、S2 反馈入池校验、S3 备份事务闭环、S4 授权绑定、S5 交互授权通道、S6 存档 provenance、S7 config 备份保护；另完成覆盖率与测试基建改善（S8/S9）。
 
 ## 任务总览
@@ -66,7 +68,7 @@
 | T09 | 记忆、缓存与指标 | re-verifying | 6 | AR-00 重新验收中 |
 | T10 | TUI | re-verifying | 6 | AR-00 重新验收中（AR-02 授权交互） |
 | T11 | Headless CLI | re-verifying | 6 | AR-00 重新验收中 |
-| T12 | 恢复、安全与异常加固 | re-verifying | 7 | AR-00 重新验收中 |
+| T12 | 恢复、安全与异常加固 | re-verifying | 7 | 新版 T12 卡进行中：T12-01 跨进程 mission 租约完成（1172 测试全绿）；T12-02~06 待续 |
 | T12A | 统一会话恢复、任务续接与外部状态对账 | re-verifying | pre-T12 | T12A-01~07 全部完成（1161 测试全绿；故障注入 5 中断点 + smoke-install 通过） |
 | T13 | npm 打包与隔离安装 | re-verifying | 8 | AR-00 重新验收中（AR-07 终验） |
 | T14 | 文档与最终报告 | re-verifying | 8 | AR-00 重新验收中（AR-07 文档对齐） |
