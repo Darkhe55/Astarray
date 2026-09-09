@@ -108,3 +108,15 @@
 - 测试：`tests/{unit,component,integration}`（355 例）
 - 文档：`README.md`、`docs/architecture.md`、`docs/adr/0001–0007`、`PLAN_STATUS.md`、本报告
 - 脚本：`scripts/{verify-package,smoke-install}.mjs`
+
+## 9. T12 综合加固增补（2026-08-26 版本化）
+
+T12A 之后的新版 T12（综合安全加固）已完成，任务卡 `docs/tasks/T12_SECURITY_HARDENING_TASK_CARD.md` 状态 done，提交 2565fc9→533e7b7 等。主要交付：跨进程 mission 租约（排他/心跳续约/过期显式接管）、编排会话租约接入与 CLI 跨进程门禁、反馈监督器心跳修复（修复正常长会话子进程 2× 超时误自退）、只读状态/doctor 一致性（损坏容错探针 + 状态目录扫描）、破坏性文件 API 静态架构门禁。
+
+终验证据（T12-06）：
+
+- `npm run check` exit 0：125 文件 / 1185 测试全绿。
+- `npm pack` + `node scripts/verify-package.mjs` + `node scripts/smoke-install.mjs` 全部通过（159 文件 tarball、隔离安装、CLI 冒烟、全局 .cmd shim、feedback-entry ESM 加载）。
+- `npm audit --audit-level=high` exit 0：4 项低/中危均为 dev 工具链（vitest、esbuild）；生产依赖无 high/critical。
+- `npm run test:coverage`：全局分支覆盖率 83.07%（低于 85% 门槛）——如实记录，属 AR-07 全项目收尾必补项。
+- 剩余风险：覆盖率补强、dev 工具链审计项、跨平台矩阵（B6R-12）、recover CLI 深层接线（随 AR-07 复验）。

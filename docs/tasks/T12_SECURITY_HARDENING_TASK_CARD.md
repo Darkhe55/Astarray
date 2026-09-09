@@ -1,6 +1,6 @@
 # T12：综合安全加固任务卡（v0.1 复验后新版）
 
-> 状态：`in_progress` — T12-01~05 完成（跨进程租约 + 编排会话接入 + 反馈心跳修复 + 只读状态/doctor 一致性 + 破坏性 API 静态门禁；1185 测试 / `npm run check` exit 0）；T12-06 待续
+> 状态：`done`（T12-01~06 全部完成：1185 测试 / `npm run check` exit 0；npm pack + verify-package + smoke-install 终验通过；剩余风险见文末）
 > 编制日期：2026-08-26
 > 任务来源：用户（PLAN_STATUS 偏序 `T07D → T12A → T12 → T13 → T14`）
 > 优先级层级：0
@@ -71,3 +71,25 @@ completionGate: passed | failed | blocked
 ```
 
 缺少并发保护、孤儿收口、故障注入、静态门禁复核或终验证据时，不得把 T12 标记为完成。
+
+## 6. T12-06 综合终验证据与剩余风险
+
+动态证据（终验轮）：
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `npm run check` | 0 | 125 文件 / 1185 测试全绿（typecheck/lint/build/test） |
+| `npm run test:coverage` | 1 | 全局分支覆盖率 83.07%（< 85% 门槛）；记录为 AR-07 全项目收尾必补项 |
+| `npm pack --pack-destination .tmp/packages` | 0 | `astarray-0.1.0.tgz`（159 文件，integrity sha512） |
+| `node scripts/verify-package.mjs` | 0 | 159 文件；shebang/BOM 正确；反馈进程入口包含 |
+| `node scripts/smoke-install.mjs` | 0 | 隔离安装 + npx version/help/doctor/run(mock done) + 全局 .cmd shim + feedback-entry ESM 加载全通过 |
+| `npm audit --audit-level=high` | 0 | 4 项低/中危均为 dev 工具链（vitest/@vitest/mocker、esbuild）；无 high/critical |
+
+并发/崩溃矩阵证据：跨进程双会话租约冲突/接管、编排会话终局释放、反馈长会话心跳存活/重启 + TUI 信号收口、5 中断点故障注入（T12A-07 基线）随各检查点测试全绿。
+
+剩余风险（移交 AR-07/T14）：
+
+- 全局分支覆盖率 83.07% < 85%（关键安全模块 95% 专项亦未全达标，见 B6R-10），属 AR-07 全项目收尾范围。
+- `npm audit` 4 项 dev 工具链低/中危（vitest、esbuild）未修复；生产依赖无 high/critical。
+- 跨平台矩阵（Linux/macOS、Node 20/新 LTS）缺 CI 未补跑（B6R-12）。
+- recover list/show/resume/abandon CLI 深层接线仍为 fail-closed 基线（T12A-06），真实接管接线随 AR-07 复验。
