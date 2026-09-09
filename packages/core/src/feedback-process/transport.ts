@@ -66,6 +66,17 @@ export class ForkFeedbackClient implements FeedbackTransportPort {
     });
   }
 
+  /**
+   * T12-03：发送心跳（无应答）。子进程以心跳刷新"主进程失联"看门狗；
+   * 主进程持续存活时必须按半周期发送，否则子进程会误判失联并自退。
+   */
+  sendHeartbeat(): void {
+    this.safeSend({
+      type: "heartbeat",
+      timestampUnixMilliseconds: Date.now(),
+    });
+  }
+
   onMessage(
     handler: (message: FeedbackMessage) => Promise<void> | void,
   ): void {

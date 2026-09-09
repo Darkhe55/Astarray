@@ -97,6 +97,32 @@ describe.skipIf(!hasBuiltEntry)("FeedbackProcessSupervisor", () => {
     expect(supervisor.getChildProcess()).toBeNull();
   }, 20_000);
 
+  it("T12-03：主进程持续心跳，子进程超过 2× 心跳超时仍存活（无心跳会误自退）", async () => {
+    const temporaryDirectory = path.join(
+      os.tmpdir(),
+      `astarray-supervisor-heartbeat-${Date.now()}`,
+    );
+    const supervisor = new FeedbackProcessSupervisor({
+      modulePath: distEntryPath,
+      baseDirectory: temporaryDirectory,
+      heartbeatTimeoutMilliseconds: 400,
+      heartbeatIntervalMilliseconds: 200,
+      maximumRestartAttempts: 0,
+      healthCheckIntervalMilliseconds: 10_000,
+    });
+    try {
+      await supervisor.start();
+      // 等待超过 2× 心跳超时（800ms）：修复前子进程会在此自行退出。
+      await new Promise((resolve) => setTimeout(resolve, 1_050));
+      const child = supervisor.getChildProcess();
+      expect(child).not.toBeNull();
+      expect(child?.exitCode).toBeNull();
+      expect(supervisor.getRestartAttemptCount()).toBe(0);
+    } finally {
+      await supervisor.stop().catch(() => {});
+    }
+  }, 15_000);
+
   it("不传 modulePath 时使用默认路径（dist/feedback-process-entry.js）", () => {
     const supervisor = new FeedbackProcessSupervisor({
       baseDirectory: path.join(os.tmpdir(), "astarray-supervisor-default"),

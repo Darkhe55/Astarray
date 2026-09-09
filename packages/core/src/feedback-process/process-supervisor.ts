@@ -20,6 +20,8 @@ export interface FeedbackProcessSupervisorOptions {
   restartBackoffMilliseconds?: number;
   maximumRestartAttempts?: number;
   shutdownGracePeriodMilliseconds?: number;
+  /** T12-03：主进程心跳周期（应显著小于心跳超时，默认超时的一半）。 */
+  heartbeatIntervalMilliseconds?: number;
 }
 
 export const MAXIMUM_RESTART_ATTEMPTS_DEFAULT = 5;
@@ -27,6 +29,7 @@ export const HEALTH_CHECK_INTERVAL_MILLISECONDS_DEFAULT = 2_000;
 export const RESTART_BACKOFF_MILLISECONDS_DEFAULT = 1_000;
 export const SHUTDOWN_GRACE_PERIOD_MILLISECONDS_DEFAULT = 5_000;
 export const HEARTBEAT_TIMEOUT_MILLISECONDS_DEFAULT = 30_000;
+export const HEARTBEAT_INTERVAL_FACTOR = 2;
 
 export class FeedbackProcessSupervisor {
   private childProcess: ChildProcess | null = null;
@@ -34,12 +37,14 @@ export class FeedbackProcessSupervisor {
   private isShuttingDown = false;
   private restartAttemptCount = 0;
   private healthCheckInterval: NodeJS.Timeout | null = null;
+  private heartbeatInterval: NodeJS.Timeout | null = null;
   private readonly modulePath: string;
   private readonly shutdownGracePeriodMilliseconds: number;
   private readonly healthCheckIntervalMilliseconds: number;
   private readonly restartBackoffMilliseconds: number;
   private readonly maximumRestartAttempts: number;
   private readonly heartbeatTimeoutMilliseconds: number;
+  private readonly heartbeatIntervalMilliseconds: number;
 
   constructor(private readonly options: FeedbackProcessSupervisorOptions) {
     this.modulePath =
@@ -58,6 +63,14 @@ export class FeedbackProcessSupervisor {
     this.heartbeatTimeoutMilliseconds =
       options.heartbeatTimeoutMilliseconds ??
       HEARTBEAT_TIMEOUT_MILLISECONDS_DEFAULT;
+    this.heartbeatIntervalMilliseconds =
+      options.heartbeatIntervalMilliseconds ??
+      Math.max(
+        1_000,
+        Math.floor(
+          this.heartbeatTimeoutMilliseconds / HEARTBEAT_INTERVAL_FACTOR,
+        ),
+      );
   }
 
   async start(): Promise<ForkFeedbackClient> {
@@ -71,12 +84,14 @@ export class FeedbackProcessSupervisor {
     }
     await startedClient.waitUntilReady();
     this.startHealthCheckLoop();
+    this.startHeartbeatLoop();
     return startedClient;
   }
 
   async stop(): Promise<void> {
     this.isShuttingDown = true;
     this.stopHealthCheckLoop();
+    this.stopHeartbeatLoop();
     const activeClient = this.client;
     const activeChild = this.childProcess;
     if (activeClient !== null) {
@@ -174,6 +189,7 @@ export class FeedbackProcessSupervisor {
     this.restartAttemptCount += 1;
     if (this.restartAttemptCount > this.maximumRestartAttempts) {
       this.stopHealthCheckLoop();
+      this.stopHeartbeatLoop();
       return;
     }
     const backoffMilliseconds =
@@ -187,6 +203,29 @@ export class FeedbackProcessSupervisor {
         void this.client?.requestReplay("*").catch(() => {});
       });
     }, backoffMilliseconds);
+  }
+
+  /**
+   * T12-03：按半周期（默认超时的一半）发送心跳，刷新子进程的
+   * "主进程失联"看门狗；主进程退出/挂死后子进程才会在 2× 超时自退，
+   * 避免健康会话被误判为失联。
+   */
+  private startHeartbeatLoop(): void {
+    this.stopHeartbeatLoop();
+    this.heartbeatInterval = setInterval(() => {
+      const activeClient = this.client;
+      if (activeClient === null || this.isShuttingDown) {
+        return;
+      }
+      activeClient.sendHeartbeat();
+    }, this.heartbeatIntervalMilliseconds);
+  }
+
+  private stopHeartbeatLoop(): void {
+    if (this.heartbeatInterval !== null) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
   }
 
   private startHealthCheckLoop(): void {
