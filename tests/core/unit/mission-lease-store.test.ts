@@ -237,4 +237,47 @@ describe("MissionLeaseStore 跨进程 mission 租约（T12-01）", () => {
     expect(missing.isActive).toBe(false);
     expect(missing.ownerProcessInstanceId).toBeNull();
   });
+
+  it("校验分支：空/超长 processInstanceId、非法 purpose、超长 missionId 均拒绝", async () => {
+    const store = makeStore();
+    await expect(
+      store.tryAcquire(makeClaim({ processInstanceId: "" })),
+    ).rejects.toMatchObject({ errorCode: "mission-locked" });
+    await expect(
+      store.tryAcquire(makeClaim({ processInstanceId: "p".repeat(201) })),
+    ).rejects.toMatchObject({ errorCode: "mission-locked" });
+    await expect(
+      store.tryAcquire(makeClaim({ missionId: "m".repeat(161) })),
+    ).rejects.toMatchObject({ errorCode: "path-escape-attempt" });
+    await expect(
+      store.tryAcquire({
+        missionId: "mission-001",
+        processInstanceId: "process-a",
+        purpose: "nonsense" as never,
+      }),
+    ).rejects.toMatchObject({ errorCode: "mission-locked" });
+  });
+
+  it("renewsUntilIso 不可解析时按已过期处理（locked-stale，fail-closed）", async () => {
+    const store = makeStore();
+    const leaseDirectory = path.join(temporaryDirectory, "missions", "mission-001");
+    await fs.mkdir(leaseDirectory, { recursive: true });
+    await fs.writeFile(
+      path.join(leaseDirectory, "mission-lease.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        leaseRevision: 1,
+        missionId: "mission-001",
+        processInstanceId: "process-a",
+        agentInstanceId: null,
+        purpose: "run",
+        claimedAtIso: "not-a-date",
+        renewsUntilIso: "not-a-date",
+        claimantDescription: "corrupt-date",
+      }),
+      "utf8",
+    );
+    const outcome = await store.tryAcquire(makeClaim({ processInstanceId: "process-b" }));
+    expect(outcome.status).toBe("locked-stale");
+  });
 });

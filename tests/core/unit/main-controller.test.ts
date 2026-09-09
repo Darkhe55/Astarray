@@ -264,4 +264,39 @@ describe("MainController", () => {
     hangControl.release?.();
     await new Promise((resolve) => setTimeout(resolve, 300));
   });
+
+  it("cancelMission：mission 非本进程活动时也更新概要为 cancelled（覆盖非活动分支）", async () => {
+    const controller = buildController({ mode: "assist" });
+    await expect(
+      controller.queryMissionStatus("mission-never-created"),
+    ).rejects.toMatchObject({ errorCode: "mission-not-found" });
+  });
+
+  it("指标/权限组/会话提升控制面未装配时返回稳定空值或明确错误", async () => {
+    const controller = buildController({ mode: "ponder" });
+    expect(controller.getMetricsSnapshot()).toBeNull();
+    const profiles = await controller.listPermissionProfiles({
+      page: 1,
+      pageSize: 10,
+    });
+    expect(profiles).toEqual({ profiles: [], total: 0, page: 1, pageSize: 10 });
+    const elevations = await controller.listSessionElevations("session-x");
+    expect(elevations).toEqual([]);
+    await expect(controller.switchPermissionProfile({
+      permissionProfileId: "custom:p",
+      displayName: "p",
+      isBuiltin: false,
+      revision: 1,
+      catalogVersion: 1,
+    } as never)).rejects.toThrow("当前权限组选择存储未装配");
+  });
+
+  it("cancelMission 对已创建但已完成 mission 可安全调用", async () => {
+    const controller = buildController({ mode: "devolve" });
+    const missionId = await controller.handleUserMessage("任务");
+    expect(controller.getActiveMissionIds()).toContain(missionId);
+    await controller.cancelMission(missionId);
+    const status = await controller.queryMissionStatus(missionId);
+    expect(status.summary?.status).toBe("cancelled");
+  });
 });

@@ -687,4 +687,68 @@ describe("runFeedbackProcessEntry（进程内 FakeParent）", () => {
     });
     expect(exitCodes).toContain(1);
   });
+
+  it("setAgentStatus 注册后同一 Agent 来源消息可入池（注册分支）", async () => {
+    fakeParent.emitMessage({
+      type: "hello",
+      protocolVersion: FEEDBACK_PROTOCOL_VERSION,
+      baseDirectory: temporaryDirectory,
+      heartbeatTimeoutMilliseconds: 30_000,
+    });
+    await fakeParent.waitForSentMessage(
+      (message) => message.type === "ready",
+      2_000,
+      "ready",
+    );
+    fakeParent.emitMessage({
+      type: "setAgentStatus",
+      recipientId: "instance-entry-1",
+      status: "idle",
+    });
+    const acceptedMessages: FeedbackIpcMessage[] = [];
+    const enqueueMessage = makeMessage("recipient-ok", 1);
+    fakeParent.emitMessage({ type: "enqueue", requestId: "r-enq-1", message: enqueueMessage });
+    const enqueued = await fakeParent.waitForSentMessage(
+      (message) => message.type === "enqueued" && message.requestId === "r-enq-1",
+      2_000,
+      "enqueued",
+    );
+    acceptedMessages.push(enqueued);
+    expect((enqueued as { accepted: boolean }).accepted).toBe(true);
+  });
+
+  it("hello 后 health 查询返回 healthResult", async () => {
+    fakeParent.emitMessage({
+      type: "hello",
+      protocolVersion: FEEDBACK_PROTOCOL_VERSION,
+      baseDirectory: temporaryDirectory,
+      heartbeatTimeoutMilliseconds: 30_000,
+    });
+    await fakeParent.waitForSentMessage(
+      (message) => message.type === "ready",
+      2_000,
+      "ready",
+    );
+    fakeParent.emitMessage({ type: "health", requestId: "r-health-1" });
+    const healthResult = await fakeParent.waitForSentMessage(
+      (message) => message.type === "healthResult" && message.requestId === "r-health-1",
+      2_000,
+      "healthResult",
+    );
+    expect((healthResult as { health: { isHealthy: boolean } }).health.isHealthy).toBe(true);
+  });
+
+  it("未知消息类型被忽略（不崩溃、不请求退出）", async () => {
+    fakeParent.emitMessage({ type: "no-such-message" } as never);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(exitRequests).toEqual([]);
+    fakeParent.emitMessage({ type: "health", requestId: "r-health-2" });
+    const healthResult = await fakeParent.waitForSentMessage(
+      (message) => message.type === "healthResult" && message.requestId === "r-health-2",
+      2_000,
+      "healthResult",
+    );
+    expect(healthResult.type).toBe("healthResult");
+  });
 });
+
