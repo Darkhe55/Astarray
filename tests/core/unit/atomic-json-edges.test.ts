@@ -38,12 +38,12 @@ describe("atomic-json 分支边缘（覆盖率冲刺）", () => {
     const originalRename = nodeFsPromises.rename.bind(nodeFsPromises);
     let renameCallCount = 0;
     vi.spyOn(nodeFsPromises, "rename").mockImplementation(
-      async (from: string, to: string) => {
+      async (oldPath: unknown, newPath: unknown) => {
         renameCallCount += 1;
         if (renameCallCount === 1) {
           throw epermError();
         }
-        return originalRename(from, to) as Promise<void>;
+        return originalRename(oldPath as string, newPath as string) as Promise<void>;
       },
     );
     await writeAtomicJson(targetPath, { ok: true });
