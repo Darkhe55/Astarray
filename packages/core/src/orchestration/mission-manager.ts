@@ -26,6 +26,18 @@ export interface MissionStatus {
   taskChain: TaskChainDocument | null;
 }
 
+/** T12-04：只读探针结果（损坏容错，绝不抛错；区分缺失/损坏/正常）。 */
+export interface MissionDirectoryProbe {
+  missionId: string;
+  exists: boolean;
+  hasSummary: boolean;
+  summaryStatus: MissionSummary["status"] | null;
+  summaryCorrupted: boolean;
+  hasTaskChain: boolean;
+  taskChainCorrupted: boolean;
+  pendingTaskCount: number | null;
+}
+
 export interface CreateMissionInput {
   missionId: string;
   mode: AgentMode;
@@ -123,5 +135,68 @@ export class MissionManager {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * T12-04：只读探测单个 mission 目录。单 mission 的损坏（summary/任务链
+   * 主文件与备份均不可解析）只标记 corrupted，绝不抛错，保证 status/recover
+   * 等只读视图在损坏状态下仍稳定输出并明确上报问题。
+   */
+  async probeMissionDirectory(
+    missionId: string,
+  ): Promise<MissionDirectoryProbe> {
+    const { readFile } = await import("node:fs/promises");
+    let hasSummary = false;
+    let summaryStatus: MissionSummary["status"] | null = null;
+    let summaryCorrupted = false;
+    try {
+      const rawSummary = await readFile(this.summaryFilePath(missionId), "utf8");
+      hasSummary = true;
+      try {
+        const parsedSummary = JSON.parse(rawSummary) as Partial<MissionSummary>;
+        summaryStatus =
+          typeof parsedSummary.status === "string"
+            ? (parsedSummary.status as MissionSummary["status"])
+            : null;
+      } catch {
+        summaryCorrupted = true;
+      }
+    } catch (error) {
+      if (!this.isFileNotFoundError(error)) {
+        hasSummary = true;
+        summaryCorrupted = true;
+      }
+    }
+
+    let hasTaskChain = false;
+    let taskChainCorrupted = false;
+    let pendingTaskCount: number | null = null;
+    try {
+      const chain = await this.taskStore.readTaskChain(missionId);
+      if (chain !== null) {
+        hasTaskChain = true;
+        pendingTaskCount = chain.tasks.filter(
+          (task) => task.status !== "done",
+        ).length;
+      }
+    } catch {
+      hasTaskChain = true;
+      taskChainCorrupted = true;
+    }
+
+    return {
+      missionId,
+      exists: hasSummary || hasTaskChain,
+      hasSummary,
+      summaryStatus,
+      summaryCorrupted,
+      hasTaskChain,
+      taskChainCorrupted,
+      pendingTaskCount,
+    };
+  }
+
+  private isFileNotFoundError(error: unknown): boolean {
+    return (error as NodeJS.ErrnoException).code === "ENOENT";
   }
 }

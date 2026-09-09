@@ -36,7 +36,35 @@ export async function executeStatusCommand(
         process.stdout.write(`${missionIds.join("\n")}\n`);
         return EXIT_CODES.SUCCESS;
       }
-      printJson({ missions: missionIds });
+      // T12-04：--json 列表携带逐 mission 只读探针（损坏容错 + 租约标注）
+      const missionViews = await Promise.all(
+        missionIds.map(async (missionId) => {
+          const probe = await bootstrap.missionManager.probeMissionDirectory(
+            missionId,
+          );
+          const lease = await bootstrap.missionLeaseStore.readLeaseSummary(
+            missionId,
+            bootstrap.processInstanceId,
+          );
+          return {
+            missionId,
+            status: probe.summaryStatus,
+            hasSummary: probe.hasSummary,
+            summaryCorrupted: probe.summaryCorrupted,
+            hasTaskChain: probe.hasTaskChain,
+            taskChainCorrupted: probe.taskChainCorrupted,
+            pendingTaskCount: probe.pendingTaskCount,
+            lease: {
+              exists: lease.exists,
+              isActive: lease.isActive,
+              isOwnedByCurrentProcess: lease.isOwnedByCurrentProcess,
+              ownerProcessInstanceId: lease.ownerProcessInstanceId,
+            },
+          };
+        }),
+      );
+      // 兼容旧契约：missions 保持 missionId 列表；探针视图在 missionViews 中提供。
+      printJson({ missions: missionIds, missionViews });
       return EXIT_CODES.SUCCESS;
     }
     const missionStatus = await bootstrap.controller.queryMissionStatus(
@@ -239,7 +267,13 @@ export async function executeDoctorCommand(
     feedbackProcessEntryExists: feedbackEntryPath !== undefined,
     workingDirectoryWritable: await isDirectoryWritable(process.cwd()),
   };
-  const isHealthy = Object.values(checks).every(Boolean);
+  // T12-04：状态目录一致性只读扫描（损坏任务链/summary、活动/过期租约计数）
+  const missionState = await scanMissionStateDirectory(options.stateDirectory);
+  const hasStateCorruption = missionState.corruptedCount > 0;
+  const isHealthy =
+    Object.values(checks).every(Boolean) &&
+    !missionState.scanFailed &&
+    !hasStateCorruption;
   if (!options.isJsonOutput) {
     process.stdout.write(
       `node: ${process.versions.node}\n` +
@@ -247,6 +281,7 @@ export async function executeDoctorCommand(
         `state-directory-writable: ${checks.stateDirectoryWritable}\n` +
         `feedback-entry-exists: ${checks.feedbackProcessEntryExists}\n` +
         `working-directory-writable: ${checks.workingDirectoryWritable}\n` +
+        `mission-state: ${missionState.scanFailed ? "unknown" : hasStateCorruption ? `${missionState.corruptedCount} 个损坏` : "ok"}\n` +
         `health: ${isHealthy ? "ok" : "failed"}\n`,
     );
     return isHealthy ? EXIT_CODES.SUCCESS : EXIT_CODES.FAILURE;
@@ -254,6 +289,7 @@ export async function executeDoctorCommand(
   printJson({
     nodeVersion: process.versions.node,
     checks,
+    missionState,
     health: isHealthy ? "ok" : "failed",
   });
   return isHealthy ? EXIT_CODES.SUCCESS : EXIT_CODES.FAILURE;
@@ -281,6 +317,84 @@ async function isDirectoryWritable(directoryPath: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+export interface MissionStateScan {
+  missionCount: number;
+  corruptedCount: number;
+  activeLeaseCount: number;
+  staleLeaseCount: number;
+  scanFailed: boolean;
+}
+
+/**
+ * T12-04：只读扫描状态目录 missions 子树。任何单 mission 损坏只计数不抛错；
+ * 目录不可读/不存在时 scanFailed=true（不误报 ok）。不创建、不修改任何文件。
+ */
+async function scanMissionStateDirectory(
+  stateDirectory: string,
+): Promise<MissionStateScan> {
+  const emptyResult: MissionStateScan = {
+    missionCount: 0,
+    corruptedCount: 0,
+    activeLeaseCount: 0,
+    staleLeaseCount: 0,
+    scanFailed: false,
+  };
+  try {
+    const { TaskStore } = await import(
+      "../../../core/src/infra/task-store.js",
+    );
+    const { MissionManager } = await import(
+      "../../../core/src/orchestration/mission-manager.js",
+    );
+    const { MissionLeaseStore } = await import(
+      "../../../core/src/infra/mission-lease-store.js",
+    );
+    const manager = new MissionManager(
+      new TaskStore({ baseDirectory: stateDirectory }),
+      stateDirectory,
+    );
+    const leaseStore = new MissionLeaseStore({ stateDirectory });
+    const missionIds = await manager.listMissionIds();
+    let corruptedCount = 0;
+    let activeLeaseCount = 0;
+    let staleLeaseCount = 0;
+    for (const missionId of missionIds) {
+      try {
+        const probe = await manager.probeMissionDirectory(missionId);
+        if (probe.summaryCorrupted || probe.taskChainCorrupted) {
+          corruptedCount += 1;
+        }
+      } catch {
+        corruptedCount += 1;
+      }
+      try {
+        const lease = await leaseStore.readLeaseSummary(
+          missionId,
+          "doctor-readonly-scan",
+        );
+        if (lease.exists) {
+          if (lease.isActive) {
+            activeLeaseCount += 1;
+          } else {
+            staleLeaseCount += 1;
+          }
+        }
+      } catch {
+        corruptedCount += 1;
+      }
+    }
+    return {
+      missionCount: missionIds.length,
+      corruptedCount,
+      activeLeaseCount,
+      staleLeaseCount,
+      scanFailed: false,
+    };
+  } catch {
+    return { ...emptyResult, scanFailed: true };
   }
 }
 

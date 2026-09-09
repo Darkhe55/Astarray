@@ -13,6 +13,7 @@ import { executeDoctorCommand } from "../../../packages/tui/src/cli/commands.js"
 import { executeResumeCommand } from "../../../packages/tui/src/cli/commands.js";
 import { executeStatusCommand } from "../../../packages/tui/src/cli/commands.js";
 import { executeRunCommand } from "../../../packages/tui/src/cli/run-command.js";
+import { MissionLeaseStore } from "../../../packages/core/src/infra/mission-lease-store.js";
 
 let stateDirectory: string;
 let originalCwd: string;
@@ -377,5 +378,92 @@ describe("CLI 命令（直接调用）", () => {
     expect(
       entries.filter((entry) => entry.startsWith(".astarray-write-probe-")),
     ).toEqual([]);
+  });
+
+  it("status --json：单个 mission 任务链损坏仍稳定列出并标注损坏与租约（T12-04）", async () => {
+    const runCapture = captureStdout();
+    const runExit = await executeRunCommand({
+      prompt: "状态损坏测试",
+      mode: "assist",
+      runtime: "mock",
+      isJsonOutput: true,
+      stateDirectory,
+    });
+    expect(runExit).toBe(0);
+    const runOutput = JSON.parse(runCapture.getOutput()) as { missionId: string };
+    const missionId = runOutput.missionId;
+
+    const chainFilePath = path.join(
+      stateDirectory,
+      "missions",
+      missionId,
+      "task-chain.json",
+    );
+    const chainBackupFilePath = `${chainFilePath}.bak`;
+    // 主文件与备份同时损坏（仅主文件损坏会被备份恢复，属正常容错）
+    await fs.writeFile(chainFilePath, "{ 损坏的任务链", "utf8");
+    await fs.writeFile(chainBackupFilePath, "{ 损坏的备份", "utf8");
+    const leaseStore = new MissionLeaseStore({ stateDirectory });
+    const acquire = await leaseStore.tryAcquire({
+      missionId,
+      processInstanceId: "process-x",
+      purpose: "run",
+    });
+    expect(acquire.status).toBe("acquired");
+
+    const statusCapture = captureStdout();
+    const statusExit = await executeStatusCommand({
+      missionId: undefined,
+      isJsonOutput: true,
+      stateDirectory,
+    });
+    expect(statusExit).toBe(0);
+    const listOutput = JSON.parse(statusCapture.getOutput()) as {
+      missions: string[];
+      missionViews: Array<{
+        missionId: string;
+        taskChainCorrupted: boolean;
+        summaryCorrupted: boolean;
+        lease: {
+          exists: boolean;
+          isActive: boolean;
+          isOwnedByCurrentProcess: boolean;
+          ownerProcessInstanceId: string | null;
+        };
+      }>;
+    };
+    const view = listOutput.missionViews.find(
+      (item) => item.missionId === missionId,
+    );
+    expect(view).toBeDefined();
+    expect(view?.taskChainCorrupted).toBe(true);
+    expect(view?.summaryCorrupted).toBe(false);
+    expect(view?.lease.exists).toBe(true);
+    expect(view?.lease.isActive).toBe(true);
+    expect(view?.lease.isOwnedByCurrentProcess).toBe(false);
+    expect(view?.lease.ownerProcessInstanceId).toBe("process-x");
+  }, 20_000);
+
+  it("doctor --json：状态目录含损坏文件时 health=failed 且 missionState 计数损坏（T12-04）", async () => {
+    const corruptedMissionDirectory = path.join(stateDirectory, "missions", "mission-corrupt");
+    await fs.mkdir(corruptedMissionDirectory, { recursive: true });
+    await fs.writeFile(
+      path.join(corruptedMissionDirectory, "summary.json"),
+      "{ 损坏的 summary",
+      "utf8",
+    );
+    const stdoutCapture = captureStdout();
+    const exitCode = await executeDoctorCommand({
+      isJsonOutput: true,
+      stateDirectory,
+    });
+    const parsed = JSON.parse(stdoutCapture.getOutput()) as {
+      health: string;
+      missionState: { corruptedCount: number; scanFailed: boolean };
+    };
+    expect(exitCode).toBe(1);
+    expect(parsed.health).toBe("failed");
+    expect(parsed.missionState.corruptedCount).toBeGreaterThanOrEqual(1);
+    expect(parsed.missionState.scanFailed).toBe(false);
   });
 });
