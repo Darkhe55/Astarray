@@ -73,6 +73,31 @@ export interface CancelCommandOptions {
   stateDirectory: string;
 }
 
+type BootstrapHandle = Awaited<ReturnType<typeof bootstrapCli>>;
+
+/**
+ * T12-02：跨进程活动租约门禁。mission 正由其他进程运行（活动租约且非本进程
+ * 属主）时快速失败 mission-locked，防止双跑/跨进程状态撕裂。
+ */
+async function refuseIfMissionActiveElsewhere(
+  bootstrap: BootstrapHandle,
+  missionId: string,
+  operationLabel: string,
+): Promise<void> {
+  const lease = await bootstrap.missionLeaseStore.readLeaseSummary(
+    missionId,
+    bootstrap.processInstanceId,
+  );
+  if (lease.exists && lease.isActive && !lease.isOwnedByCurrentProcess) {
+    failWith(
+      new Error(
+        `mission 正在其他进程运行（属主 ${lease.ownerProcessInstanceId ?? "未知"}），拒绝${operationLabel}以避免双跑: ${missionId}`,
+      ),
+      EXIT_CODES.FAILURE,
+    );
+  }
+}
+
 export async function executeCancelCommand(
   options: CancelCommandOptions,
 ): Promise<number> {
@@ -88,6 +113,12 @@ export async function executeCancelCommand(
   try {
     // 校验 mission 存在（不存在时 failWith 退出码 2）
     await bootstrap.controller.queryMissionStatus(options.missionId);
+    // T12-02：mission 正由其他进程执行时拒绝跨进程取消
+    await refuseIfMissionActiveElsewhere(
+      bootstrap,
+      options.missionId,
+      "跨进程取消",
+    );
     await bootstrap.controller.cancelMission(options.missionId);
     if (!options.isJsonOutput) {
       process.stdout.write(`cancelled: ${options.missionId}\n`);
@@ -139,6 +170,12 @@ export async function executeResumeCommand(
       printJson({ missionId: options.missionId, status: "done", resumed: false });
       return EXIT_CODES.SUCCESS;
     }
+    // T12-02：原 mission 正由其他进程执行时拒绝重复调度
+    await refuseIfMissionActiveElsewhere(
+      bootstrap,
+      options.missionId,
+      "续接",
+    );
     await bootstrap.controller.handleUserMessage(
       `恢复任务 ${options.missionId}`,
     );

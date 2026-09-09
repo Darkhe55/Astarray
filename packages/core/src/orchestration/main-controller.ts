@@ -25,6 +25,7 @@ import type { AgentWorkArchiveStore } from "./work-archive-store.js";
 import { AssistScheduler } from "./assist-scheduler.js";
 import { DevolveScheduler } from "./devolve-scheduler.js";
 import type { MissionManager } from "./mission-manager.js";
+import type { MissionLeaseStore } from "../infra/mission-lease-store.js";
 import type { GitIntegrationOrchestrationOptions } from "./mission-orchestrator.js";
 import type { PermissionProfileStore } from "../tools/permission-profile-store.js";
 import type { PermissionProfileReference } from "../tools/permission-profile-store.js";
@@ -128,6 +129,10 @@ export interface MainControllerOptions {
   } | null;
   /** T08C-07：四层路由控制面（直投/摘要/侦察/任命裁决/四级；三入口共用）。 */
   t08cRoutingFacade?: T08cRoutingFacade | null;
+  /** T12-02：跨进程 mission 活动租约（可选；透传给编排运行会话）。 */
+  missionLeaseStore?: MissionLeaseStore | null;
+  /** T12-02：本进程不可复用实例标识（装配租约时必填）。 */
+  processInstanceId?: string;
 }
 
 /** T08C-07：四层路由控制面聚合（CLI/TUI/GUI 投递与状态视图共用）。 */
@@ -588,9 +593,11 @@ export class MainController {
         }
         this.options.streamOutput(missionId, `[需要用户] ${message.payload.instructionText}`);
       },
+      missionLeaseStore: this.options.missionLeaseStore ?? null,
+      processInstanceId: this.options.processInstanceId,
     });
     this.activeOrchestrators.set(missionId, { scheduler, mode: "assist" });
-    void scheduler.start();
+    void this.startSchedulerSafely(missionId, scheduler);
   }
 
   private launchDevolveMission(
@@ -624,9 +631,28 @@ export class MainController {
       onUserEscalation: (message) => {
         this.options.streamOutput(missionId, `[需要用户] ${message}`);
       },
+      missionLeaseStore: this.options.missionLeaseStore ?? null,
+      processInstanceId: this.options.processInstanceId,
     });
     this.activeOrchestrators.set(missionId, { scheduler, mode: "devolve" });
-    void scheduler.start();
+    void this.startSchedulerSafely(missionId, scheduler);
+  }
+
+  /**
+   * T12-02：安全启动编排会话。租约冲突（mission-locked）时把 mission
+   * 置为 blocked 并转达用户，避免未处理拒绝导致进程崩溃或静默双跑。
+   */
+  private startSchedulerSafely(
+    missionId: string,
+    scheduler: AssistScheduler | DevolveScheduler,
+  ): void {
+    void scheduler.start().catch((error: Error) => {
+      this.activeOrchestrators.delete(missionId);
+      this.options.streamOutput(missionId, `[mission-locked] ${error.message}`);
+      void this.options.missionManager
+        .updateMissionStatus(missionId, "blocked")
+        .catch(() => {});
+    });
   }
 
   private buildInitialChain(

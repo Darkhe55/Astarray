@@ -50,6 +50,16 @@ export interface MissionLeaseClaimInput {
   claimantDescription?: string;
 }
 
+export interface MissionLeaseSummary {
+  missionId: string;
+  exists: boolean;
+  isActive: boolean;
+  isOwnedByCurrentProcess: boolean;
+  ownerProcessInstanceId: string | null;
+  purpose: MissionLeasePurpose | null;
+  renewsUntilIso: string | null;
+}
+
 export type MissionLeaseAcquireOutcome =
   | { status: "acquired"; lease: MissionLeaseDocument }
   | { status: "locked-active"; lease: MissionLeaseDocument }
@@ -65,13 +75,18 @@ export interface MissionLeaseStoreOptions {
 export class MissionLeaseStore {
   private readonly missionsDirectoryPath: string;
   private readonly nowMilliseconds: () => number;
-  private readonly leaseTtlMilliseconds: number;
+  private readonly configuredLeaseTtlMilliseconds: number;
 
   constructor(options: MissionLeaseStoreOptions) {
     this.missionsDirectoryPath = path.join(options.stateDirectory, "missions");
     this.nowMilliseconds = options.nowMilliseconds ?? (() => Date.now());
-    this.leaseTtlMilliseconds =
+    this.configuredLeaseTtlMilliseconds =
       options.leaseTtlMilliseconds ?? MISSION_LEASE_DEFAULT_TTL_MILLISECONDS;
+  }
+
+  /** 供运行时按半周期续约（时间量带单位）。 */
+  get leaseTtlMilliseconds(): number {
+    return this.configuredLeaseTtlMilliseconds;
   }
 
   private leaseFilePath(missionId: string): string {
@@ -179,7 +194,7 @@ export class MissionLeaseStore {
       ...current,
       leaseRevision: nextRevision,
       renewsUntilIso: new Date(
-        this.nowMilliseconds() + this.leaseTtlMilliseconds,
+        this.nowMilliseconds() + this.configuredLeaseTtlMilliseconds,
       ).toISOString(),
     };
     await writeAtomicJson(this.leaseFilePath(missionId), renewed);
@@ -242,6 +257,39 @@ export class MissionLeaseStore {
     return takenOver;
   }
 
+  /**
+   * 只读租约摘要（CLI/恢复中心展示与并发决策用）：不创建、不续约、不接管。
+   * 损坏文件仍 fail-closed（journal-corrupted）。
+   */
+  async readLeaseSummary(
+    missionId: string,
+    currentProcessInstanceId: string,
+  ): Promise<MissionLeaseSummary> {
+    this.assertSafeMissionId(missionId);
+    const lease = await this.readLeaseInternal(missionId);
+    if (lease === null) {
+      return {
+        missionId,
+        exists: false,
+        isActive: false,
+        isOwnedByCurrentProcess: false,
+        ownerProcessInstanceId: null,
+        purpose: null,
+        renewsUntilIso: null,
+      };
+    }
+    return {
+      missionId,
+      exists: true,
+      isActive: !this.isExpired(lease),
+      isOwnedByCurrentProcess:
+        lease.processInstanceId === currentProcessInstanceId,
+      ownerProcessInstanceId: lease.processInstanceId,
+      purpose: lease.purpose,
+      renewsUntilIso: lease.renewsUntilIso,
+    };
+  }
+
   private buildLeaseDocument(
     claim: MissionLeaseClaimInput,
     leaseRevision: number,
@@ -257,7 +305,7 @@ export class MissionLeaseStore {
       purpose: claim.purpose,
       claimedAtIso: new Date(claimedAtMilliseconds).toISOString(),
       renewsUntilIso: new Date(
-        claimedAtMilliseconds + this.leaseTtlMilliseconds,
+        claimedAtMilliseconds + this.configuredLeaseTtlMilliseconds,
       ).toISOString(),
       claimantDescription: (claim.claimantDescription ?? "").slice(0, 200),
     };

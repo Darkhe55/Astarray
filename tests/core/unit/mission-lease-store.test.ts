@@ -212,4 +212,29 @@ describe("MissionLeaseStore 跨进程 mission 租约（T12-01）", () => {
     expect(error?.errorCode).toBe("stale-revision");
     expect(error?.isRecoverable).toBe(false);
   });
+
+  it("readLeaseSummary：只读摘要区分活动/过期/本进程属主（CLI 并发门禁）", async () => {
+    const store = makeStore();
+    await store.tryAcquire(makeClaim({ processInstanceId: "process-a" }));
+
+    const activeOther = await store.readLeaseSummary("mission-001", "process-b");
+    expect(activeOther.exists).toBe(true);
+    expect(activeOther.isActive).toBe(true);
+    expect(activeOther.isOwnedByCurrentProcess).toBe(false);
+    expect(activeOther.ownerProcessInstanceId).toBe("process-a");
+    expect(activeOther.purpose).toBe("run");
+
+    const activeSelf = await store.readLeaseSummary("mission-001", "process-a");
+    expect(activeSelf.isOwnedByCurrentProcess).toBe(true);
+
+    nowMilliseconds += 31_000;
+    const stale = await store.readLeaseSummary("mission-001", "process-b");
+    expect(stale.isActive).toBe(false);
+    expect(stale.isOwnedByCurrentProcess).toBe(false);
+
+    const missing = await store.readLeaseSummary("mission-missing", "process-b");
+    expect(missing.exists).toBe(false);
+    expect(missing.isActive).toBe(false);
+    expect(missing.ownerProcessInstanceId).toBeNull();
+  });
 });

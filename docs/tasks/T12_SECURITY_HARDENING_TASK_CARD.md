@@ -1,6 +1,6 @@
 # T12：综合安全加固任务卡（v0.1 复验后新版）
 
-> 状态：`in_progress` — T12-01 完成（MissionLeaseStore，11 测试绿；1172 测试 / `npm run check` exit 0）；T12-02 待续
+> 状态：`in_progress` — T12-01/02 完成（MissionLeaseStore + 编排会话租约 + CLI 跨进程门禁；1176 测试 / `npm run check` exit 0）；T12-03 待续
 > 编制日期：2026-08-26
 > 任务来源：用户（PLAN_STATUS 偏序 `T07D → T12A → T12 → T13 → T14`）
 > 优先级层级：0

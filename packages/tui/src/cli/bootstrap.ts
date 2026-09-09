@@ -1,6 +1,7 @@
 /**
  * CLI 引导（T11）：组装反馈进程、任务存储、工具注册表与主控制器。
  */
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,7 @@ import { ModeMachine } from "../../../core/src/core/mode-machine.js";
 import { SessionAuthorizationManager } from "../../../core/src/core/permission-policy.js";
 import { PermissionDecider } from "../../../core/src/core/permission-policy.js";
 import { TaskStore } from "../../../core/src/infra/task-store.js";
+import { MissionLeaseStore } from "../../../core/src/infra/mission-lease-store.js";
 import { ToolRegistry } from "../../../core/src/tools/registry.js";
 import { BUILTIN_TOOL_DESCRIPTORS } from "../../../core/src/tools/builtins.js";
 import { PolicyWrapper } from "../../../core/src/tools/policy-wrapper.js";
@@ -68,6 +70,10 @@ export interface CliBootstrap {
   taskStore: TaskStore;
   supervisor: FeedbackProcessSupervisor | null;
   feedbackClient: ForkFeedbackClient | null;
+  /** T12-02：跨进程 mission 活动租约（CLI 并发门禁与编排会话共用）。 */
+  missionLeaseStore: MissionLeaseStore;
+  /** T12-02：本 CLI 进程不可复用实例标识。 */
+  processInstanceId: string;
   shutdown: () => Promise<void>;
 }
 
@@ -86,6 +92,8 @@ export async function bootstrapCli(
   options: BootstrapOptions,
 ): Promise<CliBootstrap> {
   const stateDirectory = options.stateDirectory;
+  const processInstanceId = `process-${randomUUID()}`;
+  const missionLeaseStore = new MissionLeaseStore({ stateDirectory });
   const taskStore = new TaskStore({ baseDirectory: stateDirectory });
   const missionManager = new MissionManager(taskStore, stateDirectory);
   const modeMachine = new ModeMachine(options.mode);
@@ -340,6 +348,8 @@ export async function bootstrapCli(
     taskStore,
     missionManager,
     registry,
+    missionLeaseStore,
+    processInstanceId,
     feedbackTransport: feedbackClient ?? createNoopFeedbackTransport(),
     workspaceBoundary,
     temporaryDirectoryPath,
@@ -415,6 +425,8 @@ export async function bootstrapCli(
     taskStore,
     supervisor,
     feedbackClient,
+    missionLeaseStore,
+    processInstanceId,
     shutdown,
   };
 }

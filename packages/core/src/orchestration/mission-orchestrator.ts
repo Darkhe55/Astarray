@@ -4,7 +4,7 @@
  * 处理结果（done/failed/ambiguous/permission-ask/cancelled）→ 再调度，
  * 直到 complete-mission 或取消。全程不阻塞主 Agent 输入循环。
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 
 import type {
@@ -19,6 +19,8 @@ import type {
 import type { GitWorkerAllocation } from "../core/types.js";
 import type { GitIntegrationReport } from "../core/types.js";
 import type { AgentWorkArchiveStore } from "./work-archive-store.js";
+import { DomainError } from "../core/errors.js";
+import type { MissionLeaseStore } from "../infra/mission-lease-store.js";
 import { DagScheduler } from "./dag-scheduler.js";
 import type { ScheduleAction } from "./dag-scheduler.js";
 import { ToolFailureCounter } from "./failure-counter.js";
@@ -85,6 +87,14 @@ export interface MissionOrchestratorOptions {
   secondaryAgentInstanceId?: string;
   /** T05B → T08：Git 集成装配（可选；缺省时编排行为与旧版一致）。 */
   gitIntegration?: GitIntegrationOrchestrationOptions | null;
+  /**
+   * T12-02：跨进程 mission 活动租约（可选；未装配时行为与旧版一致）。
+   * 装配后，运行会话持有排他租约（半周期续约），结束后释放；
+   * 其他进程对同一 mission 的调度请求快速失败 mission-locked。
+   */
+  missionLeaseStore?: MissionLeaseStore | null;
+  /** T12-02：本进程不可复用实例标识（装配租约时必填）。 */
+  processInstanceId?: string;
 }
 
 export type WorkerOutcomeHandler = (
@@ -104,8 +114,15 @@ export class MissionOrchestrator {
   private stopping = false;
   private wakeResolve: (() => void) | null = null;
   private runPromise: Promise<void> | null = null;
+  /** T12-02：租约会话状态。 */
+  private readonly missionLeaseStore: MissionLeaseStore | null;
+  private readonly leaseProcessInstanceId: string;
+  private acquiredLeaseRevision: number | null = null;
 
   constructor(private readonly options: MissionOrchestratorOptions) {
+    this.missionLeaseStore = options.missionLeaseStore ?? null;
+    this.leaseProcessInstanceId =
+      options.processInstanceId ?? `process-${randomUUID()}`;
     this.dagScheduler = new DagScheduler(options.initialChain, {
       concurrency: options.concurrency,
       taskStore: options.taskStore,
@@ -115,9 +132,109 @@ export class MissionOrchestrator {
 
   start(): Promise<void> {
     if (this.runPromise === null) {
-      this.runPromise = this.runLoop();
+      this.runPromise = this.runWithLeaseSession();
     }
     return this.runPromise;
+  }
+
+  /**
+   * T12-02：租约会话边界。装配租约时先申请排他租约（冲突即 mission-locked），
+   * 运行期间按半周期续约，运行结束后（done/cancelled/异常）在 finally 释放。
+   * 未装配租约时行为与旧版完全一致。
+   */
+  private async runWithLeaseSession(): Promise<void> {
+    // 未装配租约时保持旧版同步启动时序（不做多余微任务让步）。
+    if (this.missionLeaseStore !== null) {
+      await this.acquireLeaseOrThrow();
+    }
+    let renewTimer: NodeJS.Timeout | null = null;
+    if (this.missionLeaseStore !== null) {
+      const renewIntervalMilliseconds = Math.max(
+        1_000,
+        Math.floor(this.missionLeaseStore.leaseTtlMilliseconds / 2),
+      );
+      renewTimer = setInterval(() => {
+        void this.renewLeaseTick();
+      }, renewIntervalMilliseconds);
+    }
+    try {
+      await this.runLoop();
+    } finally {
+      if (renewTimer !== null) {
+        clearInterval(renewTimer);
+      }
+      await this.releaseLeaseIfAcquired().catch(() => {});
+    }
+  }
+
+  private async acquireLeaseOrThrow(): Promise<void> {
+    const leaseStore = this.missionLeaseStore;
+    if (leaseStore === null) {
+      return;
+    }
+    const outcome = await leaseStore.tryAcquire({
+      missionId: this.options.missionId,
+      processInstanceId: this.leaseProcessInstanceId,
+      purpose: "run",
+      agentInstanceId: this.options.secondaryAgentInstanceId,
+      claimantDescription: "mission-orchestrator-run-session",
+    });
+    if (outcome.status !== "acquired") {
+      throw new DomainError(
+        "mission-locked",
+        `mission 存在其他进程的${outcome.status === "locked-stale" ? "过期待接管" : "活动"}租约（属主 ${outcome.lease.processInstanceId}）: ${this.options.missionId}`,
+      );
+    }
+    this.acquiredLeaseRevision = outcome.lease.leaseRevision;
+  }
+
+  /** 半周期续约；续约失败/租约消失即停止调度并上报（不静默继续执行）。 */
+  private async renewLeaseTick(): Promise<void> {
+    const leaseStore = this.missionLeaseStore;
+    const currentRevision = this.acquiredLeaseRevision;
+    if (leaseStore === null || currentRevision === null) {
+      return;
+    }
+    try {
+      const renewed = await leaseStore.renewLease(
+        this.options.missionId,
+        currentRevision,
+        this.leaseProcessInstanceId,
+      );
+      if (renewed === null) {
+        this.stopDueToLostLease(
+          `mission 租约已消失（被释放或接管），停止调度以保护一致性: ${this.options.missionId}`,
+        );
+        return;
+      }
+      this.acquiredLeaseRevision = renewed.leaseRevision;
+    } catch (error) {
+      this.stopDueToLostLease(
+        `mission 租约续约失败（${(error as Error).message}），停止调度以保护一致性: ${this.options.missionId}`,
+      );
+    }
+  }
+
+  private stopDueToLostLease(message: string): void {
+    if (this.stopping) {
+      return;
+    }
+    this.stopping = true;
+    this.options.onUserEscalation(message);
+  }
+
+  private async releaseLeaseIfAcquired(): Promise<void> {
+    const leaseStore = this.missionLeaseStore;
+    const currentRevision = this.acquiredLeaseRevision;
+    if (leaseStore === null || currentRevision === null) {
+      return;
+    }
+    await leaseStore.releaseLease(
+      this.options.missionId,
+      currentRevision,
+      this.leaseProcessInstanceId,
+    );
+    this.acquiredLeaseRevision = null;
   }
 
   /**
@@ -164,6 +281,13 @@ export class MissionOrchestrator {
 
   private async runLoop(): Promise<void> {
     while (!this.stopping) {
+      if (this.missionLeaseStore !== null) {
+        await this.renewLeaseTick();
+        if (this.stopping) {
+          await this.finishMission("cancelled");
+          return;
+        }
+      }
       await this.ensureGitIntegrationSession();
       const actions = await this.dagScheduler.scheduleRound();
       for (const action of actions) {
