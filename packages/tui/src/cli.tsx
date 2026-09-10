@@ -8,6 +8,7 @@ import {
   executeCancelCommand,
   executeConfigInitCommand,
   executeConfigInstallEnabledCommand,
+  executeContextStatusCommand,
   executeDoctorCommand,
   executeProfileCopyCommand,
   executeProfileCreateCommand,
@@ -76,6 +77,27 @@ program
       missionId,
       isJsonOutput: options.json === true,
       stateDirectory: defaultStateDirectory(),
+    });
+  });
+
+const contextCommand = program.command("context").description("上下文生命周期");
+contextCommand
+  .command("status")
+  .description("查看上下文关闭分组、待追认状态与全局上下文预算上限")
+  .option("--agent <agent-id>", "具体 agentInstanceId")
+  .option("--graph <graph-id>", "上下文图标识")
+  .option("--json", "输出机器可解析 JSON")
+  .action(async (options: { agent?: string; graph?: string; json?: boolean }) => {
+    if (options.agent === undefined || options.graph === undefined) {
+      process.stderr.write("context status 需要 --agent 与 --graph\n");
+      process.exitCode = 2;
+      return;
+    }
+    process.exitCode = await executeContextStatusCommand({
+      stateDirectory: defaultStateDirectory(),
+      agentInstanceId: options.agent,
+      graphIdentifier: options.graph,
+      isJsonOutput: options.json === true,
     });
   });
 

@@ -1691,6 +1691,89 @@ export async function executeWorksetBudgetCommand(
   return EXIT_CODES.SUCCESS;
 }
 
+/** T09A-07：上下文生命周期状态（TUI/CLI/GUI 共用 DTO）。 */
+export interface ContextStatusCommandOptions {
+  stateDirectory: string;
+  agentInstanceId: string;
+  graphIdentifier: string;
+  isJsonOutput: boolean;
+  modeKey?: string;
+  configuredMaximumGlobalContextTokenCount?: number;
+  effectiveMaximumGlobalContextTokenCount?: number;
+  budgetReductionReason?: string;
+}
+
+export async function executeContextStatusCommand(
+  options: ContextStatusCommandOptions,
+): Promise<number> {
+  try {
+    const { LocalContextGraphStore } = await import(
+      "../../../core/src/orchestration/local-context-graph-store.js"
+    );
+    const { ContextClosureCapsuleStore } = await import(
+      "../../../core/src/orchestration/context-closure-capsule-store.js"
+    );
+    const { HumanVerificationPolicyStore } = await import(
+      "../../../core/src/orchestration/human-verification-controller.js"
+    );
+    const { buildContextLifecycleStatusView } = await import(
+      "../../../core/src/orchestration/context-lifecycle-status-view.js"
+    );
+    const graphStore = new LocalContextGraphStore({
+      baseDirectory: options.stateDirectory,
+    });
+    const capsuleStore = new ContextClosureCapsuleStore({
+      baseDirectory: options.stateDirectory,
+    });
+    const policyStore = new HumanVerificationPolicyStore({
+      baseDirectory: options.stateDirectory,
+    });
+    const graph = await graphStore.readGraph(
+      options.agentInstanceId,
+      options.graphIdentifier,
+    );
+    const capsules = await capsuleStore.listCapsules(options.agentInstanceId);
+    const humanVerificationPolicy = await policyStore
+      .getPolicy({
+        modeKey: options.modeKey ?? "assist",
+        customProfileDefaultPolicy: "block-until-verified",
+      })
+      .catch(() => null);
+    const view = buildContextLifecycleStatusView({
+      agentInstanceId: options.agentInstanceId,
+      graph,
+      capsules,
+      configuredMaximumGlobalContextTokenCount:
+        options.configuredMaximumGlobalContextTokenCount ?? null,
+      effectiveMaximumGlobalContextTokenCount:
+        options.effectiveMaximumGlobalContextTokenCount ?? null,
+      budgetReductionReason: options.budgetReductionReason ?? null,
+      humanVerificationPolicy,
+    });
+    if (options.isJsonOutput) {
+      printJson(view);
+      return EXIT_CODES.SUCCESS;
+    }
+    process.stdout.write(
+      "agent: " + view.agentInstanceId + "\n" +
+        "graph: " + (view.graphIdentifier ?? "-") + " (revision " + (view.graphRevision ?? "-") + ")\n" +
+        "已验收关闭: " + view.nodeGroups.acceptedClosed.length + " 个\n" +
+        "待人工追认关闭: " + view.nodeGroups.deferredReviewClosed.length + " 个\n" +
+        "等待用户验收: " + view.nodeGroups.awaitingUserAcceptance.length + " 个\n" +
+        "活跃节点: " + view.nodeGroups.active.length + " 个\n" +
+        "配置上限: " + (view.tokenBudget.configuredMaximumGlobalContextTokenCount ?? "-") +
+        " token；实际上限: " + (view.tokenBudget.effectiveMaximumGlobalContextTokenCount ?? "-") + " token" +
+        (view.tokenBudget.budgetReductionReason !== null
+          ? "（缩减原因: " + view.tokenBudget.budgetReductionReason + "）"
+          : "") + "\n" +
+        "人工验收策略: " + (view.humanVerificationPolicy ?? "-") + "\n",
+    );
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    failWith(error as Error);
+  }
+}
+
 /** T12A-06：恢复中心 CLI（recover list/show/resume/abandon）。 */
 
 async function loadRecoveryInfra() {
