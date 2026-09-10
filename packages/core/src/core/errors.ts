@@ -41,6 +41,7 @@ export type DomainErrorCode =
   | "global-decision-not-found"
   | "global-decision-invalid"
   | "human-verification-policy-invalid"
+  | "context-recall-invalid"
   | "unknown";
 
 export class DomainError extends Error {
