@@ -378,4 +378,81 @@ describe("LocalContextGraphStore（T09A-02）", () => {
       errorCode: "context-graph-invalid",
     });
   });
+  it("重复节点与重复边被拒绝", async () => {
+    await createGraphWithRoot();
+    await expect(
+      store.addNode({
+        ownerAgentInstanceId: "agent-a",
+        graphIdentifier: "graph-1",
+        expectedGraphRevision: 2,
+        contextNodeIdentifier: "node-root",
+        missionId: "mission-1",
+        contentFingerprint: HASH,
+      }),
+    ).rejects.toMatchObject({ errorCode: "context-graph-invalid" });
+    await store.addNode({
+      ownerAgentInstanceId: "agent-a",
+      graphIdentifier: "graph-1",
+      expectedGraphRevision: 2,
+      contextNodeIdentifier: "node-b",
+      missionId: "mission-1",
+      contentFingerprint: HASH,
+    });
+    await store.addEdge({
+      ownerAgentInstanceId: "agent-a",
+      graphIdentifier: "graph-1",
+      expectedGraphRevision: 3,
+      edgeIdentifier: "edge-dup",
+      fromContextNodeIdentifier: "node-root",
+      toContextNodeIdentifier: "node-b",
+      edgeType: "required",
+    });
+    await expect(
+      store.addEdge({
+        ownerAgentInstanceId: "agent-a",
+        graphIdentifier: "graph-1",
+        expectedGraphRevision: 4,
+        edgeIdentifier: "edge-dup",
+        fromContextNodeIdentifier: "node-root",
+        toContextNodeIdentifier: "node-b",
+        edgeType: "required",
+      }),
+    ).rejects.toMatchObject({ errorCode: "context-graph-invalid" });
+  });
+
+  it("带豁免的 waived 边成功且不增加 required 计数", async () => {
+    await createGraphWithRoot();
+    await store.addNode({
+      ownerAgentInstanceId: "agent-a",
+      graphIdentifier: "graph-1",
+      expectedGraphRevision: 2,
+      contextNodeIdentifier: "node-b",
+      missionId: "mission-1",
+      contentFingerprint: HASH,
+    });
+    const graph = await store.addEdge({
+      ownerAgentInstanceId: "agent-a",
+      graphIdentifier: "graph-1",
+      expectedGraphRevision: 3,
+      edgeIdentifier: "edge-waived",
+      fromContextNodeIdentifier: "node-root",
+      toContextNodeIdentifier: "node-b",
+      edgeType: "waived",
+      waiver: { userId: "u-1", contextGraphRevision: 3, waivedAtIso: "2026-09-09T00:00:00.000Z" },
+    });
+    expect(graph.nodes.find((node) => node.contextNodeIdentifier === "node-root")?.openRequiredChildCount).toBe(0);
+    expect(graph.edges).toHaveLength(1);
+  });
+
+  it("重复创建图被拒绝", async () => {
+    await createGraphWithRoot();
+    await expect(
+      store.createGraph({
+        graphIdentifier: "graph-1",
+        ownerAgentInstanceId: "agent-a",
+        missionId: "mission-1",
+      }),
+    ).rejects.toMatchObject({ errorCode: "context-graph-invalid" });
+  });
 });
+

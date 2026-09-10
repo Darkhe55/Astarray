@@ -12,7 +12,10 @@ import {
   ContextClosureCapsuleStore,
   buildPromptActiveFrontier,
 } from "../../../packages/core/src/orchestration/context-closure-capsule-store.js";
-import { ContextRecallController } from "../../../packages/core/src/orchestration/context-recall-controller.js";
+import {
+  ContextRecallController,
+  estimateRecallTokenCount,
+} from "../../../packages/core/src/orchestration/context-recall-controller.js";
 import { LocalContextGraphStore } from "../../../packages/core/src/orchestration/local-context-graph-store.js";
 
 const HASH = "sha256:" + "a".repeat(64);
@@ -246,4 +249,123 @@ describe("分级回访（T09A-05）", () => {
     });
     expect(foreignResult.status).toBe("not-found");
   });
+  it("无胶囊但有索引：只返回索引并提示下一级", async () => {
+    const controller = buildRecallController();
+    const result = await controller.recall({
+      callerAgentInstanceId: "agent-a",
+      request: buildRecallRequest(),
+    });
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.tier).toBe("node-index");
+    expect(result.capsule).toBeNull();
+    expect(result.nextTierAvailable).toBeNull();
+  });
+
+  it("索引本身超出预算：立即 budgetExhausted 且不返回胶囊", async () => {
+    await createCapsule();
+    const controller = buildRecallController();
+    const result = await controller.recall({
+      callerAgentInstanceId: "agent-a",
+      request: buildRecallRequest({ maximumTokenCount: 1 }),
+    });
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.budgetExhausted).toBe(true);
+    expect(result.capsule).toBeNull();
+    expect(result.remainingTokenCount).toBe(0);
+  });
+
+  it("证据超出剩余预算：保留胶囊并提示 selected-evidence", async () => {
+    await createCapsule("agent-a", "node-1", {
+      artifactOrCommitReferences: ["commit:" + "x".repeat(400)],
+    });
+    const controller = buildRecallController({ recallCooldownMilliseconds: 0 });
+    const measured = await controller.recall({
+      callerAgentInstanceId: "agent-a",
+      request: buildRecallRequest({ requestId: "measure", maximumTokenCount: 10_000 }),
+    });
+    expect(measured.status).toBe("ok");
+    if (measured.status !== "ok" || measured.capsule === null) return;
+    const exactBudget =
+      estimateRecallTokenCount(JSON.stringify(measured.nodeIndex)) +
+      estimateRecallTokenCount(JSON.stringify(measured.capsule)) +
+      1;
+    const result = await controller.recall({
+      callerAgentInstanceId: "agent-a",
+      request: buildRecallRequest({ requestId: "tight", maximumTokenCount: exactBudget }),
+    });
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.budgetExhausted).toBe(true);
+    expect(result.nextTierAvailable).toBe("selected-evidence");
+    expect(result.capsule).not.toBeNull();
+    expect(result.selectedEvidence).toEqual([]);
+  });
+
+  it("完整片段超出预算：保留胶囊与证据并提示 bounded-full-fragment", async () => {
+    await createCapsule();
+    const controller = buildRecallController({
+      fullFragmentProvider: async () => "F".repeat(2000),
+    });
+    const result = await controller.recall({
+      callerAgentInstanceId: "agent-a",
+      request: buildRecallRequest({ maximumTokenCount: 300 }),
+    });
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.budgetExhausted).toBe(true);
+    expect(result.nextTierAvailable).toBe("bounded-full-fragment");
+    expect(result.boundedFullFragment).toBeNull();
+  });
+
+  it("未装配提供者时停在胶囊级；空调用者身份被拒绝", async () => {
+    await createCapsule("agent-a", "node-1", {
+      artifactOrCommitReferences: [],
+      testEvidenceReferences: [],
+      unresolvedItems: [],
+    });
+    const controller = buildRecallController();
+    const result = await controller.recall({
+      callerAgentInstanceId: "agent-a",
+      request: buildRecallRequest(),
+    });
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") return;
+    expect(result.tier).toBe("closure-capsule");
+    expect(result.nextTierAvailable).toBeNull();
+    await expect(
+      controller.recall({ callerAgentInstanceId: "", request: buildRecallRequest() }),
+    ).rejects.toMatchObject({ errorCode: "context-recall-invalid" });
+  });
+
+  it("自定义敏感判定命中即拒绝；重复回执携带上次层级", async () => {
+    await createCapsule();
+    const sensitiveController = buildRecallController({
+      containsSensitiveContent: (text: string) => text.includes("FORBIDDEN"),
+    });
+    const refused = await sensitiveController.recall({
+      callerAgentInstanceId: "agent-a",
+      request: buildRecallRequest({ requiredInformation: "FORBIDDEN 内容" }),
+    });
+    expect(refused).toMatchObject({ status: "refused", errorCode: "sensitive-content-read-denied" });
+
+    const repeatController = buildRecallController({
+      fullFragmentProvider: async () => "片段",
+    });
+    const first = await repeatController.recall({
+      callerAgentInstanceId: "agent-a",
+      request: buildRecallRequest({ requestId: "p1" }),
+    });
+    expect(first.status).toBe("ok");
+    const repeat = await repeatController.recall({
+      callerAgentInstanceId: "agent-a",
+      request: buildRecallRequest({ requestId: "p2" }),
+    });
+    expect(repeat.status).toBe("repeat-receipt");
+    if (repeat.status === "repeat-receipt") {
+      expect(repeat.previouslyReturnedTier).toBe("bounded-full-fragment");
+    }
+  });
 });
+

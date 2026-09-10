@@ -187,4 +187,51 @@ describe("生命周期指标复算（T09A-06）", () => {
     expect(classifyReopenReasonCode("human-rejection")).toBe("human-rejection");
     expect(classifyReopenReasonCode("global-decision-missing")).toBe("defect");
   });
+  it("miss→set→hit 与统计 hitRate 计算", () => {
+    const cache = new ContextTierCache();
+    expect(cache.get(frontierParts()).status).toBe("miss");
+    cache.set(frontierParts(), "value", 12, "2026-09-09T00:00:00.000Z");
+    const hit = cache.get(frontierParts());
+    expect(hit.status).toBe("hit");
+    expect(hit.valueText).toBe("value");
+    expect(cache.bypass().status).toBe("bypass");
+    const stats = cache.getStats();
+    expect(stats.hitCount).toBe(1);
+    expect(stats.missCount).toBe(1);
+    expect(stats.bypassCount).toBe(1);
+    expect(stats.hitRate).toBeCloseTo(0.5);
+    expect(stats.entryCount).toBe(1);
+  });
+
+  it("tier-only 过滤失效只移除该层；预算 revision 变化失效全局块", () => {
+    const cache = new ContextTierCache();
+    cache.set(recallParts("agent-a"), "ra", 10, "2026-09-09T00:00:00.000Z");
+    cache.set(recallParts("agent-b"), "rb", 10, "2026-09-09T00:00:00.000Z");
+    cache.set(globalBlockParts(), "block", 10, "2026-09-09T00:00:00.000Z");
+    expect(cache.invalidate({ tier: "recall-result" })).toHaveLength(2);
+    expect(cache.get(globalBlockParts()).status).toBe("hit");
+    expect(
+      cache.invalidate({
+        tier: "global-decision-block",
+        globalContextBudgetPolicyRevision: 1,
+      }),
+    ).toHaveLength(0);
+    expect(
+      cache.invalidate({
+        tier: "global-decision-block",
+        globalContextBudgetPolicyRevision: 2,
+      }),
+    ).toHaveLength(1);
+  });
+
+  it("四层键互不相同", () => {
+    const keys = new Set([
+      buildContextCacheKey(globalBlockParts()),
+      buildContextCacheKey(frontierParts()),
+      buildContextCacheKey(capsuleParts()),
+      buildContextCacheKey(recallParts()),
+    ]);
+    expect(keys.size).toBe(4);
+  });
 });
+

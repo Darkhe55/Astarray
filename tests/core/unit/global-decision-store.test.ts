@@ -278,4 +278,85 @@ describe("全局决策相关选择与延后片段（T09A-03）", () => {
     );
     expect(agentBDirectoryEntries).toHaveLength(1);
   });
+  it("缺失记录返回 null；空库列表为空", async () => {
+    expect(await store.readRecord("gd-none")).toBeNull();
+    expect(await store.listRecords()).toEqual([]);
+  });
+
+  it("状态事件可无替代字段（status-changed）并覆盖解析结果", async () => {
+    await store.promoteCandidate(buildCandidate({ globalDecisionIdentifier: "gd-status" }));
+    await store.appendStatusEvent({
+      globalDecisionIdentifier: "gd-status",
+      eventType: "status-changed",
+      nextStatus: "stale",
+      reason: "来源失效",
+    });
+    expect(await store.resolveStatusById("gd-status")).toBe("stale");
+  });
+
+  it("损坏事件文件 journal-corrupted；非法事件字段 global-decision-invalid", async () => {
+    await store.promoteCandidate(buildCandidate({ globalDecisionIdentifier: "gd-event" }));
+    const event = await store.appendStatusEvent({
+      globalDecisionIdentifier: "gd-event",
+      eventType: "status-changed",
+      nextStatus: "disputed",
+      reason: "争议",
+    });
+    const eventFilePath = path.join(
+      temporaryDirectory,
+      "global-decisions",
+      "status-events",
+      event.eventIdentifier + ".json",
+    );
+    await fs.writeFile(eventFilePath, "{ 损坏", "utf8");
+    await expect(store.resolveStatusById("gd-event")).rejects.toMatchObject({
+      errorCode: "journal-corrupted",
+    });
+    await fs.writeFile(
+      eventFilePath,
+      JSON.stringify({ ...event, nextStatus: "unknown-status" }),
+      "utf8",
+    );
+    await expect(store.resolveStatusById("gd-event")).rejects.toMatchObject({
+      errorCode: "global-decision-invalid",
+    });
+  });
+
+  it("显式字段（revision/替代方案/失效条件/产物引用）完整持久化", async () => {
+    const result = await store.promoteCandidate(
+      buildCandidate({
+        globalDecisionIdentifier: "gd-fields",
+        globalContextRevision: 7,
+        rejectedAlternatives: [{ proposal: "方案B", reason: "成本高" }],
+        invalidationCondition: "架构修订",
+        artifactOrCommitReferences: ["commit:zzz"],
+        relatedContextNodeIdentifiers: ["node-9"],
+      }),
+    );
+    expect(result.record.globalContextRevision).toBe(7);
+    expect(result.record.rejectedAlternatives).toHaveLength(1);
+    expect(result.record.artifactOrCommitReferences).toEqual(["commit:zzz"]);
+    expect(result.record.relatedContextNodeIdentifiers).toEqual(["node-9"]);
+  });
+
+  it("内容哈希对相同输入稳定、不同 scope 不同", () => {
+    const first = computeGlobalDecisionContentHash({
+      decisionSummary: "a",
+      keyRationale: "b",
+      appliesToScope: "s1",
+    });
+    const second = computeGlobalDecisionContentHash({
+      decisionSummary: "a",
+      keyRationale: "b",
+      appliesToScope: "s1",
+    });
+    const other = computeGlobalDecisionContentHash({
+      decisionSummary: "a",
+      keyRationale: "b",
+      appliesToScope: "s2",
+    });
+    expect(first).toBe(second);
+    expect(first).not.toBe(other);
+  });
 });
+

@@ -264,4 +264,131 @@ describe("HumanVerificationController（T09A-04）", () => {
     expect(rejection.reopenedNodeIdentifiers).toEqual([]);
     expect(rejection.reworkTaskProposal.description).toContain("仅提案");
   });
+  it("Devolve/自定义模式可设置并读回显式策略；Ponder 仍禁止", async () => {
+    await policyStore.setPolicy({
+      modeKey: "devolve",
+      policy: "block-until-verified",
+      expectedPolicyRevision: 0,
+      updatedByUserId: "u-1",
+    });
+    expect(await policyStore.getPolicy({ modeKey: "devolve" })).toBe("block-until-verified");
+    const custom = await policyStore.setPolicy({
+      modeKey: "custom:p1",
+      policy: "continue-with-deferred-review",
+      expectedPolicyRevision: 1,
+      updatedByUserId: "u-1",
+    });
+    expect(custom.policyRevision).toBe(2);
+    expect(await policyStore.getPolicy({ modeKey: "custom:p1" })).toBe(
+      "continue-with-deferred-review",
+    );
+    const maybeDocument = await policyStore.readDocument();
+    expect(maybeDocument?.policiesByMode["devolve"]).toBe("block-until-verified");
+  });
+
+  it("策略文档损坏：非法枚举报 human-verification-policy-invalid，坏 JSON 报 journal-corrupted", async () => {
+    const filePath = path.join(temporaryDirectory, "human-verification-policy.json");
+    await fs.writeFile(
+      filePath,
+      JSON.stringify({
+        schemaVersion: 1,
+        policyRevision: 1,
+        policiesByMode: { assist: "auto-pass" },
+        updatedByUserId: "u-1",
+        updatedAtIso: ISO,
+      }),
+      "utf8",
+    );
+    await expect(policyStore.readDocument()).rejects.toMatchObject({
+      errorCode: "human-verification-policy-invalid",
+    });
+    await fs.writeFile(filePath, "{ 损坏", "utf8");
+    await expect(policyStore.readDocument()).rejects.toMatchObject({
+      errorCode: "journal-corrupted",
+    });
+  });
+
+  it("等待时长默认取上限；过小请求被夹到 1 秒；缺省 now 使用注入时钟", () => {
+    const defaultWait = controller.beginAcceptanceWait({ startIso: ISO });
+    expect(defaultWait.maximumWaitSeconds).toBe(MAXIMUM_HUMAN_ACCEPTANCE_WAIT_SECONDS);
+    const tinyWait = controller.beginAcceptanceWait({ startIso: ISO, requestedWaitSeconds: 0 });
+    expect(Date.parse(tinyWait.deadlineIso) - Date.parse(ISO)).toBe(1000);
+    const state = controller.evaluateAcceptanceTimeout({ deadlineIso: "2099-01-01T00:00:00.000Z" });
+    expect(state.isTimedOut).toBe(false);
+    expect(state.shouldAutoApprove).toBe(false);
+  });
+
+  it("签字落盘包含绑定字段，多次签字标识唯一", async () => {
+    const first = await controller.recordUserAcceptance({
+      ownerAgentInstanceId: "agent-a",
+      contextGraphRevision: 1,
+      currentContextGraphRevision: 1,
+      nodeIdentifiers: ["node-1", "node-2"],
+      summaryHash: HASH,
+      userId: "u-1",
+    });
+    const second = await controller.recordUserAcceptance({
+      ownerAgentInstanceId: "agent-a",
+      contextGraphRevision: 1,
+      currentContextGraphRevision: 1,
+      nodeIdentifiers: ["node-1"],
+      summaryHash: HASH,
+      userId: "u-1",
+    });
+    expect(second.acceptanceIdentifier).not.toBe(first.acceptanceIdentifier);
+    const persisted = JSON.parse(
+      await fs.readFile(
+        path.join(
+          temporaryDirectory,
+          "agent-memory",
+          "agent-a",
+          "acceptances",
+          first.acceptanceIdentifier + ".json",
+        ),
+        "utf8",
+      ),
+    ) as { nodeIdentifiers: string[]; summaryHash: string; contextGraphRevision: number };
+    expect(persisted.nodeIdentifiers).toEqual(["node-1", "node-2"]);
+    expect(persisted.summaryHash).toBe(HASH);
+    expect(persisted.contextGraphRevision).toBe(1);
+  });
+
+  it("延迟核验任务可省略可选数组（默认空）且层级 0 允许", async () => {
+    const task = await controller.createDeferredVerificationTask({
+      taskIdentifier: "deferred-min",
+      ownerAgentInstanceId: "agent-b",
+      contextNodeIdentifier: "node-9",
+      contextGraphRevision: 3,
+      closureCapsuleHash: HASH,
+      humanSteps: "最小字段",
+      priorityTier: 0,
+    });
+    expect(task.artifactOrCommitReferences).toEqual([]);
+    expect(task.automaticTestReferences).toEqual([]);
+    expect(task.risks).toEqual([]);
+    expect(task.priorityTier).toBe(0);
+    await expect(
+      controller.createDeferredVerificationTask({
+        taskIdentifier: "deferred-bad-hash",
+        ownerAgentInstanceId: "agent-b",
+        contextNodeIdentifier: "node-9",
+        contextGraphRevision: 3,
+        closureCapsuleHash: "not-a-hash",
+        humanSteps: "坏哈希",
+        priorityTier: 1,
+      }),
+    ).rejects.toMatchObject({ errorCode: "human-verification-policy-invalid" });
+  });
+
+  it("装配图存储但图不存在时否决报 context-graph-not-found", async () => {
+    await expect(
+      controller.recordUserRejection({
+        ownerAgentInstanceId: "agent-a",
+        graphIdentifier: "graph-missing",
+        allNodeIdentifiers: ["node-1"],
+        reason: "图缺失",
+      }),
+    ).rejects.toMatchObject({ errorCode: "context-graph-not-found" });
+  });
 });
+
