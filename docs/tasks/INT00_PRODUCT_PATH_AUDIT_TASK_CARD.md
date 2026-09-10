@@ -58,7 +58,7 @@ SDK可导入不代表任务执行；无HTTP监听不能单独证明没有MCP；�
 - 本检查点实现与入口证据：`docs/reports/INT00_BEHAVIOR_EVIDENCE.md` 记录 9 组命令的退出码与输出。要点：最小 CLI `run` exit 0（`mission-f94ef028` / `status done`，磁盘生成 `summary.json`、`task-chain.json`、worker `work-archive.json`、`backup-vault/manifest.json`）；非 mock 运行时 exit 2；`recover list` exit 1（命令未注册）；`context status` exit 0 但**完成任务后仍 `graphIdentifier: null`**；隔离 SDK 消费 `accepted` / `readPublicResult=null` / `stateDirCreated=False`；`shutdown()` 后调用抛 `SDK 已关闭`。
 - 测试命令、退出码和产物哈希：本检查点为只读行为取证，未新增测试，未安装新资源。tarball `.tmp/int00-02/sdk/astarray-0.1.0.tgz`，SHA-256 `A2CD54F22B4943AFCF2C29982200DE4A0E5FF6E6B28B2285183BF4F5C7137D34`。
 - 人工/外部依赖及剩余风险：无人工裁决；未连接真实 Provider（离线仅 mock）；Windows-only；多进程并发、真实服务兼容与人工体验分别属 `T07D-R2-04` / `E2E-01`。
-- 本地提交、推送尝试与结果：本检查点提交（`docs/reports/INT00_BEHAVIOR_EVIDENCE.md` + 本卡记录）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次），结果随本轮收尾记录。
+- 本地提交、推送尝试与结果：提交 `a88b2c3`（`docs/reports/INT00_BEHAVIOR_EVIDENCE.md` + 本卡记录）；`git push origin main` 第 1 次尝试成功（`d42fccc..a88b2c3`）。
 
 
 ## 首轮执行指令
