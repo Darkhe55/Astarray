@@ -1,6 +1,6 @@
 # INT-00：产品执行路径审计与验收纠偏
 
-> 状态：pending
+> 状态：done（INT-00-01 / INT-00-02 / INT-00-03 全部通过，2026-09-10）
 > 创建日期：2026-09-10
 > 类型：基础审计；高风险工作按检查点执行
 > 来源：用户授权布置；本文件为Agent派生实施方案，运行态节点默认层级1或以下，不冒充用户层级0
@@ -65,7 +65,7 @@ SDK可导入不代表任务执行；无HTTP监听不能单独证明没有MCP；�
 - 本检查点实现与入口证据：`docs/reports/INT00_STATUS_RECONCILIATION.md` 给出六类证据分级（契约/实现/接线/离线端到端/真实服务/人工体验）、未满足项映射与 GUI 依赖核查。纠偏动作：`PLAN_STATUS.md` 将 `T09A`、`T12A` 由 `done` 改为 `re-verifying`（`T07D` 保留 `re-verifying` 并标注 SDK/Provider 缺口）；T07D/T09A/T12A/GUI-01 旧卡顶部加范围说明（历史 `done` 仅模块级，产品接线未满足）；`README.md` 当前限制与 `DELIVERY_REPORT.md` §11 记录产品接线缺口。
 - 测试命令、退出码和产物哈希：本检查点为文档纠偏，未新增测试、未改动产品代码；沿用 INT-00-01/02 的命令证据（`npm audit` exit 0、CLI `run` exit 0、`recover list` exit 1、tarball SHA-256 `A2CD54F2…7D34`）。
 - 人工/外部依赖及剩余风险：无人工裁决；真实服务/人工体验/跨平台仍无证据，不得写为已支持。
-- 本地提交、推送尝试与结果：本检查点提交（新增纠偏报告 + 旧卡范围说明 + PLAN_STATUS/README/DELIVERY_REPORT 纠偏）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
+- 本地提交、推送尝试与结果：提交 `15ca497`（新增 `docs/reports/INT00_STATUS_RECONCILIATION.md` + 旧卡范围说明 + PLAN_STATUS/README/DELIVERY_REPORT 纠偏）；`git push origin main` 第 1 次尝试成功（`c3025bd..15ca497`）。本卡三检查点全部通过，卡状态置 `done`。
 
 
 
