@@ -106,11 +106,10 @@ export class PermissionCapabilityCatalog {
 
   constructor() {
     for (const definition of CAPABILITY_DEFINITIONS) {
-      const mappings = DEFAULT_TOOL_CAPABILITY_MAPPINGS
-        ? Object.entries(DEFAULT_TOOL_CAPABILITY_MAPPINGS)
-            .filter(([, capabilityIds]) => capabilityIds.includes(definition.capabilityId))
-            .map(([toolName]) => toolName)
-        : [];
+      // 常量映射表始终存在；不再保留不可达的空表回退分支。
+      const mappings = Object.entries(DEFAULT_TOOL_CAPABILITY_MAPPINGS)
+        .filter(([, capabilityIds]) => capabilityIds.includes(definition.capabilityId))
+        .map(([toolName]) => toolName);
       this.capabilitiesById.set(definition.capabilityId, {
         ...definition,
         toolMappings: mappings,

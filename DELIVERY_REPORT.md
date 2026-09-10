@@ -132,4 +132,17 @@ T12A 之后的新版 T12（综合安全加固）已完成，任务卡 `docs/task
 | `node scripts/smoke-install.mjs` | 0 | 隔离安装 + `--version/--help/doctor/run(mock done)` + 全局 `.cmd` shim + feedback-entry ESM 加载 |
 | `npm audit --audit-level=high` | 0 | 4 项低/中危均为 dev 工具链（vitest、esbuild）；生产依赖无 high/critical |
 
-AR-07 本地可验证项通过（覆盖率门槛、tarball 隔离安装、文档与动态证据一致）；未竟项如实单列：关键安全模块单模块 95% 专项、Linux/macOS 跨平台矩阵、dev 工具链 audit 修复、`recover` CLI 深层接线（当前 fail-closed 基线）。
+AR-07 本地可验证项通过（覆盖率门槛、tarball 隔离安装、文档与动态证据一致）。
+
+### 10.1 关键模块分支覆盖率收口（2026-09-10 追加）
+
+AR-07 §1 列出的 22 个关键安全模块分支覆盖率**全部 ≥95%**（12 个 100%），含
+`process-supervisor 96.4%`（mock fork/ForkFeedbackClient 全流程）、`entrypoint 95.4%`、
+`backup-vault 96.4%`、`sensitive-content-access-policy 96.4%`、`installation-gate-guard 100%`、
+`permission-profile-store 100%`、`policy-wrapper 100%`、`read-suppression-ledger 100%` 等；
+本轮新增 7 个测试文件 / 70 例（含 fast-check 属性测试）。逐模块数据与未覆盖分支归类见
+`docs/tasks/AR07_FINAL_ACCEPTANCE.md` §8/§8.1，51 项最终安全验收矩阵见 §9。
+
+本轮受限项（保持未勾选）：`npm run build`/`npm run test:coverage` 默认配置被沙箱 `spawn EPERM` 拒绝
+（同一会话早前 `npm run check` exit 0、全局分支 85.06%）；Linux/macOS 跨平台矩阵、Node 20、
+真实 Provider 与 dev 工具链 audit 修复仍无本地动态证据。
