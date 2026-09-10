@@ -843,6 +843,27 @@ describe("runFeedbackProcessEntry（进程内 FakeParent）", () => {
     exitSpy.mockRestore();
     stderrSpy.mockRestore();
   });
+  it("省略 writeStderr 时断开路径使用默认 stderr 输出", async () => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation((() => true) as never);
+    const parent = new FakeParent();
+    runFeedbackProcessEntry(parent, { defaultBaseDirectory: temporaryDirectory });
+    parent.emitMessage({
+      type: "hello",
+      protocolVersion: FEEDBACK_PROTOCOL_VERSION,
+      baseDirectory: temporaryDirectory,
+      heartbeatTimeoutMilliseconds: 30_000,
+    });
+    await parent.waitForSentMessage((message) => message.type === "ready", 2_000, "ready");
+    for (const listener of parent.disconnectListeners) {
+      listener();
+    }
+    expect(stderrSpy).toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+    stderrSpy.mockRestore();
+  });
 });
+
 
 
