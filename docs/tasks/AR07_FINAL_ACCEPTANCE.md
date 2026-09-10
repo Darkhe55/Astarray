@@ -207,6 +207,9 @@ backup-vault（88.1% → 需 +6）、policy-wrapper、sensitive-content（92.7%�
 - 会话授权过期后立即回到 `ask`（不得延续 `allow`）；
 - 20 路并发查询下抑制决定一致（同一 readReceiptId）。
 
+`tests/tui/component/ar07-tui-interaction-gaps.test.tsx`（6 例，批次 11）：用 ink-testing-library 驱动真实键盘输入，覆盖权限弹窗
+allow-once / allow-session / deny / modify / Esc 五条决策分支与初始渲染。
+
 ### 10.2 环境与依赖现状（本轮实测）
 
 | 项目 | 命令 | 结果 |
@@ -214,7 +217,7 @@ backup-vault（88.1% → 需 +6）、policy-wrapper、sensitive-content（92.7%�
 | Node / npm | `node --version` / `npm --version` | v24.18.0 / 11.16.0（当前唯一实测运行时） |
 | 依赖风险 | `npm audit --audit-level=high` | **exit 0**；7 项（4 low / 3 moderate），全部为 dev 工具链（vitest/vite/esbuild/tsup/bundle-require），生产依赖无 high/critical |
 | 类型与静态检查 | `npx tsc --noEmit` / `npx eslint .` | 均 exit 0 |
-| 免审批全量测试 | `--configLoader runner --pool=threads` | 144 文件 / 1377 测试；1304 通过，73 例为沙箱受限套件（spawn/`process.chdir`） |
+| 免审批全量测试 | `--configLoader runner --config .tmp/vitest.plain.mjs --pool=threads` | 145 文件 / 1383 测试；1310 通过，73 例为沙箱受限套件（spawn/`process.chdir`） |
 
 ### 10.3 本轮无法复跑的门禁（沙箱 `EPERM`，非代码回归）
 
@@ -225,6 +228,7 @@ backup-vault（88.1% → 需 +6）、policy-wrapper、sensitive-content（92.7%�
 | `npm pack --ignore-scripts` | npm 自身 spawn `cmd.exe` 被拒（`-4048`） | 早前 `npm pack` 171 文件 + verify + smoke 全通过 |
 | `node scripts/verify-package.mjs` / `smoke-install.mjs` | `spawnSync cmd.exe EPERM` | 同上；需审批通道可用时补跑 |
 | `git push origin main` | `sh.exe: couldn't create signal pipe, Win32 error 5` ×5 | 按用户规则跳过，累积提交待下阶段合并再试 |
+| 审批通道（第 4 轮重试） | 以 `danger-full-access` 重试上述门禁 | 审批请求挂起到 600s 上限仍未获批准（与第 2/3 轮同一条件） |
 
 > 结论：AR-07 的**本地可证项已全部复验并落在台账**（覆盖率达标的 22 个模块、51 项矩阵、typecheck/lint/免审批全量测试、Node 与 audit 现状）；其余为环境受限项，需审批通道或跨平台 CI 才能解除，保持 ⚠/⬜ 不勾选。
 ### 10.4 AR-07 §2 测试类型覆盖对照（本轮盘点）
@@ -235,4 +239,4 @@ backup-vault（88.1% → 需 +6）、policy-wrapper、sensitive-content（92.7%�
 | 并发测试 | `concurrent-change-classifier`、`concurrent-merge-coordinator`、`atomic-json-edges`、`mission-lease-store`、读取 single-flight | 新增 20 路并发抑制查询一致性 | ✅ |
 | 故障注入 | `fault-injection-recovery`、`atomic-json-edges`、`recovery-*` | 新增时钟回拨、DLP 故障 fail-closed | ✅ |
 | 安全反例 | `security-hardening`、`protected-storage-red-light`、`assist-installation-gate`、读取抑制 | 新增路径别名绕过、授权过期回 ask | ✅ |
-| TUI 交互 | `tests/tui/component/tui.test.tsx`（渲染/权限弹窗/帮助/ANSI 清洗/权限组面板/Tab 导航）、`install-decision-port`、`backup-deletion-port` | 盘点：TUI **面板**未渲染证据冲突/不足/等待用户判断，这些状态由 `context status`/人工验收控制面在 CLI 呈现（`context-status-cli`、`human-verification-controller`） | ⚠部分（TUI 面板缺证据态展示，记为遗留） |
+| TUI 交互 | `tests/tui/component/tui.test.tsx`（渲染/权限弹窗/帮助/ANSI 清洗/权限组面板/Tab 导航）、`install-decision-port`、`backup-deletion-port` | 新增 `tests/tui/component/ar07-tui-interaction-gaps.test.tsx`（真实 `useInput` 键盘路径：`1` allow-once / `2` allow-session / `3` deny / `4` modify / Esc；断言授权参数、解除阻塞指令、拒绝零副作用）；TUI **面板**仍未渲染证据冲突/不足/等待用户判断，这些状态由 `context status` 与人工验收控制面在 CLI 呈现（`context-status-cli`、`human-verification-controller`） | ✅（TUI 权限决策交互已覆盖；证据态展示走 CLI，记为产品遗留） |
