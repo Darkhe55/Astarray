@@ -3,8 +3,13 @@
  * 验收：SDK 只暴露公共 DTO（无凭据/内部字段）；桥接契约冻结
  * （认证主体/来源/任务信封/工具映射/权限复检）；依赖方向
  * （Core 不依赖 TUI/GUI；消费者不引用 packages/ 源码路径）。
+ * T07D-R1-01 起：应用必须从公开 exports 创建，并委托真实控制器。
  */
-import { describe, expect, it } from "vitest";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   ASTARRAY_SDK_VERSION,
@@ -15,40 +20,64 @@ import {
   externalHarnessBridgeRequestSchema,
 } from "../../../packages/core/src/orchestration/external-harness-bridge-port.js";
 
+let stateDirectory: string;
+
+beforeEach(async () => {
+  stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "astarray-sdk-"));
+});
+
+afterEach(async () => {
+  await fs.rm(stateDirectory, { recursive: true, force: true, maxRetries: 5 });
+});
+
 describe("AstarrayApplicationFacade（Public SDK）", () => {
-  it("创建会话/订阅/提交任务/读取结果/关闭（公共 DTO 无内部字段）", async () => {
-    const facade = new AstarrayApplicationFacade({});
+  it("从公开入口创建应用：会话/提交/查询/订阅/关闭（公共 DTO 无内部字段）", async () => {
+    const facade = await AstarrayApplicationFacade.create({
+      stateDirectory,
+      mode: "assist",
+    });
     const receivedEvents: Array<{ eventType: string }> = [];
     const subscription = facade.subscribe((event) => {
       receivedEvents.push(event);
     });
-    const session = facade.createSession({
-      sessionId: "session-1",
-      mode: "assist",
-    });
+    const session = facade.createSession({ sessionId: "session-1", mode: "assist" });
     expect(session).toEqual({ sessionId: "session-1", mode: "assist", status: "idle" });
+
     const result = await facade.submitTask({
+      sessionId: "session-1",
       taskIdentifier: "task-1",
       prompt: "分析项目",
-      mode: "assist",
     });
     expect(result.status).toBe("accepted");
+    expect(result.missionIdentifier).not.toBeNull();
+
+    const queried = await facade.queryTask({
+      sessionId: "session-1",
+      taskIdentifier: "task-1",
+    });
+    expect(["running", "blocked", "done", "failed", "cancelled"]).toContain(queried.status);
     expect(receivedEvents.length).toBeGreaterThanOrEqual(2);
     subscription.unsubscribe();
-    facade.shutdown();
-    expect(() => facade.createSession({ sessionId: "x", mode: "ponder" })).toThrow(
-      /SDK 已关闭/,
+
+    await facade.shutdown();
+    expect(facade.isClosed).toBe(true);
+    expect(() => facade.createSession({ sessionId: "x", mode: "assist" })).toThrow(
+      /已关闭/,
     );
   });
 
   it("SDK 版本与公共 DTO 不携带凭据/内部字段", async () => {
     expect(ASTARRAY_SDK_VERSION).toBe("0.1.0");
-    const facade = new AstarrayApplicationFacade({});
+    const facade = await AstarrayApplicationFacade.create({
+      stateDirectory,
+      mode: "devolve",
+    });
     const session = facade.createSession({ sessionId: "s", mode: "devolve" });
     const serialized = JSON.stringify(session);
     expect(serialized).not.toContain("apiKey");
     expect(serialized).not.toContain("nonce");
     expect(serialized).not.toContain("credential");
+    await facade.shutdown();
   });
 });
 
@@ -109,11 +138,11 @@ describe("ExternalHarnessBridgePort 契约", () => {
 
 describe("依赖方向", () => {
   it("Core 源码不 import TUI/GUI（依赖方向：core 不反向依赖界面）", async () => {
-    const { promises: fs } = await import("node:fs");
+    const { promises: fileSystem } = await import("node:fs");
     const pathModule = await import("node:path");
     const walk = async (directoryPath: string): Promise<string[]> => {
       const files: string[] = [];
-      for (const entry of await fs.readdir(directoryPath, { withFileTypes: true })) {
+      for (const entry of await fileSystem.readdir(directoryPath, { withFileTypes: true })) {
         const entryPath = pathModule.join(directoryPath, entry.name);
         if (entry.isDirectory()) {
           files.push(...(await walk(entryPath)));
@@ -127,10 +156,13 @@ describe("依赖方向", () => {
       pathModule.join(process.cwd(), "packages", "core", "src"),
     );
     for (const filePath of coreSourceFiles) {
-      const content = await fs.readFile(filePath, "utf8");
-      expect(content, `${filePath} 不得引用 TUI/GUI`).not.toMatch(
-        /packages\/tui|packages\/gui|\.\.\/\.\.\/tui|\.\.\/\.\.\/gui/,
-      );
+      const content = await fileSystem.readFile(filePath, "utf8");
+      for (const forbiddenFragment of ["packages/tui", "packages/gui", "../tui", "../gui"]) {
+        expect(
+          content.includes(forbiddenFragment),
+          filePath + " 不得引用 " + forbiddenFragment,
+        ).toBe(false);
+      }
     }
   });
 });

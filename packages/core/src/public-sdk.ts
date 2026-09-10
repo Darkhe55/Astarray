@@ -1,85 +1,235 @@
 /**
- * Astarray 公开 SDK facade（T07D-08 / T07D 任务卡 §6.6）。
+ * Astarray 公开 SDK facade（T07D-08 / T07D-R1-01）。
  *
- * 稳定、版本化的公开应用接口：普通 Node.js 应用可从安装包导入 Astarray，
- * 而不必引用仓库源码或 TUI 内部文件。只导出稳定应用 facade、公共 DTO、
- * 事件订阅与配置端口；不导出内部存储路径、能力令牌、备份对象、
- * IPC 地址或 TUI 私有组件。
- *
- * SDK 嵌入路径与 CLI/TUI 使用相同应用控制器（不维护第二套权限/任务/
- * Provider 实现）。
+ * 应用服务从安装包公开 exports 创建：运行时资源由应用层装配与回收，
+ * 消费者不导入 MainController、TUI bootstrap 或内部存储路径。
+ * 会话/任务状态迁移在此冻结；提交/查询/取消委托给同一主控制器。
  */
-import type { MainController } from "./orchestration/main-controller.js";
+import type { AgentMode } from "./core/types.js";
+import type { ApplicationRuntime } from "./application/application-runtime.js";
+import { createApplicationRuntime } from "./application/application-runtime.js";
 
 /** SDK 版本（与 package.json 同步语义版本）。 */
 export const ASTARRAY_SDK_VERSION = "0.1.0";
 
+export type PublicTaskStatus =
+  | "accepted"
+  | "running"
+  | "blocked"
+  | "done"
+  | "failed"
+  | "cancelled";
+
 /** 公开会话状态（公共 DTO；不含内部字段）。 */
 export interface PublicSessionState {
   sessionId: string;
-  mode: "ponder" | "assist" | "devolve";
+  mode: AgentMode;
   status: "idle" | "running" | "blocked" | "closed";
 }
 
 /** 公开任务结果（公共 DTO）。 */
 export interface PublicTaskResult {
   taskIdentifier: string;
-  status: string;
+  status: PublicTaskStatus;
+  /** 本地 mission 标识；accepted 后必填，用于 query/cancel。 */
+  missionIdentifier: string | null;
   summaryPreview: string | null;
 }
 
 /** 公开事件（订阅用；不含凭据/内部执行细节）。 */
 export type PublicAstarrayEvent =
   | { eventType: "session-status"; sessionId: string; status: PublicSessionState["status"] }
-  | { eventType: "task-finished"; taskIdentifier: string; status: string };
+  | { eventType: "task-status"; taskIdentifier: string; status: PublicTaskStatus }
+  | { eventType: "task-finished"; taskIdentifier: string; status: PublicTaskStatus };
 
-/** 状态订阅端口（SDK 内部转发控制器事件；不暴露 IPC 地址）。 */
+/** 状态订阅端口（不暴露 IPC 地址）。 */
 export interface PublicEventSubscriptionPort {
   subscribe(
     listener: (event: PublicAstarrayEvent) => void,
   ): { unsubscribe(): void };
 }
 
+/** 应用创建选项：由消费者从公开 exports 传入，不接触内部控制器。 */
+export interface PublicApplicationOptions {
+  stateDirectory: string;
+  mode: AgentMode;
+  /** T07D-R1 阶段仅 mock；真实 Provider 接线见 T07D-R2。 */
+  runtime?: "mock";
+  concurrency?: number;
+  failureThreshold?: number;
+  maximumLoopIterations?: number;
+}
+
+/** 公开应用错误：稳定 errorCode，便于消费者分支处理。 */
+export class PublicApplicationError extends Error {
+  constructor(
+    readonly errorCode: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "PublicApplicationError";
+  }
+}
+
+interface TaskRecord {
+  sessionId: string;
+  missionIdentifier: string | null;
+  status: PublicTaskStatus;
+  summaryPreview: string | null;
+}
+
 /**
- * 稳定应用 facade：CLI/TUI/外部消费者共用同一应用控制器。
- * 本 facade 不实现权限/任务/Provider 第二套逻辑；全部委托
- * 注入的 MainController。
+ * 稳定应用 facade：CLI/TUI/外部消费者共用同一主控制器。
+ * 本 facade 不实现第二套权限/任务/Provider 逻辑。
  */
 export class AstarrayApplicationFacade {
-  private readonly controller: MainController | null;
-  private readonly eventSubscriptionPort: PublicEventSubscriptionPort | null;
-  private readonly listeners = new Set<(event: PublicAstarrayEvent) => void>();
-  private isClosed = false;
-
-  constructor(options: {
-    controller?: MainController | null;
-    eventSubscriptionPort?: PublicEventSubscriptionPort | null;
-  }) {
-    this.controller = options.controller ?? null;
-    this.eventSubscriptionPort = options.eventSubscriptionPort ?? null;
+  /** 从公开 exports 创建应用；运行资源由应用层创建。 */
+  static async create(
+    options: PublicApplicationOptions,
+  ): Promise<AstarrayApplicationFacade> {
+    const runtimeKind = options.runtime ?? "mock";
+    if (runtimeKind !== "mock") {
+      throw new PublicApplicationError(
+        "runtime-unsupported",
+        "运行时暂不支持: " + String(runtimeKind) + "（Provider 接线见 T07D-R2）",
+      );
+    }
+    const runtime = await createApplicationRuntime({
+      mode: options.mode,
+      stateDirectory: options.stateDirectory,
+      concurrency: options.concurrency ?? 1,
+      failureThreshold: options.failureThreshold ?? 1,
+      maxLoopIterations: options.maximumLoopIterations ?? 8,
+      useFeedbackProcess: false,
+      streamOutput: () => {},
+      backupDeletionControlPort: null,
+      installationUserPort: null,
+      authenticatedUserId: "sdk-user",
+      mainAgentInstanceId: "main-agent-sdk",
+      feedbackProcessModulePath: null,
+    });
+    return new AstarrayApplicationFacade(runtime);
   }
 
-  /** 创建会话（委托同一控制器；返回公共状态）。 */
-  createSession(input: {
-    sessionId: string;
-    mode: "ponder" | "assist" | "devolve";
-  }): PublicSessionState {
-    if (this.isClosed) {
-      throw new Error("SDK 已关闭");
+  constructor(private readonly runtime: ApplicationRuntime) {}
+
+  private readonly sessionStates = new Map<string, PublicSessionState>();
+  private readonly tasksByTaskIdentifier = new Map<string, TaskRecord>();
+  private readonly listeners = new Set<(event: PublicAstarrayEvent) => void>();
+  private isClosedFlag = false;
+
+  get isClosed(): boolean {
+    return this.isClosedFlag;
+  }
+
+  /** 创建会话（冻结状态迁移：idle → closed）。 */
+  createSession(input: { sessionId: string; mode: AgentMode }): PublicSessionState {
+    this.assertOpen();
+    if (this.sessionStates.has(input.sessionId)) {
+      throw new PublicApplicationError(
+        "session-already-exists",
+        "会话已存在: " + input.sessionId,
+      );
+    }
+    if (input.mode !== this.runtime.controller.getCurrentMode()) {
+      throw new PublicApplicationError(
+        "mode-mismatch",
+        "会话模式与应用模式不一致: " + input.mode,
+      );
     }
     const state: PublicSessionState = {
       sessionId: input.sessionId,
       mode: input.mode,
       status: "idle",
     };
+    this.sessionStates.set(input.sessionId, state);
     this.emit({ eventType: "session-status", sessionId: input.sessionId, status: "idle" });
-    return state;
+    return { ...state };
   }
 
-  /** 订阅状态/任务事件（不暴露 IPC 地址）。 */
-  subscribe(listener: (event: PublicAstarrayEvent) => void): {
-    unsubscribe(): void;
-  } {
+  /** 打开既有会话；不存在或应用已关闭时抛出公开错误。 */
+  openSession(sessionId: string): PublicSessionState {
+    this.assertOpen();
+    const state = this.sessionStates.get(sessionId);
+    if (state === undefined) {
+      throw new PublicApplicationError("session-not-found", "会话不存在: " + sessionId);
+    }
+    return { ...state };
+  }
+
+  listSessions(): PublicSessionState[] {
+    return [...this.sessionStates.values()].map((state) => ({ ...state }));
+  }
+
+  /** 提交任务：委托调度并返回 accepted + mission 标识；不提前发 task-finished。 */
+  async submitTask(input: {
+    sessionId: string;
+    taskIdentifier: string;
+    prompt: string;
+  }): Promise<PublicTaskResult> {
+    this.assertOpen();
+    this.requireSession(input.sessionId);
+    const existing = this.tasksByTaskIdentifier.get(input.taskIdentifier);
+    if (existing !== undefined) {
+      if (existing.sessionId !== input.sessionId) {
+        throw new PublicApplicationError(
+          "session-mismatch",
+          "任务不属于该会话: " + input.taskIdentifier,
+        );
+      }
+      return this.toTaskResult(input.taskIdentifier, existing);
+    }
+    const missionIdentifier = await this.runtime.controller.handleUserMessage(input.prompt);
+    this.assertOpen();
+    const record: TaskRecord = {
+      sessionId: input.sessionId,
+      missionIdentifier,
+      status: "accepted",
+      summaryPreview: null,
+    };
+    this.tasksByTaskIdentifier.set(input.taskIdentifier, record);
+    this.emit({
+      eventType: "task-status",
+      taskIdentifier: input.taskIdentifier,
+      status: "accepted",
+    });
+    return this.toTaskResult(input.taskIdentifier, record);
+  }
+
+  /** 查询任务：以本地权威 mission 状态为准（非字符串占位）。 */
+  async queryTask(input: {
+    sessionId: string;
+    taskIdentifier: string;
+  }): Promise<PublicTaskResult> {
+    this.assertOpen();
+    this.requireSession(input.sessionId);
+    const record = this.requireTask(input.taskIdentifier, input.sessionId);
+    if (record.missionIdentifier === null) {
+      return this.toTaskResult(input.taskIdentifier, record);
+    }
+    const missionStatus = (await this.runtime.controller.queryMissionStatus(
+      record.missionIdentifier,
+    )) as {
+      summary?: { status?: string } | null;
+      taskChain?: { tasks: Array<{ status: string }> } | null;
+    };
+    record.status = this.mapMissionStatus(missionStatus);
+    return this.toTaskResult(input.taskIdentifier, record);
+  }
+
+  /** 取消任务：委托控制器取消并记录终态。 */
+  async cancelTask(input: { sessionId: string; taskIdentifier: string }): Promise<void> {
+    this.assertOpen();
+    this.requireSession(input.sessionId);
+    const record = this.requireTask(input.taskIdentifier, input.sessionId);
+    if (record.missionIdentifier !== null) {
+      await this.runtime.controller.cancelMission(record.missionIdentifier);
+    }
+    record.status = "cancelled";
+  }
+
+  subscribe(listener: (event: PublicAstarrayEvent) => void): { unsubscribe(): void } {
+    this.assertOpen();
     this.listeners.add(listener);
     return {
       unsubscribe: () => {
@@ -88,46 +238,87 @@ export class AstarrayApplicationFacade {
     };
   }
 
-  /** 提交任务（委托控制器；返回公共结果）。 */
-  async submitTask(input: {
-    taskIdentifier: string;
-    prompt: string;
-    mode: "ponder" | "assist" | "devolve";
-  }): Promise<PublicTaskResult> {
-    if (this.isClosed) {
-      throw new Error("SDK 已关闭");
+  /** 安全关闭：会话转 closed、订阅释放、运行资源回收。 */
+  async shutdown(): Promise<void> {
+    if (this.isClosedFlag) {
+      return;
     }
-    const result: PublicTaskResult = {
-      taskIdentifier: input.taskIdentifier,
-      status: "accepted",
-      summaryPreview: null,
-    };
-    this.emit({
-      eventType: "task-finished",
-      taskIdentifier: input.taskIdentifier,
-      status: "accepted",
-    });
-    return result;
-  }
-
-  /** 读取公开结果（公共 DTO；不含内部执行细节）。 */
-  readPublicResult(taskIdentifier: string): PublicTaskResult | null {
-    return this.lastResultsByIdentifier.get(taskIdentifier) ?? null;
-  }
-
-  /** 安全关闭（释放订阅；不泄露内部状态）。 */
-  shutdown(): void {
-    this.isClosed = true;
+    this.isClosedFlag = true;
+    for (const [sessionId, state] of this.sessionStates) {
+      state.status = "closed";
+      this.emit({ eventType: "session-status", sessionId, status: "closed" });
+    }
+    this.sessionStates.clear();
+    this.tasksByTaskIdentifier.clear();
     this.listeners.clear();
-    void this.eventSubscriptionPort;
-    void this.controller;
+    await this.runtime.shutdown();
   }
 
-  private readonly lastResultsByIdentifier = new Map<string, PublicTaskResult>();
+  private assertOpen(): void {
+    if (this.isClosedFlag) {
+      throw new PublicApplicationError("application-closed", "应用已关闭");
+    }
+  }
+
+  private requireSession(sessionId: string): PublicSessionState {
+    const state = this.sessionStates.get(sessionId);
+    if (state === undefined) {
+      throw new PublicApplicationError("session-not-found", "会话不存在: " + sessionId);
+    }
+    return state;
+  }
+
+  private requireTask(taskIdentifier: string, sessionId: string): TaskRecord {
+    const record = this.tasksByTaskIdentifier.get(taskIdentifier);
+    if (record === undefined) {
+      throw new PublicApplicationError("task-not-found", "任务不存在: " + taskIdentifier);
+    }
+    if (record.sessionId !== sessionId) {
+      throw new PublicApplicationError(
+        "session-mismatch",
+        "任务不属于该会话: " + taskIdentifier,
+      );
+    }
+    return record;
+  }
+
+  private mapMissionStatus(missionStatus: {
+    summary?: { status?: string } | null;
+    taskChain?: { tasks: Array<{ status: string }> } | null;
+  }): PublicTaskStatus {
+    const summaryStatus = missionStatus.summary?.status ?? "running";
+    if (summaryStatus === "done") {
+      return "done";
+    }
+    if (summaryStatus === "cancelled") {
+      return "cancelled";
+    }
+    if (summaryStatus === "failed") {
+      return "failed";
+    }
+    const tasks = missionStatus.taskChain?.tasks ?? [];
+    if (tasks.some((task) => task.status === "blocked" || task.status === "failed")) {
+      return "blocked";
+    }
+    return "running";
+  }
+
+  private toTaskResult(taskIdentifier: string, record: TaskRecord): PublicTaskResult {
+    return {
+      taskIdentifier,
+      status: record.status,
+      missionIdentifier: record.missionIdentifier,
+      summaryPreview: record.summaryPreview,
+    };
+  }
 
   private emit(event: PublicAstarrayEvent): void {
     for (const listener of this.listeners) {
-      listener(event);
+      try {
+        listener(event);
+      } catch {
+        // 单个订阅者异常不得影响其他订阅者
+      }
     }
   }
 }
