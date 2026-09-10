@@ -58,6 +58,8 @@ export interface PublicApplicationOptions {
   concurrency?: number;
   failureThreshold?: number;
   maximumLoopIterations?: number;
+  /** 权威状态轮询间隔（毫秒）；测试可注入更小值。 */
+  statusPollIntervalMilliseconds?: number;
 }
 
 /** 公开应用错误：稳定 errorCode，便于消费者分支处理。 */
@@ -108,14 +110,25 @@ export class AstarrayApplicationFacade {
       mainAgentInstanceId: "main-agent-sdk",
       feedbackProcessModulePath: null,
     });
-    return new AstarrayApplicationFacade(runtime);
+    return new AstarrayApplicationFacade(runtime, {
+      statusPollIntervalMilliseconds: options.statusPollIntervalMilliseconds ?? 25,
+    });
   }
 
-  constructor(private readonly runtime: ApplicationRuntime) {}
+  constructor(
+    private readonly runtime: ApplicationRuntime,
+    options: { statusPollIntervalMilliseconds?: number } = {},
+  ) {
+    this.statusPollIntervalMilliseconds =
+      options.statusPollIntervalMilliseconds ?? 25;
+  }
 
   private readonly sessionStates = new Map<string, PublicSessionState>();
   private readonly tasksByTaskIdentifier = new Map<string, TaskRecord>();
+  private readonly taskIdentifierByIdempotencyKey = new Map<string, string>();
+  private readonly taskMonitors = new Map<string, NodeJS.Timeout>();
   private readonly listeners = new Set<(event: PublicAstarrayEvent) => void>();
+  private readonly statusPollIntervalMilliseconds: number;
   private isClosedFlag = false;
 
   get isClosed(): boolean {
@@ -161,14 +174,29 @@ export class AstarrayApplicationFacade {
     return [...this.sessionStates.values()].map((state) => ({ ...state }));
   }
 
-  /** 提交任务：委托调度并返回 accepted + mission 标识；不提前发 task-finished。 */
+  /**
+   * 提交任务：委托调度并返回 accepted + mission 标识；不提前发 task-finished。
+   * 同一会话内相同 idempotencyKey 不重复执行；不同会话相互隔离。
+   */
   async submitTask(input: {
     sessionId: string;
     taskIdentifier: string;
     prompt: string;
+    idempotencyKey?: string;
   }): Promise<PublicTaskResult> {
     this.assertOpen();
     this.requireSession(input.sessionId);
+    if (input.idempotencyKey !== undefined) {
+      const existingTaskIdentifier = this.taskIdentifierByIdempotencyKey.get(
+        input.sessionId + "|" + input.idempotencyKey,
+      );
+      if (existingTaskIdentifier !== undefined) {
+        const existingRecord = this.tasksByTaskIdentifier.get(existingTaskIdentifier);
+        if (existingRecord !== undefined) {
+          return this.toTaskResult(existingTaskIdentifier, existingRecord);
+        }
+      }
+    }
     const existing = this.tasksByTaskIdentifier.get(input.taskIdentifier);
     if (existing !== undefined) {
       if (existing.sessionId !== input.sessionId) {
@@ -188,11 +216,18 @@ export class AstarrayApplicationFacade {
       summaryPreview: null,
     };
     this.tasksByTaskIdentifier.set(input.taskIdentifier, record);
+    if (input.idempotencyKey !== undefined) {
+      this.taskIdentifierByIdempotencyKey.set(
+        input.sessionId + "|" + input.idempotencyKey,
+        input.taskIdentifier,
+      );
+    }
     this.emit({
       eventType: "task-status",
       taskIdentifier: input.taskIdentifier,
       status: "accepted",
     });
+    this.startTaskMonitor(input.taskIdentifier);
     return this.toTaskResult(input.taskIdentifier, record);
   }
 
@@ -222,10 +257,16 @@ export class AstarrayApplicationFacade {
     this.assertOpen();
     this.requireSession(input.sessionId);
     const record = this.requireTask(input.taskIdentifier, input.sessionId);
+    this.stopTaskMonitor(input.taskIdentifier);
     if (record.missionIdentifier !== null) {
       await this.runtime.controller.cancelMission(record.missionIdentifier);
     }
     record.status = "cancelled";
+    this.emit({
+      eventType: "task-finished",
+      taskIdentifier: input.taskIdentifier,
+      status: "cancelled",
+    });
   }
 
   subscribe(listener: (event: PublicAstarrayEvent) => void): { unsubscribe(): void } {
@@ -248,10 +289,63 @@ export class AstarrayApplicationFacade {
       state.status = "closed";
       this.emit({ eventType: "session-status", sessionId, status: "closed" });
     }
+    for (const taskIdentifier of [...this.taskMonitors.keys()]) {
+      this.stopTaskMonitor(taskIdentifier);
+    }
     this.sessionStates.clear();
     this.tasksByTaskIdentifier.clear();
+    this.taskIdentifierByIdempotencyKey.clear();
     this.listeners.clear();
     await this.runtime.shutdown();
+  }
+
+  /** 权威状态监视器：只有终态发 task-finished，其余状态发 task-status。 */
+  private startTaskMonitor(taskIdentifier: string): void {
+    if (this.taskMonitors.has(taskIdentifier)) {
+      return;
+    }
+    const timer = setInterval(() => {
+      void this.pollTaskStatus(taskIdentifier);
+    }, this.statusPollIntervalMilliseconds);
+    timer.unref?.();
+    this.taskMonitors.set(taskIdentifier, timer);
+    void this.pollTaskStatus(taskIdentifier);
+  }
+
+  private stopTaskMonitor(taskIdentifier: string): void {
+    const timer = this.taskMonitors.get(taskIdentifier);
+    if (timer !== undefined) {
+      clearInterval(timer);
+      this.taskMonitors.delete(taskIdentifier);
+    }
+  }
+
+  private async pollTaskStatus(taskIdentifier: string): Promise<void> {
+    const record = this.tasksByTaskIdentifier.get(taskIdentifier);
+    if (record === undefined || record.missionIdentifier === null || this.isClosedFlag) {
+      return;
+    }
+    let status: PublicTaskStatus;
+    try {
+      status = this.mapMissionStatus(
+        (await this.runtime.controller.queryMissionStatus(record.missionIdentifier)) as {
+          summary?: { status?: string } | null;
+          taskChain?: { tasks: Array<{ status: string }> } | null;
+        },
+      );
+    } catch {
+      status = "blocked";
+    }
+    if (status === record.status) {
+      return;
+    }
+    record.status = status;
+    if (status === "done" || status === "failed" || status === "cancelled") {
+      this.stopTaskMonitor(taskIdentifier);
+      this.emit({ eventType: "task-finished", taskIdentifier, status });
+      return;
+    }
+    this.emit({ eventType: "task-status", taskIdentifier, status });
   }
 
   private assertOpen(): void {

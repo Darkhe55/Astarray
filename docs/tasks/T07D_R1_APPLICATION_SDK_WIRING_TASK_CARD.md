@@ -25,7 +25,7 @@
 
 ### T07D-R1-02：真实提交和事件
 
-- 状态：pending。
+- 状态：done（2026-09-10）。产物：`docs/reports/T07D_R1_02_TASK_EVENTS_EVIDENCE.md`。
 - 工作：submit 委托调度并返回 accepted/任务ID；以权威执行状态驱动 started/blocked/finished；请求幂等键和会话隔离生效。
 - 验收：提交后观察实际执行器调用和fixture产物；accepted不发task-finished；同请求不重复执行；两个会话结果不串线。
 - 前驱：T07D-R1-01。先通过前驱，再执行本节点。
@@ -59,6 +59,14 @@
 - 测试命令、退出码和产物哈希：红灯 5/5 失败（`create is not a function`）→ `npx tsc --noEmit` exit 0 → `npm run check` exit 0（146 文件 / 1388 测试）→ `npm run test:coverage` exit 0（语句 94.08% / 分支 87.32% / 函数 91.68% / 行 94.15%）→ 隔离消费者 exit 0；tarball SHA-256 `E4FAE4B3EC90FF6E31D9020150E384206225FA989064CA5E6AC4736864532344`。
 - 人工/外部依赖及剩余风险：无人工裁决；真实 Provider 与人工体验不在本检查点范围。后继：`-02` 事件状态机/幂等/会话隔离结果、`-03` 结果存储与关闭收敛、`-04` CLI/TUI 切换到公共应用服务与 tarball 消费者行为测试。
 - 本地提交、推送尝试与结果：提交 `dfa13d0`（应用运行时提取 + SDK 重写 + 测试 + 证据报告）；`git push origin main` 第 1 次尝试成功（`86923f8..dfa13d0`）。
+### T07D-R1-02 验收记录
+
+- 当前提交/工作树基线：`95b11c8`（与 `origin/main` 同点）；工作树含用户并行的 3 M + 10 个未跟踪新卡。
+- 本检查点实现与入口证据：`docs/reports/T07D_R1_02_TASK_EVENTS_EVIDENCE.md`。`submitTask` 支持 `idempotencyKey`（同会话同键不重复执行、跨会话隔离）；新增权威状态监视器，`task-status` 承载 `accepted/running/blocked`，仅终态发一次 `task-finished`；轮询异常保守映射 `blocked`；`cancelTask`/`shutdown` 停止监视器。
+- 测试命令、退出码和产物哈希：红灯 3/4 失败 → 绿灯 15 通过 → `npx tsc --noEmit` exit 0 → `npm run check` exit 0（147 文件 / 1392 测试）→ `npm run test:coverage` exit 0（分支 87.43%）→ 隔离消费者 exit 0（`duplicateMissionMatches=true`、`sessionsIsolated=true`、`missionCount=2`）；tarball SHA-256 `BADEF54CE3A29A8BB84D3957F4797F9A4C1FAB4BFAD890AA23B22BC40B6F1C3F`。
+- 人工/外部依赖及剩余风险：无人工裁决；`summaryPreview` 仍为占位与关闭时在途收敛属 `-03`；CLI/TUI 切换与仓库内 tarball 消费者测试属 `-04`。
+- 本地提交、推送尝试与结果：本检查点提交（见 git log 顶部）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
+
 
 ## 首轮执行指令
 
