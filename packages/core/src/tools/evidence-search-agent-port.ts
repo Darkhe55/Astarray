@@ -97,10 +97,9 @@ export class EvidenceQueryGuard {
     });
     this.cache.set(fingerprint, results);
     if (this.cache.size > this.maxCachedQueries) {
-      const oldestFingerprint = this.cache.keys().next().value;
-      if (oldestFingerprint !== undefined) {
-        this.cache.delete(oldestFingerprint);
-      }
+      // size > maxCachedQueries 蕴含缓存非空；淘汰最早指纹无需不可达的空值判断。
+      const oldestFingerprint = this.cache.keys().next().value!;
+      this.cache.delete(oldestFingerprint);
     }
     return { results, fromCache: false };
   }

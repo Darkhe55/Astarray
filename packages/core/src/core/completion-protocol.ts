@@ -73,7 +73,8 @@ export class CompletionControlParser {
       lastLineIndex - markerGracePeriodLines,
     );
     for (let index = lastLineIndex; index >= searchStart; index--) {
-      const line = lines[index] ?? "";
+      // split 后索引区间恒有效（searchStart 已夹到 0），无需不可达的空值回退。
+      const line = lines[index]!;
       const control = this.tryParseMarkerLine(line);
       if (control !== null) {
         return control;

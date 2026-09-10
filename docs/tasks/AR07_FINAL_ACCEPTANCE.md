@@ -68,3 +68,22 @@
 - 真实 Provider `live-smoke-verified`/`product-path-verified`（无凭据、CLI `run` 仍仅 mock）；
 - dev 工具链 audit 修复（vitest/esbuild 中低危，未升级）；
 - `recover` CLI 深层接线（当前为 fail-closed 基线）。
+
+## 6. 批次 2 结果（定向覆盖率验证）
+
+| 模块 | 批次前 | 批次后（定向） | 说明 |
+|---|---|---|---|
+| protected-storage-policy.ts | 86.95% | **95.65%** | 受保护根/审计文件 getter、不存在盘符路径安全解析；剩余 1 个为 Windows 不可达的平台分支（非 win32 归一化） |
+| completion-protocol.ts | 80.0% | **100%** | blocked 标记 JSON 非法/schema 不符返回 null、结构化控制帧 none；移除不可达的 `?? ""` 空值回退（split 后索引恒有效） |
+| mailbox-journal.ts | 91.8% | **95.91%** | 目录缺失列空、ack 不存在接收者、非对象文档与 null 消息条目 fail-closed |
+| work-archive-store.ts | 81.3% | **100%** | 非法 agentRole 拒绝、损坏文档读出 null、未选中条目返回 null |
+| evidence-search-agent-port.ts | 81.3% | **100%** | 未登记主张预算 0、查询后累计、缓存超限淘汰；移除不可达的 `value !== undefined` 判断（size > max 蕴含非空） |
+
+批次 2 新增测试：`tests/core/unit/ar07-module-gaps-2.test.ts`（5 例）。
+
+> 说明：两处生产代码改动仅删除**不可达的防御性空值回退**（语义不变，typecheck/lint/目标测试全绿），目的是让 95% 门槛反映真实分支而非死代码。
+
+## 7. 仍待推进（批次 3+）
+
+backup-vault（88.1% → 需 +6）、policy-wrapper、sensitive-content（92.7%，含 2 个平台分支）、process-supervisor、installation-gate-guard、current-permission-selection、unbounded-agent-registry、read-suppression-ledger、local-progress-and-cycle-guard、session-permission-elevation、permission-profile-store、configurable-permission-policy-engine、agent-run-watchdog、local-tool-policy-engine、permission-capability-catalog、entrypoint 等。
+
