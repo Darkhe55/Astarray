@@ -32,6 +32,8 @@
 >
 > 2026-09-10 AR-07 收尾：全局分支覆盖率 **85.06%**、`npm run test:coverage` exit 0；`npm run check` exit 0（135 文件 / 1301 测试）；`npm pack`（171 文件）+ verify-package + smoke-install 全通过；T09A 全卡 done。T12A/T12 恢复与安全回归（34/34 恢复单元 + 故障注入）通过，T12/T12A/T13/T14 恢复为 `done`。未竟项如实单列：关键安全模块单模块 95% 专项、Linux/macOS 跨平台矩阵（B6R-12）、dev 工具链 audit 修复、`recover` CLI 深层接线。其余 T00~T11 任务保留 `re-verifying`，待其各自 AR 复验项完成后再恢复。
 >
+> 2026-09-10 AR-07 关键模块分支覆盖率专项收口 + 完整门禁复跑：新增 10 个 AR-07 测试文件（属性、并发、故障注入、安全反例、TUI 交互；全量 1301 → 1383 测试），AR-07 §1 的 22 个关键安全模块分支覆盖率**全部 ≥95%**（12 个 100%；process-supervisor 以 mock fork/ForkFeedbackClient 达 96.4%、entrypoint 95.4%、backup-vault 96.4%）。真实环境复跑全部通过：`npm run check` exit 0（145 文件 / 1383 测试，typecheck+lint+build+test）、`npm run test:coverage` exit 0（**分支 87.45%**，较 85.06% 提升；语句 94.14% / 函数 91.59% / 行 94.21%）、`npm pack` 171 文件 + verify-package + smoke-install 全部 exit 0；`git push origin main` 成功（4350261..64626ea）。51 项最终安全验收矩阵见 `docs/tasks/AR07_FINAL_ACCEPTANCE.md` §9（逐行复核 **50 ✅ / 1 ⚠**：第 7 项仅剩非 win32 平台归一化分支）；未本地验证项（真实 Provider、Node 20、Linux/macOS 跨平台矩阵）单列 §5。T00~T11 的 `re-verifying` 待各自 AR 复验项确认后恢复 done。
+>
 > 2026-08-12 审计整改：外部验收发现 7 项阻断性问题，全部已修复并回归（详见"审计整改记录"）。修复涉及 S1 doctor 数据丢失、S2 反馈入池校验、S3 备份事务闭环、S4 授权绑定、S5 交互授权通道、S6 存档 provenance、S7 config 备份保护；另完成覆盖率与测试基建改善（S8/S9）。
 
 ## 任务总览
