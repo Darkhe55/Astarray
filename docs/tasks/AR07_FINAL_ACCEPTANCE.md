@@ -195,3 +195,44 @@ backup-vault（88.1% → 需 +6）、policy-wrapper、sensitive-content（92.7%�
 | 51 | 文档状态与动态验收证据一致 | 本台账 §1–§10 + `PLAN_STATUS.md` + `DELIVERY_REPORT.md` §10 | ✅动态 |
 
 统计：✅动态 42 项、⚠受限 8 项、⬜未验证 1 项（真实 Provider / Node 20 / 跨平台见 §5）。
+## 10. 本轮复验与受限记录（2026-09-10，收口第 3 轮）
+
+### 10.1 新增测试（批次 10）
+
+`tests/core/unit/ar07-fault-and-counterexample-gaps.test.ts`（5 例）：
+
+- 单调时钟回拨不误放行未变化资源（回拨后仍抑制，`retryAfterMilliseconds > window`）；
+- 路径别名与相对段（`sub/../x`）不能绕过抑制键（账本仍为 1 条记录）；
+- DLP 扫描器故障 fail-closed（拒绝传播，不静默放行）；
+- 会话授权过期后立即回到 `ask`（不得延续 `allow`）；
+- 20 路并发查询下抑制决定一致（同一 readReceiptId）。
+
+### 10.2 环境与依赖现状（本轮实测）
+
+| 项目 | 命令 | 结果 |
+|---|---|---|
+| Node / npm | `node --version` / `npm --version` | v24.18.0 / 11.16.0（当前唯一实测运行时） |
+| 依赖风险 | `npm audit --audit-level=high` | **exit 0**；7 项（4 low / 3 moderate），全部为 dev 工具链（vitest/vite/esbuild/tsup/bundle-require），生产依赖无 high/critical |
+| 类型与静态检查 | `npx tsc --noEmit` / `npx eslint .` | 均 exit 0 |
+| 免审批全量测试 | `--configLoader runner --pool=threads` | 144 文件 / 1377 测试；1304 通过，73 例为沙箱受限套件（spawn/`process.chdir`） |
+
+### 10.3 本轮无法复跑的门禁（沙箱 `EPERM`，非代码回归）
+
+| 命令 | 现象 | 说明 |
+|---|---|---|
+| `npm run build`（tsup） | `spawn EPERM`（esbuild service） | 本会话早前 exit 0；本轮变更仅新增测试与移除不可达分支 |
+| `npm run test:coverage`（默认配置） | Vite 加载配置触发 `spawn EPERM` | 早前 exit 0（全局分支 85.06%）；本轮改用免审批 threads + 显式 include 逐模块复测 |
+| `npm pack --ignore-scripts` | npm 自身 spawn `cmd.exe` 被拒（`-4048`） | 早前 `npm pack` 171 文件 + verify + smoke 全通过 |
+| `node scripts/verify-package.mjs` / `smoke-install.mjs` | `spawnSync cmd.exe EPERM` | 同上；需审批通道可用时补跑 |
+| `git push origin main` | `sh.exe: couldn't create signal pipe, Win32 error 5` ×5 | 按用户规则跳过，累积提交待下阶段合并再试 |
+
+> 结论：AR-07 的**本地可证项已全部复验并落在台账**（覆盖率达标的 22 个模块、51 项矩阵、typecheck/lint/免审批全量测试、Node 与 audit 现状）；其余为环境受限项，需审批通道或跨平台 CI 才能解除，保持 ⚠/⬜ 不勾选。
+### 10.4 AR-07 §2 测试类型覆盖对照（本轮盘点）
+
+| 类型 | 现有证据 | 本轮动作 | 状态 |
+|---|---|---|---|
+| 属性测试 | 此前无 fast-check 用例 | 新增 `ar07-property-invariants.test.ts`（三态求交、资源范围子集、期限求交） | ✅新增 |
+| 并发测试 | `concurrent-change-classifier`、`concurrent-merge-coordinator`、`atomic-json-edges`、`mission-lease-store`、读取 single-flight | 新增 20 路并发抑制查询一致性 | ✅ |
+| 故障注入 | `fault-injection-recovery`、`atomic-json-edges`、`recovery-*` | 新增时钟回拨、DLP 故障 fail-closed | ✅ |
+| 安全反例 | `security-hardening`、`protected-storage-red-light`、`assist-installation-gate`、读取抑制 | 新增路径别名绕过、授权过期回 ask | ✅ |
+| TUI 交互 | `tests/tui/component/tui.test.tsx`（渲染/权限弹窗/帮助/ANSI 清洗/权限组面板/Tab 导航）、`install-decision-port`、`backup-deletion-port` | 盘点：TUI **面板**未渲染证据冲突/不足/等待用户判断，这些状态由 `context status`/人工验收控制面在 CLI 呈现（`context-status-cli`、`human-verification-controller`） | ⚠部分（TUI 面板缺证据态展示，记为遗留） |
