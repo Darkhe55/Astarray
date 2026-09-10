@@ -32,7 +32,7 @@
 
 ### T07D-R1-03：结果、取消与安全关闭
 
-- 状态：pending。
+- 状态：done（2026-09-10）。产物：`docs/reports/T07D_R1_03_RESULTS_CLOSE_EVIDENCE.md`。
 - 工作：以权威结果存储替代永空 Map；接通取消、错误传播、订阅退订、资源关闭；恢复后的结果仍可查询。
 - 验收：成功/失败/等待授权/取消均有稳定终态；shutdown等在途调用收敛，反馈进程和订阅释放；回调异常不破坏其他订阅者。
 - 前驱：T07D-R1-02。先通过前驱，再执行本节点。
@@ -66,6 +66,14 @@
 - 测试命令、退出码和产物哈希：红灯 3/4 失败 → 绿灯 15 通过 → `npx tsc --noEmit` exit 0 → `npm run check` exit 0（147 文件 / 1392 测试）→ `npm run test:coverage` exit 0（分支 87.43%）→ 隔离消费者 exit 0（`duplicateMissionMatches=true`、`sessionsIsolated=true`、`missionCount=2`）；tarball SHA-256 `BADEF54CE3A29A8BB84D3957F4797F9A4C1FAB4BFAD890AA23B22BC40B6F1C3F`。
 - 人工/外部依赖及剩余风险：无人工裁决；`summaryPreview` 仍为占位与关闭时在途收敛属 `-03`；CLI/TUI 切换与仓库内 tarball 消费者测试属 `-04`。
 - 本地提交、推送尝试与结果：提交 `0626638`（幂等键 + 权威状态事件 + 监视器 + 测试 + 证据报告）；`git push origin main` 第 1 次尝试成功（`95b11c8..0626638`）。
+### T07D-R1-03 验收记录
+
+- 当前提交/工作树基线：`bb77141`（与 `origin/main` 同点）；工作树含用户并行的 3 M + 10 个未跟踪新卡。
+- 本检查点实现与入口证据：`docs/reports/T07D_R1_03_RESULTS_CLOSE_EVIDENCE.md`。权威结果来自 `AgentWorkArchiveStore` 的 `result` 条目（`readMissionResultSummaries`）；终态粘滞、取消幂等且只发一次 `task-finished`、`submit-failed` 稳定错误码、订阅退订与回调隔离；`shutdown` 先 `MainController.shutdown()` 取消在途编排再释放反馈进程，修复了“关闭后仍写工作存档导致 unhandled ENOENT”的真实缺陷。
+- 测试命令、退出码和产物哈希：红灯 3/5 失败 → 绿灯 20 通过 → `npx tsc --noEmit` exit 0 → `npm run check` exit 0（148 文件 / 1397 测试，无 unhandled error）→ `npm run test:coverage` exit 0（语句 94.10% / 分支 87.33% / 函数 91.55% / 行 94.18%）→ 隔离消费者 exit 0（`summaryPreview="（mock 执行器）"`、关闭后进程干净退出）；tarball SHA-256 `FF0314EE6517B849CE62AC0EDDDC2B8BC95FDB1AE7B204F16AA1EAE29A476A63`。
+- 人工/外部依赖及剩余风险：无人工裁决；跨进程 SDK 会话/结果恢复属 T12A-R1；真实 Provider/人工体验不在本检查点范围。
+- 本地提交、推送尝试与结果：本检查点提交（见 git log 顶部）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
+
 
 
 ## 首轮执行指令

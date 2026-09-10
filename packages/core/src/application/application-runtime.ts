@@ -73,6 +73,10 @@ export interface ApplicationRuntime {
   missionLeaseStore: MissionLeaseStore;
   /** T12-02：本 CLI 进程不可复用实例标识。 */
   processInstanceId: string;
+  /** 权威执行结果摘要（来自 Agent 工作存档的 result 条目；T07D-R1-03）。 */
+  readMissionResultSummaries: (
+    missionId: string,
+  ) => Promise<Array<{ taskId: string | null; entryType: string; summary: string }>>;
   shutdown: () => Promise<void>;
 }
 
@@ -420,8 +424,35 @@ export async function createApplicationRuntime(
   });
 
   const shutdown = async (): Promise<void> => {
+    // T07D-R1-03：先收敛在途编排（取消并等待 Worker/循环），再释放反馈进程资源。
+    await controller.shutdown().catch(() => {});
     await feedbackClient?.shutdown().catch(() => {});
     await supervisor?.stop().catch(() => {});
+  };
+
+  const readMissionResultSummaries = async (
+    missionId: string,
+  ): Promise<Array<{ taskId: string | null; entryType: string; summary: string }>> => {
+    const agentInstanceIds = await workArchiveStore.listAgentIdsWithArchive(missionId);
+    const summaries: Array<{ taskId: string | null; entryType: string; summary: string }> = [];
+    for (const agentInstanceId of agentInstanceIds) {
+      const archive = await workArchiveStore
+        .readArchive(missionId, agentInstanceId)
+        .catch(() => null);
+      if (archive === null) {
+        continue;
+      }
+      for (const entry of archive.entries) {
+        if (entry.entryType === "result") {
+          summaries.push({
+            taskId: entry.taskId,
+            entryType: entry.entryType,
+            summary: entry.summary,
+          });
+        }
+      }
+    }
+    return summaries;
   };
 
   return {
@@ -432,6 +463,7 @@ export async function createApplicationRuntime(
     feedbackClient,
     missionLeaseStore,
     processInstanceId,
+    readMissionResultSummaries,
     shutdown,
   };
 }

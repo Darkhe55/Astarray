@@ -127,6 +127,7 @@ export class AstarrayApplicationFacade {
   private readonly tasksByTaskIdentifier = new Map<string, TaskRecord>();
   private readonly taskIdentifierByIdempotencyKey = new Map<string, string>();
   private readonly taskMonitors = new Map<string, NodeJS.Timeout>();
+  private readonly inFlightPolls = new Set<Promise<void>>();
   private readonly listeners = new Set<(event: PublicAstarrayEvent) => void>();
   private readonly statusPollIntervalMilliseconds: number;
   private isClosedFlag = false;
@@ -207,7 +208,15 @@ export class AstarrayApplicationFacade {
       }
       return this.toTaskResult(input.taskIdentifier, existing);
     }
-    const missionIdentifier = await this.runtime.controller.handleUserMessage(input.prompt);
+    let missionIdentifier: string;
+    try {
+      missionIdentifier = await this.runtime.controller.handleUserMessage(input.prompt);
+    } catch (error) {
+      throw new PublicApplicationError(
+        "submit-failed",
+        "任务提交失败: " + (error as Error).message,
+      );
+    }
     this.assertOpen();
     const record: TaskRecord = {
       sessionId: input.sessionId,
@@ -239,7 +248,7 @@ export class AstarrayApplicationFacade {
     this.assertOpen();
     this.requireSession(input.sessionId);
     const record = this.requireTask(input.taskIdentifier, input.sessionId);
-    if (record.missionIdentifier === null) {
+    if (this.isTerminalStatus(record.status) || record.missionIdentifier === null) {
       return this.toTaskResult(input.taskIdentifier, record);
     }
     const missionStatus = (await this.runtime.controller.queryMissionStatus(
@@ -249,6 +258,9 @@ export class AstarrayApplicationFacade {
       taskChain?: { tasks: Array<{ status: string }> } | null;
     };
     record.status = this.mapMissionStatus(missionStatus);
+    if (this.isTerminalStatus(record.status) && record.summaryPreview === null) {
+      await this.captureAuthoritativeResult(record);
+    }
     return this.toTaskResult(input.taskIdentifier, record);
   }
 
@@ -257,6 +269,9 @@ export class AstarrayApplicationFacade {
     this.assertOpen();
     this.requireSession(input.sessionId);
     const record = this.requireTask(input.taskIdentifier, input.sessionId);
+    if (this.isTerminalStatus(record.status)) {
+      return;
+    }
     this.stopTaskMonitor(input.taskIdentifier);
     if (record.missionIdentifier !== null) {
       await this.runtime.controller.cancelMission(record.missionIdentifier);
@@ -292,6 +307,7 @@ export class AstarrayApplicationFacade {
     for (const taskIdentifier of [...this.taskMonitors.keys()]) {
       this.stopTaskMonitor(taskIdentifier);
     }
+    await Promise.allSettled([...this.inFlightPolls]);
     this.sessionStates.clear();
     this.tasksByTaskIdentifier.clear();
     this.taskIdentifierByIdempotencyKey.clear();
@@ -305,11 +321,11 @@ export class AstarrayApplicationFacade {
       return;
     }
     const timer = setInterval(() => {
-      void this.pollTaskStatus(taskIdentifier);
+      this.trackPoll(this.pollTaskStatus(taskIdentifier));
     }, this.statusPollIntervalMilliseconds);
     timer.unref?.();
     this.taskMonitors.set(taskIdentifier, timer);
-    void this.pollTaskStatus(taskIdentifier);
+    this.trackPoll(this.pollTaskStatus(taskIdentifier));
   }
 
   private stopTaskMonitor(taskIdentifier: string): void {
@@ -320,9 +336,41 @@ export class AstarrayApplicationFacade {
     }
   }
 
+  private trackPoll(promise: Promise<void>): void {
+    this.inFlightPolls.add(promise);
+    void promise.finally(() => {
+      this.inFlightPolls.delete(promise);
+    });
+  }
+
+  private isTerminalStatus(status: PublicTaskStatus): boolean {
+    return status === "done" || status === "failed" || status === "cancelled";
+  }
+
+  /** 权威结果存储：终态时从 Agent 工作存档读取 result 条目摘要。 */
+  private async captureAuthoritativeResult(record: TaskRecord): Promise<void> {
+    if (record.missionIdentifier === null) {
+      return;
+    }
+    try {
+      const summaries = await this.runtime.readMissionResultSummaries(
+        record.missionIdentifier,
+      );
+      const lastSummary = summaries.at(-1);
+      if (lastSummary !== undefined) {
+        record.summaryPreview = lastSummary.summary;
+      }
+    } catch {
+      // 结果读取失败不改变已确认的权威状态
+    }
+  }
+
   private async pollTaskStatus(taskIdentifier: string): Promise<void> {
     const record = this.tasksByTaskIdentifier.get(taskIdentifier);
     if (record === undefined || record.missionIdentifier === null || this.isClosedFlag) {
+      return;
+    }
+    if (this.isTerminalStatus(record.status)) {
       return;
     }
     let status: PublicTaskStatus;
@@ -336,12 +384,16 @@ export class AstarrayApplicationFacade {
     } catch {
       status = "blocked";
     }
-    if (status === record.status) {
+    if (this.isClosedFlag || status === record.status) {
       return;
     }
     record.status = status;
-    if (status === "done" || status === "failed" || status === "cancelled") {
+    if (this.isTerminalStatus(status)) {
       this.stopTaskMonitor(taskIdentifier);
+      await this.captureAuthoritativeResult(record);
+      if (this.isClosedFlag) {
+        return;
+      }
       this.emit({ eventType: "task-finished", taskIdentifier, status });
       return;
     }

@@ -216,6 +216,18 @@ export class MainController {
     return this.options.missionManager.getMissionStatus(missionId);
   }
 
+  /**
+   * 应用关闭：取消全部在途编排并等待调度器与 Worker 收敛，
+   * 避免关闭后仍有后台状态写入（T07D-R1-03）。
+   */
+  async shutdown(): Promise<void> {
+    const activeEntries = [...this.activeOrchestrators.values()];
+    this.activeOrchestrators.clear();
+    await Promise.allSettled(
+      activeEntries.map((entry) => entry.scheduler.cancel()),
+    );
+  }
+
   async cancelMission(missionId: string): Promise<void> {
     const active = this.activeOrchestrators.get(missionId);
     if (active !== undefined) {
