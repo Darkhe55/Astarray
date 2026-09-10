@@ -30,6 +30,8 @@
 >
 > 2026-08-26 进度更新：T12A-01~07 完成后开始 T12 综合安全加固（新版任务卡 `docs/tasks/T12_SECURITY_HARDENING_TASK_CARD.md`）。T12-01 跨进程 mission 活动租约完成：`MissionLeaseStore`（排他创建 + 心跳续约 + 过期显式接管 + revision CAS + 损坏 fail-closed）；先红灯 11 测试后实现，`npm run check` exit 0（1172 测试全绿）。T12-02 编排会话租约接入完成：运行会话申请/半周期续约/终局释放、同 mission 跨进程 start 拒绝 mission-locked、cancel/resume CLI 跨进程门禁；先红灯 3 测试后实现，`npm run check` exit 0（1176 测试全绿）。T12-03 反馈孤儿收口修复完成：发现并修复监督器从未发送心跳（正常长会话 2× 超时后子进程误判失联自退）——`sendHeartbeat` + 半周期心跳循环；子进程断线自退/心跳看门狗与 TUI SIGINT/SIGTERM → shutdown 收口构成双保险；先红灯 1 测试后实现，`npm run check` exit 0（1177 测试全绿）。T12-04 只读状态与 doctor 一致性完成：`MissionManager.probeMissionDirectory`（损坏容错探针）、status --json 列表新增 `missionViews`（损坏/租约标注，兼容旧 `missions` 契约）、doctor 新增状态目录一致性扫描（损坏计数 + 活动/过期租约计数，损坏即 health failed）；先红灯/直接测试后实现，`npm run check` exit 0（1183 测试全绿）。T12-05 破坏性调用盘点与静态架构门禁完成：新增 `tests/architecture/destructive-file-api-guard.test.ts`（扫描 packages/core|tui/src，21 个带逐项理由的白名单模块 + 每文件最小令牌集，违规即失败；扫描器自带捕获单测）；Git 破坏性操作恢复点由 git-recovery-point/git-coordinator-branches 集成套件动态复核（随 check 全绿）。`npm run check` exit 0（1185 测试全绿）。T12-06 综合终验完成：`npm run check` exit 0（125 文件 / 1185 测试全绿）；`npm pack`（159 文件）+ verify-package + smoke-install（隔离安装/CLI/全局 shim/feedback-entry）全通过；npm audit（--audit-level=high exit 0，4 项 dev 工具链低/中危）；覆盖率实测全局分支 83.07%（<85%）如实记录为 AR-07 收尾必补项。T12 卡状态 `done`，剩余风险见卡 §6 并移交 AR-07/T14。
 >
+> 2026-09-10 AR-07 收尾：全局分支覆盖率 **85.06%**、`npm run test:coverage` exit 0；`npm run check` exit 0（135 文件 / 1301 测试）；`npm pack`（171 文件）+ verify-package + smoke-install 全通过；T09A 全卡 done。T12A/T12 恢复与安全回归（34/34 恢复单元 + 故障注入）通过，T12/T12A/T13/T14 恢复为 `done`。未竟项如实单列：关键安全模块单模块 95% 专项、Linux/macOS 跨平台矩阵（B6R-12）、dev 工具链 audit 修复、`recover` CLI 深层接线。其余 T00~T11 任务保留 `re-verifying`，待其各自 AR 复验项完成后再恢复。
+>
 > 2026-08-12 审计整改：外部验收发现 7 项阻断性问题，全部已修复并回归（详见"审计整改记录"）。修复涉及 S1 doctor 数据丢失、S2 反馈入池校验、S3 备份事务闭环、S4 授权绑定、S5 交互授权通道、S6 存档 provenance、S7 config 备份保护；另完成覆盖率与测试基建改善（S8/S9）。
 
 ## 任务总览
@@ -71,10 +73,10 @@
 | T09A | 全局决策提升、局部上下文节点关闭与分级回访 | done | post-T12增补 | T09A-01~08 完成：ADR-0031 + 契约/存储/选择/验收/胶囊/回访/缓存指标/共用视图；全量 `npm run check` exit 0（134 文件 1264 测试）+ 恢复回归 34/34 + npm pack 171 文件 + verify/smoke 全通过；剩余风险：全局分支覆盖率 83.23%<85%、跨平台矩阵待 AR-07 |
 | T10 | TUI | re-verifying | 6 | AR-00 重新验收中（AR-02 授权交互） |
 | T11 | Headless CLI | re-verifying | 6 | AR-00 重新验收中 |
-| T12 | 恢复、安全与异常加固 | re-verifying | 7 | 新版 T12 卡 `done`（T12-01~06）：1185 测试全绿 + npm pack/verify/smoke-install 终验通过；整体状态仍待 AR-07 全项目收尾（含覆盖率补强） |
-| T12A | 统一会话恢复、任务续接与外部状态对账 | re-verifying | pre-T12 | T12A-01~07 全部完成（1161 测试全绿；故障注入 5 中断点 + smoke-install 通过） |
-| T13 | npm 打包与隔离安装 | re-verifying | 8 | AR-00 重新验收中（AR-07 终验） |
-| T14 | 文档与最终报告 | re-verifying | 8 | AR-00 重新验收中（AR-07 文档对齐） |
+| T12 | 恢复、安全与异常加固 | done | 7 | T12-01~06 完成；AR-07 复验：`npm run check` 1301 测试全绿、覆盖率 85.06%、tarball 终验通过 |
+| T12A | 统一会话恢复、任务续接与外部状态对账 | done | pre-T12 | T12A-01~07 完成；AR-07 复验：恢复单元回归 34/34 + 故障注入套件随 `npm run check` 全绿 |
+| T13 | npm 打包与隔离安装 | done | 8 | 最终终验（2026-09-10）：`npm pack` 171 文件 + verify-package + smoke-install（隔离安装/CLI/全局 shim/feedback-entry）全通过 |
+| T14 | 文档与最终报告 | done | 8 | README（上下文生命周期/并发恢复加固/限制）、DELIVERY_REPORT §10、AR-07 复验记录与遗留清单对齐 |
 
 ## 审计整改记录（外部验收后）
 

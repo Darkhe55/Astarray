@@ -120,3 +120,16 @@ T12A 之后的新版 T12（综合安全加固）已完成，任务卡 `docs/task
 - `npm audit --audit-level=high` exit 0：4 项低/中危均为 dev 工具链（vitest、esbuild）；生产依赖无 high/critical。
 - `npm run test:coverage`：全局分支覆盖率 83.07%（低于 85% 门槛）——如实记录，属 AR-07 全项目收尾必补项。
 - 剩余风险：覆盖率补强、dev 工具链审计项、跨平台矩阵（B6R-12）、recover CLI 深层接线（随 AR-07 复验）。
+
+## 10. 最终终验（2026-09-10）
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `npm run check` | 0 | 135 文件 / 1301 测试全绿（typecheck/lint/build/test） |
+| `npm run test:coverage` | **0** | 语句 93.00% / **分支 85.06%** / 函数 90.02% / 行 93.16%（全局门槛 85% 达成） |
+| `npm pack --pack-destination .tmp/packages` | 0 | `astarray-0.1.0.tgz`（171 文件） |
+| `node scripts/verify-package.mjs` | 0 | shebang/BOM 正确、反馈进程入口包含 |
+| `node scripts/smoke-install.mjs` | 0 | 隔离安装 + `--version/--help/doctor/run(mock done)` + 全局 `.cmd` shim + feedback-entry ESM 加载 |
+| `npm audit --audit-level=high` | 0 | 4 项低/中危均为 dev 工具链（vitest、esbuild）；生产依赖无 high/critical |
+
+AR-07 本地可验证项通过（覆盖率门槛、tarball 隔离安装、文档与动态证据一致）；未竟项如实单列：关键安全模块单模块 95% 专项、Linux/macOS 跨平台矩阵、dev 工具链 audit 修复、`recover` CLI 深层接线（当前 fail-closed 基线）。

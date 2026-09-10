@@ -1125,3 +1125,20 @@ Agent 无累计/同级产品数量配额。下级通信只能通过不可转授�
 ## 9. 完成定义
 
 本任务书只有在 AR-00 至 AR-07（包括 AR-06A 至 AR-06J）全部满足各自完成条件、最终安全清单全部勾选、tarball 隔离安装通过且文档与动态证据一致时，才能标记完成。任何仅有代码审阅、静态推断或“已有测试看起来通过”的结论都不能替代动态验收。
+
+---
+
+## AR-07 动态复验记录（2026-09-10）
+
+已通过（本地动态证据）：
+
+| 项目 | 命令/证据 | 结果 |
+|---|---|---|
+| 完整质量门禁 | `npm run check` | exit 0：135 文件 / 1301 测试（含 build 与 spawn 类套件） |
+| 全局覆盖率门槛 | `npm run test:coverage` | exit 0：语句 93.00% / 分支 **85.06%** / 函数 90.02% / 行 93.16% |
+| 打包与隔离安装 | `npm pack` + `verify-package.mjs` + `smoke-install.mjs` | 全部 exit 0：171 文件；隔离安装、CLI 冒烟、全局 `.cmd` shim、feedback-entry ESM 加载 |
+| 依赖风险 | `npm audit --audit-level=high` | exit 0；4 项低/中危均为 dev 工具链（vitest、esbuild），生产依赖无 high/critical |
+| 恢复与安全回归 | 恢复单元 5 套件 + 故障注入 + T12/T12A 卡 | 34/34 恢复单元通过；恢复与安全路径随全量门禁全绿 |
+| 文档一致性 | `PLAN_STATUS.md`、`README.md`、`DELIVERY_REPORT.md` | 与动态证据对齐；T12/T12A/T13/T14 恢复 `done` |
+
+未竟项（未勾选，需后续补齐）：关键安全模块单模块 ≥95% 专项（B6R-10 记录的历史缺口）、Linux/macOS 与 Node 20/新 LTS 跨平台矩阵（B6R-12，缺 CI/远端）、dev 工具链 audit 修复、`recover` CLI 深层接线（当前 fail-closed 基线）。

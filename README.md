@@ -115,6 +115,8 @@ astarray resume <mission-id> [--json]
 astarray cancel <mission-id> [--json]
 astarray doctor [--json]
 astarray config init
+astarray context status --agent <agent-id> --graph <graph-id> [--json]
+astarray recover list|show|resume|abandon <mission-id> [--json]
 ```
 
 - `--json` 模式 stdout 只输出机器可解析结果，日志与警告写 stderr。
@@ -143,6 +145,24 @@ Tab: 切换面板  Ctrl+M: 模式  Ctrl+N: 新任务  Ctrl+C: 取消/退出  ?: 
 - Windows：原子替换使用 `MoveFileEx(MOVEFILE_REPLACE_EXISTING)`；全局安装 shim 为 `astarray.cmd`；信号处理与子进程清理已覆盖。
 - 数据清理：删除 `.astarray/` 即清理全部任务/信箱/缓存数据；Ponder 的模型工具调用不写项目、任务、记忆、缓存或遥测文件。
 - 任务运行要求模型以版本化 `ASTARRAY_TASK_COMPLETION_V1` 控制事件明确声明完成。本地运行时还会核对任务节点、验收门禁和未决调用；若输出提前结束且本地状态未完成，看门狗从最近检查点有界续跑，超过续跑上限后转为失败/人工处理，不无限循环。
+
+## 上下文生命周期（T09A / ADR-0031）
+
+- 历史分为**全局决策库**、受 token 硬预算约束的**当前任务全局上下文**、按 `agentInstanceId` 隔离的**延后上下文片段**、**局部上下文偏序图**与不可变**关闭胶囊**；关闭只是从普通提示词逻辑排除，不删除原文。
+- 模型可见全局上下文默认上限 `maximumGlobalContextTokenCount = 4096`（认证用户可调高/调低/设为 0），实际上限取设置与 Provider 可用输入空间的较小值，并预扣系统规则/任务/输出预算；`context status --agent <id> --graph <id> --json` 同时返回配置上限、实际上限与缩减原因。
+- 人工验收：Assist 默认 `block-until-verified`（单次等待上限 3 小时，超时不自动通过），Devolve 默认 `continue-with-deferred-review`；延迟核验节点在界面/报告中始终标记为**待人工追认**，不得表述为用户已验收。
+- 回访请求 `ASTARRAY_CONTEXT_RECALL_REQUEST_V1` 按“索引 → 关闭胶囊 → 选定证据 → 有界完整片段”逐级返回，受冷却回执、任务级次数上限、敏感禁读与 token 预算约束；`agentInstanceId` 由 harness 注入。
+
+## 并发与恢复加固（T12/T12A）
+
+- 跨进程 mission 活动租约：运行会话申请排他租约并按半周期续约，同 mission 的他进程并发被 `mission-locked` 快速失败；过期租约须经恢复分类后显式接管。
+- 反馈进程心跳由主进程半周期发送；子进程在断线或 2× 超时后自行退出，CLI/TUI 的 SIGINT/SIGTERM 会走 `shutdown()` 收口，避免孤儿进程。
+- `doctor` 增加状态目录一致性扫描（损坏任务链/summary、活动/过期租约计数），损坏即 `health: failed`；`status --json` 返回逐 mission 探针与租约标注。
+
+## 当前限制（如实记录）
+
+- Provider：`mock` 为唯一离线可用路径；各厂商适配器按 T07D 卡分级记录支持等级，未做真实凭据联网验收。
+- 覆盖率：全局分支 85.06% 达标；关键安全模块单模块 95% 专项、Linux/macOS 跨平台矩阵、dev 工具链 audit 项与 `recover` CLI 深层接线仍列为遗留。
 
 ## 当前限制
 
