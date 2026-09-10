@@ -72,7 +72,7 @@
 - 本检查点实现与入口证据：`docs/reports/T07D_R2_03_TOOL_LOOP_EVIDENCE.md`。Worker 现将任务工具子集经注册表解析为 Provider 工具描述符；安装门禁收窄到进程执行/系统级/未知副作用类操作（修复 `readFile` 被误判为安装的缺陷）；Provider 运行时强制 `ASTARRAY_TASK_COMPLETION_V1` 完成事件且须声明本任务；CLI 等待改为无固定上限 + 可选 `--timeout-seconds`；新增工作存档追加回调与内存结果索引消除结果预览竞态。
 - 测试命令、退出码和产物哈希：红灯（安装门禁误拒）→ 绿灯 34 通过 → `npm run check` exit 0（153 文件 / 1416 测试）→ `npm run test:coverage` exit 0（语句 93.86% / 分支 87.28% / 函数 91.07% / 行 93.94%）；本检查点未产出 tarball。
 - 人工/外部依赖及剩余风险：无需人工裁决；`LocalCompletionVerifier` 的 revision/证据包全量校验与真实服务小样本分别属 `E2E-01`、`T07D-R2-04`（缺凭据 blocked）。
-- 本地提交、推送尝试与结果：本检查点提交（见 git log 顶部）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
+- 本地提交、推送尝试与结果：提交 `b9d04cf`（工具描述符 + 完成门禁 + 等待策略 + 竞态修复 + 测试 + 证据报告）；`git push origin main` 第 1 次尝试成功（`c95a1a0..b9d04cf`）。
 
 
 
