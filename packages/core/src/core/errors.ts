@@ -38,6 +38,8 @@ export type DomainErrorCode =
   | "context-graph-not-found"
   | "context-graph-invalid"
   | "context-node-not-closable"
+  | "global-decision-not-found"
+  | "global-decision-invalid"
   | "unknown";
 
 export class DomainError extends Error {
