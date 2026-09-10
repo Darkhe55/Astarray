@@ -65,7 +65,7 @@
 - 本检查点实现与入口证据：`docs/reports/T07D_R1_02_TASK_EVENTS_EVIDENCE.md`。`submitTask` 支持 `idempotencyKey`（同会话同键不重复执行、跨会话隔离）；新增权威状态监视器，`task-status` 承载 `accepted/running/blocked`，仅终态发一次 `task-finished`；轮询异常保守映射 `blocked`；`cancelTask`/`shutdown` 停止监视器。
 - 测试命令、退出码和产物哈希：红灯 3/4 失败 → 绿灯 15 通过 → `npx tsc --noEmit` exit 0 → `npm run check` exit 0（147 文件 / 1392 测试）→ `npm run test:coverage` exit 0（分支 87.43%）→ 隔离消费者 exit 0（`duplicateMissionMatches=true`、`sessionsIsolated=true`、`missionCount=2`）；tarball SHA-256 `BADEF54CE3A29A8BB84D3957F4797F9A4C1FAB4BFAD890AA23B22BC40B6F1C3F`。
 - 人工/外部依赖及剩余风险：无人工裁决；`summaryPreview` 仍为占位与关闭时在途收敛属 `-03`；CLI/TUI 切换与仓库内 tarball 消费者测试属 `-04`。
-- 本地提交、推送尝试与结果：本检查点提交（见 git log 顶部）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
+- 本地提交、推送尝试与结果：提交 `0626638`（幂等键 + 权威状态事件 + 监视器 + 测试 + 证据报告）；`git push origin main` 第 1 次尝试成功（`95b11c8..0626638`）。
 
 
 ## 首轮执行指令
