@@ -58,7 +58,7 @@
 - 本检查点实现与入口证据：`docs/reports/T07D_R1_01_LIFECYCLE_EVIDENCE.md`。装配提取到 `packages/core/src/application/application-runtime.ts`（TUI bootstrap 改薄委托，对外签名不变）；`public-sdk.ts` 重写为 `create()` + 会话生命周期（create/open/list/closed）+ 真实委托（mission 标识 / 权威状态查询 / 取消，`accepted` 不发 `task-finished`）；稳定错误码 `session-not-found` / `session-already-exists` / `mode-mismatch` / `session-mismatch` / `application-closed` / `runtime-unsupported`。隔离消费者仅经包 exports 创建成功，`internalSubpathBlocked=true`、`stateDirectoryCreated=true`。
 - 测试命令、退出码和产物哈希：红灯 5/5 失败（`create is not a function`）→ `npx tsc --noEmit` exit 0 → `npm run check` exit 0（146 文件 / 1388 测试）→ `npm run test:coverage` exit 0（语句 94.08% / 分支 87.32% / 函数 91.68% / 行 94.15%）→ 隔离消费者 exit 0；tarball SHA-256 `E4FAE4B3EC90FF6E31D9020150E384206225FA989064CA5E6AC4736864532344`。
 - 人工/外部依赖及剩余风险：无人工裁决；真实 Provider 与人工体验不在本检查点范围。后继：`-02` 事件状态机/幂等/会话隔离结果、`-03` 结果存储与关闭收敛、`-04` CLI/TUI 切换到公共应用服务与 tarball 消费者行为测试。
-- 本地提交、推送尝试与结果：本检查点提交（见 git log 顶部）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
+- 本地提交、推送尝试与结果：提交 `dfa13d0`（应用运行时提取 + SDK 重写 + 测试 + 证据报告）；`git push origin main` 第 1 次尝试成功（`86923f8..dfa13d0`）。
 
 ## 首轮执行指令
 
