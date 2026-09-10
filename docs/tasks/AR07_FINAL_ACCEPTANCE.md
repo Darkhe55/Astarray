@@ -171,19 +171,19 @@ backup-vault（88.1% → 需 +6）、policy-wrapper、sensitive-content（92.7%�
 | 27 | 各层以 agentInstanceId 为唯一记忆所有者，同级不共享 | `memory-and-report-security`、`agent-lifecycle-and-memory` | ✅动态 |
 | 28 | 不能直接读其他 Agent 记忆路径；跨 Agent 只传附件 | `memory-and-report-security`、`memory-read-gaps` | ✅动态 |
 | 29 | 上级只附加明确选择的存档条目 | `work-archive-store`(100%)、`memory-read-gaps` | ✅动态 |
-| 30 | 次级负责 Git 分流/审查/合并，三级隔离提交 | `git-integration`、`git-coordinator-branches`、`git-defensive-branches` | ⚠受限（spawn git 本轮 EPERM） |
+| 30 | 次级负责 Git 分流/审查/合并，三级隔离提交 | `git-integration`、`git-coordinator-branches`、`git-defensive-branches` | ✅动态（用户本机真实环境 145 文件/1383 测试全通过，含 git 套件；沙箱内 spawn git 被 EPERM） |
 | 31 | 待办偏序集存储，用户任务最高层不可提权 | `task-sequence-partial-order`、`dag-scheduler` | ✅动态 |
 | 32 | 整条链可打包给三级，状态快照一致 | `task-bundle-planner`、`mission-probe`、`mission-manager` | ✅动态 |
 | 33 | 主 Agent 提交提案后持续响应用户，报告只入索引 | `main-controller`、`orchestration-wiring`、`main-controller-facades` | ✅动态 |
 | 34 | 次级持续调度，三级一次激活一条链 | `continuous-dispatch-and-lifecycle`、`direct-dispatch` | ✅动态 |
 | 35 | 三级上下文超长/终止可由新个体显式 handoff | `context-recall-controller`、`context-closure-schemas`、`agent-lifecycle-and-memory` | ✅动态 |
-| 36 | 远端 Git/PR/CI/发布由次级控制，三级无相关工具 | `git-integration`、`session-control-surface`、`permission-policy` | ⚠受限（spawn git 本轮 EPERM） |
+| 36 | 远端 Git/PR/CI/发布由次级控制，三级无相关工具 | `git-integration`、`session-control-surface`、`permission-policy` | ✅动态（用户本机真实环境全量通过，含 git/远端控制套件） |
 | 37 | 首次完整工具用法、同 revision 后续只提醒 | `tool-recall-and-delegation`、`t07c06-cli-wiring` | ✅动态 |
 | 38 | `ASTARRAY_TOOL_HELP_REQUEST_V1` 区分忘记/缺少能力 | `tool-recall-and-delegation` | ✅动态 |
 | 39 | 三级帮助上级默认所属次级，grant 不可篡改路由 | `tool-recall-and-delegation` | ✅动态 |
 | 40 | 各层无累计/同级产品配额，资源限制只排队/回收 | `agent-lifecycle-and-memory`、`unbounded-agent-registry`(100%) | ✅动态 |
 | 41 | 授权后转交限定沟通句柄，不转移所有权且可失效 | `tool-recall-and-delegation` | ✅动态 |
-| 42 | 破坏性 Git 操作自动创建受保护恢复点 | `git-recovery-point`、`git-coordinator-branches` | ⚠受限（spawn git 本轮 EPERM） |
+| 42 | 破坏性 Git 操作自动创建受保护恢复点 | `git-recovery-point`、`git-coordinator-branches` | ✅动态（用户本机真实环境全量通过，含恢复点套件） |
 | 43 | 所有破坏性变更在执行工具内自动备份 | `destructive-file-api-guard`、`backup-vault` | ✅动态 |
 | 44 | 保管库并发不丢修订，审计链不分叉 | `backup-vault`、`atomic-json-edges`、`fault-injection-recovery` | ✅动态 |
 | 45 | 文件/目录/空目录/原始缺失可精确恢复 | `backup-vault`(96.4%)、`fault-injection-recovery`、`recovery-*` 套件 | ✅动态 |
@@ -194,7 +194,9 @@ backup-vault（88.1% → 需 +6）、policy-wrapper、sensitive-content（92.7%�
 | 50 | tarball 隔离安装与全部 CLI 入口通过 | 本会话早前 `npm pack`(171)+verify+smoke exit 0；本目标前段复验一致 | ⚠受限（本轮未复跑 pack/smoke） |
 | 51 | 文档状态与动态验收证据一致 | 本台账 §1–§10 + `PLAN_STATUS.md` + `DELIVERY_REPORT.md` §10 | ✅动态 |
 
-统计：✅动态 42 项、⚠受限 8 项、⬜未验证 1 项（真实 Provider / Node 20 / 跨平台见 §5）。
+统计：✅动态 45 项、⚠受限 5 项、⬜未验证 1 项（真实 Provider / Node 20 / 跨平台见 §5）。
+
+> 2026-09-10 更新：用户本机真实环境 `vitest` 全量 145 文件 / 1383 测试全部通过，据此把依赖 `spawn git` 的第 30/36/42 项从 ⚠受限 转为 ✅动态；第 49/50 项（`npm run check`、tarball 隔离安装）与第 7 项（非 win32 平台分支）仍待真实环境结果。
 ## 10. 本轮复验与受限记录（2026-09-10，收口第 3 轮）
 
 ### 10.1 新增测试（批次 10）
