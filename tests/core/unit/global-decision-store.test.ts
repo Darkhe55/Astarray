@@ -358,5 +358,16 @@ describe("全局决策相关选择与延后片段（T09A-03）", () => {
     expect(first).toBe(second);
     expect(first).not.toBe(other);
   });
+  it("替代目标不存在时拒绝并保持只追加语义", async () => {
+    await expect(
+      store.promoteCandidate(
+        buildCandidate({
+          globalDecisionIdentifier: "gd-orphan",
+          supersedesGlobalDecisionIdentifier: "gd-missing-target",
+        }),
+      ),
+    ).rejects.toMatchObject({ errorCode: "global-decision-not-found" });
+  });
 });
+
 

@@ -203,6 +203,28 @@ describe("生命周期指标复算（T09A-06）", () => {
     expect(stats.entryCount).toBe(1);
   });
 
+  it("bypass 判定：授权/时间敏感/失败/任务结论各自单独触发", () => {
+    const base = {
+      isWriteOperation: false,
+      isAuthorizationResult: false,
+      isTimeSensitive: false,
+      isFailedResult: false,
+      isTaskExecutionConclusion: false,
+    };
+    expect(shouldBypassContextCache({ ...base, isAuthorizationResult: true })).toBe(true);
+    expect(shouldBypassContextCache({ ...base, isTimeSensitive: true })).toBe(true);
+    expect(shouldBypassContextCache({ ...base, isFailedResult: true })).toBe(true);
+    expect(shouldBypassContextCache({ ...base, isTaskExecutionConclusion: true })).toBe(true);
+  });
+
+  it("空缓存统计 hitRate 为 0 且条目为 0", () => {
+    const cache = new ContextTierCache();
+    const stats = cache.getStats();
+    expect(stats.hitRate).toBe(0);
+    expect(stats.entryCount).toBe(0);
+    expect(cache.staleReject(1, 1).status).toBe("hit");
+  });
+
   it("tier-only 过滤失效只移除该层；预算 revision 变化失效全局块", () => {
     const cache = new ContextTierCache();
     cache.set(recallParts("agent-a"), "ra", 10, "2026-09-09T00:00:00.000Z");
@@ -233,5 +255,22 @@ describe("生命周期指标复算（T09A-06）", () => {
     ]);
     expect(keys.size).toBe(4);
   });
+  it("回访结果层按节点精确失效；活跃前沿按图 revision 相等/变化判定", () => {
+    const cache = new ContextTierCache();
+    cache.set(recallParts("agent-a", "node-1"), "r1", 5, "2026-09-09T00:00:00.000Z");
+    cache.set(recallParts("agent-a", "node-2"), "r2", 5, "2026-09-09T00:00:00.000Z");
+    cache.set(frontierParts("agent-a", 3), "f3", 5, "2026-09-09T00:00:00.000Z");
+    expect(
+      cache.invalidate({ tier: "recall-result", contextNodeIdentifier: "node-1" }),
+    ).toHaveLength(1);
+    expect(cache.get(recallParts("agent-a", "node-2")).status).toBe("hit");
+    expect(
+      cache.invalidate({ tier: "active-frontier", contextGraphRevision: 3 }),
+    ).toHaveLength(0);
+    expect(
+      cache.invalidate({ tier: "active-frontier", contextGraphRevision: 4 }),
+    ).toHaveLength(1);
+  });
 });
+
 

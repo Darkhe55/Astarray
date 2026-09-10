@@ -367,5 +367,18 @@ describe("分级回访（T09A-05）", () => {
       expect(repeat.previouslyReturnedTier).toBe("bounded-full-fragment");
     }
   });
+  it("默认敏感判定（DLP 正则）命中即拒绝", async () => {
+    await createCapsule();
+    const controller = buildRecallController();
+    const refused = await controller.recall({
+      callerAgentInstanceId: "agent-a",
+      request: buildRecallRequest({ requiredInformation: "读取 .env 内容" }),
+    });
+    expect(refused).toMatchObject({
+      status: "refused",
+      errorCode: "sensitive-content-read-denied",
+    });
+  });
 });
+
 
