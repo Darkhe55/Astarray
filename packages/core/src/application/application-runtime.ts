@@ -19,7 +19,7 @@ import { MainController } from "../orchestration/main-controller.js";
 import { MissionManager } from "../orchestration/mission-manager.js";
 import { FeedbackProcessSupervisor } from "../feedback-process/process-supervisor.js";
 import type { ForkFeedbackClient } from "../feedback-process/transport.js";
-import type { TaskDependencyNode } from "../core/types.js";
+import type { AgentRuntime, TaskDependencyNode } from "../core/types.js";
 import type { BackupDeletionAuthorizationControlPort } from "../core/types.js";
 import type { InstallationGateUserPort } from "../tools/installation-gate-guard.js";
 import {
@@ -99,6 +99,13 @@ export interface ApplicationRuntimeOptions {
   mainAgentInstanceId?: string;
   /** 独立反馈进程入口路径；不传则使用 supervisor 默认解析。 */
   feedbackProcessModulePath?: string | null;
+  /** 主 Agent 运行时工厂覆盖（Provider 接线；缺省为 mock ScriptedRuntime）。 */
+  mainRuntimeFactory?: (agentInstanceId: string) => AgentRuntime;
+  /** Worker 运行时工厂覆盖（Provider 接线；缺省为 mock ScriptedRuntime）。 */
+  workerRuntimeFactory?: (
+    agentInstanceId: string,
+    task: TaskDependencyNode,
+  ) => AgentRuntime;
 }
 
 export async function createApplicationRuntime(
@@ -385,19 +392,23 @@ export async function createApplicationRuntime(
     tertiaryLifecycleController,
     tertiaryRuntimeComponents,
     t08cRoutingFacade,
-    mainRuntimeFactory: () =>
-      new ScriptedRuntime([
-        {
-          type: "text",
-          text: "（主 Agent 应答）任务已受理。",
-        },
-        { type: "finish", reason: "success", detail: "受理完成" },
-      ]),
-    workerRuntimeFactory: (): ScriptedRuntime =>
-      new ScriptedRuntime([
-        { type: "text", text: "（mock 执行器）" },
-        { type: "finish", reason: "success", detail: "任务完成" },
-      ]),
+    mainRuntimeFactory:
+      options.mainRuntimeFactory ??
+      (() =>
+        new ScriptedRuntime([
+          {
+            type: "text",
+            text: "（主 Agent 应答）任务已受理。",
+          },
+          { type: "finish", reason: "success", detail: "受理完成" },
+        ])),
+    workerRuntimeFactory:
+      options.workerRuntimeFactory ??
+      (() =>
+        new ScriptedRuntime([
+          { type: "text", text: "（mock 执行器）" },
+          { type: "finish", reason: "success", detail: "任务完成" },
+        ])),
     buildWorkerToolPort: (task: TaskDependencyNode, allowedToolNames: Set<string>) =>
       new PolicyWrapper({
         permissionDecider,

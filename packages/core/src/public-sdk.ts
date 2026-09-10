@@ -5,9 +5,14 @@
  * 消费者不导入 MainController、TUI bootstrap 或内部存储路径。
  * 会话/任务状态迁移在此冻结；提交/查询/取消委托给同一主控制器。
  */
-import type { AgentMode } from "./core/types.js";
+import type { AgentMode, AgentRuntime, TaskDependencyNode } from "./core/types.js";
 import type { MainController } from "./orchestration/main-controller.js";
 import type { PermissionProfileReference } from "./tools/permission-profile-store.js";
+import { ProviderConfigurationError } from "./runtime/provider-runtime-registry.js";
+import type {
+  ProviderRuntimeCapability,
+  ProviderRuntimeRegistry,
+} from "./runtime/provider-runtime-registry.js";
 import type { ApplicationRuntime } from "./application/application-runtime.js";
 import { createApplicationRuntime } from "./application/application-runtime.js";
 
@@ -80,8 +85,12 @@ export interface PublicMissionState {
 export interface PublicApplicationOptions {
   stateDirectory: string;
   mode: AgentMode;
-  /** T07D-R1 阶段仅 mock；真实 Provider 接线见 T07D-R2。 */
-  runtime?: "mock";
+  /** 运行时选择：mock（离线）或 provider（真实 Provider，T07D-R2）。 */
+  runtime?: "mock" | "provider";
+  /** Provider 配置（runtime=provider 时必填；只含受保护凭据引用）。 */
+  provider?: PublicProviderConfiguration;
+  /** Provider 运行时注册表（嵌入方注入；runtime=provider 且未提供则稳定失败）。 */
+  providerRuntimeRegistry?: ProviderRuntimeRegistry;
   /** 可选流式输出钩子（headless 写 stderr；不暴露内部字段）。 */
   streamOutput?: (missionIdentifier: string | null, text: string) => void;
   concurrency?: number;
@@ -89,6 +98,17 @@ export interface PublicApplicationOptions {
   maximumLoopIterations?: number;
   /** 权威状态轮询间隔（毫秒）；测试可注入更小值。 */
   statusPollIntervalMilliseconds?: number;
+}
+
+/** 公开 Provider 配置：只含受保护凭据引用与允许列表，不含秘密内容。 */
+export interface PublicProviderConfiguration {
+  providerId: string;
+  modelIdentifier: string;
+  allowedModelIdentifiers: string[];
+  requiredCapabilities?: ProviderRuntimeCapability[];
+  baseUrl?: string | null;
+  protectedCredentialReferenceId?: string | null;
+  requestTimeoutMilliseconds?: number;
 }
 
 /** 公开应用错误：稳定 errorCode，便于消费者分支处理。 */
@@ -119,10 +139,50 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     options: PublicApplicationOptions,
   ): Promise<AstarrayApplicationFacade> {
     const runtimeKind = options.runtime ?? "mock";
-    if (runtimeKind !== "mock") {
+    let mainRuntimeFactory:
+      | ((agentInstanceId: string) => AgentRuntime)
+      | undefined;
+    let workerRuntimeFactory:
+      | ((agentInstanceId: string, task: TaskDependencyNode) => AgentRuntime)
+      | undefined;
+    if (runtimeKind === "provider") {
+      const registry = options.providerRuntimeRegistry;
+      if (registry === undefined) {
+        throw new PublicApplicationError(
+          "runtime-unsupported",
+          "选择 provider 运行时需要已注册的 Provider 运行时（不静默回退 mock）",
+        );
+      }
+      const provider = options.provider;
+      if (provider === undefined) {
+        throw new PublicApplicationError(
+          "provider-config-missing",
+          "缺少 Provider 配置（providerId/modelIdentifier）",
+        );
+      }
+      try {
+        const resolved = await registry.resolveRuntime({
+          providerId: provider.providerId,
+          modelIdentifier: provider.modelIdentifier,
+          allowedModelIdentifiers: provider.allowedModelIdentifiers,
+          requiredCapabilities: provider.requiredCapabilities,
+          baseUrl: provider.baseUrl ?? null,
+          protectedCredentialReferenceId:
+            provider.protectedCredentialReferenceId ?? null,
+          requestTimeoutMilliseconds: provider.requestTimeoutMilliseconds,
+        });
+        mainRuntimeFactory = () => resolved.createRuntime();
+        workerRuntimeFactory = () => resolved.createRuntime();
+      } catch (error) {
+        if (error instanceof ProviderConfigurationError) {
+          throw new PublicApplicationError(error.errorCode, error.message);
+        }
+        throw error;
+      }
+    } else if (runtimeKind !== "mock") {
       throw new PublicApplicationError(
         "runtime-unsupported",
-        "运行时暂不支持: " + String(runtimeKind) + "（Provider 接线见 T07D-R2）",
+        "不支持的运行时: " + String(runtimeKind),
       );
     }
     const runtime = await createApplicationRuntime({
@@ -138,6 +198,8 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       authenticatedUserId: "sdk-user",
       mainAgentInstanceId: "main-agent-sdk",
       feedbackProcessModulePath: null,
+      mainRuntimeFactory,
+      workerRuntimeFactory,
     });
     return new AstarrayApplicationFacade(runtime, {
       statusPollIntervalMilliseconds: options.statusPollIntervalMilliseconds ?? 25,
@@ -456,7 +518,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
           record.missionIdentifier,
         );
         const lastSummary = summaries.at(-1);
-        if (lastSummary !== undefined) {
+        if (lastSummary !== undefined && lastSummary.summary.length > 0) {
           record.summaryPreview = lastSummary.summary;
           return;
         }
