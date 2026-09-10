@@ -58,7 +58,7 @@
 - 本检查点实现与入口证据：`docs/reports/T07D_R2_01_PROVIDER_BASELINE.md`。首个目标 `openai-compatible`（Chat Completions 流式+工具）并核对官方文档；新增 `ProviderRuntimeRegistry`（注册/解析/描述符）与 `PublicProviderConfiguration`；入口选择 provider 时解析注册表并把主/Worker 运行时工厂指向已注册实现，未注册/缺配置/模型不允许/能力不足/凭据引用缺失全部稳定失败且不回退 mock；凭据仅以受保护引用出现，错误与描述符断言无泄漏。
 - 测试命令、退出码和产物哈希：红灯模块缺失 → 绿灯 17 通过 → `npm run check` exit 0（150 文件 / 1404 测试）→ `npm run test:coverage` exit 0（语句 93.91% / 分支 87.27% / 函数 90.75% / 行 94.00%）；本检查点未产出 tarball（打包属 R2-04/E2E-01）。
 - 人工/外部依赖及剩余风险：无需用户凭据即可完成；真实服务联网与费用授权属 `T07D-R2-04`（缺凭据预期 blocked）；`platform.openai.com` 直连 403，已改用官方 SDK 源码与 Azure OpenAI REST 参考核对。
-- 本地提交、推送尝试与结果：本检查点提交（见 git log 顶部）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
+- 本地提交、推送尝试与结果：提交 `60447d7`（ProviderRuntimeRegistry + 入口选择 + 测试 + 基线报告）；`git push origin main` 第 1 次尝试成功（`1f7f3b1..60447d7`）。
 
 ## 首轮执行指令
 
