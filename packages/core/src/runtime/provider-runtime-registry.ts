@@ -43,6 +43,8 @@ export interface ProviderRuntimeConfig {
   baseUrl: string;
   /** 受保护凭据引用（不含秘密内容）。 */
   protectedCredentialReferenceId: string;
+  /** 仅内存流转的凭据内容；不得进入描述符、错误、日志或导出。 */
+  apiKey: string;
   requestTimeoutMilliseconds: number;
 }
 
@@ -124,9 +126,31 @@ export class ProviderRuntimeRegistry {
         "未注册的 Provider 运行时: " + request.providerId + "（不静默回退 mock）",
       );
     }
-    const baseUrl = request.baseUrl ?? null;
     const modelIdentifier = request.modelIdentifier;
     const credentialReferenceId = request.protectedCredentialReferenceId ?? null;
+    let apiKey = "";
+    let credentialBaseUrl: string | null = null;
+    if (this.protectedCredentialStore !== null && credentialReferenceId !== null) {
+      const referenceExists =
+        await this.protectedCredentialStore.doesReferenceExist(credentialReferenceId);
+      if (!referenceExists) {
+        throw new ProviderConfigurationError(
+          "credential-reference-missing",
+          "受保护凭据引用不存在: " + credentialReferenceId,
+        );
+      }
+      const credential =
+        await this.protectedCredentialStore.readCredential(credentialReferenceId);
+      if (credential === null) {
+        throw new ProviderConfigurationError(
+          "credential-reference-missing",
+          "受保护凭据引用不存在: " + credentialReferenceId,
+        );
+      }
+      apiKey = credential.apiKey;
+      credentialBaseUrl = credential.baseUrl;
+    }
+    const baseUrl = request.baseUrl ?? credentialBaseUrl ?? null;
     if (
       baseUrl === null ||
       baseUrl.trim().length === 0 ||
@@ -156,21 +180,12 @@ export class ProviderRuntimeRegistry {
           missingCapability,
       );
     }
-    if (this.protectedCredentialStore !== null && credentialReferenceId !== null) {
-      const referenceExists =
-        await this.protectedCredentialStore.doesReferenceExist(credentialReferenceId);
-      if (!referenceExists) {
-        throw new ProviderConfigurationError(
-          "credential-reference-missing",
-          "受保护凭据引用不存在: " + credentialReferenceId,
-        );
-      }
-    }
     const runtimeConfig: ProviderRuntimeConfig = {
       providerId: registration.providerId,
       modelIdentifier,
       baseUrl,
       protectedCredentialReferenceId: credentialReferenceId ?? "",
+      apiKey,
       requestTimeoutMilliseconds: request.requestTimeoutMilliseconds ?? 30_000,
     };
     return {

@@ -1,6 +1,6 @@
 # T07D-R2：首个真实 Provider 产品接线
 
-> 状态：`in_progress`（T07D-R2-01 done；T07D-R2-02/03/04 pending）
+> 状态：`in_progress`（T07D-R2-01/02 done；T07D-R2-03/04 pending）
 > 创建日期：2026-09-10
 > 类型：核心返修；高风险工作按检查点执行
 > 来源：用户授权布置；本文件为Agent派生实施方案，运行态节点默认层级1或以下，不冒充用户层级0
@@ -25,7 +25,7 @@
 
 ### T07D-R2-02：生产入口连通本地协议服务器
 
-- 状态：pending。
+- 状态：done（2026-09-10）。产物：`docs/reports/T07D_R2_02_FAKE_SERVER_EVIDENCE.md`。
 - 工作：通过CLI/TUI/SDK公共应用入口连接本地fake server；真正消费增量事件、工具参数并回填受控结果。
 - 验收：同一产品链覆盖分片中文、慢流、工具调用、正常完成、断流、429、取消和超时；适配器不能直接执行工具或决定完成。
 - 前驱：T07D-R2-01。先通过前驱，再执行本节点。
@@ -59,6 +59,14 @@
 - 测试命令、退出码和产物哈希：红灯模块缺失 → 绿灯 17 通过 → `npm run check` exit 0（150 文件 / 1404 测试）→ `npm run test:coverage` exit 0（语句 93.91% / 分支 87.27% / 函数 90.75% / 行 94.00%）；本检查点未产出 tarball（打包属 R2-04/E2E-01）。
 - 人工/外部依赖及剩余风险：无需用户凭据即可完成；真实服务联网与费用授权属 `T07D-R2-04`（缺凭据预期 blocked）；`platform.openai.com` 直连 403，已改用官方 SDK 源码与 Azure OpenAI REST 参考核对。
 - 本地提交、推送尝试与结果：提交 `60447d7`（ProviderRuntimeRegistry + 入口选择 + 测试 + 基线报告）；`git push origin main` 第 1 次尝试成功（`1f7f3b1..60447d7`）。
+### T07D-R2-02 验收记录
+
+- 当前提交/工作树基线：`b8d5c93`（与 `origin/main` 同点）；工作树含用户并行的 3 M + 10 个未跟踪新卡。
+- 本检查点实现与入口证据：`docs/reports/T07D_R2_02_FAKE_SERVER_EVIDENCE.md`。新增 openai-compatible 真实注册与凭据解析；适配器改为**增量 SSE 消费**（TextDecoder stream 处理跨字节中文）并区分超时与取消；编排层把 Worker 运行时异常收敛为任务失败。集成测试经公共入口覆盖分片中文+慢流、429、断流、超时、取消与工具调用参数消费，断言适配器不执行工具、不决定完成。
+- 测试命令、退出码和产物哈希：红灯模块缺失 → 绿灯 22 通过（集成 6 + 适配器回归 16，无 unhandled error）→ `npm run check` exit 0（151 文件 / 1410 测试）→ `npm run test:coverage` exit 0（语句 93.94% / 分支 87.30% / 函数 90.98% / 行 94.03%）；本检查点未产出 tarball。
+- 人工/外部依赖及剩余风险：无人工裁决、无真实服务调用；Worker 工具描述符仍为空（产品级工具执行属 `T07D-R2-03`）；非 2xx 统一映射 `provider-timeout` 的粒度问题已记录。
+- 本地提交、推送尝试与结果：本检查点提交（见 git log 顶部）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
+
 
 ## 首轮执行指令
 

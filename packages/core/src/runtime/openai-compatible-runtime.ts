@@ -69,7 +69,8 @@ export class OpenAiCompatibleRuntime implements AgentRuntime {
           signal: abortController.signal,
         });
       } catch {
-        if (cancellationSignal.aborted || abortController.signal.aborted) {
+        // 只有调用方取消才算 cancelled；本适配器超时（abortController）必须报超时失败。
+        if (cancellationSignal.aborted) {
           yield {
             kind: "runFinished",
             agentId: agentRunInput.agentId,
@@ -89,14 +90,13 @@ export class OpenAiCompatibleRuntime implements AgentRuntime {
           `Provider 返回非 2xx: ${response.status} ${response.statusText}`,
         );
       }
-      const responseText = await response.text();
-      const chunks = parseServerSentEvents(responseText);
+      const chunks = readOpenAiStreamChunks(response.body);
       const accumulatedToolCalls = new Map<
         number,
         { id: string; name: string; arguments: string }
       >();
       let finalFinishReason: string | null = null;
-      for (const chunk of chunks) {
+      for await (const chunk of chunks) {
         if (cancellationSignal.aborted) {
           yield {
             kind: "runFinished",
@@ -197,6 +197,61 @@ function buildChatRequestBody(
     ),
     tool_choice: "auto",
   };
+}
+
+/**
+ * 增量读取 SSE 流：逐块解码（TextDecoder stream 模式处理跨字节 UTF-8 中文），
+ * 按行拆出 data: 负载并即时产出，支持取消/超时提前中断。
+ */
+export async function* readOpenAiStreamChunks(
+  body: ReadableStream<Uint8Array>,
+): AsyncIterable<OpenAiStreamChunk> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let bufferedText = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (value !== undefined) {
+        bufferedText += decoder.decode(value, { stream: true });
+      }
+      const lines = bufferedText.split("\n");
+      bufferedText = lines.pop() ?? "";
+      for (const line of lines) {
+        const parsed = parseSseDataLine(line);
+        if (parsed !== null) {
+          yield parsed;
+        }
+      }
+    }
+    bufferedText += decoder.decode();
+    for (const line of bufferedText.split("\n")) {
+      const parsed = parseSseDataLine(line);
+      if (parsed !== null) {
+        yield parsed;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function parseSseDataLine(line: string): OpenAiStreamChunk | null {
+  if (!line.startsWith("data:")) {
+    return null;
+  }
+  const payload = line.slice("data:".length).trim();
+  if (payload === "" || payload === "[DONE]") {
+    return null;
+  }
+  try {
+    return JSON.parse(payload) as OpenAiStreamChunk;
+  } catch {
+    return null;
+  }
 }
 
 export function parseServerSentEvents(responseText: string): OpenAiStreamChunk[] {

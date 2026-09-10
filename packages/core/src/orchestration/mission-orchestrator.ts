@@ -414,9 +414,21 @@ export class MissionOrchestrator {
       archiveAttachments,
     });
     const workerPromise = (async () => {
-      const outcome = await worker.run();
-      this.inFlightTaskIds.delete(action.taskId);
-      await this.handleWorkerOutcome(action.taskId, outcome);
+      try {
+        const outcome = await worker.run();
+        this.inFlightTaskIds.delete(action.taskId);
+        await this.handleWorkerOutcome(action.taskId, outcome);
+      } catch (error) {
+        // 运行时/工具异常必须收敛为任务失败，不得变成未处理拒绝（T07D-R2-02）。
+        this.inFlightTaskIds.delete(action.taskId);
+        await this.handleWorkerOutcome(action.taskId, {
+          outcome: "failure",
+          toolName: null,
+          failureReason:
+            error instanceof Error ? error.message : "运行时异常",
+          stateSummary: "运行时异常终止",
+        });
+      }
     })();
     this.inFlightWorkerPromises.add(workerPromise);
     void workerPromise.finally(() => {
