@@ -240,3 +240,8 @@ allow-once / allow-session / deny / modify / Esc 五条决策分支与初始渲�
 | 故障注入 | `fault-injection-recovery`、`atomic-json-edges`、`recovery-*` | 新增时钟回拨、DLP 故障 fail-closed | ✅ |
 | 安全反例 | `security-hardening`、`protected-storage-red-light`、`assist-installation-gate`、读取抑制 | 新增路径别名绕过、授权过期回 ask | ✅ |
 | TUI 交互 | `tests/tui/component/tui.test.tsx`（渲染/权限弹窗/帮助/ANSI 清洗/权限组面板/Tab 导航）、`install-decision-port`、`backup-deletion-port` | 新增 `tests/tui/component/ar07-tui-interaction-gaps.test.tsx`（真实 `useInput` 键盘路径：`1` allow-once / `2` allow-session / `3` deny / `4` modify / Esc；断言授权参数、解除阻塞指令、拒绝零副作用）；TUI **面板**仍未渲染证据冲突/不足/等待用户判断，这些状态由 `context status` 与人工验收控制面在 CLI 呈现（`context-status-cli`、`human-verification-controller`） | ✅（TUI 权限决策交互已覆盖；证据态展示走 CLI，记为产品遗留） |
+### 10.5 用户本机真实环境复验（2026-09-10 00:24，用户提供）
+
+- `vitest` 全量：**145 文件 / 1383 测试全部通过**（Duration 20.16s）。
+- 意义：确认此前免审批 threads 通道的 73 例失败完全来自沙箱/线程池环境（`spawn EPERM`、worker 内 `process.chdir`、Headless CLI 需构建产物），**不是代码回归**；同一测试集在真实环境 100% 通过。
+- 仍待用户回贴：`npm run check`（typecheck/lint/build）、`npm run test:coverage`、`npm pack` + `node scripts/verify-package.mjs` + `node scripts/smoke-install.mjs`、`git push origin main`。
