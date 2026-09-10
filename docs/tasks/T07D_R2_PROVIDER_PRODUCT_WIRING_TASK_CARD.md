@@ -65,7 +65,7 @@
 - 本检查点实现与入口证据：`docs/reports/T07D_R2_02_FAKE_SERVER_EVIDENCE.md`。新增 openai-compatible 真实注册与凭据解析；适配器改为**增量 SSE 消费**（TextDecoder stream 处理跨字节中文）并区分超时与取消；编排层把 Worker 运行时异常收敛为任务失败。集成测试经公共入口覆盖分片中文+慢流、429、断流、超时、取消与工具调用参数消费，断言适配器不执行工具、不决定完成。
 - 测试命令、退出码和产物哈希：红灯模块缺失 → 绿灯 22 通过（集成 6 + 适配器回归 16，无 unhandled error）→ `npm run check` exit 0（151 文件 / 1410 测试）→ `npm run test:coverage` exit 0（语句 93.94% / 分支 87.30% / 函数 90.98% / 行 94.03%）；本检查点未产出 tarball。
 - 人工/外部依赖及剩余风险：无人工裁决、无真实服务调用；Worker 工具描述符仍为空（产品级工具执行属 `T07D-R2-03`）；非 2xx 统一映射 `provider-timeout` 的粒度问题已记录。
-- 本地提交、推送尝试与结果：本检查点提交（见 git log 顶部）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
+- 本地提交、推送尝试与结果：提交 `4867349`（真实注册 + 增量流 + 失败分类 + 集成测试 + 证据报告）；`git push origin main` 第 1 次尝试成功（`b8d5c93..4867349`）。
 
 
 ## 首轮执行指令
