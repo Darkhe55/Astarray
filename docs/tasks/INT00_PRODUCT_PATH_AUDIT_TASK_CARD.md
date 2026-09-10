@@ -49,7 +49,7 @@ SDK可导入不代表任务执行；无HTTP监听不能单独证明没有MCP；�
 - 本检查点实现与入口证据：`docs/reports/INT00_PRODUCT_PATH_MATRIX.md` 给出 8 条产品路径的入口→装配→执行结论，逐条附文件:符号、搜索范围与反例。关键结论：Public SDK facade 未接控制器（`public-sdk.ts:48,100-116`）、`run` 拒绝非 mock 且 bootstrap 固定 `ScriptedRuntime`（`run-command.ts:31-36`、`bootstrap.ts:379-391`）、上下文组件未进编排（`main-controller.ts` 0 命中）、`recover` 未在 `cli.tsx` 注册且为桩（`commands.ts:1805-1880`）、桥接仅契约。
 - 测试命令、退出码和产物哈希：本检查点为文档/链路审计，未新增测试。已执行只读诊断：`git rev-parse HEAD`、`git status --porcelain`、`node -e require(package.json)`、`npm audit --audit-level=high`（exit 0）、`node --input-type=module` 调用 `dist/public-sdk.js`（输出 `submitResult.status=accepted`、`readPublicResult=null`、事件 `task-finished/accepted`）。未生成 tarball，故无产物哈希。
 - 人工/外部依赖及剩余风险：无需人工裁决；剩余风险是真实 Provider/真实服务无凭据（`T07D-R2-04` 预期 blocked）、GUI 仅占位、Linux/macOS 与 Node 20 未验证。行为级证据待 INT-00-02。
-- 本地提交、推送尝试与结果：待填写。
+- 本地提交、推送尝试与结果：提交 `8aca696`（新增 `docs/reports/INT00_PRODUCT_PATH_MATRIX.md` + 本卡验收记录）；`git push origin main` 第 1 次尝试即成功（`8ebdaa8..8aca696`）。
 
 ## 首轮执行指令
 
