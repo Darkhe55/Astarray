@@ -180,6 +180,7 @@ export const localContextGraphNodeSchema = z
     updatedAtIso: z.iso.datetime(),
   })
   .strict();
+export type LocalContextGraphNode = z.infer<typeof localContextGraphNodeSchema>;
 
 export const localContextGraphEdgeSchema = z
   .object({
@@ -210,7 +211,7 @@ export const localContextGraphSchema = z
     ownerAgentInstanceId: z.string().min(1),
     missionId: z.string().min(1),
     revision: z.number().int().positive(),
-    nodes: z.array(localContextGraphNodeSchema).min(1),
+    nodes: z.array(localContextGraphNodeSchema).default([]),
     edges: z.array(localContextGraphEdgeSchema).default([]),
     updatedAtIso: z.iso.datetime(),
   })

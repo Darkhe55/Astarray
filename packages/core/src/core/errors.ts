@@ -35,6 +35,9 @@ export type DomainErrorCode =
   | "resource-already-read"
   | "livelock-guard-triggered"
   | "stale-human-change"
+  | "context-graph-not-found"
+  | "context-graph-invalid"
+  | "context-node-not-closable"
   | "unknown";
 
 export class DomainError extends Error {
