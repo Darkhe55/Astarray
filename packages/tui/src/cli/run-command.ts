@@ -1,12 +1,13 @@
 /**
- * run 命令（T11）。
- * 流程：解析配置 → 引导 → 创建 mission → 轮询至终态 → 输出 JSON。
+ * run 命令（T11 / T07D-R1-04）。
+ * 通过公共应用服务（AstarrayApplicationFacade）提交与查询任务，
+ * 与 SDK 消费者使用同一入口、同一状态源（不再直接调用内部控制器）。
  */
 import path from "node:path";
 
-import { bootstrapCli } from "./bootstrap.js";
-import { EXIT_CODES, failWith, logToStderr, printJson } from "./json-output.js";
+import { AstarrayApplicationFacade } from "../../../core/src/public-sdk.js";
 import { runConfigSchema } from "../../../core/src/core/schemas.js";
+import { EXIT_CODES, failWith, logToStderr, printJson } from "./json-output.js";
 
 export interface RunCommandOptions {
   prompt: string;
@@ -23,14 +24,14 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
   });
   if (!parsedConfig.success) {
     failWith(
-      new Error(`配置非法: ${parsedConfig.error.message}`),
+      new Error("配置非法: " + parsedConfig.error.message),
       EXIT_CODES.USAGE_ERROR,
     );
   }
   const runConfig = parsedConfig.data;
   if (runConfig.runtime !== "mock") {
     failWith(
-      new Error(`--runtime ${runConfig.runtime} 尚未支持（v0.1 仅 mock）`),
+      new Error("--runtime " + runConfig.runtime + " 尚未支持（v0.1 仅 mock）"),
       EXIT_CODES.USAGE_ERROR,
     );
   }
@@ -41,51 +42,55 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
     );
   }
 
-  const bootstrap = await bootstrapCli({
-    mode: runConfig.mode,
+  const application = await AstarrayApplicationFacade.create({
     stateDirectory: options.stateDirectory,
+    mode: runConfig.mode,
+    runtime: "mock",
     concurrency: runConfig.concurrency,
     failureThreshold: runConfig.toolFailureThreshold,
-    maxLoopIterations: 8,
-    useFeedbackProcess: false,
-    streamOutput: (_missionId, text) => {
+    maximumLoopIterations: 8,
+    statusPollIntervalMilliseconds: 25,
+    streamOutput: (_missionIdentifier, text) => {
       logToStderr(text);
     },
   });
   try {
-    const missionId = await bootstrap.controller.handleUserMessage(options.prompt);
-    const finalStatus = await waitForTerminalStatus(bootstrap, missionId);
+    application.createSession({ sessionId: "cli-run", mode: runConfig.mode });
+    const accepted = await application.submitTask({
+      sessionId: "cli-run",
+      taskIdentifier: "cli-task",
+      prompt: options.prompt,
+    });
+    const finalStatus = await waitForTerminalStatus(
+      application,
+      "cli-run",
+      "cli-task",
+    );
     printJson({
-      missionId,
+      missionId: accepted.missionIdentifier,
       mode: runConfig.mode,
       status: finalStatus,
       prompt: options.prompt,
     });
     return finalStatus === "done" ? EXIT_CODES.SUCCESS : EXIT_CODES.FAILURE;
   } finally {
-    await bootstrap.shutdown();
+    await application.shutdown();
   }
 }
 
 async function waitForTerminalStatus(
-  bootstrap: Awaited<ReturnType<typeof bootstrapCli>>,
-  missionId: string,
+  application: AstarrayApplicationFacade,
+  sessionId: string,
+  taskIdentifier: string,
 ): Promise<string> {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
-    const missionStatus = await bootstrap.controller.queryMissionStatus(missionId);
-    const summaryStatus = missionStatus.summary?.status ?? "running";
-    if (summaryStatus === "done" || summaryStatus === "cancelled") {
-      return summaryStatus;
+    const result = await application.queryTask({ sessionId, taskIdentifier });
+    if (result.status === "done" || result.status === "cancelled") {
+      return result.status;
     }
-    const taskChain = missionStatus.taskChain;
-    if (taskChain !== null) {
-      const hasBlockedTask = taskChain.tasks.some(
-        (task) => task.status === "blocked" || task.status === "failed",
-      );
-      if (hasBlockedTask) {
-        return "blocked";
-      }
+    if (result.status === "blocked" || result.status === "failed") {
+      return "blocked";
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }

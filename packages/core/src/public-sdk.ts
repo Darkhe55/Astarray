@@ -6,6 +6,8 @@
  * 会话/任务状态迁移在此冻结；提交/查询/取消委托给同一主控制器。
  */
 import type { AgentMode } from "./core/types.js";
+import type { MainController } from "./orchestration/main-controller.js";
+import type { PermissionProfileReference } from "./tools/permission-profile-store.js";
 import type { ApplicationRuntime } from "./application/application-runtime.js";
 import { createApplicationRuntime } from "./application/application-runtime.js";
 
@@ -49,12 +51,39 @@ export interface PublicEventSubscriptionPort {
   ): { unsubscribe(): void };
 }
 
+/**
+ * 公共应用服务端口：CLI/TUI/外部消费者共用的应用能力视图。
+ * 只暴露公共能力（任务状态、模式、权限组控制面），不暴露内部装配与存储。
+ */
+export type PublicApplicationService = Pick<
+  MainController,
+  | "getActiveMissionIds"
+  | "queryMissionStatus"
+  | "getMetricsSnapshot"
+  | "handleUserMessage"
+  | "cancelMission"
+  | "sendSchedulerInstruction"
+  | "grantSessionAuthorization"
+  | "transitionMode"
+  | "getCurrentPermissionProfileReference"
+  | "listPermissionProfiles"
+  | "switchPermissionProfile"
+>;
+
+/** 公开 mission 状态（SDK/CLI 共用视图）。 */
+export interface PublicMissionState {
+  missionIdentifier: string;
+  status: PublicTaskStatus;
+}
+
 /** 应用创建选项：由消费者从公开 exports 传入，不接触内部控制器。 */
 export interface PublicApplicationOptions {
   stateDirectory: string;
   mode: AgentMode;
   /** T07D-R1 阶段仅 mock；真实 Provider 接线见 T07D-R2。 */
   runtime?: "mock";
+  /** 可选流式输出钩子（headless 写 stderr；不暴露内部字段）。 */
+  streamOutput?: (missionIdentifier: string | null, text: string) => void;
   concurrency?: number;
   failureThreshold?: number;
   maximumLoopIterations?: number;
@@ -84,7 +113,7 @@ interface TaskRecord {
  * 稳定应用 facade：CLI/TUI/外部消费者共用同一主控制器。
  * 本 facade 不实现第二套权限/任务/Provider 逻辑。
  */
-export class AstarrayApplicationFacade {
+export class AstarrayApplicationFacade implements PublicApplicationService {
   /** 从公开 exports 创建应用；运行资源由应用层创建。 */
   static async create(
     options: PublicApplicationOptions,
@@ -103,7 +132,7 @@ export class AstarrayApplicationFacade {
       failureThreshold: options.failureThreshold ?? 1,
       maxLoopIterations: options.maximumLoopIterations ?? 8,
       useFeedbackProcess: false,
-      streamOutput: () => {},
+      streamOutput: options.streamOutput ?? (() => {}),
       backupDeletionControlPort: null,
       installationUserPort: null,
       authenticatedUserId: "sdk-user",
@@ -173,6 +202,74 @@ export class AstarrayApplicationFacade {
 
   listSessions(): PublicSessionState[] {
     return [...this.sessionStates.values()].map((state) => ({ ...state }));
+  }
+
+  /** 公共应用服务端口：CLI/TUI 通过本 facade 访问应用能力（不接触内部装配）。 */
+  getActiveMissionIds(): string[] {
+    return this.runtime.controller.getActiveMissionIds();
+  }
+
+  async queryMissionStatus(missionId: string) {
+    return this.runtime.controller.queryMissionStatus(missionId);
+  }
+
+  getMetricsSnapshot() {
+    return this.runtime.controller.getMetricsSnapshot();
+  }
+
+  async handleUserMessage(message: string): Promise<string> {
+    return this.runtime.controller.handleUserMessage(message);
+  }
+
+  async cancelMission(missionId: string): Promise<void> {
+    return this.runtime.controller.cancelMission(missionId);
+  }
+
+  sendSchedulerInstruction(missionId: string, instructionText: string): void {
+    this.runtime.controller.sendSchedulerInstruction(missionId, instructionText);
+  }
+
+  async grantSessionAuthorization(
+    toolName: string,
+    argumentsJson: string,
+    nowUnixSeconds: number,
+  ): Promise<void> {
+    return this.runtime.controller.grantSessionAuthorization(
+      toolName,
+      argumentsJson,
+      nowUnixSeconds,
+    );
+  }
+
+  transitionMode(mode: AgentMode): void {
+    this.runtime.controller.transitionMode(mode);
+  }
+
+  async getCurrentPermissionProfileReference() {
+    return this.runtime.controller.getCurrentPermissionProfileReference();
+  }
+
+  async listPermissionProfiles(input: { page: number; pageSize: number }) {
+    return this.runtime.controller.listPermissionProfiles(input);
+  }
+
+  async switchPermissionProfile(reference: PermissionProfileReference): Promise<void> {
+    return this.runtime.controller.switchPermissionProfile(reference);
+  }
+
+  /** 按 mission 标识查询权威状态（CLI 与 SDK 共用同一状态源）。 */
+  async queryMission(missionIdentifier: string): Promise<PublicMissionState> {
+    this.assertOpen();
+    const missionStatus = (await this.runtime.controller.queryMissionStatus(
+      missionIdentifier,
+    )) as {
+      summary?: { status?: string } | null;
+      taskChain?: { tasks: Array<{ status: string }> } | null;
+    };
+    return {
+      missionIdentifier,
+      status: this.mapMissionStatus(missionStatus),
+    };
   }
 
   /**
@@ -353,12 +450,19 @@ export class AstarrayApplicationFacade {
       return;
     }
     try {
-      const summaries = await this.runtime.readMissionResultSummaries(
-        record.missionIdentifier,
-      );
-      const lastSummary = summaries.at(-1);
-      if (lastSummary !== undefined) {
-        record.summaryPreview = lastSummary.summary;
+      // mission 终态可能先于 Worker 存档写入到达：有界重试，避免结果预览偶发为空。
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const summaries = await this.runtime.readMissionResultSummaries(
+          record.missionIdentifier,
+        );
+        const lastSummary = summaries.at(-1);
+        if (lastSummary !== undefined) {
+          record.summaryPreview = lastSummary.summary;
+          return;
+        }
+        if (attempt < 19) {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
       }
     } catch {
       // 结果读取失败不改变已确认的权威状态

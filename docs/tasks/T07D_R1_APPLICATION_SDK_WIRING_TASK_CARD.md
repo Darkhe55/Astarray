@@ -1,6 +1,6 @@
 # T07D-R1：公共应用服务与 SDK 接线返修
 
-> 状态：`in_progress`（T07D-R1-01 done；T07D-R1-02/03/04 pending）
+> 状态：`done`（T07D-R1-01/02/03/04 全部通过，2026-09-10）
 > 创建日期：2026-09-10
 > 类型：核心返修；高风险工作按检查点执行
 > 来源：用户授权布置；本文件为Agent派生实施方案，运行态节点默认层级1或以下，不冒充用户层级0
@@ -39,7 +39,7 @@
 
 ### T07D-R1-04：消费者与入口一致性
 
-- 状态：pending。
+- 状态：done（2026-09-10）。产物：`docs/reports/T07D_R1_04_CONSUMER_PARITY_EVIDENCE.md`。
 - 工作：CLI/TUI改用同一公共应用服务；增加tarball消费者行为测试，安装后提交、查询结果、取消、关闭。
 - 验收：不通过源码路径导入；比较CLI和SDK同一任务状态；验证真实文件变化而非仅字符串accepted；执行公共回归。
 - 前驱：T07D-R1-03。先通过前驱，再执行本节点。
@@ -73,6 +73,14 @@
 - 测试命令、退出码和产物哈希：红灯 3/5 失败 → 绿灯 20 通过 → `npx tsc --noEmit` exit 0 → `npm run check` exit 0（148 文件 / 1397 测试，无 unhandled error）→ `npm run test:coverage` exit 0（语句 94.10% / 分支 87.33% / 函数 91.55% / 行 94.18%）→ 隔离消费者 exit 0（`summaryPreview="（mock 执行器）"`、关闭后进程干净退出）；tarball SHA-256 `FF0314EE6517B849CE62AC0EDDDC2B8BC95FDB1AE7B204F16AA1EAE29A476A63`。
 - 人工/外部依赖及剩余风险：无人工裁决；跨进程 SDK 会话/结果恢复属 T12A-R1；真实 Provider/人工体验不在本检查点范围。
 - 本地提交、推送尝试与结果：提交 `0a0bfe5`（权威结果 + 关闭收敛 + 控制器 shutdown + 测试 + 证据报告）；`git push origin main` 第 1 次尝试成功（`bb77141..0a0bfe5`）。
+### T07D-R1-04 验收记录
+
+- 当前提交/工作树基线：`8208679`（与 `origin/main` 同点）；工作树含用户并行的 3 M + 10 个未跟踪新卡。
+- 本检查点实现与入口证据：`docs/reports/T07D_R1_04_CONSUMER_PARITY_EVIDENCE.md`。新增公共 `PublicApplicationService` 端口与 `queryMission`，facade 全部委托同一控制器；CLI headless `run` 与 TUI 均改用 `AstarrayApplicationFacade`；新增仓库内 tarball 消费者验证脚本 `verify:sdk-consumer`；parity 测试证明 CLI 与 SDK 观察同一 mission 状态一致且任务链真实落盘。
+- 测试命令、退出码和产物哈希：红灯 1 失败（`queryMission` 缺失）→ 绿灯 24 通过 → `npm run check` 连续两次 exit 0（149 文件 / 1398 测试，无 unhandled error）→ `npm run test:coverage` exit 0（语句 93.93% / 分支 87.30% / 函数 90.82% / 行 94.02%）→ `node scripts/verify-sdk-consumer.mjs` exit 0；tarball SHA-256 `8FC96503E674B2E5A4D5C04695B41FF08A009F024C0C739897DCDB42264EEBC2`。
+- 人工/外部依赖及剩余风险：无人工裁决；消费者未采样到 `summaryPreview` 的时序问题由 -03 单测覆盖并在后续查询重试；真实 Provider/跨平台不在本卡范围。
+- 本地提交、推送尝试与结果：本检查点提交（见 git log 顶部）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
+
 
 
 

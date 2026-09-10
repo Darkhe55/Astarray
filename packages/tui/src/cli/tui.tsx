@@ -4,6 +4,7 @@
  */
 import { render } from "ink";
 
+import { AstarrayApplicationFacade } from "../../../core/src/public-sdk.js";
 import { bootstrapCli } from "./bootstrap.js";
 import { AppState } from "../ui/state/app-state.js";
 import { AstarrayApp } from "../ui/app.js";
@@ -23,23 +24,25 @@ export async function launchTui(stateDirectory: string): Promise<void> {
     state.pushConversation("main", stripAnsiControlSequences(text));
   });
 
-  const bootstrap = await bootstrapCli({
-    mode: state.mode,
-    stateDirectory,
-    concurrency: 4,
-    failureThreshold: 3,
-    maxLoopIterations: 8,
-    useFeedbackProcess: true,
-    streamOutput: (_missionId, text) => {
-      streamThrottle.append(text);
-    },
-  });
+  const application = new AstarrayApplicationFacade(
+    await bootstrapCli({
+      mode: state.mode,
+      stateDirectory,
+      concurrency: 4,
+      failureThreshold: 3,
+      maxLoopIterations: 8,
+      useFeedbackProcess: true,
+      streamOutput: (_missionId, text) => {
+        streamThrottle.append(text);
+      },
+    }),
+  );
 
   let isExiting = false;
   const { waitUntilExit, unmount, clear } = render(
     <AstarrayApp
       state={state}
-      controller={bootstrap.controller}
+      controller={application}
       onRequestExit={() => {
         if (isExiting) {
           return;
@@ -47,7 +50,7 @@ export async function launchTui(stateDirectory: string): Promise<void> {
         isExiting = true;
         streamThrottle.dispose();
         unmount();
-        void bootstrap.shutdown().then(() => {
+        void application.shutdown().then(() => {
           clear();
           process.exit(0);
         });
@@ -62,7 +65,7 @@ export async function launchTui(stateDirectory: string): Promise<void> {
     isExiting = true;
     streamThrottle.dispose();
     unmount();
-    await bootstrap.shutdown();
+    await application.shutdown();
     clear();
     process.exit(0);
   };

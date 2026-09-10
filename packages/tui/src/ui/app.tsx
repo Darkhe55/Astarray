@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
 
 import type { AgentMode } from "../../../core/src/core/types.js";
 import type { AppState } from "./state/app-state.js";
-import type { MainController } from "../../../core/src/orchestration/main-controller.js";
+import type { PublicApplicationService } from "../../../core/src/public-sdk.js";
 import { cyclePanel } from "./panel-navigation.js";
 import type { PanelFocus } from "./panel-navigation.js";
 import {
@@ -25,7 +25,7 @@ import {
 
 export interface AstarrayAppProps {
   state: AppState;
-  controller: MainController;
+  controller: PublicApplicationService;
   onRequestExit: () => void;
 }
 
@@ -161,7 +161,7 @@ export function AstarrayApp(props: AstarrayAppProps): ReactNode {
   );
 }
 
-function submitPrompt(state: AppState, controller: MainController, text: string): void {
+function submitPrompt(state: AppState, controller: PublicApplicationService, text: string): void {
   const trimmedText = text.trim();
   if (trimmedText.length === 0) {
     return;
@@ -180,7 +180,7 @@ function handlePermissionKey(
   input: string,
   key: { escape?: boolean },
   state: AppState,
-  controller: MainController,
+  controller: PublicApplicationService,
 ): void {
   if (key.escape) {
     state.closePermissionAsk();
@@ -207,7 +207,7 @@ function handlePermissionKey(
 function decidePermission(
   decision: "allow-once" | "allow-session" | "deny" | "modify",
   state: AppState,
-  controller: MainController,
+  controller: PublicApplicationService,
 ): void {
   const ask = state.permissionAsk;
   if (ask === null) {
@@ -232,7 +232,7 @@ function decidePermission(
   );
 }
 
-function cycleMode(state: AppState, controller: MainController): void {
+function cycleMode(state: AppState, controller: PublicApplicationService): void {
   const nextMode: AgentMode =
     state.mode === "ponder" ? "assist" : state.mode === "assist" ? "devolve" : "ponder";
   controller.transitionMode(nextMode);
@@ -251,7 +251,7 @@ function modeName(mode: AgentMode): string {
   }
 }
 
-async function refreshMissions(state: AppState, controller: MainController): Promise<void> {  for (const missionId of controller.getActiveMissionIds()) {
+async function refreshMissions(state: AppState, controller: PublicApplicationService): Promise<void> {  for (const missionId of controller.getActiveMissionIds()) {
     try {
       const missionStatus = await controller.queryMissionStatus(missionId);
       if (missionStatus.summary === null) {
@@ -281,7 +281,7 @@ async function refreshMissions(state: AppState, controller: MainController): Pro
   }
 }
 
-async function refreshMetrics(state: AppState, controller: MainController): Promise<void> {
+async function refreshMetrics(state: AppState, controller: PublicApplicationService): Promise<void> {
   const metrics = controller.getMetricsSnapshot();
   if (metrics !== null) {
     state.setMetrics({
@@ -297,7 +297,7 @@ async function refreshMetrics(state: AppState, controller: MainController): Prom
 /** B6R-04b：只读刷新权限组列表与当前组显示名（不打断输入）。 */
 async function refreshPermissionProfiles(
   state: AppState,
-  controller: MainController,
+  controller: PublicApplicationService,
 ): Promise<void> {
   try {
     const [currentReference, profileList] = await Promise.all([
