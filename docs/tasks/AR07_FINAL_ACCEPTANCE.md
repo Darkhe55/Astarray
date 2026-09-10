@@ -190,11 +190,11 @@ backup-vault（88.1% → 需 +6）、policy-wrapper、sensitive-content（92.7%�
 | 46 | 完成事件只在本地验收通过后结案，伪造/重放无效 | `completion-protocol`(100%)、`acceptance-verdict-gate`、`fault-injection-recovery` | ✅动态 |
 | 47 | 早停从检查点有界续跑，三次后明确失败 | `completion-protocol`(100%)、`recovery-checkpoint-*` | ✅动态 |
 | 48 | 关键安全模块分支覆盖率 ≥95% | 本文 §8：22/22 模块 ≥95% | ✅动态 |
-| 49 | `npm run check` 通过 | 本会话早前 exit 0（135 文件/1301 测试）；本轮 typecheck/lint exit 0，build 被沙箱 spawn 拒绝 | ⚠受限（本轮未复跑 build/check） |
-| 50 | tarball 隔离安装与全部 CLI 入口通过 | 本会话早前 `npm pack`(171)+verify+smoke exit 0；本目标前段复验一致 | ⚠受限（本轮未复跑 pack/smoke） |
+| 49 | `npm run check` 通过 | **真实环境 exit 0**：145 文件 / 1383 测试全通过，覆盖 typecheck + lint + build + test（2026-09-10 复跑） | ✅动态 |
+| 50 | tarball 隔离安装与全部 CLI 入口通过 | **真实环境 exit 0**：`npm pack` 171 文件 + `verify-package` + `smoke-install`（隔离安装、`--version/--help/doctor/run(mock done)`、全局 `.cmd` shim、feedback-entry ESM 加载） | ✅动态 |
 | 51 | 文档状态与动态验收证据一致 | 本台账 §1–§10 + `PLAN_STATUS.md` + `DELIVERY_REPORT.md` §10 | ✅动态 |
 
-统计：✅动态 45 项、⚠受限 5 项、⬜未验证 1 项（真实 Provider / Node 20 / 跨平台见 §5）。
+统计（逐行复核）：**✅动态 50 项、⚠受限 1 项（第 7 项：非 win32 平台归一化分支）、⬜未验证 0 项**；真实 Provider、Node 20、Linux/macOS 跨平台矩阵不在 51 项内，单列于 §5。
 
 > 2026-09-10 更新：用户本机真实环境 `vitest` 全量 145 文件 / 1383 测试全部通过，据此把依赖 `spawn git` 的第 30/36/42 项从 ⚠受限 转为 ✅动态；第 49/50 项（`npm run check`、tarball 隔离安装）与第 7 项（非 win32 平台分支）仍待真实环境结果。
 ## 10. 本轮复验与受限记录（2026-09-10，收口第 3 轮）
@@ -247,3 +247,15 @@ allow-once / allow-session / deny / modify / Esc 五条决策分支与初始渲�
 - `vitest` 全量：**145 文件 / 1383 测试全部通过**（Duration 20.16s）。
 - 意义：确认此前免审批 threads 通道的 73 例失败完全来自沙箱/线程池环境（`spawn EPERM`、worker 内 `process.chdir`、Headless CLI 需构建产物），**不是代码回归**；同一测试集在真实环境 100% 通过。
 - 仍待用户回贴：`npm run check`（typecheck/lint/build）、`npm run test:coverage`、`npm pack` + `node scripts/verify-package.mjs` + `node scripts/smoke-install.mjs`、`git push origin main`。
+### 10.6 审批通道恢复后的完整门禁复跑（2026-09-10，真实环境）
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `npm run check` | **0** | 145 文件 / 1383 测试全通过（typecheck + lint + build + test） |
+| `npm run test:coverage` | **0** | 145 文件 / 1383 测试全通过；语句 94.14% / **分支 87.45%** / 函数 91.59% / 行 94.21%（全局 85% 门槛达标，分支较此前 85.06% 提升） |
+| `npm pack --pack-destination .tmp/packages` | **0** | `astarray-0.1.0.tgz`，171 文件 |
+| `node scripts/verify-package.mjs` | **0** | 171 文件、shebang/BOM 正确、反馈进程入口已包含 |
+| `node scripts/smoke-install.mjs` | **0** | 隔离安装 + `--version/--help/doctor/run(mock done)` + 全局 `astarray.cmd` shim + feedback-entry ESM 加载，冒烟全部通过 |
+
+> §10.3 的全部沙箱受限项（build/coverage/pack/verify/smoke）已在本轮以 `danger-full-access` 审批后复跑并全部通过；
+> 第 49/50 项据此转为 ✅动态，矩阵统计更新为 50 ✅ / 1 ⚠（第 7 项非 win32 平台分支）。
