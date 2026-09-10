@@ -6,7 +6,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { randomUUID } from "node:crypto";
 import type { FeedbackMessage } from "../../../packages/core/src/core/types.js";
@@ -750,5 +750,99 @@ describe("runFeedbackProcessEntry（进程内 FakeParent）", () => {
     );
     expect(healthResult.type).toBe("healthResult");
   });
+  it("isNodeJsProcess：对象判别矩阵（send/on/null/原始值）", async () => {
+    const { isNodeJsProcess } = await import(
+      "../../../packages/core/src/feedback-process/entrypoint.js"
+    );
+    expect(isNodeJsProcess(null)).toBe(false);
+    expect(isNodeJsProcess("process")).toBe(false);
+    expect(isNodeJsProcess({})).toBe(false);
+    expect(isNodeJsProcess({ send: () => undefined })).toBe(false);
+    expect(isNodeJsProcess({ send: () => undefined, on: () => undefined })).toBe(
+      true,
+    );
+  });
+
+  it("parent.pid 缺省时 ready/health 回退到 process.pid", async () => {
+    (fakeParent as unknown as { pid: number | undefined }).pid = undefined;
+    fakeParent.emitMessage({
+      type: "hello",
+      protocolVersion: FEEDBACK_PROTOCOL_VERSION,
+      baseDirectory: temporaryDirectory,
+      heartbeatTimeoutMilliseconds: 30_000,
+    });
+    const ready = await fakeParent.waitForSentMessage(
+      (message) => message.type === "ready",
+      2_000,
+      "ready",
+    );
+    expect((ready as { processPid: number }).processPid).toBe(process.pid);
+    fakeParent.emitMessage({ type: "health", requestId: "r-pid" });
+    const health = await fakeParent.waitForSentMessage(
+      (message) => message.type === "healthResult" && message.requestId === "r-pid",
+      2_000,
+      "healthResult",
+    );
+    expect((health as { health: { processPid: number } }).health.processPid).toBe(
+      process.pid,
+    );
+  });
+
+  it("replay 指定单个接收者（非 * 分支）重放已投递消息", async () => {
+    fakeParent.emitMessage({
+      type: "hello",
+      protocolVersion: FEEDBACK_PROTOCOL_VERSION,
+      baseDirectory: temporaryDirectory,
+      heartbeatTimeoutMilliseconds: 30_000,
+    });
+    await fakeParent.waitForSentMessage(
+      (message) => message.type === "ready",
+      2_000,
+      "ready",
+    );
+    fakeParent.emitMessage({
+      type: "setAgentStatus",
+      recipientId: "instance-entry-1",
+      status: "idle",
+    });
+    fakeParent.emitMessage({
+      type: "enqueue",
+      requestId: "r-single",
+      message: makeMessage("recipient-single", 1),
+    });
+    await fakeParent.waitForSentMessage(
+      (message) =>
+        message.type === "deliver" &&
+        message.message.recipientId === "recipient-single",
+      3_000,
+      "deliver",
+    );
+    fakeParent.emitMessage({
+      type: "replay",
+      requestId: "r-replay-one",
+      recipientId: "recipient-single",
+    });
+    const replayResult = await fakeParent.waitForSentMessage(
+      (message) =>
+        message.type === "replayResult" && message.requestId === "r-replay-one",
+      3_000,
+      "replayResult",
+    );
+    expect((replayResult as { replayCount: number }).replayCount).toBe(1);
+  });
+
+  it("省略 processExit/writeStderr 时使用默认实现（退出码 1）", () => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation((() => true) as never);
+    const disconnectedParent = new FakeParent();
+    disconnectedParent.connected = false;
+    runFeedbackProcessEntry(disconnectedParent, {
+      defaultBaseDirectory: temporaryDirectory,
+    });
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    exitSpy.mockRestore();
+    stderrSpy.mockRestore();
+  });
 });
+
 
