@@ -40,6 +40,7 @@ export type DomainErrorCode =
   | "context-node-not-closable"
   | "global-decision-not-found"
   | "global-decision-invalid"
+  | "human-verification-policy-invalid"
   | "unknown";
 
 export class DomainError extends Error {
