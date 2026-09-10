@@ -72,7 +72,7 @@
 - 本检查点实现与入口证据：`docs/reports/T07D_R1_03_RESULTS_CLOSE_EVIDENCE.md`。权威结果来自 `AgentWorkArchiveStore` 的 `result` 条目（`readMissionResultSummaries`）；终态粘滞、取消幂等且只发一次 `task-finished`、`submit-failed` 稳定错误码、订阅退订与回调隔离；`shutdown` 先 `MainController.shutdown()` 取消在途编排再释放反馈进程，修复了“关闭后仍写工作存档导致 unhandled ENOENT”的真实缺陷。
 - 测试命令、退出码和产物哈希：红灯 3/5 失败 → 绿灯 20 通过 → `npx tsc --noEmit` exit 0 → `npm run check` exit 0（148 文件 / 1397 测试，无 unhandled error）→ `npm run test:coverage` exit 0（语句 94.10% / 分支 87.33% / 函数 91.55% / 行 94.18%）→ 隔离消费者 exit 0（`summaryPreview="（mock 执行器）"`、关闭后进程干净退出）；tarball SHA-256 `FF0314EE6517B849CE62AC0EDDDC2B8BC95FDB1AE7B204F16AA1EAE29A476A63`。
 - 人工/外部依赖及剩余风险：无人工裁决；跨进程 SDK 会话/结果恢复属 T12A-R1；真实 Provider/人工体验不在本检查点范围。
-- 本地提交、推送尝试与结果：本检查点提交（见 git log 顶部）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
+- 本地提交、推送尝试与结果：提交 `0a0bfe5`（权威结果 + 关闭收敛 + 控制器 shutdown + 测试 + 证据报告）；`git push origin main` 第 1 次尝试成功（`bb77141..0a0bfe5`）。
 
 
 
