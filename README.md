@@ -163,6 +163,7 @@ Tab: 切换面板  Ctrl+M: 模式  Ctrl+N: 新任务  Ctrl+C: 取消/退出  ?: 
 
 - Provider：`mock` 为唯一离线可用路径；各厂商适配器按 T07D 卡分级记录支持等级，未做真实凭据联网验收。
 - 覆盖率：全局分支 85.06% 达标；AR-07 §1 的 22 个关键安全模块单模块分支覆盖率均 ≥95%（12 个 100%，2026-09-10 复测，含属性/故障注入/安全反例测试）。遗留：Linux/macOS 跨平台矩阵、Node 20、dev 工具链 audit 修复、`recover` CLI 深层接线，以及沙箱受限时 `npm run build`/`test:coverage`/`pack` 的复跑。
+- 产品接线（INT-00 实测，2026-09-10）：Public SDK facade 尚未接入应用控制器（`readPublicResult` 恒 `null`，`submitTask` 把 `accepted` 当 `task-finished` 发出且不触发调度）；非 mock 运行时仍被 `run` 拒绝；上下文组件与 `recover` 未进入产品入口。证据见 `docs/reports/INT00_PRODUCT_PATH_MATRIX.md`、`docs/reports/INT00_BEHAVIOR_EVIDENCE.md`、`docs/reports/INT00_STATUS_RECONCILIATION.md`；返修卡 `T07D-R1`、`T07D-R2`、`T09A-R1`、`T12A-R1`。
 
 ## 当前限制
 

@@ -1,6 +1,6 @@
 # Astarray 返修序列补充任务卡：GUI MVP
 
-> 状态：待执行  
+> 状态：待执行；**依赖纠偏 2026-09-10**：旧边 `B6R-10 → GUI-01 → T08B` 作废（GUI 不再阻塞已实现的 `T08B`），新批以 `T07D-R1 → GUI-01-R` 取代，见 `docs/reports/INT00_STATUS_RECONCILIATION.md`  
 > 编制日期：2026-08-16  
 > 任务编号：GUI-01  
 > 任务来源：用户  

@@ -146,3 +146,23 @@ AR-07 §1 列出的 22 个关键安全模块分支覆盖率**全部 ≥95%**（1
 本轮受限项（保持未勾选）：`npm run build`/`npm run test:coverage` 默认配置被沙箱 `spawn EPERM` 拒绝
 （同一会话早前 `npm run check` exit 0、全局分支 85.06%）；Linux/macOS 跨平台矩阵、Node 20、
 真实 Provider 与 dev 工具链 audit 修复仍无本地动态证据。
+
+## 11. 产品接线缺口与旧状态纠偏（INT-00，2026-09-10）
+
+INT-00-01/02/03 以当前提交为基线复核了从公共入口到实际执行的调用链与行为，结论与纠偏见：
+`docs/reports/INT00_PRODUCT_PATH_MATRIX.md`（8 条路径矩阵）、`docs/reports/INT00_BEHAVIOR_EVIDENCE.md`（9 组命令/退出码/产物）、
+`docs/reports/INT00_STATUS_RECONCILIATION.md`（证据分级、映射、GUI 依赖核查）。
+
+| 能力 | 实测状态 | 移交 |
+|---|---|---|
+| CLI `run` / TUI（mock） | 真实控制器 + 落盘 + 状态可读回 | 无需返修 |
+| Public SDK / 应用服务 | facade 未接控制器；结果恒 `null`；事件误报 | `T07D-R1-01..04` |
+| Provider 真实运行时 | `run` 拒绝非 mock；bootstrap 固定 `ScriptedRuntime` | `T07D-R2-01..04`（04 预期 blocked） |
+| 上下文预算/关闭/回访 | 模块齐备但编排零装配；完成任务后图仍为空 | `T09A-R1-01..04` |
+| 会话恢复 | `recover` 未注册且为桩 | `T12A-R1-01..04` |
+| GUI / 外部桥接 | 仅占位或契约 | `GUI-01-R`、`BRIDGE-01` |
+
+状态纠偏：`PLAN_STATUS.md` 中 `T09A`、`T12A` 由 `done` 改为 `re-verifying`，`T07D` 保留 `re-verifying` 并标注缺口；
+T07D/T09A/T12A/GUI-01 旧卡顶部加范围说明；GUI 旧边 `B6R-10 → GUI-01 → T08B` 作废，改为 `T07D-R1 → GUI-01-R → WB-00`（无环）。
+历史测试、覆盖率、tarball 与验收记录全部保留，仅降级“产品接线未验证”的范围表述。
+

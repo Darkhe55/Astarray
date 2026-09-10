@@ -1,5 +1,6 @@
 # T09A：全局决策提升、局部上下文节点关闭与分级回访任务卡
 
+> **范围纠偏 2026-09-10**：历史 `done` 仅覆盖模块级证据；上下文组件未进入编排运行路径（完成任务后 `context status` 仍为空图），见 `docs/reports/INT00_STATUS_RECONCILIATION.md`，移交 `T09A-R1-01..04`。
 > 状态：`done`（T09A-01~08 完成：全量 `npm run check` exit 0 / 134 文件 1264 测试全绿；恢复单元回归 34/34；npm pack 171 文件 + verify-package + smoke-install 全通过；剩余：全局分支覆盖率 83.23% < 85% 与跨平台矩阵待 AR-07 收尾）  
 > 设计日期：2026-09-09  
 > 任务来源：用户  

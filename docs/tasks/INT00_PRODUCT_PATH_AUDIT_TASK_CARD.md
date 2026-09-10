@@ -32,7 +32,7 @@
 
 ### INT-00-03：状态与依赖纠偏
 
-- 状态：pending。
+- 状态：done（2026-09-10）。产物：`docs/reports/INT00_STATUS_RECONCILIATION.md`。
 - 工作：逐项区分契约、实现、接线、离线端到端、真实服务、人工体验证据；更新旧卡顶部范围说明及 PLAN_STATUS/README/DELIVERY_REPORT 中冲突状态，保留历史证据。
 - 验收：T07D-06/07/08、T09A、T12A 未满足项映射到明确返修检查点；GUI 旧依赖不得形成循环；真实服务未验证不得写已支持。
 - 前驱：INT-00-02。先通过前驱，再执行本节点。
@@ -58,7 +58,15 @@ SDK可导入不代表任务执行；无HTTP监听不能单独证明没有MCP；�
 - 本检查点实现与入口证据：`docs/reports/INT00_BEHAVIOR_EVIDENCE.md` 记录 9 组命令的退出码与输出。要点：最小 CLI `run` exit 0（`mission-f94ef028` / `status done`，磁盘生成 `summary.json`、`task-chain.json`、worker `work-archive.json`、`backup-vault/manifest.json`）；非 mock 运行时 exit 2；`recover list` exit 1（命令未注册）；`context status` exit 0 但**完成任务后仍 `graphIdentifier: null`**；隔离 SDK 消费 `accepted` / `readPublicResult=null` / `stateDirCreated=False`；`shutdown()` 后调用抛 `SDK 已关闭`。
 - 测试命令、退出码和产物哈希：本检查点为只读行为取证，未新增测试，未安装新资源。tarball `.tmp/int00-02/sdk/astarray-0.1.0.tgz`，SHA-256 `A2CD54F22B4943AFCF2C29982200DE4A0E5FF6E6B28B2285183BF4F5C7137D34`。
 - 人工/外部依赖及剩余风险：无人工裁决；未连接真实 Provider（离线仅 mock）；Windows-only；多进程并发、真实服务兼容与人工体验分别属 `T07D-R2-04` / `E2E-01`。
-- 本地提交、推送尝试与结果：提交 `a88b2c3`（`docs/reports/INT00_BEHAVIOR_EVIDENCE.md` + 本卡记录）；`git push origin main` 第 1 次尝试成功（`d42fccc..a88b2c3`）。
+- 本地提交、推送尝试与结果：提交 `a88b2c3`（`docs/reports/INT00_BEHAVIOR_EVIDENCE.md` + 本卡记录）；`git push origin main` 第 1 次尝试成功（`d42fccc..a88b2c3`）。后续补记：`c3025bd`。
+### INT-00-03 验收记录
+
+- 当前提交/工作树基线：`c3025bd`（与 `origin/main` 同点）；工作树含用户并行的 3 M + 10 个未跟踪新卡。
+- 本检查点实现与入口证据：`docs/reports/INT00_STATUS_RECONCILIATION.md` 给出六类证据分级（契约/实现/接线/离线端到端/真实服务/人工体验）、未满足项映射与 GUI 依赖核查。纠偏动作：`PLAN_STATUS.md` 将 `T09A`、`T12A` 由 `done` 改为 `re-verifying`（`T07D` 保留 `re-verifying` 并标注 SDK/Provider 缺口）；T07D/T09A/T12A/GUI-01 旧卡顶部加范围说明（历史 `done` 仅模块级，产品接线未满足）；`README.md` 当前限制与 `DELIVERY_REPORT.md` §11 记录产品接线缺口。
+- 测试命令、退出码和产物哈希：本检查点为文档纠偏，未新增测试、未改动产品代码；沿用 INT-00-01/02 的命令证据（`npm audit` exit 0、CLI `run` exit 0、`recover list` exit 1、tarball SHA-256 `A2CD54F2…7D34`）。
+- 人工/外部依赖及剩余风险：无人工裁决；真实服务/人工体验/跨平台仍无证据，不得写为已支持。
+- 本地提交、推送尝试与结果：本检查点提交（新增纠偏报告 + 旧卡范围说明 + PLAN_STATUS/README/DELIVERY_REPORT 纠偏）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
+
 
 
 ## 首轮执行指令

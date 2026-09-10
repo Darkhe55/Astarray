@@ -34,6 +34,8 @@
 >
 > 2026-09-10 AR-07 关键模块分支覆盖率专项收口 + 完整门禁复跑：新增 10 个 AR-07 测试文件（属性、并发、故障注入、安全反例、TUI 交互；全量 1301 → 1383 测试），AR-07 §1 的 22 个关键安全模块分支覆盖率**全部 ≥95%**（12 个 100%；process-supervisor 以 mock fork/ForkFeedbackClient 达 96.4%、entrypoint 95.4%、backup-vault 96.4%）。真实环境复跑全部通过：`npm run check` exit 0（145 文件 / 1383 测试，typecheck+lint+build+test）、`npm run test:coverage` exit 0（**分支 87.45%**，较 85.06% 提升；语句 94.14% / 函数 91.59% / 行 94.21%）、`npm pack` 171 文件 + verify-package + smoke-install 全部 exit 0；`git push origin main` 成功（4350261..64626ea）。51 项最终安全验收矩阵见 `docs/tasks/AR07_FINAL_ACCEPTANCE.md` §9（逐行复核 **50 ✅ / 1 ⚠**：第 7 项仅剩非 win32 平台归一化分支）；未本地验证项（真实 Provider、Node 20、Linux/macOS 跨平台矩阵）单列 §5。T00~T11 的 `re-verifying` 待各自 AR 复验项确认后恢复 done。
 >
+> 2026-09-10 INT-00-03 状态与依赖纠偏：按 `docs/reports/INT00_STATUS_RECONCILIATION.md`，历史 `T07D`（`T07D-06/07/08`）、`T09A`、`T12A` 的 `done` 仅代表模块/适配器与“可导入”级证据，产品接线未通过；`T09A`/`T12A` 由 `done` 改为 `re-verifying`，`T07D` 保留 `re-verifying` 并标注缺口。返修映射：`T07D-08 → T07D-R1-01..04`、`T07D-06/07 → T07D-R2-01..04 + E2E-01`、`T09A → T09A-R1-01..04`、`T12A → T12A-R1-01..04`。GUI 旧边 `B6R-10 → GUI-01 → T08B` 作废，改为 `T07D-R1 → GUI-01-R → WB-00`（无环）。历史测试、覆盖率与 tarball 证据全部保留。
+>
 > 2026-08-12 审计整改：外部验收发现 7 项阻断性问题，全部已修复并回归（详见"审计整改记录"）。修复涉及 S1 doctor 数据丢失、S2 反馈入池校验、S3 备份事务闭环、S4 授权绑定、S5 交互授权通道、S6 存档 provenance、S7 config 备份保护；另完成覆盖率与测试基建改善（S8/S9）。
 
 ## 任务总览
@@ -64,7 +66,7 @@
 | T07A | 明确完成协议与早停恢复 | re-verifying | 4J | 2026-08-13 完成；Batch 4J 检查点（583 测试全绿）；待 AR 复验 |
 | T07B | 反自指读取与通用活锁守卫 | re-verifying | 4H | 2026-08-13 完成；Batch 4H 检查点（539 测试全绿）；待 AR 复验 |
 | T07C | Agent 独立模型/Provider 策略与任务类型预设 | re-verifying | 6H | T07C-01~06 全部完成（957 测试全绿；dist 可达 + smoke-install 通过）；T07D 可开始 |
-| T07D | 多 Provider 生产运行时与独立 Agent 工作助手 | re-verifying | 6I | T07D-00~08 全部完成（1117 测试全绿；SDK exports 隔离导入验证 + smoke-install 通过） |
+| T07D | 多 Provider 生产运行时与独立 Agent 工作助手 | re-verifying（INT-00 纠偏：SDK 仅“可导入”、Provider 仍 mock-only，产品接线缺口移交 `T07D-R1`/`T07D-R2`/`E2E-01`） | 6I | T07D-00~08 全部完成（1117 测试全绿；SDK exports 隔离导入验证 + smoke-install 通过） |
 | T07E | Agent 工作集与默认10文件读取预算 | re-verifying | pre-T07D | T07E-01~06 全部完成（1106 测试全绿；dist 可达 + smoke-install 通过） |
 | T08 | 三级 Agent 编排 | re-verifying | 5 | AR-04 复验：T05B→T08 Git 编排接入完成（Batch 5 增补检查点），待 AR-04 全项复验 |
 | T08A | 默认控制流、个体记忆隔离与三级 Agent 生命周期 | re-verifying | 6D | B6R-07/08/09 已返修完成；待终验（跨平台矩阵） |
@@ -72,11 +74,11 @@
 | T08C | 主对话独占、次级直投、项目侦察/验收与四级委派 | re-verifying | 6F | T08C-01~07 全部完成（858 测试全绿；dist 可达 + smoke-install 通过）；T08D 可开始 |
 | T08D | 阶段性“工匠”三级 Agent与工作流定制 | re-verifying | 6G | T08D-01~06 全部完成（910 测试全绿；dist 可达 + smoke-install 通过）；T07C 可开始 |
 | T09 | 记忆、缓存与指标 | re-verifying | 6 | AR-00 重新验收中 |
-| T09A | 全局决策提升、局部上下文节点关闭与分级回访 | done | post-T12增补 | T09A-01~08 完成：ADR-0031 + 契约/存储/选择/验收/胶囊/回访/缓存指标/共用视图；全量 `npm run check` exit 0（134 文件 1264 测试）+ 恢复回归 34/34 + npm pack 171 文件 + verify/smoke 全通过；剩余风险：全局分支覆盖率 83.23%<85%、跨平台矩阵待 AR-07 |
+| T09A | 全局决策提升、局部上下文节点关闭与分级回访 | re-verifying（模块级证据成立；运行期未装配，见 INT-00-03） | post-T12增补 | T09A-01~08 完成：ADR-0031 + 契约/存储/选择/验收/胶囊/回访/缓存指标/共用视图；全量 `npm run check` exit 0（134 文件 1264 测试）+ 恢复回归 34/34 + npm pack 171 文件 + verify/smoke 全通过；剩余风险：全局分支覆盖率 83.23%<85%、跨平台矩阵待 AR-07 |
 | T10 | TUI | re-verifying | 6 | AR-00 重新验收中（AR-02 授权交互） |
 | T11 | Headless CLI | re-verifying | 6 | AR-00 重新验收中 |
 | T12 | 恢复、安全与异常加固 | done | 7 | T12-01~06 完成；AR-07 复验：`npm run check` 1301 测试全绿、覆盖率 85.06%、tarball 终验通过 |
-| T12A | 统一会话恢复、任务续接与外部状态对账 | done | pre-T12 | T12A-01~07 完成；AR-07 复验：恢复单元回归 34/34 + 故障注入套件随 `npm run check` 全绿 |
+| T12A | 统一会话恢复、任务续接与外部状态对账 | re-verifying（模块级证据成立；`recover` 未注册且为桩，见 INT-00-03） | pre-T12 | T12A-01~07 完成；AR-07 复验：恢复单元回归 34/34 + 故障注入套件随 `npm run check` 全绿 |
 | T13 | npm 打包与隔离安装 | done | 8 | 最终终验（2026-09-10）：`npm pack` 171 文件 + verify-package + smoke-install（隔离安装/CLI/全局 shim/feedback-entry）全通过 |
 | T14 | 文档与最终报告 | done | 8 | README（上下文生命周期/并发恢复加固/限制）、DELIVERY_REPORT §10、AR-07 复验记录与遗留清单对齐 |
 
