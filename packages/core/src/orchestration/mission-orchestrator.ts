@@ -18,6 +18,7 @@ import type {
 } from "../core/types.js";
 import type { GitWorkerAllocation } from "../core/types.js";
 import type { GitIntegrationReport } from "../core/types.js";
+import type { ToolDescriptor } from "../core/types.js";
 import type { AgentWorkArchiveStore } from "./work-archive-store.js";
 import { DomainError } from "../core/errors.js";
 import type { MissionLeaseStore } from "../infra/mission-lease-store.js";
@@ -36,6 +37,8 @@ export interface OrchestratorWorkerFactories {
   ) => AgentRuntime;
   toolPortFactory: (task: TaskDependencyNode) => ToolPort;
   buildPermissionExplanation: (toolName: string) => string;
+  /** T07D-R2-03：实际暴露给 Provider 的工具描述符（按任务工具子集）。 */
+  toolDescriptorFactory?: (task: TaskDependencyNode) => ToolDescriptor[];
 }
 
 /**
@@ -69,6 +72,8 @@ export interface MissionOrchestratorOptions {
   failureThreshold: number;
   maxLoopIterations: number;
   workerFactories: OrchestratorWorkerFactories;
+  /** T07D-R2-03：Provider 运行时是否强制要求本地完成控制事件。 */
+  requireCompletionControlEvent?: boolean;
   feedbackTransportFactory: () => Promise<FeedbackTransportPort>;
   onMissionFinished: (status: "done" | "cancelled") => void | Promise<void>;
   /** 无法由调度层裁决、需要用户输入时回调（ambiguity / 裁决指令无法解析）。 */
@@ -403,6 +408,9 @@ export class MissionOrchestrator {
       agentInstanceId,
       missionId,
       task,
+      availableToolDescriptors:
+        this.options.workerFactories.toolDescriptorFactory?.(task) ?? [],
+      requireCompletionEvent: this.options.requireCompletionControlEvent ?? false,
       runtime: this.options.workerFactories.runtimeFactory(agentInstanceId, task),
       toolPort: workerToolPort,
       failureCounter: this.getFailureCounter(task.id),

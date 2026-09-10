@@ -46,15 +46,28 @@ program
   .option("--mode <mode>", "运行模式: ponder | assist | devolve")
   .option("--runtime <runtime>", "运行时: mock | openai-compatible")
   .option("--json", "输出机器可解析 JSON")
-  .action(async (prompt: string, options: { mode?: string; runtime?: string; json?: boolean }) => {
-    process.exitCode = await executeRunCommand({
-      prompt,
-      mode: options.mode,
-      runtime: options.runtime,
-      isJsonOutput: options.json === true,
-      stateDirectory: defaultStateDirectory(),
-    });
-  });
+  .option(
+    "--timeout-seconds <seconds>",
+    "等待上限秒数；缺省不设固定上限，等待任务终态",
+  )
+  .action(
+    async (
+      prompt: string,
+      options: { mode?: string; runtime?: string; json?: boolean; timeoutSeconds?: string },
+    ) => {
+      process.exitCode = await executeRunCommand({
+        prompt,
+        mode: options.mode,
+        runtime: options.runtime,
+        isJsonOutput: options.json === true,
+        stateDirectory: defaultStateDirectory(),
+        timeoutSeconds:
+          options.timeoutSeconds === undefined
+            ? undefined
+            : Number.parseInt(options.timeoutSeconds, 10),
+      });
+    },
+  );
 
 program
   .command("resume <mission-id>")

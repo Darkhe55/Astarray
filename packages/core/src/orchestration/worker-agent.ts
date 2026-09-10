@@ -12,8 +12,10 @@ import type {
   FeedbackMessage,
   FeedbackTransportPort,
   TaskDependencyNode,
+  ToolDescriptor,
   ToolPort,
 } from "../core/types.js";
+import { CompletionControlParser } from "../core/completion-protocol.js";
 import { runToolLoop } from "../runtime/tool-loop.js";
 import type { ToolFailureCounter } from "./failure-counter.js";
 
@@ -43,6 +45,10 @@ export interface WorkerAgentOptions {
   missionId: string;
   task: TaskDependencyNode;
   runtime: AgentRuntime;
+  /** T07D-R2-03：暴露给 Provider 的工具子集描述符（默认空 = 不暴露工具）。 */
+  availableToolDescriptors?: ToolDescriptor[];
+  /** T07D-R2-03：Provider 运行时必须给出本地完成控制事件才允许结案。 */
+  requireCompletionEvent?: boolean;
   toolPort: ToolPort;
   failureCounter: ToolFailureCounter;
   feedbackTransport: FeedbackTransportPort;
@@ -74,6 +80,27 @@ export class WorkerAgent {
     this.cancellationController.abort();
   }
 
+  /** T07D-R2-03：本地完成门禁——必须解析出声明本任务的版本化完成事件。 */
+  private verifyCompletionControlEvent(): string | null {
+    const parser = new CompletionControlParser();
+    const parsed = parser.parseTextOutput({
+      finalOutputText: this.outputTextChunks.join(""),
+      markerGracePeriodLines: 1,
+    });
+    if (parsed.kind === "blocked") {
+      return (
+        "模型声明任务阻塞，未满足完成门禁: " + parsed.event.blockReason
+      );
+    }
+    if (parsed.kind !== "completion") {
+      return "缺少 ASTARRAY_TASK_COMPLETION_V1 完成控制事件（本地完成门禁未通过）";
+    }
+    if (!parsed.event.completedTaskIdentifiers.includes(this.options.task.id)) {
+      return "完成事件未声明本任务: " + this.options.task.id;
+    }
+    return null;
+  }
+
   async run(): Promise<WorkerOutcome> {
     const { feedbackTransport } = this.options;
     feedbackTransport.setAgentStatus(this.options.agentInstanceId, "busy");
@@ -90,7 +117,7 @@ export class WorkerAgent {
           this.options.archiveAttachments ?? [],
         ),
         userPrompt: this.options.task.description,
-        availableToolDescriptors: [],
+        availableToolDescriptors: this.options.availableToolDescriptors ?? [],
         maxLoopIterations: this.options.maxLoopIterations,
       },
       {
@@ -141,11 +168,23 @@ export class WorkerAgent {
             break;
           }
           if (event.reason === "success") {
-            finalReason = {
-              outcome: "success",
-              summary: summarize(this.outputTextChunks),
-              resultLocation: null,
-            };
+            const completionGateFailure = this.options.requireCompletionEvent
+              ? this.verifyCompletionControlEvent()
+              : null;
+            if (completionGateFailure !== null) {
+              finalReason = {
+                outcome: "failure",
+                toolName: null,
+                failureReason: completionGateFailure,
+                stateSummary: summarize(this.outputTextChunks),
+              };
+            } else {
+              finalReason = {
+                outcome: "success",
+                summary: summarize(this.outputTextChunks),
+                resultLocation: null,
+              };
+            }
           } else if (event.reason === "ambiguous") {
             finalReason = {
               outcome: "ambiguous",

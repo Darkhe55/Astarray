@@ -171,14 +171,26 @@ describe("AR-07：SensitiveContentAccessPolicy 分支缺口", () => {
 describe("AR-07：PolicyWrapper 分支缺口", () => {
   it("安装门禁装配且未提供执行标识时使用默认值", async () => {
     const assertInstallationAllowed = vi.fn(async () => ({ allowed: true, reason: null }));
+    // T07D-R2-03：安装门禁只对进程执行/系统级/未知副作用类工具生效，
+    // 因此用进程执行类工具（stub registry）覆盖默认标识分支。
     const wrapper = buildWrapper({
       installationGateGuard: { assertInstallationAllowed } as never,
       requestingAgentInstanceId: undefined,
       taskExecutionId: undefined,
+      registry: {
+        getDescriptor: () => ({
+          name: "runProcess",
+          summary: "执行进程",
+          category: "forbidden",
+          backupPolicy: "not-required",
+          mutationKind: "none",
+          inputSchema: { type: "object" },
+        }),
+      } as never,
     });
     const result = await wrapper.execute(
-      "readFile",
-      JSON.stringify({ filePath: path.join(temporaryDirectory, "x.txt") }),
+      "runProcess",
+      JSON.stringify({ command: "whoami" }),
       "call-1",
       new AbortController().signal,
     );

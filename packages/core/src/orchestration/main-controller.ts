@@ -13,6 +13,7 @@ import type {
   TaskChainDocument,
   TaskDependencyNode,
   TaskStorePort,
+  ToolDescriptor,
   ToolPort,
 } from "../core/types.js";
 import type { SessionAuthorizationManager } from "../core/permission-policy.js";
@@ -65,6 +66,10 @@ export interface MainControllerOptions {
   concurrency: number;
   failureThreshold: number;
   maxLoopIterations: number;
+  /** T07D-R2-03：按任务工具子集解析暴露给 Provider 的工具描述符。 */
+  resolveToolDescriptors?: (task: TaskDependencyNode) => ToolDescriptor[];
+  /** T07D-R2-03：Provider 运行时强制要求本地完成控制事件。 */
+  requireCompletionControlEvent?: boolean;
   /** 次级/主 Agent 的 LLM 运行时工厂。 */
   mainRuntimeFactory: (agentInstanceId: string) => AgentRuntime;
   workerRuntimeFactory: (
@@ -586,8 +591,10 @@ export class MainController {
         this.options.secondaryAgentInstanceIdFactory?.(missionId) ??
         `scheduler:${missionId}`,
       gitIntegration: this.options.gitIntegration ?? null,
+      requireCompletionControlEvent: this.options.requireCompletionControlEvent ?? false,
       workerFactories: {
         runtimeFactory: this.options.workerRuntimeFactory,
+        toolDescriptorFactory: this.options.resolveToolDescriptors,
         toolPortFactory: (task) =>
           this.options.buildWorkerToolPort(task, new Set(task.toolNames)),
         buildPermissionExplanation: this.options.buildPermissionExplanation,
@@ -630,8 +637,10 @@ export class MainController {
         this.options.secondaryAgentInstanceIdFactory?.(missionId) ??
         `scheduler:${missionId}`,
       gitIntegration: this.options.gitIntegration ?? null,
+      requireCompletionControlEvent: this.options.requireCompletionControlEvent ?? false,
       workerFactories: {
         runtimeFactory: this.options.workerRuntimeFactory,
+        toolDescriptorFactory: this.options.resolveToolDescriptors,
         toolPortFactory: (task) =>
           this.options.buildWorkerToolPort(task, new Set(task.toolNames)),
         buildPermissionExplanation: this.options.buildPermissionExplanation,

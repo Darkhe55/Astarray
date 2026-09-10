@@ -20,6 +20,7 @@ import type { ProtectedStoragePolicy } from "./protected-storage-policy.js";
 import type { TaskSequenceStatusController } from "../orchestration/task-sequence-controllers.js";
 import type { LocalToolPolicyEngine } from "./local-tool-policy-engine.js";
 import { InstallationGateGuard } from "./installation-gate-guard.js";
+import { LocalSensitiveOperationClassifier } from "./local-sensitive-operation-classifier.js";
 import type { ConfigurablePermissionPolicyEngine } from "./configurable-permission-policy-engine.js";
 import type { PermissionProfileReference } from "./permission-profile-store.js";
 import {
@@ -77,6 +78,8 @@ export interface PolicyWrapperOptions {
 }
 
 export class PolicyWrapper implements ToolPort {
+  private readonly operationClassifier = new LocalSensitiveOperationClassifier();
+
   constructor(private readonly options: PolicyWrapperOptions) {}
 
   async execute(
@@ -97,9 +100,23 @@ export class PolicyWrapper implements ToolPort {
     try {
       const descriptor = this.assertRegistered(toolName);
       this.assertWithinWorkerSubset(toolName);
-      // B6R-02：安装类调用执行前先经 T06E 两阶段门禁（分类/询问/开关/allow-once）
+      // B6R-02：安装类调用执行前先经 T06E 两阶段门禁（分类/询问/开关/allow-once）。
+      // T07D-R2-03：只对进程执行/系统级/未知副作用类工具走安装门禁；
+      // 内置只读/状态/备份类工具名不应被命令分类器按“未知命令”误判为安装尝试。
       const installationGate = this.options.installationGateGuard;
-      if (installationGate !== null && installationGate !== undefined) {
+      const operationClassification = this.operationClassifier.classifyOperation({
+        toolName,
+        mutationKind: descriptor.mutationKind,
+      });
+      const isInstallationCapableOperation =
+        operationClassification.operationClass === "process-execution" ||
+        operationClassification.operationClass === "system-level" ||
+        operationClassification.operationClass === "unknown";
+      if (
+        installationGate !== null &&
+        installationGate !== undefined &&
+        isInstallationCapableOperation
+      ) {
         const gateDecision = await installationGate.assertInstallationAllowed({
           commandName: toolName,
           arguments: [argumentsJson],

@@ -26,14 +26,31 @@ import { writeAtomicJson } from "../infra/atomic-json.js";
 
 export interface AgentWorkArchiveStoreOptions {
   baseDirectory: string;
+  /**
+   * T07D-R2-03：条目落盘后的即时回调（best-effort，不抛错）。
+   * 用于运行时内存索引，避免“终态已到但存档读取仍未可见”的竞态。
+   */
+  onEntryAppended?: (input: {
+    missionId: string;
+    agentInstanceId: string;
+    entry: AgentWorkArchiveEntry;
+  }) => void;
 }
 
 export class AgentWorkArchiveStore {
   private readonly stateDirectory: string;
   private readonly agentMutexes = new Map<string, AsyncMutex>();
+  private readonly onEntryAppended:
+    | ((input: {
+        missionId: string;
+        agentInstanceId: string;
+        entry: AgentWorkArchiveEntry;
+      }) => void)
+    | null;
 
   constructor(options: AgentWorkArchiveStoreOptions) {
     this.stateDirectory = options.baseDirectory;
+    this.onEntryAppended = options.onEntryAppended ?? null;
   }
 
   private archiveDirectoryPath(
@@ -103,6 +120,15 @@ export class AgentWorkArchiveStore {
         this.archiveFilePath(input.missionId, input.agentInstanceId),
         parsed.data,
       );
+      try {
+        this.onEntryAppended?.({
+          missionId: input.missionId,
+          agentInstanceId: input.agentInstanceId,
+          entry: newEntry,
+        });
+      } catch {
+        // 内存索引失败不得影响存档落盘
+      }
       return parsed.data;
     });
   }

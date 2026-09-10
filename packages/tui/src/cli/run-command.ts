@@ -15,6 +15,8 @@ export interface RunCommandOptions {
   runtime: string | undefined;
   isJsonOutput: boolean;
   stateDirectory: string;
+  /** T07D-R2-03：等待上限秒数；缺省不设固定上限（等待任务终态）。 */
+  timeoutSeconds?: number;
 }
 
 export async function executeRunCommand(options: RunCommandOptions): Promise<number> {
@@ -61,11 +63,12 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
       taskIdentifier: "cli-task",
       prompt: options.prompt,
     });
-    const finalStatus = await waitForTerminalStatus(
-      application,
-      "cli-run",
-      "cli-task",
-    );
+    const finalStatus = await waitForTaskTerminal(application, "cli-run", "cli-task", {
+      timeoutMilliseconds:
+        options.timeoutSeconds === undefined
+          ? null
+          : options.timeoutSeconds * 1_000,
+    });
     printJson({
       missionId: accepted.missionIdentifier,
       mode: runConfig.mode,
@@ -78,13 +81,28 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
   }
 }
 
-async function waitForTerminalStatus(
+export interface WaitForTaskTerminalOptions {
+  /** 总体等待上限（毫秒）；null/undefined = 不设固定上限，直到任务终态。 */
+  timeoutMilliseconds?: number | null;
+  pollIntervalMilliseconds?: number;
+}
+
+/**
+ * 等待任务终态（T07D-R2-03）：不再使用固定一分钟上限误收口长任务；
+ * 仅在调用方显式给出 timeoutMilliseconds 时才提前返回 running。
+ */
+export async function waitForTaskTerminal(
   application: AstarrayApplicationFacade,
   sessionId: string,
   taskIdentifier: string,
+  options: WaitForTaskTerminalOptions = {},
 ): Promise<string> {
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
+  const deadlineMilliseconds =
+    options.timeoutMilliseconds === undefined || options.timeoutMilliseconds === null
+      ? null
+      : Date.now() + options.timeoutMilliseconds;
+  const pollIntervalMilliseconds = options.pollIntervalMilliseconds ?? 50;
+  while (deadlineMilliseconds === null || Date.now() < deadlineMilliseconds) {
     const result = await application.queryTask({ sessionId, taskIdentifier });
     if (result.status === "done" || result.status === "cancelled") {
       return result.status;
@@ -92,7 +110,7 @@ async function waitForTerminalStatus(
     if (result.status === "blocked" || result.status === "failed") {
       return "blocked";
     }
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMilliseconds));
   }
   return "running";
 }

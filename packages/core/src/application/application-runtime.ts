@@ -19,7 +19,11 @@ import { MainController } from "../orchestration/main-controller.js";
 import { MissionManager } from "../orchestration/mission-manager.js";
 import { FeedbackProcessSupervisor } from "../feedback-process/process-supervisor.js";
 import type { ForkFeedbackClient } from "../feedback-process/transport.js";
-import type { AgentRuntime, TaskDependencyNode } from "../core/types.js";
+import type {
+  AgentRuntime,
+  TaskDependencyNode,
+  ToolDescriptor,
+} from "../core/types.js";
 import type { BackupDeletionAuthorizationControlPort } from "../core/types.js";
 import type { InstallationGateUserPort } from "../tools/installation-gate-guard.js";
 import {
@@ -106,6 +110,8 @@ export interface ApplicationRuntimeOptions {
     agentInstanceId: string,
     task: TaskDependencyNode,
   ) => AgentRuntime;
+  /** T07D-R2-03：Provider 运行时强制要求本地完成控制事件（mock 默认关闭）。 */
+  requireCompletionControlEvent?: boolean;
 }
 
 export async function createApplicationRuntime(
@@ -152,8 +158,25 @@ export async function createApplicationRuntime(
     readCurrentVaultRevision: () => backupVault.getManifestRevision(),
   });
   // T05A：Agent 工作存档
+  // T07D-R2-03：结果条目落盘即时入内存索引，避免终态先于存档可见的竞态。
+  const inMemoryResultSummariesByMission = new Map<
+    string,
+    Array<{ taskId: string | null; entryType: string; summary: string }>
+  >();
   const workArchiveStore = new AgentWorkArchiveStore({
     baseDirectory: stateDirectory,
+    onEntryAppended: ({ missionId, entry }) => {
+      if (entry.entryType !== "result" || entry.summary.length === 0) {
+        return;
+      }
+      const existing = inMemoryResultSummariesByMission.get(missionId) ?? [];
+      existing.push({
+        taskId: entry.taskId,
+        entryType: entry.entryType,
+        summary: entry.summary,
+      });
+      inMemoryResultSummariesByMission.set(missionId, existing);
+    },
   });
 
   // B6R-02：T06E 安装门禁（分类器/设置/询问/逐次授权 + 交互端口）
@@ -431,6 +454,11 @@ export async function createApplicationRuntime(
       }),
     buildPermissionExplanation: (toolName: string) =>
       `执行任务需要调用工具 ${toolName}`,
+    resolveToolDescriptors: (task: TaskDependencyNode): ToolDescriptor[] =>
+      task.toolNames
+        .map((toolName) => registry.getDescriptor(toolName))
+        .filter((descriptor): descriptor is ToolDescriptor => descriptor !== undefined),
+    requireCompletionControlEvent: options.requireCompletionControlEvent ?? false,
     streamOutput: options.streamOutput,
   });
 
@@ -444,6 +472,10 @@ export async function createApplicationRuntime(
   const readMissionResultSummaries = async (
     missionId: string,
   ): Promise<Array<{ taskId: string | null; entryType: string; summary: string }>> => {
+    const inMemory = inMemoryResultSummariesByMission.get(missionId);
+    if (inMemory !== undefined && inMemory.length > 0) {
+      return [...inMemory];
+    }
     const agentInstanceIds = await workArchiveStore.listAgentIdsWithArchive(missionId);
     const summaries: Array<{ taskId: string | null; entryType: string; summary: string }> = [];
     for (const agentInstanceId of agentInstanceIds) {

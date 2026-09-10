@@ -200,6 +200,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       feedbackProcessModulePath: null,
       mainRuntimeFactory,
       workerRuntimeFactory,
+      requireCompletionControlEvent: runtimeKind === "provider",
     });
     return new AstarrayApplicationFacade(runtime, {
       statusPollIntervalMilliseconds: options.statusPollIntervalMilliseconds ?? 25,

@@ -39,7 +39,21 @@ function makeRecordingRegistration(label: string) {
     createRuntime: (config) => {
       createdModelIdentifiers.push(config.modelIdentifier);
       return new ScriptedRuntime([
-        { type: "text", text: "（registered provider runtime " + label + "）" },
+        {
+          type: "text",
+          text:
+            "（registered provider runtime " +
+            label +
+            "）\n" +
+            "ASTARRAY_TASK_COMPLETION_V1 " +
+            JSON.stringify({
+              taskExecutionId: "task-exec:registered",
+              completionAttemptId: "attempt-registered-" + label,
+              completedTaskIdentifiers: ["T-001"],
+              claimedStatus: "complete",
+              taskSequenceRevision: 1,
+            }),
+        },
         { type: "finish", reason: "success", detail: "provider run" },
       ]);
     },

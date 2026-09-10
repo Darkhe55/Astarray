@@ -1,6 +1,6 @@
 # T07D-R2：首个真实 Provider 产品接线
 
-> 状态：`in_progress`（T07D-R2-01/02 done；T07D-R2-03/04 pending）
+> 状态：`in_progress`（T07D-R2-01/02/03 done；T07D-R2-04 pending）
 > 创建日期：2026-09-10
 > 类型：核心返修；高风险工作按检查点执行
 > 来源：用户授权布置；本文件为Agent派生实施方案，运行态节点默认层级1或以下，不冒充用户层级0
@@ -32,7 +32,7 @@
 
 ### T07D-R2-03：工具与多层调度
 
-- 状态：pending。
+- 状态：done（2026-09-10）。产物：`docs/reports/T07D_R2_03_TOOL_LOOP_EVIDENCE.md`。
 - 工作：主Agent和工作Agent使用允许的运行时；实际工具注册、执行前权限、安装门禁、备份、来源、完成协议和看门狗进入循环。
 - 验收：实际fixture读取/修改/测试；禁用工具无法旁路；未满足本地完成门禁不宣布成功；CLI等待策略不再用固定一分钟误收口长任务。
 - 前驱：T07D-R2-02。先通过前驱，再执行本节点。
@@ -65,7 +65,15 @@
 - 本检查点实现与入口证据：`docs/reports/T07D_R2_02_FAKE_SERVER_EVIDENCE.md`。新增 openai-compatible 真实注册与凭据解析；适配器改为**增量 SSE 消费**（TextDecoder stream 处理跨字节中文）并区分超时与取消；编排层把 Worker 运行时异常收敛为任务失败。集成测试经公共入口覆盖分片中文+慢流、429、断流、超时、取消与工具调用参数消费，断言适配器不执行工具、不决定完成。
 - 测试命令、退出码和产物哈希：红灯模块缺失 → 绿灯 22 通过（集成 6 + 适配器回归 16，无 unhandled error）→ `npm run check` exit 0（151 文件 / 1410 测试）→ `npm run test:coverage` exit 0（语句 93.94% / 分支 87.30% / 函数 90.98% / 行 94.03%）；本检查点未产出 tarball。
 - 人工/外部依赖及剩余风险：无人工裁决、无真实服务调用；Worker 工具描述符仍为空（产品级工具执行属 `T07D-R2-03`）；非 2xx 统一映射 `provider-timeout` 的粒度问题已记录。
-- 本地提交、推送尝试与结果：提交 `4867349`（真实注册 + 增量流 + 失败分类 + 集成测试 + 证据报告）；`git push origin main` 第 1 次尝试成功（`b8d5c93..4867349`）。
+- 本地提交、推送尝试与结果：提交 `4867349`（真实注册 + 增量流 + 失败分类 + 集成测试 + 证据报告）；`git push origin main` 第 1 次尝试成功（`b8d5c93..4867349`）。后续补记：`c95a1a0`。
+### T07D-R2-03 验收记录
+
+- 当前提交/工作树基线：`c95a1a0`（与 `origin/main` 同点）；工作树含用户并行的 3 M + 10 个未跟踪新卡。
+- 本检查点实现与入口证据：`docs/reports/T07D_R2_03_TOOL_LOOP_EVIDENCE.md`。Worker 现将任务工具子集经注册表解析为 Provider 工具描述符；安装门禁收窄到进程执行/系统级/未知副作用类操作（修复 `readFile` 被误判为安装的缺陷）；Provider 运行时强制 `ASTARRAY_TASK_COMPLETION_V1` 完成事件且须声明本任务；CLI 等待改为无固定上限 + 可选 `--timeout-seconds`；新增工作存档追加回调与内存结果索引消除结果预览竞态。
+- 测试命令、退出码和产物哈希：红灯（安装门禁误拒）→ 绿灯 34 通过 → `npm run check` exit 0（153 文件 / 1416 测试）→ `npm run test:coverage` exit 0（语句 93.86% / 分支 87.28% / 函数 91.07% / 行 93.94%）；本检查点未产出 tarball。
+- 人工/外部依赖及剩余风险：无需人工裁决；`LocalCompletionVerifier` 的 revision/证据包全量校验与真实服务小样本分别属 `E2E-01`、`T07D-R2-04`（缺凭据 blocked）。
+- 本地提交、推送尝试与结果：本检查点提交（见 git log 顶部）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
+
 
 
 ## 首轮执行指令

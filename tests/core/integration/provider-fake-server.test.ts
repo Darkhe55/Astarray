@@ -34,6 +34,16 @@ afterEach(async () => {
   await fs.rm(stateDirectory, { recursive: true, force: true, maxRetries: 5 });
 });
 
+const completionMarkerLine = () =>
+  "ASTARRAY_TASK_COMPLETION_V1 " +
+  JSON.stringify({
+    taskExecutionId: "task-exec:provider",
+    completionAttemptId: "attempt-fake",
+    completedTaskIdentifiers: ["T-001"],
+    claimedStatus: "complete",
+    taskSequenceRevision: 1,
+  });
+
 type ScenarioHandler = (
   body: Record<string, unknown>,
   response: http.ServerResponse,
@@ -129,7 +139,8 @@ describe("T07D-R2-02：经产品入口连接本地 fake server", () => {
       await new Promise((resolve) => setTimeout(resolve, 30));
       writeSseChunk(response, "式恢", null);
       await new Promise((resolve) => setTimeout(resolve, 30));
-      writeSseChunk(response, "复完成", "stop");
+      writeSseChunk(response, "复完成", null);
+      writeSseChunk(response, "\n" + completionMarkerLine(), "stop");
       response.write("data: [DONE]\n\n");
       response.end();
     });
