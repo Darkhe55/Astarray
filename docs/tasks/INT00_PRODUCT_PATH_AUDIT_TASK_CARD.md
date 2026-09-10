@@ -25,7 +25,7 @@
 
 ### INT-00-02：行为证据
 
-- 状态：pending。
+- 状态：done（2026-09-10）。产物：`docs/reports/INT00_BEHAVIOR_EVIDENCE.md`。
 - 工作：通过已有离线环境执行最小 CLI 和隔离 SDK 消费场景；检查 submit 是否触发调度、accepted 是否误报 finished、结果是否来自执行、关闭是否回收资源；检查上下文/恢复能力是否到达产品入口。
 - 验收：记录命令、退出码、产物、真实事件顺序；只读诊断不安装新资源，不触发真实付费请求。
 - 前驱：INT-00-01。先通过前驱，再执行本节点。
@@ -45,11 +45,21 @@ SDK可导入不代表任务执行；无HTTP监听不能单独证明没有MCP；�
 
 ## 验收记录
 
+### INT-00-01 验收记录
+
 - 当前提交/工作树基线：`8ebdaa87b72754f4c40ecab9cbf9dadb8249e6cc`（与 `origin/main` 同点）；工作树 13 项未提交，全部为用户并行的产品接线文档（3 M + 10 个新卡），本检查点未改动产品代码。
 - 本检查点实现与入口证据：`docs/reports/INT00_PRODUCT_PATH_MATRIX.md` 给出 8 条产品路径的入口→装配→执行结论，逐条附文件:符号、搜索范围与反例。关键结论：Public SDK facade 未接控制器（`public-sdk.ts:48,100-116`）、`run` 拒绝非 mock 且 bootstrap 固定 `ScriptedRuntime`（`run-command.ts:31-36`、`bootstrap.ts:379-391`）、上下文组件未进编排（`main-controller.ts` 0 命中）、`recover` 未在 `cli.tsx` 注册且为桩（`commands.ts:1805-1880`）、桥接仅契约。
 - 测试命令、退出码和产物哈希：本检查点为文档/链路审计，未新增测试。已执行只读诊断：`git rev-parse HEAD`、`git status --porcelain`、`node -e require(package.json)`、`npm audit --audit-level=high`（exit 0）、`node --input-type=module` 调用 `dist/public-sdk.js`（输出 `submitResult.status=accepted`、`readPublicResult=null`、事件 `task-finished/accepted`）。未生成 tarball，故无产物哈希。
 - 人工/外部依赖及剩余风险：无需人工裁决；剩余风险是真实 Provider/真实服务无凭据（`T07D-R2-04` 预期 blocked）、GUI 仅占位、Linux/macOS 与 Node 20 未验证。行为级证据待 INT-00-02。
-- 本地提交、推送尝试与结果：提交 `8aca696`（新增 `docs/reports/INT00_PRODUCT_PATH_MATRIX.md` + 本卡验收记录）；`git push origin main` 第 1 次尝试即成功（`8ebdaa8..8aca696`）。
+- 本地提交、推送尝试与结果：提交 `8aca696`（新增 `docs/reports/INT00_PRODUCT_PATH_MATRIX.md` + 本卡验收记录）；`git push origin main` 第 1 次尝试即成功（`8ebdaa8..8aca696`）。后续补记：`d42fccc` 记录 INT-00-01 提交/推送结果并已推送。
+### INT-00-02 验收记录
+
+- 当前提交/工作树基线：`d42fccc`（与 `origin/main` 同点）；工作树仍为用户并行的 3 M + 10 个未跟踪新卡。
+- 本检查点实现与入口证据：`docs/reports/INT00_BEHAVIOR_EVIDENCE.md` 记录 9 组命令的退出码与输出。要点：最小 CLI `run` exit 0（`mission-f94ef028` / `status done`，磁盘生成 `summary.json`、`task-chain.json`、worker `work-archive.json`、`backup-vault/manifest.json`）；非 mock 运行时 exit 2；`recover list` exit 1（命令未注册）；`context status` exit 0 但**完成任务后仍 `graphIdentifier: null`**；隔离 SDK 消费 `accepted` / `readPublicResult=null` / `stateDirCreated=False`；`shutdown()` 后调用抛 `SDK 已关闭`。
+- 测试命令、退出码和产物哈希：本检查点为只读行为取证，未新增测试，未安装新资源。tarball `.tmp/int00-02/sdk/astarray-0.1.0.tgz`，SHA-256 `A2CD54F22B4943AFCF2C29982200DE4A0E5FF6E6B28B2285183BF4F5C7137D34`。
+- 人工/外部依赖及剩余风险：无人工裁决；未连接真实 Provider（离线仅 mock）；Windows-only；多进程并发、真实服务兼容与人工体验分别属 `T07D-R2-04` / `E2E-01`。
+- 本地提交、推送尝试与结果：本检查点提交（`docs/reports/INT00_BEHAVIOR_EVIDENCE.md` + 本卡记录）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次），结果随本轮收尾记录。
+
 
 ## 首轮执行指令
 
