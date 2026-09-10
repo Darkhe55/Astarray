@@ -79,7 +79,7 @@
 - 本检查点实现与入口证据：`docs/reports/T07D_R1_04_CONSUMER_PARITY_EVIDENCE.md`。新增公共 `PublicApplicationService` 端口与 `queryMission`，facade 全部委托同一控制器；CLI headless `run` 与 TUI 均改用 `AstarrayApplicationFacade`；新增仓库内 tarball 消费者验证脚本 `verify:sdk-consumer`；parity 测试证明 CLI 与 SDK 观察同一 mission 状态一致且任务链真实落盘。
 - 测试命令、退出码和产物哈希：红灯 1 失败（`queryMission` 缺失）→ 绿灯 24 通过 → `npm run check` 连续两次 exit 0（149 文件 / 1398 测试，无 unhandled error）→ `npm run test:coverage` exit 0（语句 93.93% / 分支 87.30% / 函数 90.82% / 行 94.02%）→ `node scripts/verify-sdk-consumer.mjs` exit 0；tarball SHA-256 `8FC96503E674B2E5A4D5C04695B41FF08A009F024C0C739897DCDB42264EEBC2`。
 - 人工/外部依赖及剩余风险：无人工裁决；消费者未采样到 `summaryPreview` 的时序问题由 -03 单测覆盖并在后续查询重试；真实 Provider/跨平台不在本卡范围。
-- 本地提交、推送尝试与结果：本检查点提交（见 git log 顶部）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
+- 本地提交、推送尝试与结果：提交 `ac5e1d7`（应用服务端口 + CLI/TUI 切换 + 消费者验证脚本 + parity 测试 + 结果竞态修复）；`git push origin main` 第 1 次尝试成功（`8208679..ac5e1d7`）。
 
 
 
