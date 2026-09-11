@@ -81,7 +81,7 @@
 - 本检查点实现与入口证据：`docs/reports/T09A_R1_04_METRICS_EVIDENCE.md`。新增运行时指标纯函数复算（版本/样本/分母/本地缓存估算/失效原因/Provider usage 观察/样本限制）、JSONL 事件存储、装配事件发出（hit/miss + 精准失效原因）、产品运行时写入、`context metrics` CLI。
 - 测试命令、退出码和产物哈希：新增套件 4 通过 → 恢复回归 5 套件 34 通过 → `npm run check` exit 0（165 文件 / 1441 测试）→ `npm run test:coverage` exit 0（语句 93.81% / 分支 87.16% / 函数 91.36% / 行 93.88%）；本检查点未产出 tarball。
 - 人工/外部依赖及剩余风险：无人工裁决；Provider usage 未采集（如实标记 unavailable）；生命周期事件未并入同一 JSONL。T09A-R1 卡四检查点全部通过。
-- 本地提交、推送尝试与结果：本检查点提交（见 git log 顶部）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
+- 本地提交、推送尝试与结果：提交 `b654972`（指标模块 + 事件存储 + 装配事件 + CLI + 测试 + 证据报告）；`git push origin main` 第 1 次尝试成功（`1689ccb..b654972`）。
 
 
 ## 首轮执行指令
