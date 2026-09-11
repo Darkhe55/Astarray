@@ -37,8 +37,17 @@ export interface ContextRecallNodeIndex {
   state: string | null;
 }
 
+export interface ContextRecallLedgerPort {
+  readEntry(ledgerKey: string): Promise<RecallLedgerEntry | null>;
+  writeEntry(ledgerKey: string, entry: RecallLedgerEntry): Promise<void>;
+  readTaskRecallCount(taskExecutionId: string): Promise<number>;
+  writeTaskRecallCount(taskExecutionId: string, count: number): Promise<void>;
+}
+
 export interface ContextRecallControllerOptions {
   capsuleStore: ContextClosureCapsuleStore;
+  /** T09A-R1-03：持久化回执/预算账本（跨进程 CLI 调用需要）。 */
+  ledgerPort?: ContextRecallLedgerPort | null;
   nowMilliseconds?: () => number;
   recallCooldownMilliseconds?: number;
   maximumRecallsPerTaskExecution?: number;
@@ -78,7 +87,7 @@ export type ContextRecallResult =
       nextTierAvailable: ContextRecallTier | null;
     };
 
-interface RecallLedgerEntry {
+export interface RecallLedgerEntry {
   returnedAtMilliseconds: number;
   tier: ContextRecallTier;
 }
@@ -97,9 +106,11 @@ export class ContextRecallController {
   >;
   private readonly recallCountByTaskExecution = new Map<string, number>();
   private readonly ledgerByCallerAndNode = new Map<string, RecallLedgerEntry>();
+  private readonly ledgerPort: ContextRecallLedgerPort | null;
 
   constructor(options: ContextRecallControllerOptions) {
     this.capsuleStore = options.capsuleStore;
+    this.ledgerPort = options.ledgerPort ?? null;
     this.nowMilliseconds = options.nowMilliseconds ?? (() => Date.now());
     this.recallCooldownMilliseconds =
       options.recallCooldownMilliseconds ?? DEFAULT_RECALL_COOLDOWN_MILLISECONDS;
@@ -130,7 +141,10 @@ export class ContextRecallController {
     const request: ContextRecallRequest = parsedRequest.data;
     const nowMilliseconds = input.nowMilliseconds ?? this.nowMilliseconds();
 
-    const consumedRecalls = this.recallCountByTaskExecution.get(request.taskExecutionId) ?? 0;
+    const consumedRecalls =
+      this.ledgerPort !== null
+        ? await this.ledgerPort.readTaskRecallCount(request.taskExecutionId)
+        : this.recallCountByTaskExecution.get(request.taskExecutionId) ?? 0;
     if (consumedRecalls >= this.maximumRecallsPerTaskExecution) {
       return {
         status: "refused",
@@ -145,9 +159,13 @@ export class ContextRecallController {
       request.contextNodeIdentifier +
       "/" +
       String(request.nodeRevision);
-    const existingLedgerEntry = this.ledgerByCallerAndNode.get(ledgerKey);
+    const existingLedgerEntry =
+      this.ledgerPort !== null
+        ? await this.ledgerPort.readEntry(ledgerKey)
+        : this.ledgerByCallerAndNode.get(ledgerKey);
     if (
       existingLedgerEntry !== undefined &&
+      existingLedgerEntry !== null &&
       nowMilliseconds - existingLedgerEntry.returnedAtMilliseconds < this.recallCooldownMilliseconds
     ) {
       return {
@@ -212,7 +230,7 @@ export class ContextRecallController {
     remainingTokenCount -= estimateRecallTokenCount(JSON.stringify(nodeIndex));
     if (remainingTokenCount < 0) {
       budgetExhausted = true;
-      return this.finishRecallResult({
+      return await this.finishRecallResult({
         request,
         tier,
         nodeIndex,
@@ -236,7 +254,7 @@ export class ContextRecallController {
         remainingTokenCount -= capsuleTokens;
       } else {
         budgetExhausted = true;
-        return this.finishRecallResult({
+        return await this.finishRecallResult({
           request,
           tier,
           nodeIndex,
@@ -261,7 +279,7 @@ export class ContextRecallController {
         remainingTokenCount -= evidenceTokens;
       } else {
         budgetExhausted = true;
-        return this.finishRecallResult({
+        return await this.finishRecallResult({
           request,
           tier,
           nodeIndex,
@@ -291,7 +309,7 @@ export class ContextRecallController {
         remainingTokenCount -= fragmentTokens;
       } else {
         budgetExhausted = true;
-        return this.finishRecallResult({
+        return await this.finishRecallResult({
           request,
           tier,
           nodeIndex,
@@ -308,7 +326,7 @@ export class ContextRecallController {
       }
     }
 
-    return this.finishRecallResult({
+    return await this.finishRecallResult({
       request,
       tier,
       nodeIndex,
@@ -324,7 +342,7 @@ export class ContextRecallController {
     });
   }
 
-  private finishRecallResult(input: {
+  private async finishRecallResult(input: {
     request: ContextRecallRequest;
     tier: ContextRecallTier;
     nodeIndex: ContextRecallNodeIndex;
@@ -337,7 +355,7 @@ export class ContextRecallController {
     nowMilliseconds: number;
     ledgerKey: string;
     input: { callerAgentInstanceId: string; request: unknown };
-  }): ContextRecallResult {
+  }): Promise<ContextRecallResult> {
     const estimatedTokenCount = input.request.maximumTokenCount - input.remainingTokenCount;
     this.ledgerByCallerAndNode.set(input.ledgerKey, {
       returnedAtMilliseconds: input.nowMilliseconds,
@@ -347,6 +365,16 @@ export class ContextRecallController {
       input.request.taskExecutionId,
       (this.recallCountByTaskExecution.get(input.request.taskExecutionId) ?? 0) + 1,
     );
+    if (this.ledgerPort !== null) {
+      await this.ledgerPort.writeEntry(input.ledgerKey, {
+        returnedAtMilliseconds: input.nowMilliseconds,
+        tier: input.tier,
+      });
+      await this.ledgerPort.writeTaskRecallCount(
+        input.request.taskExecutionId,
+        this.recallCountByTaskExecution.get(input.request.taskExecutionId) ?? 1,
+      );
+    }
     return {
       status: "ok",
       tier: input.tier,

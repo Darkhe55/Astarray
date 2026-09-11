@@ -919,6 +919,78 @@ export async function executeConfigInstallEnabledCommand(
   return EXIT_CODES.SUCCESS;
 }
 
+/** T09A-R1-03：结构化上下文回访（ASTARRAY_CONTEXT_RECALL_REQUEST_V1）。 */
+export interface ContextRecallCommandOptions {
+  stateDirectory: string;
+  callerAgentInstanceId: string;
+  graphIdentifier: string;
+  requestJson: string;
+  isJsonOutput: boolean;
+}
+
+export async function executeContextRecallCommand(
+  options: ContextRecallCommandOptions,
+): Promise<number> {
+  try {
+    const { ContextRecallController } = await import(
+      "../../../core/src/orchestration/context-recall-controller.js"
+    );
+    const { ContextClosureCapsuleStore } = await import(
+      "../../../core/src/orchestration/context-closure-capsule-store.js"
+    );
+    const { LocalContextGraphStore } = await import(
+      "../../../core/src/orchestration/local-context-graph-store.js"
+    );
+    const capsuleStore = new ContextClosureCapsuleStore({
+      baseDirectory: options.stateDirectory,
+    });
+    const graphStore = new LocalContextGraphStore({
+      baseDirectory: options.stateDirectory,
+    });
+    const { FileContextRecallLedgerStore } = await import(
+      "../../../core/src/orchestration/context-recall-ledger-store.js"
+    );
+    const controller = new ContextRecallController({
+      capsuleStore,
+      ledgerPort: new FileContextRecallLedgerStore({
+        baseDirectory: options.stateDirectory,
+        callerAgentInstanceId: options.callerAgentInstanceId,
+      }),
+      nodeIndexProvider: async (
+        ownerAgentInstanceId: string,
+        contextNodeIdentifier: string,
+      ) => {
+        const graph = await graphStore.readGraph(
+          ownerAgentInstanceId,
+          options.graphIdentifier,
+        );
+        if (graph === null) {
+          return null;
+        }
+        const node = graph.nodes.find(
+          (candidate) => candidate.contextNodeIdentifier === contextNodeIdentifier,
+        );
+        if (node === undefined) {
+          return null;
+        }
+        return { missionId: graph.missionId, state: node.state };
+      },
+    });
+    const result = await controller.recall({
+      callerAgentInstanceId: options.callerAgentInstanceId,
+      request: JSON.parse(options.requestJson) as unknown,
+    });
+    if (options.isJsonOutput) {
+      printJson(result);
+    } else {
+      process.stdout.write("recall-status: " + result.status + "\n");
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    return failWith(error as Error);
+  }
+}
+
 /** T09A-R1-02：全局上下文预算查看/设置（默认 4096；0 表示不自动注入全局记录）。 */
 export interface ConfigContextBudgetCommandOptions {
   stateDirectory: string;

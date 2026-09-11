@@ -1,6 +1,6 @@
 # T09A-R1：上下文生命周期运行接线
 
-> 状态：`in_progress`（T09A-R1-01/02 done；T09A-R1-03/04 pending）
+> 状态：`in_progress`（T09A-R1-01/02/03 done；T09A-R1-04 pending）
 > 创建日期：2026-09-10
 > 类型：核心返修；高风险工作按检查点执行
 > 来源：用户授权布置；本文件为Agent派生实施方案，运行态节点默认层级1或以下，不冒充用户层级0
@@ -32,7 +32,7 @@
 
 ### T09A-R1-03：关闭、人工验收与回访工具
 
-- 状态：pending。
+- 状态：done（2026-09-10）。产物：`docs/reports/T09A_R1_03_CLOSURE_VERIFICATION_EVIDENCE.md`。
 - 工作：注册结构化回访和本地关闭控制，接通Assist阻塞/Devolve延迟及开关、签字revision、补充核验与否决重开。
 - 验收：产品任务生成真实胶囊及层级1+核验任务；重复回访回执/预算生效；延迟子节点不能让祖先被错误标为全已人工验收。
 - 前驱：T09A-R1-02。先通过前驱，再执行本节点。
@@ -66,6 +66,14 @@
 - 测试命令、退出码和产物哈希：新增 4 套件 10 通过 → `npm run check` exit 0（160 文件 / 1432 测试）→ `npm run test:coverage` exit 0（语句 93.87% / 分支 87.34% / 函数 91.19% / 行 93.95%）；本检查点未产出 tarball。
 - 人工/外部依赖及剩余风险：无人工裁决；延迟片段的自动回访注入属 `-03`；TUI 图形设置控件未接入（CLI/SDK 已通）。
 - 本地提交、推送尝试与结果：提交 `c389be7`（预算存储 + 选择缓存 + 延后片段读取 + CLI 命令 + 测试 + 证据报告）；`git push origin main` 第 1 次尝试成功（`4f7e815..c389be7`）。
+
+### T09A-R1-03 验收记录
+
+- 当前提交/工作树基线：`c900fa9`（与 `origin/main` 同点）；工作树含用户并行的 3 M + 7 个未跟踪新卡。
+- 本检查点实现与入口证据：`docs/reports/T09A_R1_03_CLOSURE_VERIFICATION_EVIDENCE.md`。产品任务成功后经 `ContextNodeLifecycleController` 建节点→本地验证→按策略关闭/等待→生成胶囊与层级 1 延迟核验任务；`accepted-closed` 增加 required 子节点必须同样 `accepted-closed` 的严格门禁；回访账本持久化并新增 `context recall` CLI；重复回执与预算拒绝生效。
+- 测试命令、退出码和产物哈希：`npm run check` exit 0（163 文件 / 1437 测试）→ `npm run test:coverage` exit 0（语句 93.83% / 分支 87.24% / 函数 91.34% / 行 93.90%）；本检查点未产出 tarball。
+- 人工/外部依赖及剩余风险：无人工裁决；CLI 关闭/签字/否决子命令与 TUI 控件未接入（服务与控制面已通）；`-04` 实际缓存与指标待做。
+- 本地提交、推送尝试与结果：本检查点提交（见 git log 顶部）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
 
 
 ## 首轮执行指令

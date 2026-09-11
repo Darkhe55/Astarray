@@ -42,6 +42,17 @@ export type WorkerOutcome =
     }
   | { outcome: "cancelled" };
 
+export interface ContextNodeLifecyclePort {
+  completeTaskNode(input: {
+    ownerAgentInstanceId: string;
+    missionId: string;
+    taskIdentifier: string;
+    taskDescription: string;
+    summaryText: string;
+    modeKey: string;
+  }): Promise<unknown>;
+}
+
 export interface WorkerAgentOptions {
   agentInstanceId: string;
   missionId: string;
@@ -53,6 +64,10 @@ export interface WorkerAgentOptions {
   requireCompletionEvent?: boolean;
   /** T09A-R1-01：上下文提示词装配（全局相关选择 + 局部活跃前沿）。 */
   contextPromptProvider?: ContextPromptProvider;
+  /** T09A-R1-03：任务完成后的上下文节点收口（建立/验证/关闭/胶囊/核验任务）。 */
+  contextNodeLifecycle?: ContextNodeLifecyclePort | null;
+  /** T09A-R1-03：当前模式（人工验收策略来源）。 */
+  contextLifecycleModeKey?: string;
   toolPort: ToolPort;
   failureCounter: ToolFailureCounter;
   feedbackTransport: FeedbackTransportPort;
@@ -237,6 +252,20 @@ export class WorkerAgent {
       }
     }
     await this.appendArchiveEntryForOutcome(finalReason);
+    if (
+      finalReason.outcome === "success" &&
+      this.options.contextNodeLifecycle !== undefined &&
+      this.options.contextNodeLifecycle !== null
+    ) {
+      await this.options.contextNodeLifecycle.completeTaskNode({
+        ownerAgentInstanceId: this.options.agentInstanceId,
+        missionId: this.options.missionId,
+        taskIdentifier: this.options.task.id,
+        taskDescription: this.options.task.description,
+        summaryText: finalReason.summary,
+        modeKey: this.options.contextLifecycleModeKey ?? "assist",
+      });
+    }
     await this.reportOutcome(finalReason);
     feedbackTransport.setAgentStatus(this.options.agentInstanceId, "idle");
     return finalReason;

@@ -20,6 +20,7 @@ import type { GitWorkerAllocation } from "../core/types.js";
 import type { GitIntegrationReport } from "../core/types.js";
 import type { ToolDescriptor } from "../core/types.js";
 import type { ContextPromptProvider } from "./context-prompt-assembler.js";
+import type { ContextNodeLifecyclePort } from "./worker-agent.js";
 import type { AgentWorkArchiveStore } from "./work-archive-store.js";
 import { DomainError } from "../core/errors.js";
 import type { MissionLeaseStore } from "../infra/mission-lease-store.js";
@@ -77,6 +78,10 @@ export interface MissionOrchestratorOptions {
   requireCompletionControlEvent?: boolean;
   /** T09A-R1-01：上下文提示词装配提供者。 */
   contextPromptProvider?: ContextPromptProvider;
+  /** T09A-R1-03：任务完成后的上下文节点收口。 */
+  contextNodeLifecycle?: ContextNodeLifecyclePort | null;
+  /** T09A-R1-03：当前模式（人工验收策略来源）。 */
+  contextLifecycleModeKey?: string;
   feedbackTransportFactory: () => Promise<FeedbackTransportPort>;
   onMissionFinished: (status: "done" | "cancelled") => void | Promise<void>;
   /** 无法由调度层裁决、需要用户输入时回调（ambiguity / 裁决指令无法解析）。 */
@@ -415,6 +420,8 @@ export class MissionOrchestrator {
         this.options.workerFactories.toolDescriptorFactory?.(task) ?? [],
       requireCompletionEvent: this.options.requireCompletionControlEvent ?? false,
       contextPromptProvider: this.options.contextPromptProvider,
+      contextNodeLifecycle: this.options.contextNodeLifecycle ?? null,
+      contextLifecycleModeKey: this.options.contextLifecycleModeKey,
       runtime: this.options.workerFactories.runtimeFactory(agentInstanceId, task),
       toolPort: workerToolPort,
       failureCounter: this.getFailureCounter(task.id),

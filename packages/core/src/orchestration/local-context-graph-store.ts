@@ -176,6 +176,41 @@ export class LocalContextGraphStore {
     });
   }
 
+  /**
+   * T09A-R1-03：标记节点状态（CAS）；已关闭状态不得回退为非关闭状态。
+   */
+  async markNodeState(input: {
+    ownerAgentInstanceId: string;
+    graphIdentifier: string;
+    expectedGraphRevision: number;
+    contextNodeIdentifier: string;
+    state: ContextNodeState;
+  }): Promise<LocalContextGraph> {
+    return this.getGraphLock(input.ownerAgentInstanceId, input.graphIdentifier).runExclusive(async () => {
+      const current = await this.requireGraphCurrentRevision(input);
+      const node = this.requireNode(current, input.contextNodeIdentifier);
+      if (this.isClosedState(node.state) && !this.isClosedState(input.state)) {
+        throw new DomainError(
+          "context-graph-invalid",
+          "已关闭节点不得回退为非关闭状态: " + input.contextNodeIdentifier,
+        );
+      }
+      const next = this.withRevision(current, {
+        nodes: current.nodes.map((candidate) =>
+          candidate.contextNodeIdentifier === node.contextNodeIdentifier
+            ? {
+                ...candidate,
+                state: input.state,
+                updatedAtIso: new Date(this.nowMilliseconds()).toISOString(),
+              }
+            : candidate,
+        ),
+      });
+      await this.persistGraph(input.ownerAgentInstanceId, input.graphIdentifier, next);
+      return next;
+    });
+  }
+
   async addEdge(input: AddContextEdgeInput): Promise<LocalContextGraph> {
     return this.getGraphLock(input.ownerAgentInstanceId, input.graphIdentifier).runExclusive(async () => {
       const current = await this.requireGraphCurrentRevision(input);
@@ -241,6 +276,30 @@ export class LocalContextGraphStore {
           "context-node-not-closable",
           "仍有 " + node.openRequiredChildCount + " 个未关闭 required 直接子节点: " + input.contextNodeIdentifier,
         );
+      }
+      // T09A-R1-03：accepted-closed 要求 required 子节点也必须 accepted-closed；
+      // 仅 deferred-review-closed 的子节点不得让祖先被标记为“已人工验收”。
+      if (input.targetState === "accepted-closed") {
+        const unverifiedRequiredChildIdentifiers = current.edges
+          .filter(
+            (edge) =>
+              edge.edgeType === "required" &&
+              edge.fromContextNodeIdentifier === input.contextNodeIdentifier,
+          )
+          .map((edge) => edge.toContextNodeIdentifier)
+          .filter((childIdentifier) => {
+            const child = current.nodes.find(
+              (candidate) => candidate.contextNodeIdentifier === childIdentifier,
+            );
+            return child === undefined || child.state !== "accepted-closed";
+          });
+        if (unverifiedRequiredChildIdentifiers.length > 0) {
+          throw new DomainError(
+            "context-node-not-closable",
+            "required 子节点尚未通过人工验收: " +
+              unverifiedRequiredChildIdentifiers.join(", "),
+          );
+        }
       }
       const nextNodes = current.nodes.map((candidate) => {
         if (candidate.contextNodeIdentifier === input.contextNodeIdentifier) {

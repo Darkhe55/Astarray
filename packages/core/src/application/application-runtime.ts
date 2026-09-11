@@ -68,6 +68,12 @@ import { AgentIndividualMemoryStore } from "../orchestration/agent-individual-me
 import { CrossAgentContextAttachmentController } from "../orchestration/cross-agent-attachment-controller.js";
 import { GlobalDecisionStore } from "../orchestration/global-decision-store.js";
 import { GlobalContextBudgetStore } from "../orchestration/global-context-budget-store.js";
+import { ContextClosureCapsuleStore } from "../orchestration/context-closure-capsule-store.js";
+import {
+  HumanVerificationController,
+  HumanVerificationPolicyStore,
+} from "../orchestration/human-verification-controller.js";
+import { ContextNodeLifecycleController } from "../orchestration/context-node-lifecycle.js";
 import { LocalContextGraphStore } from "../orchestration/local-context-graph-store.js";
 import {
   createContextPromptProvider,
@@ -406,6 +412,24 @@ export async function createApplicationRuntime(
   const globalContextBudgetStore = new GlobalContextBudgetStore({
     baseDirectory: stateDirectory,
   });
+  // T09A-R1-03：任务完成后的节点收口（节点 → 验证 → 关闭/等待 → 胶囊 → 核验任务）。
+  const contextClosureCapsuleStore = new ContextClosureCapsuleStore({
+    baseDirectory: stateDirectory,
+  });
+  const humanVerificationController = new HumanVerificationController({
+    baseDirectory: stateDirectory,
+    graphStore: contextGraphStore,
+    globalDecisionStore,
+  });
+  const humanVerificationPolicyStore = new HumanVerificationPolicyStore({
+    baseDirectory: stateDirectory,
+  });
+  const contextNodeLifecycle = new ContextNodeLifecycleController({
+    graphStore: contextGraphStore,
+    capsuleStore: contextClosureCapsuleStore,
+    humanVerificationController,
+    humanVerificationPolicyStore,
+  });
   const contextPromptProvider =
     options.contextPromptProvider ??
     createContextPromptProvider({
@@ -496,6 +520,7 @@ export async function createApplicationRuntime(
         .filter((descriptor): descriptor is ToolDescriptor => descriptor !== undefined),
     requireCompletionControlEvent: options.requireCompletionControlEvent ?? false,
     contextPromptProvider,
+    contextNodeLifecycle,
     streamOutput: options.streamOutput,
   });
 

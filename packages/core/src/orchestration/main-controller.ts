@@ -29,6 +29,7 @@ import type { MissionManager } from "./mission-manager.js";
 import type { MissionLeaseStore } from "../infra/mission-lease-store.js";
 import type { GitIntegrationOrchestrationOptions } from "./mission-orchestrator.js";
 import type { ContextPromptProvider } from "./context-prompt-assembler.js";
+import type { ContextNodeLifecyclePort } from "./worker-agent.js";
 import type { PermissionProfileStore } from "../tools/permission-profile-store.js";
 import type { PermissionProfileReference } from "../tools/permission-profile-store.js";
 import type { PermissionCapabilityCatalog } from "../tools/permission-capability-catalog.js";
@@ -73,6 +74,8 @@ export interface MainControllerOptions {
   requireCompletionControlEvent?: boolean;
   /** T09A-R1-01：上下文提示词装配提供者。 */
   contextPromptProvider?: ContextPromptProvider;
+  /** T09A-R1-03：任务完成后的上下文节点收口。 */
+  contextNodeLifecycle?: ContextNodeLifecyclePort | null;
   /** 次级/主 Agent 的 LLM 运行时工厂。 */
   mainRuntimeFactory: (agentInstanceId: string) => AgentRuntime;
   workerRuntimeFactory: (
@@ -596,6 +599,8 @@ export class MainController {
       gitIntegration: this.options.gitIntegration ?? null,
       requireCompletionControlEvent: this.options.requireCompletionControlEvent ?? false,
       contextPromptProvider: this.options.contextPromptProvider,
+      contextNodeLifecycle: this.options.contextNodeLifecycle ?? null,
+      contextLifecycleModeKey: "assist",
       workerFactories: {
         runtimeFactory: this.options.workerRuntimeFactory,
         toolDescriptorFactory: this.options.resolveToolDescriptors,
@@ -643,6 +648,8 @@ export class MainController {
       gitIntegration: this.options.gitIntegration ?? null,
       requireCompletionControlEvent: this.options.requireCompletionControlEvent ?? false,
       contextPromptProvider: this.options.contextPromptProvider,
+      contextNodeLifecycle: this.options.contextNodeLifecycle ?? null,
+      contextLifecycleModeKey: "devolve",
       workerFactories: {
         runtimeFactory: this.options.workerRuntimeFactory,
         toolDescriptorFactory: this.options.resolveToolDescriptors,

@@ -9,6 +9,7 @@ import {
   executeConfigContextBudgetCommand,
   executeConfigInitCommand,
   executeConfigInstallEnabledCommand,
+  executeContextRecallCommand,
   executeContextStatusCommand,
   executeDoctorCommand,
   executeProfileCopyCommand,
@@ -95,6 +96,24 @@ program
   });
 
 const contextCommand = program.command("context").description("上下文生命周期");
+contextCommand
+  .command("recall")
+  .description("结构化上下文回访（ASTARRAY_CONTEXT_RECALL_REQUEST_V1 JSON）")
+  .requiredOption("--agent <agent-id>", "调用者 agentInstanceId")
+  .requiredOption("--graph <graph-id>", "上下文图标识（用于节点索引）")
+  .requiredOption("--request <json>", "结构化回访请求 JSON")
+  .option("--json", "JSON 输出")
+  .action(
+    async (options: { agent: string; graph: string; request: string; json?: boolean }) => {
+      process.exitCode = await executeContextRecallCommand({
+        stateDirectory: defaultStateDirectory(),
+        callerAgentInstanceId: options.agent,
+        graphIdentifier: options.graph,
+        requestJson: options.request,
+        isJsonOutput: options.json === true,
+      });
+    },
+  );
 contextCommand
   .command("status")
   .description("查看上下文关闭分组、待追认状态与全局上下文预算上限")
