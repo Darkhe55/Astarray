@@ -9,6 +9,7 @@ import {
   executeConfigContextBudgetCommand,
   executeConfigInitCommand,
   executeConfigInstallEnabledCommand,
+  executeContextMetricsCommand,
   executeContextRecallCommand,
   executeContextStatusCommand,
   executeDoctorCommand,
@@ -96,6 +97,16 @@ program
   });
 
 const contextCommand = program.command("context").description("上下文生命周期");
+contextCommand
+  .command("metrics")
+  .description("上下文运行时缓存与 token 指标（由真实装配事件复算）")
+  .option("--json", "JSON 输出")
+  .action(async (options: { json?: boolean }) => {
+    process.exitCode = await executeContextMetricsCommand({
+      stateDirectory: defaultStateDirectory(),
+      isJsonOutput: options.json === true,
+    });
+  });
 contextCommand
   .command("recall")
   .description("结构化上下文回访（ASTARRAY_CONTEXT_RECALL_REQUEST_V1 JSON）")

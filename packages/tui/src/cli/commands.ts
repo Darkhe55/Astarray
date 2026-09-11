@@ -919,6 +919,44 @@ export async function executeConfigInstallEnabledCommand(
   return EXIT_CODES.SUCCESS;
 }
 
+/** T09A-R1-04：上下文运行时指标（由真实装配事件复算）。 */
+export interface ContextMetricsCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+}
+
+export async function executeContextMetricsCommand(
+  options: ContextMetricsCommandOptions,
+): Promise<number> {
+  try {
+    const { ContextRuntimeEventStore } = await import(
+      "../../../core/src/orchestration/context-runtime-event-store.js"
+    );
+    const { computeContextRuntimeMetrics } = await import(
+      "../../../core/src/orchestration/context-runtime-metrics.js"
+    );
+    const assemblyEvents = await new ContextRuntimeEventStore({
+      baseDirectory: options.stateDirectory,
+    }).readAll();
+    const metrics = computeContextRuntimeMetrics({ assemblyEvents });
+    if (options.isJsonOutput) {
+      printJson(metrics);
+    } else {
+      process.stdout.write(
+        "metrics-version: " + metrics.metricsVersion + "\n" +
+          "sample: " + metrics.sampleSize + " (assembly=" + metrics.denominators.assemblyEventCount + ")\n" +
+          "cache: hit=" + metrics.denominators.hitCount + " miss=" + metrics.denominators.missCount + "\n" +
+          "local-hit-ratio: " + (metrics.localCacheEstimate.hitRatio ?? "-") + "\n" +
+          "provider-cache-usage: " + (metrics.providerCacheUsage.available ? String(metrics.providerCacheUsage.cachedTokenCount) : "unavailable") + "\n" +
+          (metrics.percentageBenefitNote === null ? "" : "note: " + metrics.percentageBenefitNote + "\n"),
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    return failWith(error as Error);
+  }
+}
+
 /** T09A-R1-03：结构化上下文回访（ASTARRAY_CONTEXT_RECALL_REQUEST_V1）。 */
 export interface ContextRecallCommandOptions {
   stateDirectory: string;

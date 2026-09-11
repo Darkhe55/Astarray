@@ -11,6 +11,8 @@ import type { TaskDependencyNode } from "../core/types.js";
 import { buildPromptActiveFrontier } from "./context-closure-capsule-store.js";
 import type { GlobalDecisionStore } from "./global-decision-store.js";
 import { selectGlobalDecisionsForTask } from "./global-decision-selector.js";
+import { estimateRecallTokenCount } from "./context-recall-controller.js";
+import type { ContextAssemblyRuntimeEvent } from "./context-runtime-metrics.js";
 import type { LocalContextGraphStore } from "./local-context-graph-store.js";
 
 /** 系统规则文本（独立于可选全局记录，任何预算下都进入提示词）。 */
@@ -149,6 +151,10 @@ export interface ContextPromptProviderOptions {
   }>;
   /** T09A-R1-02：Provider 可用输入空间（token）；配置超出时取较小有效值。 */
   modelInputSpaceTokens?: number | null;
+  /** T09A-R1-04：真实装配事件接收器（原始事件 → 指标复算）。 */
+  runtimeEventSink?: ((event: ContextAssemblyRuntimeEvent) => void | Promise<void>) | null;
+  /** T09A-R1-04：时钟（测试可注入）。 */
+  nowIso?: () => string;
 }
 
 export interface ContextBudgetResolution {
@@ -186,6 +192,10 @@ export function createContextPromptProvider(
   options: ContextPromptProviderOptions,
 ): ContextPromptProvider {
   const selectionCache = new Map<string, ReturnType<typeof selectGlobalDecisionsForTask>>();
+  const lastKeyPartsByScope = new Map<
+    string,
+    { budgetPolicyRevision: number; effectiveBudgetTokens: number; recordsFingerprint: string }
+  >();
   return async (input) => {
     const policy =
       options.budgetPolicyProvider === undefined
@@ -210,7 +220,25 @@ export function createContextPromptProvider(
       String(budget.effectiveMaximumGlobalContextTokenCount),
       recordsFingerprint,
     ].join("|");
+    const scopeKey = input.missionId + "|" + input.agentInstanceId + "|" + input.task.id;
+    const previousKeyParts = lastKeyPartsByScope.get(scopeKey);
+    lastKeyPartsByScope.set(scopeKey, {
+      budgetPolicyRevision: budget.budgetPolicyRevision,
+      effectiveBudgetTokens: budget.effectiveMaximumGlobalContextTokenCount,
+      recordsFingerprint,
+    });
     let selection = selectionCache.get(cacheKey);
+    const cacheStatus: "hit" | "miss" = selection === undefined ? "miss" : "hit";
+    let invalidationReason: string | null = null;
+    if (selection === undefined && previousKeyParts !== undefined) {
+      if (previousKeyParts.budgetPolicyRevision !== budget.budgetPolicyRevision) {
+        invalidationReason = "budget-policy-revision-change";
+      } else if (previousKeyParts.effectiveBudgetTokens !== budget.effectiveMaximumGlobalContextTokenCount) {
+        invalidationReason = "effective-budget-change";
+      } else if (previousKeyParts.recordsFingerprint !== recordsFingerprint) {
+        invalidationReason = "global-records-change";
+      }
+    }
     if (selection === undefined) {
       selection = selectGlobalDecisionsForTask({
         relation: {
@@ -229,7 +257,30 @@ export function createContextPromptProvider(
       input.missionId,
     );
     const frontier = graph === null ? null : buildPromptActiveFrontier(graph);
-    return assembleContextPrompt({
+    const runtimeEventSink = options.runtimeEventSink ?? null;
+    const emitRuntimeEvent = (assembled: AssembledContextPrompt): void => {
+      if (runtimeEventSink === null) {
+        return;
+      }
+      const event: ContextAssemblyRuntimeEvent = {
+        schemaVersion: 1,
+        eventType: "context-assembly",
+        recordedAtIso: options.nowIso?.() ?? new Date().toISOString(),
+        missionId: input.missionId,
+        agentInstanceId: input.agentInstanceId,
+        taskIdentifier: input.task.id,
+        cacheStatus,
+        invalidationReason,
+        injectedGlobalDecisionCount: assembled.injectedGlobalDecisionIdentifiers.length,
+        injectedFrontierNodeCount: assembled.injectedFrontierNodeIdentifiers.length,
+        excludedClosedNodeCount: assembled.excludedClosedNodeCount,
+        estimatedInjectedTokenCount: estimateRecallTokenCount(assembled.promptText),
+        budgetPolicyRevision: budget.budgetPolicyRevision,
+        effectiveBudgetTokens: budget.effectiveMaximumGlobalContextTokenCount,
+      };
+      void Promise.resolve(runtimeEventSink(event)).catch(() => {});
+    };
+    const assembled = assembleContextPrompt({
       systemRulesText: APPLICATION_CONTEXT_SYSTEM_RULES,
       necessaryConditions: options.mandatoryConditions ?? [],
       globalDecisionRecords: selection.selected.map((record) => ({
@@ -251,5 +302,7 @@ export function createContextPromptProvider(
               excludedClosedNodeCount: frontier.excludedClosedNodeCount,
             },
     });
+    emitRuntimeEvent(assembled);
+    return assembled;
   };
 }

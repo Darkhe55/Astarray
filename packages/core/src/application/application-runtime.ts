@@ -74,6 +74,7 @@ import {
   HumanVerificationPolicyStore,
 } from "../orchestration/human-verification-controller.js";
 import { ContextNodeLifecycleController } from "../orchestration/context-node-lifecycle.js";
+import { ContextRuntimeEventStore } from "../orchestration/context-runtime-event-store.js";
 import { LocalContextGraphStore } from "../orchestration/local-context-graph-store.js";
 import {
   createContextPromptProvider,
@@ -430,6 +431,9 @@ export async function createApplicationRuntime(
     humanVerificationController,
     humanVerificationPolicyStore,
   });
+  const contextRuntimeEventStore = new ContextRuntimeEventStore({
+    baseDirectory: stateDirectory,
+  });
   const contextPromptProvider =
     options.contextPromptProvider ??
     createContextPromptProvider({
@@ -439,6 +443,7 @@ export async function createApplicationRuntime(
       mandatoryConditions: options.mandatoryContextConditions,
       budgetPolicyProvider: () => globalContextBudgetStore.readPolicy(),
       modelInputSpaceTokens: options.modelInputSpaceTokens,
+      runtimeEventSink: (event) => contextRuntimeEventStore.append(event),
     });
 
   const controller = new MainController({
