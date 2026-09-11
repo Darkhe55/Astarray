@@ -65,7 +65,7 @@
 - 本检查点实现与入口证据：`docs/reports/T09A_R1_02_BUDGET_DEFERRED_EVIDENCE.md`。新增 `GlobalContextBudgetStore`（默认 4096、非负整数、CAS、原子+备份）；`resolveContextBudget`（模型空间缩减）；选择缓存按预算 revision/有效值/记录指纹失效；`readDeferredGlobalContextFragments` 按 agentInstanceId 隔离；CLI `config context-budget` 与 `context status` 读取持久化预算。
 - 测试命令、退出码和产物哈希：新增 4 套件 10 通过 → `npm run check` exit 0（160 文件 / 1432 测试）→ `npm run test:coverage` exit 0（语句 93.87% / 分支 87.34% / 函数 91.19% / 行 93.95%）；本检查点未产出 tarball。
 - 人工/外部依赖及剩余风险：无人工裁决；延迟片段的自动回访注入属 `-03`；TUI 图形设置控件未接入（CLI/SDK 已通）。
-- 本地提交、推送尝试与结果：本检查点提交（见 git log 顶部）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
+- 本地提交、推送尝试与结果：提交 `c389be7`（预算存储 + 选择缓存 + 延后片段读取 + CLI 命令 + 测试 + 证据报告）；`git push origin main` 第 1 次尝试成功（`4f7e815..c389be7`）。
 
 
 ## 首轮执行指令
