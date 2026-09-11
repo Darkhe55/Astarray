@@ -42,6 +42,7 @@ export type DomainErrorCode =
   | "global-decision-invalid"
   | "human-verification-policy-invalid"
   | "context-recall-invalid"
+  | "context-mandatory-constraint-missing"
   | "unknown";
 
 export class DomainError extends Error {

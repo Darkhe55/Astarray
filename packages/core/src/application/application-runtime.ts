@@ -66,6 +66,13 @@ import {
 } from "../orchestration/tertiary-lifecycle.js";
 import { AgentIndividualMemoryStore } from "../orchestration/agent-individual-memory.js";
 import { CrossAgentContextAttachmentController } from "../orchestration/cross-agent-attachment-controller.js";
+import { GlobalDecisionStore } from "../orchestration/global-decision-store.js";
+import { LocalContextGraphStore } from "../orchestration/local-context-graph-store.js";
+import {
+  createContextPromptProvider,
+  type ContextPromptProvider,
+  type NecessaryContextCondition,
+} from "../orchestration/context-prompt-assembler.js";
 
 export interface ApplicationRuntime {
   controller: MainController;
@@ -112,6 +119,12 @@ export interface ApplicationRuntimeOptions {
   ) => AgentRuntime;
   /** T07D-R2-03：Provider 运行时强制要求本地完成控制事件（mock 默认关闭）。 */
   requireCompletionControlEvent?: boolean;
+  /** T09A-R1-01：全局上下文预算（token，默认 4096）。 */
+  globalContextBudgetTokens?: number;
+  /** T09A-R1-01：任务必要条件；不满足时阻塞而非静默执行。 */
+  mandatoryContextConditions?: NecessaryContextCondition[];
+  /** T09A-R1-01：上下文提示词装配提供者覆盖（测试/嵌入用）。 */
+  contextPromptProvider?: ContextPromptProvider;
 }
 
 export async function createApplicationRuntime(
@@ -381,6 +394,21 @@ export async function createApplicationRuntime(
     quaternaryGitBranchPolicy,
   };
 
+  const globalDecisionStore = new GlobalDecisionStore({
+    baseDirectory: stateDirectory,
+  });
+  const contextGraphStore = new LocalContextGraphStore({
+    baseDirectory: stateDirectory,
+  });
+  const contextPromptProvider =
+    options.contextPromptProvider ??
+    createContextPromptProvider({
+      globalDecisionStore,
+      graphStore: contextGraphStore,
+      maximumGlobalContextTokenCount: options.globalContextBudgetTokens ?? 4096,
+      mandatoryConditions: options.mandatoryContextConditions,
+    });
+
   const controller = new MainController({
     modeMachine,
     sessionManager,
@@ -459,6 +487,7 @@ export async function createApplicationRuntime(
         .map((toolName) => registry.getDescriptor(toolName))
         .filter((descriptor): descriptor is ToolDescriptor => descriptor !== undefined),
     requireCompletionControlEvent: options.requireCompletionControlEvent ?? false,
+    contextPromptProvider,
     streamOutput: options.streamOutput,
   });
 

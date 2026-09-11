@@ -16,6 +16,8 @@ import type {
   ToolPort,
 } from "../core/types.js";
 import { CompletionControlParser } from "../core/completion-protocol.js";
+import { DomainError } from "../core/errors.js";
+import type { ContextPromptProvider } from "./context-prompt-assembler.js";
 import { runToolLoop } from "../runtime/tool-loop.js";
 import type { ToolFailureCounter } from "./failure-counter.js";
 
@@ -49,6 +51,8 @@ export interface WorkerAgentOptions {
   availableToolDescriptors?: ToolDescriptor[];
   /** T07D-R2-03：Provider 运行时必须给出本地完成控制事件才允许结案。 */
   requireCompletionEvent?: boolean;
+  /** T09A-R1-01：上下文提示词装配（全局相关选择 + 局部活跃前沿）。 */
+  contextPromptProvider?: ContextPromptProvider;
   toolPort: ToolPort;
   failureCounter: ToolFailureCounter;
   feedbackTransport: FeedbackTransportPort;
@@ -108,14 +112,32 @@ export class WorkerAgent {
     let finalReason: WorkerOutcome = { outcome: "cancelled" };
     const toolFailureThresholdHit = new Set<string>();
 
+    let systemPrompt = buildWorkerSystemPrompt(
+      this.options.task,
+      this.options.archiveAttachments ?? [],
+    );
+    const contextPromptProvider = this.options.contextPromptProvider;
+    if (contextPromptProvider !== undefined) {
+      const assembledContext = await contextPromptProvider({
+        missionId: this.options.missionId,
+        agentInstanceId: this.options.agentInstanceId,
+        task: this.options.task,
+      });
+      if (assembledContext.unsatisfiedNecessaryConditionIdentifiers.length > 0) {
+        throw new DomainError(
+          "context-mandatory-constraint-missing",
+          "缺少必要上下文约束，阻塞而非静默执行: " +
+            assembledContext.unsatisfiedNecessaryConditionIdentifiers.join(", "),
+        );
+      }
+      systemPrompt = assembledContext.promptText + "\n\n" + systemPrompt;
+    }
+
     const events = await runToolLoop(
       {
         missionId: this.options.missionId,
         agentId: this.options.agentInstanceId,
-        systemPrompt: buildWorkerSystemPrompt(
-          this.options.task,
-          this.options.archiveAttachments ?? [],
-        ),
+        systemPrompt,
         userPrompt: this.options.task.description,
         availableToolDescriptors: this.options.availableToolDescriptors ?? [],
         maxLoopIterations: this.options.maxLoopIterations,

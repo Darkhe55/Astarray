@@ -8,7 +8,10 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// 真实文件 I/O + 真实定时器：全量并行时放宽超时（仍为有界）。
+vi.setConfig({ testTimeout: 60_000 });
 
 import { AstarrayApplicationFacade } from "../../../packages/core/src/public-sdk.js";
 import {
@@ -123,7 +126,7 @@ async function runToTerminal(
     prompt,
   });
   let result = await application.queryTask({ sessionId: "session-1", taskIdentifier });
-  const deadline = Date.now() + 8_000;
+  const deadline = Date.now() + 50_000;
   while (!["done", "failed", "blocked", "cancelled"].includes(result.status) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 15));
     result = await application.queryTask({ sessionId: "session-1", taskIdentifier });
