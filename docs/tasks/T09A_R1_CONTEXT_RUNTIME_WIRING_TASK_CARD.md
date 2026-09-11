@@ -73,7 +73,7 @@
 - 本检查点实现与入口证据：`docs/reports/T09A_R1_03_CLOSURE_VERIFICATION_EVIDENCE.md`。产品任务成功后经 `ContextNodeLifecycleController` 建节点→本地验证→按策略关闭/等待→生成胶囊与层级 1 延迟核验任务；`accepted-closed` 增加 required 子节点必须同样 `accepted-closed` 的严格门禁；回访账本持久化并新增 `context recall` CLI；重复回执与预算拒绝生效。
 - 测试命令、退出码和产物哈希：`npm run check` exit 0（163 文件 / 1437 测试）→ `npm run test:coverage` exit 0（语句 93.83% / 分支 87.24% / 函数 91.34% / 行 93.90%）；本检查点未产出 tarball。
 - 人工/外部依赖及剩余风险：无人工裁决；CLI 关闭/签字/否决子命令与 TUI 控件未接入（服务与控制面已通）；`-04` 实际缓存与指标待做。
-- 本地提交、推送尝试与结果：本检查点提交（见 git log 顶部）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
+- 本地提交、推送尝试与结果：提交 `4925eb0`（节点生命周期 + 严格祖先门禁 + 回访账本/CLI + 测试 + 证据报告）；`git push origin main` 第 1 次尝试成功（`c900fa9..4925eb0`）。
 
 
 ## 首轮执行指令
