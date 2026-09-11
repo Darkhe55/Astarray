@@ -105,6 +105,16 @@ export const recoveryCheckpointSchema = z.object({
       completionAttemptIdentifier: z.string().nullable(),
     }),
   ),
+  /** 重启只读对账输入：写入时记录的 Git/worktree 目标状态（T12A-R1-02）。 */
+  gitStateRecovery: z
+    .object({
+      targetBranchName: z.string().min(1),
+      targetHeadCommitIdentifier: z.string().min(1),
+      expectedDirty: z.boolean(),
+      expectedWorktreeIdentifiers: z.array(z.string().min(1)),
+    })
+    .nullable()
+    .optional(),
   /** 人工变化观察 revision/编辑意图/未决冲突（T05D 对账输入）。 */
   humanChangeObservationRevision: z.number().int().min(0),
   pendingConflictIdentifiers: z.array(z.string().min(1)),

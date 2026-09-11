@@ -13,18 +13,53 @@ import { MissionLeaseStore } from "../infra/mission-lease-store.js";
 import { TaskStore } from "../infra/task-store.js";
 import { MissionManager } from "./mission-manager.js";
 import { RecoveryCheckpointStore } from "./recovery-checkpoint-store.js";
+import type { RecoveryCheckpoint } from "./recovery-checkpoint-schemas.js";
 import { RecoveryClassificationService } from "./recovery-classification-service.js";
 import { RecoveryIdentityAndBudgetService } from "./recovery-identity-budget-service.js";
+import {
+  createLocalHumanChangeObservationPort,
+  createLocalWorktreeExistencePort,
+  ReconciliationStateUnavailableError,
+} from "./recovery-reconciliation-ports.js";
+import { ReadonlyReconciliationService } from "./readonly-reconciliation-service.js";
+import type {
+  GitStatusPort,
+  HumanChangeObservationPort,
+  WorktreeExistencePort,
+} from "./readonly-reconciliation-service.js";
+
+/** 恢复对账端口（默认 worktree/人工变化走真实本地只读实现）。 */
+export interface RecoveryReconciliationPorts {
+  /** Git 只读状态端口；缺省表示本进程无法读取 Git 状态（fail-closed）。 */
+  gitStatusPort?: GitStatusPort;
+  worktreeExistencePort?: WorktreeExistencePort;
+  humanChangeObservationPort?: HumanChangeObservationPort;
+}
+
+/** 只读对账结论（重启先对账；不写任何文件）。 */
+export interface RecoveryReconciliationOutcome {
+  /** 检查点是否声明了需要核对的状态（gitStateRecovery 非空）。 */
+  required: boolean;
+  /** Git 状态是否实际读到（false 时不得继续恢复）。 */
+  gitStateAvailable: boolean;
+  isReadonlyConfirmed: boolean;
+  isSafeToProceed: boolean;
+  requiresHumanChangeReconciliation: boolean;
+  discrepancies: Array<{ type: string; detail: string }>;
+}
 
 export interface RecoveryCenterControllerOptions {
   baseDirectory: string;
   /** 诊断用本进程实例 ID；缺省按进程唯一生成，可注入以便测试稳定。 */
   currentProcessInstanceId?: string;
+  reconciliationPorts?: RecoveryReconciliationPorts;
 }
 
 export interface RecoverableMissionView {
   missionIdentifier: string;
   exists: boolean;
+  /** 该 mission 的可信检查点声明了 Git/worktree 状态 → 恢复前必须先只读对账。 */
+  reconciliationRequired: boolean;
   status: string | null;
   isCorrupted: boolean;
   pendingTaskCount: number | null;
@@ -35,7 +70,14 @@ export interface RecoverableMissionView {
 
 export interface RecoveryDecisionItem {
   item: string;
-  decision: "blocked-uncertain-side-effect" | "blocked-provider-state-unknown" | "reauthorize-required" | "blocked-state-corrupted" | "checkpoint-not-found";
+  decision:
+    | "blocked-uncertain-side-effect"
+    | "blocked-provider-state-unknown"
+    | "reauthorize-required"
+    | "blocked-state-corrupted"
+    | "checkpoint-not-found"
+    | "blocked-reconciliation-discrepancy"
+    | "blocked-reconciliation-unavailable";
   reason: string;
 }
 
@@ -57,6 +99,13 @@ export interface RecoveryResumeResult {
   blockedDecisionItems: RecoveryDecisionItem[];
   /** 一次性授权不随恢复延续；恢复后需重新授权的能力类型（非阻断项）。 */
   reauthorizationRequiredTypes: string[];
+  /** 重启先做只读对账的结论（未声明对账输入时 required=false）。 */
+  reconciliation: RecoveryReconciliationOutcome;
+  /** 反馈 ack 之后才允许重放的 enqueue 范围（ack 之前不得重复投递）。 */
+  feedbackReplayEnqueueRange: {
+    fromEnqueueCursor: number;
+    toEnqueueCursor: number;
+  } | null;
   lostTimeWindowDescription: string | null;
 }
 
@@ -67,6 +116,17 @@ export interface RecoveryAbandonResult {
   statusAfter: string | null;
 }
 
+function buildReconciliationNotRequired(): RecoveryReconciliationOutcome {
+  return {
+    required: false,
+    gitStateAvailable: false,
+    isReadonlyConfirmed: false,
+    isSafeToProceed: true,
+    requiresHumanChangeReconciliation: false,
+    discrepancies: [],
+  };
+}
+
 export class RecoveryCenterController {
   private readonly missionManager: MissionManager;
   private readonly leaseStore: MissionLeaseStore;
@@ -75,10 +135,20 @@ export class RecoveryCenterController {
   private readonly identityAndBudgetService =
     new RecoveryIdentityAndBudgetService();
   private readonly currentProcessInstanceId: string;
+  private readonly gitStatusPort: GitStatusPort | undefined;
+  private readonly worktreeExistencePort: WorktreeExistencePort;
+  private readonly humanChangeObservationPort: HumanChangeObservationPort;
 
   constructor(options: RecoveryCenterControllerOptions) {
     this.currentProcessInstanceId =
       options.currentProcessInstanceId ?? `process-${randomUUID()}`;
+    this.gitStatusPort = options.reconciliationPorts?.gitStatusPort;
+    this.worktreeExistencePort =
+      options.reconciliationPorts?.worktreeExistencePort ??
+      createLocalWorktreeExistencePort(options.baseDirectory);
+    this.humanChangeObservationPort =
+      options.reconciliationPorts?.humanChangeObservationPort ??
+      createLocalHumanChangeObservationPort(options.baseDirectory);
     this.missionManager = new MissionManager(
       new TaskStore({ baseDirectory: options.baseDirectory }),
       options.baseDirectory,
@@ -108,6 +178,10 @@ export class RecoveryCenterController {
       missions.push({
         missionIdentifier,
         exists: probe.exists,
+        reconciliationRequired:
+          trustedCheckpoint?.checkpoint.missionIdentifier ===
+            missionIdentifier &&
+          (trustedCheckpoint.checkpoint.gitStateRecovery ?? null) !== null,
         status: probe.summaryStatus,
         isCorrupted: probe.summaryCorrupted || probe.taskChainCorrupted,
         pendingTaskCount: probe.pendingTaskCount,
@@ -147,6 +221,10 @@ export class RecoveryCenterController {
       view: {
         missionIdentifier,
         exists: probe.exists,
+        reconciliationRequired:
+          trustedCheckpoint?.checkpoint.missionIdentifier ===
+            missionIdentifier &&
+          (trustedCheckpoint.checkpoint.gitStateRecovery ?? null) !== null,
         status: probe.summaryStatus,
         isCorrupted: probe.summaryCorrupted || probe.taskChainCorrupted,
         pendingTaskCount: probe.pendingTaskCount,
@@ -179,6 +257,8 @@ export class RecoveryCenterController {
           },
         ],
         reauthorizationRequiredTypes: [],
+        reconciliation: buildReconciliationNotRequired(),
+        feedbackReplayEnqueueRange: null,
         lostTimeWindowDescription: null,
       };
     }
@@ -203,6 +283,8 @@ export class RecoveryCenterController {
           },
         ],
         reauthorizationRequiredTypes: [],
+        reconciliation: buildReconciliationNotRequired(),
+        feedbackReplayEnqueueRange: null,
         lostTimeWindowDescription: trustedCheckpoint?.lostTimeWindowDescription ?? null,
       };
     }
@@ -216,6 +298,9 @@ export class RecoveryCenterController {
         generateNewIdentity: (originalAgentInstanceId) =>
           `${originalAgentInstanceId}-recovered-${randomUUID()}`,
       });
+    const reconciliation = await this.reconcileCheckpoint(
+      trustedCheckpoint.checkpoint,
+    );
     const blockedDecisionItems: RecoveryDecisionItem[] =
       classification.toolCallClassifications
         .filter(
@@ -234,6 +319,30 @@ export class RecoveryCenterController {
         reason: "Provider 停止状态不确定，需确认停止后才能继续",
       });
     }
+    // 重启先只读对账：检查点声明的 Git/worktree/人工变化状态不一致 → 阻断，
+    // 未读到 Git 状态时 fail-closed（绝不当作“无差异”继续恢复）。
+    if (reconciliation.required && !reconciliation.gitStateAvailable) {
+      blockedDecisionItems.push({
+        item: "git-state-unavailable",
+        decision: "blocked-reconciliation-unavailable",
+        reason: "无法只读读取 Git 状态；未对账前不得继续恢复",
+      });
+    }
+    for (const discrepancy of reconciliation.discrepancies) {
+      blockedDecisionItems.push({
+        item: discrepancy.type,
+        decision: "blocked-reconciliation-discrepancy",
+        reason: discrepancy.detail,
+      });
+    }
+    // 未决冲突：旧检查点不得覆盖人工变化，先由用户裁决。
+    if (trustedCheckpoint.checkpoint.pendingConflictIdentifiers.length > 0) {
+      blockedDecisionItems.push({
+        item: "pending-conflict-identifiers",
+        decision: "blocked-reconciliation-discrepancy",
+        reason: `存在未决冲突 ${trustedCheckpoint.checkpoint.pendingConflictIdentifiers.join(", ")}；需人工裁决后才能继续`,
+      });
+    }
     // 一次性授权不随恢复延续：作为必须重新授权项上报，但不阻断安全节点恢复
     // （recovery-classification-service 的 hasBlockingItems 同样不含该类别）。
     const recoveredSafeNodes = classification.toolCallClassifications
@@ -250,6 +359,8 @@ export class RecoveryCenterController {
         identityRecoveries: identityAndBudget.identityRecoveries,
         blockedDecisionItems,
         reauthorizationRequiredTypes: classification.reauthorizationRequiredTypes,
+        reconciliation,
+        feedbackReplayEnqueueRange: classification.feedbackReplayEnqueueRange,
         lostTimeWindowDescription: trustedCheckpoint.lostTimeWindowDescription,
       };
     }
@@ -264,8 +375,69 @@ export class RecoveryCenterController {
       identityRecoveries: identityAndBudget.identityRecoveries,
       blockedDecisionItems: [],
       reauthorizationRequiredTypes: classification.reauthorizationRequiredTypes,
+      reconciliation,
+      feedbackReplayEnqueueRange: classification.feedbackReplayEnqueueRange,
       lostTimeWindowDescription: trustedCheckpoint.lostTimeWindowDescription,
     };
+  }
+
+  /** 只读对账：检查点声明了 Git/worktree 状态时，重启先用本地只读状态核对。 */
+  private async reconcileCheckpoint(
+    checkpoint: RecoveryCheckpoint,
+  ): Promise<RecoveryReconciliationOutcome> {
+    const gitStateRecovery = checkpoint.gitStateRecovery ?? null;
+    if (gitStateRecovery === null) {
+      return buildReconciliationNotRequired();
+    }
+    if (this.gitStatusPort === undefined) {
+      return {
+        required: true,
+        gitStateAvailable: false,
+        isReadonlyConfirmed: false,
+        isSafeToProceed: false,
+        requiresHumanChangeReconciliation: false,
+        discrepancies: [],
+      };
+    }
+    const reconciliationService = new ReadonlyReconciliationService({
+      gitStatusPort: this.gitStatusPort,
+      worktreeExistencePort: this.worktreeExistencePort,
+      humanChangeObservationPort: this.humanChangeObservationPort,
+    });
+    try {
+      const result = await reconciliationService.reconcile({
+        checkpointGitState: {
+          targetBranchName: gitStateRecovery.targetBranchName,
+          targetHeadCommitIdentifier: gitStateRecovery.targetHeadCommitIdentifier,
+          expectedDirty: gitStateRecovery.expectedDirty,
+        },
+        checkpointHumanChangeObservationRevision:
+          checkpoint.humanChangeObservationRevision,
+        expectedWorktreeIdentifiers:
+          gitStateRecovery.expectedWorktreeIdentifiers,
+      });
+      return {
+        required: true,
+        gitStateAvailable: true,
+        isReadonlyConfirmed: result.isReadonlyConfirmed,
+        isSafeToProceed: result.isSafeToProceed,
+        requiresHumanChangeReconciliation:
+          result.requiresHumanChangeReconciliation,
+        discrepancies: result.discrepancies,
+      };
+    } catch (error) {
+      if (error instanceof ReconciliationStateUnavailableError) {
+        return {
+          required: true,
+          gitStateAvailable: false,
+          isReadonlyConfirmed: false,
+          isSafeToProceed: false,
+          requiresHumanChangeReconciliation: false,
+          discrepancies: [],
+        };
+      }
+      throw error;
+    }
   }
 
   async abandonMission(missionIdentifier: string): Promise<RecoveryAbandonResult> {

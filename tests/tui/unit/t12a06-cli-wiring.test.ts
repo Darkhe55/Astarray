@@ -10,12 +10,16 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { TaskStore } from "../../../packages/core/src/infra/task-store.js";
+import { MissionManager } from "../../../packages/core/src/orchestration/mission-manager.js";
+import { RecoveryCheckpointStore } from "../../../packages/core/src/orchestration/recovery-checkpoint-store.js";
 import {
   executeRecoverAbandonCommand,
   executeRecoverListCommand,
   executeRecoverResumeCommand,
   executeRecoverShowCommand,
 } from "../../../packages/tui/src/cli/commands.js";
+import { makeRecoveryCheckpoint } from "../../support/recovery-checkpoint-fixture.js";
 
 let stdoutBuffer: string[];
 let stateDirectory: string;
@@ -36,6 +40,17 @@ beforeEach(async () => {
 afterEach(async () => {
   await fs.rm(stateDirectory, { recursive: true, force: true });
 });
+
+async function captureJson(
+  run: () => Promise<number>,
+): Promise<{ exitCode: number; payload: Record<string, unknown> }> {
+  stdoutBuffer.length = 0;
+  const exitCode = await run();
+  return {
+    exitCode,
+    payload: JSON.parse(stdoutBuffer.join("")) as Record<string, unknown>,
+  };
+}
 
 describe("recover list 命令", () => {
   it("只读列出恢复中心状态（脱敏；无内部细节）", async () => {
@@ -123,6 +138,119 @@ describe("recover resume 命令", () => {
   });
 });
 
+describe("recover resume 命令（重启先只读对账）", () => {
+  it("检查点声明 Git 状态时绝不静默恢复：未读到状态或状态不一致均阻断", async () => {
+    const missionIdentifier = "mission-reconcile";
+    const missionManager = new MissionManager(
+      new TaskStore({ baseDirectory: stateDirectory }),
+      stateDirectory,
+    );
+    await missionManager.createMission({
+      missionId: missionIdentifier,
+      mode: "assist",
+      prompt: "对账命令探针",
+      taskNodes: [
+        {
+          id: "T-001",
+          description: "任务一",
+          dependsOn: [],
+          taskType: "data",
+          toolNames: ["readFile"],
+          assignedAgentId: null,
+          status: "pending",
+          resultLocation: null,
+        },
+      ],
+    });
+    await missionManager.updateMissionStatus(missionIdentifier, "blocked");
+    await new RecoveryCheckpointStore({
+      baseDirectory: stateDirectory,
+    }).writeCheckpoint({
+      checkpoint: makeRecoveryCheckpoint(missionIdentifier, {
+        gitStateRecovery: {
+          targetBranchName: "main",
+          targetHeadCommitIdentifier: "commit-does-not-exist",
+          expectedDirty: false,
+          expectedWorktreeIdentifiers: [],
+        },
+      }),
+      writingProcessInstanceIdentifier: "process-1",
+    });
+
+    const { exitCode, payload } = await captureJson(() =>
+      executeRecoverResumeCommand({
+        stateDirectory,
+        missionIdentifier,
+        isJsonOutput: true,
+      }),
+    );
+    expect(exitCode).not.toBe(0);
+    expect(payload.resumed).toBe(false);
+    const decisions = (
+      payload.blockedDecisionItems as Array<Record<string, unknown>>
+    ).map((item) => item.decision);
+    expect(
+      decisions.includes("blocked-reconciliation-discrepancy") ||
+        decisions.includes("blocked-reconciliation-unavailable"),
+    ).toBe(true);
+    const reconciliation = payload.reconciliation as Record<string, unknown>;
+    expect(typeof reconciliation.gitStateAvailable).toBe("boolean");
+    expect(reconciliation.required).toBe(true);
+    // 原任务历史保持：任务链未被删除
+    expect(
+      (await missionManager.getMissionStatus(missionIdentifier)).taskChain
+        ?.tasks,
+    ).toHaveLength(1);
+  });
+
+  it("list 标记该 mission 恢复前需先只读对账", async () => {
+    const missionIdentifier = "mission-list-reconcile";
+    const missionManager = new MissionManager(
+      new TaskStore({ baseDirectory: stateDirectory }),
+      stateDirectory,
+    );
+    await missionManager.createMission({
+      missionId: missionIdentifier,
+      mode: "assist",
+      prompt: "对账列表探针",
+      taskNodes: [
+        {
+          id: "T-002",
+          description: "任务二",
+          dependsOn: [],
+          taskType: "data",
+          toolNames: ["readFile"],
+          assignedAgentId: null,
+          status: "pending",
+          resultLocation: null,
+        },
+      ],
+    });
+    await new RecoveryCheckpointStore({
+      baseDirectory: stateDirectory,
+    }).writeCheckpoint({
+      checkpoint: makeRecoveryCheckpoint(missionIdentifier, {
+        gitStateRecovery: {
+          targetBranchName: "main",
+          targetHeadCommitIdentifier: "commit-1",
+          expectedDirty: false,
+          expectedWorktreeIdentifiers: [],
+        },
+      }),
+      writingProcessInstanceIdentifier: "process-1",
+    });
+
+    const { payload } = await captureJson(() =>
+      executeRecoverListCommand({ stateDirectory, isJsonOutput: true }),
+    );
+    const missions = payload.missions as Array<Record<string, unknown>>;
+    const target = missions.find(
+      (mission) => mission.missionIdentifier === missionIdentifier,
+    );
+    expect(target?.reconciliationRequired).toBe(true);
+  });
+});
+
 describe("recover abandon 命令", () => {
   it("关闭调度并保留存档（不删除数据）", async () => {
     const exitCode = await executeRecoverAbandonCommand({
@@ -160,13 +288,14 @@ describe("T12A dist 可达性", () => {
     if (!existsSync(distDirectory)) {
       return; // 未构建（check 流程会先 build）
     }
-    // T12A-R1-02（副作用与权限对账）接线后把 readonly-reconciliation-service
-    // 加回本清单；-01 只要求恢复中心真实使用的模块可达。
+    // T12A-R1-02 已把只读对账接线进恢复中心：reconciliation 模块随之进入 bundle。
     const moduleNames = [
       "recovery-checkpoint-schemas",
       "recovery-checkpoint-store",
       "recovery-classification-service",
       "recovery-identity-budget-service",
+      "readonly-reconciliation-service",
+      "recovery-reconciliation-ports",
     ];
     for (const moduleName of moduleNames) {
       const found = await (async () => {

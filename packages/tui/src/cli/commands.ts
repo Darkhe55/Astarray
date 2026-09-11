@@ -1980,7 +1980,27 @@ async function loadRecoveryInfra() {
   const { RecoveryCenterController } = await import(
     "../../../core/src/orchestration/recovery-center-controller.js"
   );
-  return { RecoveryCenterController };
+  const { createLocalGitStatusPort } = await import(
+    "../../../core/src/orchestration/recovery-reconciliation-ports.js"
+  );
+  return { RecoveryCenterController, createLocalGitStatusPort };
+}
+
+/**
+ * 恢复中心装配：对账走真实本地只读端口（Git 状态以当前工作区为准）。
+ * Git 状态不可读时由控制器 fail-closed（不进入“无差异”）。
+ */
+async function createRecoveryCenterController(stateDirectory: string) {
+  const { RecoveryCenterController, createLocalGitStatusPort } =
+    await loadRecoveryInfra();
+  return new RecoveryCenterController({
+    baseDirectory: stateDirectory,
+    reconciliationPorts: {
+      gitStatusPort: createLocalGitStatusPort({
+        workspaceDirectoryPath: process.cwd(),
+      }),
+    },
+  });
 }
 
 export interface RecoverListCommandOptions {
@@ -1992,10 +2012,9 @@ export interface RecoverListCommandOptions {
 export async function executeRecoverListCommand(
   options: RecoverListCommandOptions,
 ): Promise<number> {
-  const { RecoveryCenterController } = await loadRecoveryInfra();
-  const controller = new RecoveryCenterController({
-    baseDirectory: options.stateDirectory,
-  });
+  const controller = await createRecoveryCenterController(
+    options.stateDirectory,
+  );
   const { missions, requiresDecisionMissions } = await controller.listMissions();
   const view = {
     recoveryCenterReady: true,
@@ -2025,10 +2044,9 @@ export interface RecoverShowCommandOptions {
 export async function executeRecoverShowCommand(
   options: RecoverShowCommandOptions,
 ): Promise<number> {
-  const { RecoveryCenterController } = await loadRecoveryInfra();
-  const controller = new RecoveryCenterController({
-    baseDirectory: options.stateDirectory,
-  });
+  const controller = await createRecoveryCenterController(
+    options.stateDirectory,
+  );
   const { view } = await controller.inspectMission(options.missionIdentifier);
   if (!view.exists) {
     if (options.isJsonOutput) {
@@ -2062,10 +2080,9 @@ export interface RecoverResumeCommandOptions {
 export async function executeRecoverResumeCommand(
   options: RecoverResumeCommandOptions,
 ): Promise<number> {
-  const { RecoveryCenterController } = await loadRecoveryInfra();
-  const controller = new RecoveryCenterController({
-    baseDirectory: options.stateDirectory,
-  });
+  const controller = await createRecoveryCenterController(
+    options.stateDirectory,
+  );
   const result = await controller.resumeMission(options.missionIdentifier);
   const view = {
     missionIdentifier: result.missionIdentifier,
@@ -2076,6 +2093,8 @@ export async function executeRecoverResumeCommand(
     identityRecoveries: result.identityRecoveries,
     blockedDecisionItems: result.blockedDecisionItems,
     reauthorizationRequiredTypes: result.reauthorizationRequiredTypes,
+    reconciliation: result.reconciliation,
+    feedbackReplayEnqueueRange: result.feedbackReplayEnqueueRange,
     lostTimeWindowDescription: result.lostTimeWindowDescription,
     requiresUserDecision: result.resumed ? false : true,
   };
@@ -2106,10 +2125,9 @@ export interface RecoverAbandonCommandOptions {
 export async function executeRecoverAbandonCommand(
   options: RecoverAbandonCommandOptions,
 ): Promise<number> {
-  const { RecoveryCenterController } = await loadRecoveryInfra();
-  const controller = new RecoveryCenterController({
-    baseDirectory: options.stateDirectory,
-  });
+  const controller = await createRecoveryCenterController(
+    options.stateDirectory,
+  );
   const result = await controller.abandonMission(options.missionIdentifier);
   const view = {
     missionIdentifier: result.missionIdentifier,
