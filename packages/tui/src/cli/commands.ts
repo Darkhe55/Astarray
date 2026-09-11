@@ -919,6 +919,77 @@ export async function executeConfigInstallEnabledCommand(
   return EXIT_CODES.SUCCESS;
 }
 
+/** T09A-R1-02：全局上下文预算查看/设置（默认 4096；0 表示不自动注入全局记录）。 */
+export interface ConfigContextBudgetCommandOptions {
+  stateDirectory: string;
+  /** null = 仅查看当前配置与有效值。 */
+  tokens: number | null;
+  isJsonOutput: boolean;
+}
+
+export async function executeConfigContextBudgetCommand(
+  options: ConfigContextBudgetCommandOptions,
+): Promise<number> {
+  try {
+    const { GlobalContextBudgetStore } = await import(
+      "../../../core/src/orchestration/global-context-budget-store.js"
+    );
+    const { resolveContextBudget } = await import(
+      "../../../core/src/orchestration/context-prompt-assembler.js"
+    );
+    const budgetStore = new GlobalContextBudgetStore({
+      baseDirectory: options.stateDirectory,
+    });
+    const current = await budgetStore.readPolicy();
+    if (options.tokens === null) {
+      const budget = resolveContextBudget({
+        configuredMaximumGlobalContextTokenCount:
+          current.configuredMaximumGlobalContextTokenCount,
+        budgetPolicyRevision: current.globalContextBudgetPolicyRevision,
+      });
+      if (options.isJsonOutput) {
+        printJson(budget);
+      } else {
+        process.stdout.write(
+          "configured: " +
+            budget.configuredMaximumGlobalContextTokenCount +
+            " token\neffective: " +
+            budget.effectiveMaximumGlobalContextTokenCount +
+            " token\nrevision: " +
+            budget.budgetPolicyRevision +
+            "\n",
+        );
+      }
+      return EXIT_CODES.SUCCESS;
+    }
+    const updated = await budgetStore.updatePolicy({
+      expectedRevision: current.globalContextBudgetPolicyRevision,
+      configuredMaximumGlobalContextTokenCount: options.tokens,
+      updatedByUserId: "cli-user",
+    });
+    const summary = {
+      configuredMaximumGlobalContextTokenCount:
+        updated.configuredMaximumGlobalContextTokenCount,
+      globalContextBudgetPolicyRevision:
+        updated.globalContextBudgetPolicyRevision,
+    };
+    if (options.isJsonOutput) {
+      printJson(summary);
+    } else {
+      process.stdout.write(
+        "context-budget=" +
+          summary.configuredMaximumGlobalContextTokenCount +
+          " revision=" +
+          summary.globalContextBudgetPolicyRevision +
+          "\n",
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    return failWith(error as Error);
+  }
+}
+
 /** T08C-07：小任务直投次级（主会话内投递动作；不切换聊天对象）。 */
 export interface DirectDispatchCommandOptions {
   stateDirectory: string;
@@ -1739,15 +1810,34 @@ export async function executeContextStatusCommand(
         customProfileDefaultPolicy: "block-until-verified",
       })
       .catch(() => null);
+    // T09A-R1-02：预算配置从持久化策略读取（调用方可显式覆盖）。
+    const { GlobalContextBudgetStore } = await import(
+      "../../../core/src/orchestration/global-context-budget-store.js"
+    );
+    const { resolveContextBudget } = await import(
+      "../../../core/src/orchestration/context-prompt-assembler.js"
+    );
+    const budgetPolicy = await new GlobalContextBudgetStore({
+      baseDirectory: options.stateDirectory,
+    }).readPolicy();
+    const resolvedBudget = resolveContextBudget({
+      configuredMaximumGlobalContextTokenCount:
+        options.configuredMaximumGlobalContextTokenCount ??
+        budgetPolicy.configuredMaximumGlobalContextTokenCount,
+      budgetPolicyRevision: budgetPolicy.globalContextBudgetPolicyRevision,
+      modelInputSpaceTokens:
+        options.effectiveMaximumGlobalContextTokenCount ?? null,
+    });
     const view = buildContextLifecycleStatusView({
       agentInstanceId: options.agentInstanceId,
       graph,
       capsules,
       configuredMaximumGlobalContextTokenCount:
-        options.configuredMaximumGlobalContextTokenCount ?? null,
+        resolvedBudget.configuredMaximumGlobalContextTokenCount,
       effectiveMaximumGlobalContextTokenCount:
-        options.effectiveMaximumGlobalContextTokenCount ?? null,
-      budgetReductionReason: options.budgetReductionReason ?? null,
+        resolvedBudget.effectiveMaximumGlobalContextTokenCount,
+      budgetReductionReason:
+        options.budgetReductionReason ?? resolvedBudget.budgetReductionReason,
       humanVerificationPolicy,
     });
     if (options.isJsonOutput) {

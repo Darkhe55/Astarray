@@ -1,6 +1,6 @@
 # T09A-R1：上下文生命周期运行接线
 
-> 状态：`in_progress`（T09A-R1-01 done；T09A-R1-02/03/04 pending）
+> 状态：`in_progress`（T09A-R1-01/02 done；T09A-R1-03/04 pending）
 > 创建日期：2026-09-10
 > 类型：核心返修；高风险工作按检查点执行
 > 来源：用户授权布置；本文件为Agent派生实施方案，运行态节点默认层级1或以下，不冒充用户层级0
@@ -25,7 +25,7 @@
 
 ### T09A-R1-02：设置与延后片段
 
-- 状态：pending。
+- 状态：done（2026-09-10）。产物：`docs/reports/T09A_R1_02_BUDGET_DEFERRED_EVIDENCE.md`。
 - 工作：接通TUI/CLI公开预算设置与持久化：默认4096、可调高/低/0；显示配置及有效值；修改从下一请求生效，按revision失效选择缓存。
 - 验收：测试0、小预算、模型空间不足、中文估算、并发CAS、非法值；延后内容持久化且未来相关任务可读取，不跨Agent泄漏。
 - 前驱：T09A-R1-01。先通过前驱，再执行本节点。
@@ -58,7 +58,15 @@
 - 本检查点实现与入口证据：`docs/reports/T09A_R1_01_CONTEXT_ASSEMBLY_EVIDENCE.md`。新增 `context-prompt-assembler`（系统规则 / 任务必要条件 / 全局相关选择 / 局部活跃前沿四段装配）与真实存储提供者；经 `application-runtime → main-controller → mission-orchestrator → worker-agent` 透传；Worker 在调用 Provider 前装配，必要条件缺失时抛 `context-mandatory-constraint-missing` 且不调用 Provider。集成测试捕获本地服务器请求，证明相关记录注入、无关记录不注入、已关闭节点只计数不注入原文。
 - 测试命令、退出码和产物哈希：隔离验证 5 套件 15 通过 → `npx tsc --noEmit` exit 0 → `npx eslint .` exit 0；**权威 `npm run check` / `test:coverage` 本次未复跑**（`danger-full-access` 审批挂起至 600s 上限）；上次权威结果为 153 文件 / 1416 测试 exit 0、分支 87.28% exit 0。
 - 人工/外部依赖及剩余风险：无人工裁决；预算设置/延后片段（-02）、关闭与回访工具（-03）、实际缓存与指标（-04）待做；threads 池在高并发下的集成测试饥饿已记录并放宽超时。
+- 本地提交、推送尝试与结果：提交 `4f7e815`（T09A-R1-01 上下文装配）；`git push origin main` 第 1 次尝试成功（`80274a4..4f7e815`）。
+### T09A-R1-02 验收记录
+
+- 当前提交/工作树基线：`4f7e815`（与 `origin/main` 同点）；工作树含用户并行的 3 M + 7 个未跟踪新卡。
+- 本检查点实现与入口证据：`docs/reports/T09A_R1_02_BUDGET_DEFERRED_EVIDENCE.md`。新增 `GlobalContextBudgetStore`（默认 4096、非负整数、CAS、原子+备份）；`resolveContextBudget`（模型空间缩减）；选择缓存按预算 revision/有效值/记录指纹失效；`readDeferredGlobalContextFragments` 按 agentInstanceId 隔离；CLI `config context-budget` 与 `context status` 读取持久化预算。
+- 测试命令、退出码和产物哈希：新增 4 套件 10 通过 → `npm run check` exit 0（160 文件 / 1432 测试）→ `npm run test:coverage` exit 0（语句 93.87% / 分支 87.34% / 函数 91.19% / 行 93.95%）；本检查点未产出 tarball。
+- 人工/外部依赖及剩余风险：无人工裁决；延迟片段的自动回访注入属 `-03`；TUI 图形设置控件未接入（CLI/SDK 已通）。
 - 本地提交、推送尝试与结果：本检查点提交（见 git log 顶部）；`git push origin main` 按 AGENTS.md 规则尝试（≤5 次）。
+
 
 ## 首轮执行指令
 

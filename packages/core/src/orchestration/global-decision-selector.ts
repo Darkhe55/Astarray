@@ -17,6 +17,7 @@ import { writeAtomicJson } from "../infra/atomic-json.js";
 import { sanitizePathSegment } from "./work-archive-store.js";
 import {
   deferredGlobalContextFragmentSchema,
+  type DeferredGlobalContextFragment,
   type GlobalDecisionRecord,
 } from "./context-closure-schemas.js";
 import { estimateGlobalDecisionTokenCount } from "./global-decision-store.js";
@@ -173,6 +174,63 @@ export interface DeferGlobalDecisionsInput {
   sourceNodeRevision: number;
   decisions: GlobalDecisionRecord[];
   createdAtIso?: string;
+}
+
+export interface ReadDeferredGlobalContextFragmentsInput {
+  baseDirectory: string;
+  ownerAgentInstanceId: string;
+  missionId?: string;
+}
+
+/**
+ * 读取某 Agent 自己的延后上下文片段（按 agentInstanceId 目录隔离；
+ * 目录内 ownership 不匹配或损坏的条目不返回，绝不跨 Agent 泄漏）。
+ */
+export async function readDeferredGlobalContextFragments(
+  input: ReadDeferredGlobalContextFragmentsInput,
+): Promise<DeferredGlobalContextFragment[]> {
+  const directoryPath = path.join(
+    input.baseDirectory,
+    "agent-memory",
+    sanitizePathSegment(input.ownerAgentInstanceId),
+    "deferred-context",
+  );
+  let fileNames: string[];
+  try {
+    fileNames = await fs.readdir(directoryPath);
+  } catch {
+    return [];
+  }
+  const fragments: DeferredGlobalContextFragment[] = [];
+  for (const fileName of fileNames.filter((name) => name.endsWith(".json"))) {
+    try {
+      const rawContent = await fs.readFile(
+        path.join(directoryPath, fileName),
+        "utf8",
+      );
+      const parsed = deferredGlobalContextFragmentSchema.safeParse(
+        JSON.parse(rawContent) as unknown,
+      );
+      if (!parsed.success) {
+        continue;
+      }
+      if (parsed.data.ownerAgentInstanceId !== input.ownerAgentInstanceId) {
+        continue;
+      }
+      if (
+        input.missionId !== undefined &&
+        parsed.data.missionId !== input.missionId
+      ) {
+        continue;
+      }
+      fragments.push(parsed.data);
+    } catch {
+      // 损坏条目跳过（不泄露、不阻塞其他片段）
+    }
+  }
+  return fragments.sort((left, right) =>
+    left.fragmentIdentifier.localeCompare(right.fragmentIdentifier),
+  );
 }
 
 /** 写入按 agentInstanceId/mission 隔离的延后上下文片段（不进入普通提示词）。 */

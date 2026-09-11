@@ -142,23 +142,88 @@ export interface ContextPromptProviderOptions {
   graphStore: LocalContextGraphStore;
   maximumGlobalContextTokenCount: number;
   mandatoryConditions?: NecessaryContextCondition[];
+  /** T09A-R1-02：预算策略提供者（设置变化通过 revision 使选择缓存失效）。 */
+  budgetPolicyProvider?: () => Promise<{
+    configuredMaximumGlobalContextTokenCount: number;
+    globalContextBudgetPolicyRevision: number;
+  }>;
+  /** T09A-R1-02：Provider 可用输入空间（token）；配置超出时取较小有效值。 */
+  modelInputSpaceTokens?: number | null;
+}
+
+export interface ContextBudgetResolution {
+  configuredMaximumGlobalContextTokenCount: number;
+  effectiveMaximumGlobalContextTokenCount: number;
+  budgetPolicyRevision: number;
+  budgetReductionReason: string | null;
+}
+
+/** 计算配置值、有效值与缩减原因（模型空间不足时缩减，不报错）。 */
+export function resolveContextBudget(input: {
+  configuredMaximumGlobalContextTokenCount: number;
+  budgetPolicyRevision: number;
+  modelInputSpaceTokens?: number | null;
+}): ContextBudgetResolution {
+  const modelSpace = input.modelInputSpaceTokens;
+  if (modelSpace === undefined || modelSpace === null || modelSpace >= input.configuredMaximumGlobalContextTokenCount) {
+    return {
+      configuredMaximumGlobalContextTokenCount: input.configuredMaximumGlobalContextTokenCount,
+      effectiveMaximumGlobalContextTokenCount: input.configuredMaximumGlobalContextTokenCount,
+      budgetPolicyRevision: input.budgetPolicyRevision,
+      budgetReductionReason: null,
+    };
+  }
+  return {
+    configuredMaximumGlobalContextTokenCount: input.configuredMaximumGlobalContextTokenCount,
+    effectiveMaximumGlobalContextTokenCount: modelSpace,
+    budgetPolicyRevision: input.budgetPolicyRevision,
+    budgetReductionReason: "Provider 可用输入空间不足，按较小值生效",
+  };
 }
 
 /** 由真实存储构建提示词装配提供者（全局选择 + 局部活跃前沿）。 */
 export function createContextPromptProvider(
   options: ContextPromptProviderOptions,
 ): ContextPromptProvider {
+  const selectionCache = new Map<string, ReturnType<typeof selectGlobalDecisionsForTask>>();
   return async (input) => {
-    const records = await options.globalDecisionStore.listRecords();
-    const selection = selectGlobalDecisionsForTask({
-      relation: {
-        taskIdentifier: input.task.id,
-        missionId: input.missionId,
-        scopeKeys: [input.missionId, input.task.id],
-      },
-      records,
-      maximumGlobalContextTokenCount: options.maximumGlobalContextTokenCount,
+    const policy =
+      options.budgetPolicyProvider === undefined
+        ? null
+        : await options.budgetPolicyProvider();
+    const budget = resolveContextBudget({
+      configuredMaximumGlobalContextTokenCount:
+        policy?.configuredMaximumGlobalContextTokenCount ??
+        options.maximumGlobalContextTokenCount,
+      budgetPolicyRevision: policy?.globalContextBudgetPolicyRevision ?? 0,
+      modelInputSpaceTokens: options.modelInputSpaceTokens,
     });
+    const records = await options.globalDecisionStore.listRecords();
+    const recordsFingerprint = records
+      .map((record) => record.globalDecisionIdentifier + ":" + record.globalContextRevision)
+      .join(",");
+    const cacheKey = [
+      input.missionId,
+      input.agentInstanceId,
+      input.task.id,
+      String(budget.budgetPolicyRevision),
+      String(budget.effectiveMaximumGlobalContextTokenCount),
+      recordsFingerprint,
+    ].join("|");
+    let selection = selectionCache.get(cacheKey);
+    if (selection === undefined) {
+      selection = selectGlobalDecisionsForTask({
+        relation: {
+          taskIdentifier: input.task.id,
+          missionId: input.missionId,
+          scopeKeys: [input.missionId, input.task.id],
+        },
+        records,
+        maximumGlobalContextTokenCount:
+          budget.effectiveMaximumGlobalContextTokenCount,
+      });
+      selectionCache.set(cacheKey, selection);
+    }
     const graph = await options.graphStore.readGraph(
       input.agentInstanceId,
       input.missionId,

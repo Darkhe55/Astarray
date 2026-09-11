@@ -6,6 +6,7 @@ import { defaultStateDirectory } from "./cli/run-command.js";
 import { executeRunCommand } from "./cli/run-command.js";
 import {
   executeCancelCommand,
+  executeConfigContextBudgetCommand,
   executeConfigInitCommand,
   executeConfigInstallEnabledCommand,
   executeContextStatusCommand,
@@ -133,6 +134,31 @@ configCommand
   .action(async () => {
     process.exitCode = await executeConfigInitCommand({
       stateDirectory: defaultStateDirectory(),
+    });
+  });
+configCommand
+  .command("context-budget")
+  .description("查看或设置全局上下文预算（token；0=不自动注入全局记录）")
+  .argument("[tokens]", "非负整数 token 数；缺省仅查看")
+  .option("--json", "JSON 输出")
+  .action(async (tokens: string | undefined, options: { json?: boolean }) => {
+    let parsedTokens: number | null = null;
+    if (tokens !== undefined) {
+      parsedTokens = Number.parseInt(tokens, 10);
+      if (
+        !Number.isInteger(parsedTokens) ||
+        parsedTokens < 0 ||
+        String(parsedTokens) !== tokens.trim()
+      ) {
+        process.stderr.write("context-budget 必须为非负整数（0 表示不自动注入）\n");
+        process.exitCode = 2;
+        return;
+      }
+    }
+    process.exitCode = await executeConfigContextBudgetCommand({
+      stateDirectory: defaultStateDirectory(),
+      tokens: parsedTokens,
+      isJsonOutput: options.json === true,
     });
   });
 configCommand

@@ -67,6 +67,7 @@ import {
 import { AgentIndividualMemoryStore } from "../orchestration/agent-individual-memory.js";
 import { CrossAgentContextAttachmentController } from "../orchestration/cross-agent-attachment-controller.js";
 import { GlobalDecisionStore } from "../orchestration/global-decision-store.js";
+import { GlobalContextBudgetStore } from "../orchestration/global-context-budget-store.js";
 import { LocalContextGraphStore } from "../orchestration/local-context-graph-store.js";
 import {
   createContextPromptProvider,
@@ -125,6 +126,8 @@ export interface ApplicationRuntimeOptions {
   mandatoryContextConditions?: NecessaryContextCondition[];
   /** T09A-R1-01：上下文提示词装配提供者覆盖（测试/嵌入用）。 */
   contextPromptProvider?: ContextPromptProvider;
+  /** T09A-R1-02：Provider 可用输入空间（token）；缺省不缩减。 */
+  modelInputSpaceTokens?: number | null;
 }
 
 export async function createApplicationRuntime(
@@ -400,6 +403,9 @@ export async function createApplicationRuntime(
   const contextGraphStore = new LocalContextGraphStore({
     baseDirectory: stateDirectory,
   });
+  const globalContextBudgetStore = new GlobalContextBudgetStore({
+    baseDirectory: stateDirectory,
+  });
   const contextPromptProvider =
     options.contextPromptProvider ??
     createContextPromptProvider({
@@ -407,6 +413,8 @@ export async function createApplicationRuntime(
       graphStore: contextGraphStore,
       maximumGlobalContextTokenCount: options.globalContextBudgetTokens ?? 4096,
       mandatoryConditions: options.mandatoryContextConditions,
+      budgetPolicyProvider: () => globalContextBudgetStore.readPolicy(),
+      modelInputSpaceTokens: options.modelInputSpaceTokens,
     });
 
   const controller = new MainController({
