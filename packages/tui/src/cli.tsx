@@ -24,6 +24,10 @@ import {
   executeProfileSetCapabilityCommand,
   executeProfileShowCommand,
   executeProfileSwitchCommand,
+  executeRecoverAbandonCommand,
+  executeRecoverListCommand,
+  executeRecoverResumeCommand,
+  executeRecoverShowCommand,
   executeResumeCommand,
   executeSessionElevateCommand,
   executeSessionElevationListCommand,
@@ -141,6 +145,53 @@ contextCommand
       stateDirectory: defaultStateDirectory(),
       agentInstanceId: options.agent,
       graphIdentifier: options.graph,
+      isJsonOutput: options.json === true,
+    });
+  });
+
+const recoverCommand = program
+  .command("recover")
+  .description("恢复中心：列出/查询/恢复/放弃 mission（只恢复安全节点）");
+recoverCommand
+  .command("list")
+  .description("只读列出磁盘上的 mission（含损坏标记与租约）")
+  .option("--json", "JSON 输出")
+  .action(async (options: { json?: boolean }) => {
+    process.exitCode = await executeRecoverListCommand({
+      stateDirectory: defaultStateDirectory(),
+      isJsonOutput: options.json === true,
+    });
+  });
+recoverCommand
+  .command("show <mission-id>")
+  .description("查询单个 mission 的磁盘状态与可信检查点可用性")
+  .option("--json", "JSON 输出")
+  .action(async (missionIdentifier: string, options: { json?: boolean }) => {
+    process.exitCode = await executeRecoverShowCommand({
+      stateDirectory: defaultStateDirectory(),
+      missionIdentifier,
+      isJsonOutput: options.json === true,
+    });
+  });
+recoverCommand
+  .command("resume <mission-id>")
+  .description("只恢复安全节点；需裁决项逐项 blocked（不默认允许）")
+  .option("--json", "JSON 输出")
+  .action(async (missionIdentifier: string, options: { json?: boolean }) => {
+    process.exitCode = await executeRecoverResumeCommand({
+      stateDirectory: defaultStateDirectory(),
+      missionIdentifier,
+      isJsonOutput: options.json === true,
+    });
+  });
+recoverCommand
+  .command("abandon <mission-id>")
+  .description("只关闭调度并保留可审计存档（不删除数据）")
+  .option("--json", "JSON 输出")
+  .action(async (missionIdentifier: string, options: { json?: boolean }) => {
+    process.exitCode = await executeRecoverAbandonCommand({
+      stateDirectory: defaultStateDirectory(),
+      missionIdentifier,
       isJsonOutput: options.json === true,
     });
   });

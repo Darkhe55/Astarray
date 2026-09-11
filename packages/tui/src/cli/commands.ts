@@ -1974,64 +1974,86 @@ export async function executeContextStatusCommand(
   }
 }
 
-/** T12A-06：恢复中心 CLI（recover list/show/resume/abandon）。 */
+/** T12A-06 / T12A-R1-01：恢复中心 CLI（recover list/show/resume/abandon）。 */
 
 async function loadRecoveryInfra() {
-  const { RecoveryClassificationService } = await import(
-    "../../../core/src/orchestration/recovery-classification-service.js"
+  const { RecoveryCenterController } = await import(
+    "../../../core/src/orchestration/recovery-center-controller.js"
   );
-  const { RecoveryIdentityAndBudgetService } = await import(
-    "../../../core/src/orchestration/recovery-identity-budget-service.js"
-  );
-  const { ReadonlyReconciliationService } = await import(
-    "../../../core/src/orchestration/readonly-reconciliation-service.js"
-  );
-  const { RecoveryCheckpointStore } = await import(
-    "../../../core/src/orchestration/recovery-checkpoint-store.js"
-  );
-  return {
-    RecoveryClassificationService,
-    RecoveryIdentityAndBudgetService,
-    ReadonlyReconciliationService,
-    RecoveryCheckpointStore,
-  };
+  return { RecoveryCenterController };
 }
 
 export interface RecoverListCommandOptions {
+  stateDirectory: string;
   isJsonOutput: boolean;
 }
 
-/** recover list：只读列出可恢复 mission（脱敏公开状态）。 */
+/** recover list：只读列出磁盘上的 mission（含损坏标记与租约）。 */
 export async function executeRecoverListCommand(
   options: RecoverListCommandOptions,
 ): Promise<number> {
-  const { RecoveryClassificationService, RecoveryCheckpointStore } =
-    await loadRecoveryInfra();
-  const classificationService = new RecoveryClassificationService();
-  void classificationService;
-  const componentsReady = {
-    classificationService: RecoveryClassificationService !== null,
-    checkpointStore: RecoveryCheckpointStore !== null,
-  };
+  const { RecoveryCenterController } = await loadRecoveryInfra();
+  const controller = new RecoveryCenterController({
+    baseDirectory: options.stateDirectory,
+  });
+  const { missions, requiresDecisionMissions } = await controller.listMissions();
   const view = {
-    recoveryCenterReady: componentsReady.classificationService && componentsReady.checkpointStore,
-    recoverableMissions: [],
-    requiresDecisionMissions: [],
-    note: "list 为只读能力；返回脱敏公开状态",
+    recoveryCenterReady: true,
+    missions,
+    requiresDecisionMissions,
+    note: "list 只读；损坏状态显式上报，不静默重建为成功",
   };
   if (options.isJsonOutput) {
     process.stdout.write(`${JSON.stringify(view)}\n`);
   } else {
     process.stdout.write(
       `恢复中心: ${view.recoveryCenterReady ? "就绪" : "未就绪"}\n` +
-        `可恢复 mission: ${view.recoverableMissions.length}\n` +
-        `需裁决 mission: ${view.requiresDecisionMissions.length}\n`,
+        `可恢复 mission: ${missions.length}\n` +
+        `需裁决 mission: ${requiresDecisionMissions.length}\n`,
+    );
+  }
+  return EXIT_CODES.SUCCESS;
+}
+
+export interface RecoverShowCommandOptions {
+  stateDirectory: string;
+  missionIdentifier: string;
+  isJsonOutput: boolean;
+}
+
+/** recover show：查询单个 mission 的磁盘状态与可信检查点可用性。 */
+export async function executeRecoverShowCommand(
+  options: RecoverShowCommandOptions,
+): Promise<number> {
+  const { RecoveryCenterController } = await loadRecoveryInfra();
+  const controller = new RecoveryCenterController({
+    baseDirectory: options.stateDirectory,
+  });
+  const { view } = await controller.inspectMission(options.missionIdentifier);
+  if (!view.exists) {
+    if (options.isJsonOutput) {
+      process.stdout.write(
+        `${JSON.stringify({ missionIdentifier: options.missionIdentifier, exists: false })}\n`,
+      );
+    } else {
+      process.stdout.write(`mission ${options.missionIdentifier}: 不存在\n`);
+    }
+    return EXIT_CODES.FAILURE;
+  }
+  if (options.isJsonOutput) {
+    process.stdout.write(`${JSON.stringify(view)}\n`);
+  } else {
+    process.stdout.write(
+      `mission ${view.missionIdentifier}: 状态 ${view.status ?? "未知"}\n` +
+        `损坏: ${view.isCorrupted ? "是" : "否"}；未完成任务: ${view.pendingTaskCount ?? "未知"}\n` +
+        `可信检查点: ${view.hasTrustedCheckpoint ? "有" : "无"}；租约: ${view.isLeaseActive ? "活跃" : "非活跃"}\n`,
     );
   }
   return EXIT_CODES.SUCCESS;
 }
 
 export interface RecoverResumeCommandOptions {
+  stateDirectory: string;
   isJsonOutput: boolean;
   missionIdentifier: string;
 }
@@ -2040,37 +2062,42 @@ export interface RecoverResumeCommandOptions {
 export async function executeRecoverResumeCommand(
   options: RecoverResumeCommandOptions,
 ): Promise<number> {
-  const { RecoveryClassificationService, RecoveryIdentityAndBudgetService } =
-    await loadRecoveryInfra();
-  const classificationService = new RecoveryClassificationService();
-  void classificationService;
-  const identityService = new RecoveryIdentityAndBudgetService();
-  void identityService;
-  // 无检查点 → 无安全节点可恢复；需裁决项稳定 blocked JSON
-  const result = {
-    missionIdentifier: options.missionIdentifier,
-    recoveredSafeNodes: [],
-    blockedDecisionItems: [
-      {
-        item: "checkpoint-not-found",
-        decision: "blocked-uncertain-side-effect",
-        reason: "未找到可信检查点；未知状态不得自动恢复",
-      },
-    ],
-    requiresUserDecision: true,
+  const { RecoveryCenterController } = await loadRecoveryInfra();
+  const controller = new RecoveryCenterController({
+    baseDirectory: options.stateDirectory,
+  });
+  const result = await controller.resumeMission(options.missionIdentifier);
+  const view = {
+    missionIdentifier: result.missionIdentifier,
+    resumed: result.resumed,
+    recoveredSafeNodes: result.recoveredSafeNodes,
+    readySetTaskNodeIdentifiers: result.readySetTaskNodeIdentifiers,
+    requiresHandoffIdentity: result.requiresHandoffIdentity,
+    identityRecoveries: result.identityRecoveries,
+    blockedDecisionItems: result.blockedDecisionItems,
+    reauthorizationRequiredTypes: result.reauthorizationRequiredTypes,
+    lostTimeWindowDescription: result.lostTimeWindowDescription,
+    requiresUserDecision: result.resumed ? false : true,
   };
   if (options.isJsonOutput) {
-    process.stdout.write(`${JSON.stringify(result)}\n`);
+    process.stdout.write(`${JSON.stringify(view)}\n`);
+  } else if (result.resumed) {
+    process.stdout.write(
+      `mission ${result.missionIdentifier}: 已恢复（安全节点 ${result.recoveredSafeNodes.length}）\n`,
+    );
   } else {
     process.stdout.write(
-      `mission ${options.missionIdentifier}: 无可自动恢复节点\n` +
-        `需裁决: ${result.blockedDecisionItems.length} 项（非交互不得默认允许）\n`,
+      `mission ${result.missionIdentifier}: 未恢复，需裁决 ${result.blockedDecisionItems.length} 项\n` +
+        result.blockedDecisionItems
+          .map((item) => `  - ${item.item}: ${item.decision}\n`)
+          .join(""),
     );
   }
-  return EXIT_CODES.FAILURE;
+  return result.resumed ? EXIT_CODES.SUCCESS : EXIT_CODES.FAILURE;
 }
 
 export interface RecoverAbandonCommandOptions {
+  stateDirectory: string;
   isJsonOutput: boolean;
   missionIdentifier: string;
 }
@@ -2079,10 +2106,16 @@ export interface RecoverAbandonCommandOptions {
 export async function executeRecoverAbandonCommand(
   options: RecoverAbandonCommandOptions,
 ): Promise<number> {
-  const { ReadonlyReconciliationService } = await loadRecoveryInfra();
-  void ReadonlyReconciliationService;
+  const { RecoveryCenterController } = await loadRecoveryInfra();
+  const controller = new RecoveryCenterController({
+    baseDirectory: options.stateDirectory,
+  });
+  const result = await controller.abandonMission(options.missionIdentifier);
   const view = {
-    missionIdentifier: options.missionIdentifier,
+    missionIdentifier: result.missionIdentifier,
+    abandoned: result.abandoned,
+    artifactsRetained: result.artifactsRetained,
+    statusAfter: result.statusAfter,
     schedulingClosed: true,
     dataPreserved: true,
     note: "abandon 不等于删除所有数据；清理需独立受控操作并自动备份",
@@ -2091,8 +2124,9 @@ export async function executeRecoverAbandonCommand(
     process.stdout.write(`${JSON.stringify(view)}\n`);
   } else {
     process.stdout.write(
-      `mission ${options.missionIdentifier}: 调度已关闭；存档保留\n`,
+      `mission ${result.missionIdentifier}: 调度已关闭；存档保留\n`,
     );
   }
   return EXIT_CODES.SUCCESS;
 }
+
