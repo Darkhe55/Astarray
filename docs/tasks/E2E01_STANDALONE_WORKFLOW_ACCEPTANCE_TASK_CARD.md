@@ -25,7 +25,7 @@
 
 ### E2E-01-02：确定性纵向闭环
 
-- 状态：in_progress（切片 1 已完成：本地协议服务器 + Provider 运行时公共入口；证据 docs/reports/E2E01_02_PROVIDER_ENTRY_SLICE_EVIDENCE.md。剩余：多身份纵向闭环、强制返修、次级集成/报告、tarball 场景）。
+- 状态：in_progress（切片 1：本地协议服务器 + Provider 运行时公共入口，docs/reports/E2E01_02_PROVIDER_ENTRY_SLICE_EVIDENCE.md；切片 2：能力探针与缺口分析，docs/reports/E2E01_02_GAP_ANALYSIS.md——已确认"未写入产物仍可 done"的完成门禁缺陷与工作区写入权限缺口，切片 3 修复；切片 4 纵向编排；切片 5 tarball 复现）。
 - 工作：安装tarball，使用本地协议服务器从用户入口完成侦察→规划→实现→测试→独立验收→返修→次级集成→主报告按需读取。
 - 验收：实际产物和测试证据；实现/测试/验收身份不同；强制一次测试失败验证返修；拒绝未授权合并；主对话不被后台报告抢占。
 - 前驱：E2E-01-01。先通过前驱，再执行本节点。
