@@ -267,9 +267,10 @@ export function validateEvidenceBundle(bundle) {
     }
     if (!REQUIRED_PROVIDER_KINDS.includes(provider.kind)) {
       problems.push("provider.kind 非法");
-    } else if (provider.kind !== "mock" && provider.credentialsAuthorized !== true) {
+    } else if (provider.kind === "real" && provider.credentialsAuthorized !== true) {
+      // 只有真实服务需要凭据与费用授权；mock 与本地假服务器不联网、无费用。
       problems.push(
-        "real-provider-requires-authorization: 非 mock Provider 必须先取得用户凭据与费用授权",
+        "real-provider-requires-authorization: 真实 Provider 必须先取得用户凭据与费用授权",
       );
     }
   }

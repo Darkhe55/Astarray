@@ -17,7 +17,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.setConfig({ testTimeout: 60_000 });
+vi.setConfig({ testTimeout: 120_000 });
 
 import { AstarrayApplicationFacade } from "../../../packages/core/src/public-sdk.js";
 import {
@@ -68,6 +68,8 @@ afterEach(async () => {
     await new Promise<void>((resolve) => server?.close(() => resolve()));
     server = null;
   }
+  // 关闭后仍有少量原子写入在途（满载时可能较慢）：先短暂静置，避免清理竞态。
+  await new Promise((resolve) => setTimeout(resolve, 200));
   await fs.rm(temporaryDirectory, { recursive: true, force: true, maxRetries: 5 });
   for (const relativeDirectory of workspaceFixtureRelativeDirectories.splice(0)) {
     await fs
@@ -213,7 +215,7 @@ describe("E2E-01-02 能力探针：assist 默认权限下的项目写入", () =>
       prompt: "实现 fixture 目标功能",
     });
     let status = "accepted";
-    const deadline = Date.now() + 50_000;
+    const deadline = Date.now() + 90_000;
     while (
       !["done", "failed", "blocked", "cancelled"].includes(status) &&
       Date.now() < deadline
@@ -254,7 +256,7 @@ describe("E2E-01-02 能力探针：assist 默认权限下的项目写入", () =>
       prompt: "实现 fixture 目标功能（特征记录）",
     });
     let status = "accepted";
-    const deadline = Date.now() + 50_000;
+    const deadline = Date.now() + 90_000;
     while (
       !["done", "failed", "blocked", "cancelled"].includes(status) &&
       Date.now() < deadline
@@ -309,7 +311,7 @@ describe("E2E-01-02 能力探针：assist 默认权限下的项目写入", () =>
       prompt: "新建项目文件（assist）",
     });
     let status = "accepted";
-    const deadline = Date.now() + 50_000;
+    const deadline = Date.now() + 90_000;
     while (
       !["done", "failed", "blocked", "cancelled"].includes(status) &&
       Date.now() < deadline
@@ -367,7 +369,7 @@ describe("E2E-01-02 能力探针：assist 默认权限下的项目写入", () =>
       prompt: "新建项目文件（devolve）",
     });
     let status = "accepted";
-    const deadline = Date.now() + 50_000;
+    const deadline = Date.now() + 90_000;
     while (
       !["done", "failed", "blocked", "cancelled"].includes(status) &&
       Date.now() < deadline

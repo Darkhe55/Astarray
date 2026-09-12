@@ -222,6 +222,11 @@ describe("E2E-01-01 证据协议绑定与人工项分离", () => {
     expect(manualChecks.every((check) => check.status === "pending-manual")).toBe(
       true,
     );
+
+    // 本地假服务器不联网、无费用：不需要真实凭据授权
+    const localFakeProvider = structuredClone(bundle) as Record<string, unknown>;
+    (localFakeProvider.provider as Record<string, unknown>).kind = "local-fake";
+    expect(acceptance.validateEvidenceBundle(localFakeProvider)).toEqual([]);
   });
 
   it("缺失绑定、真实 Provider 未授权、人工项无签署、自动项退出码不一致均被拒绝", async () => {

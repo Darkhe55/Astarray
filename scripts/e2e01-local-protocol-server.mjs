@@ -8,19 +8,61 @@
  * 输出：{"endpoint":"http://127.0.0.1:<port>/v1/chat/completions","model":"..."}
  */
 import http from "node:http";
+import { readFileSync } from "node:fs";
 
 function parseArguments(argumentsList) {
-  const options = { port: 0, model: "fake-model" };
+  const options = {
+    port: 0,
+    model: "fake-model",
+    toolName: null,
+    toolArgumentsJson: null,
+    logRequests: false,
+  };
   for (let index = 0; index < argumentsList.length; index += 1) {
-    if (argumentsList[index] === "--port") {
+    const token = argumentsList[index];
+    if (token === "--port") {
       options.port = Number.parseInt(argumentsList[index + 1] ?? "0", 10);
       index += 1;
-    } else if (argumentsList[index] === "--model") {
+    } else if (token === "--model") {
       options.model = argumentsList[index + 1] ?? options.model;
+      index += 1;
+    } else if (token === "--tool-name") {
+      options.toolName = argumentsList[index + 1] ?? null;
+      index += 1;
+    } else if (token === "--tool-args-json") {
+      options.toolArgumentsJson = argumentsList[index + 1] ?? null;
+      index += 1;
+    } else if (token === "--log-requests") {
+      options.logRequests = true;
+    } else if (token === "--tool-args-file") {
+      const argumentsFilePath = argumentsList[index + 1];
+      options.toolArgumentsJson =
+        argumentsFilePath === undefined
+          ? null
+          : readFileSync(argumentsFilePath, "utf8").trim();
       index += 1;
     }
   }
   return options;
+}
+
+function writeSseToolCall(response, toolName, argumentsJson) {
+  response.write(
+    "data: " +
+      JSON.stringify({
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                { index: 0, id: "tc-local-1", function: { name: toolName, arguments: argumentsJson } },
+              ],
+            },
+            finish_reason: "tool_calls",
+          },
+        ],
+      }) +
+      "\n\n",
+  );
 }
 
 const options = parseArguments(process.argv.slice(2));
@@ -71,10 +113,47 @@ const server = http.createServer((request, response) => {
         model: requestedModel,
       }),
     );
+    if (options.logRequests) {
+      try {
+        const parsedBody = JSON.parse(rawBody);
+        const messages = Array.isArray(parsedBody.messages) ? parsedBody.messages : [];
+        console.log(
+          JSON.stringify({
+            event: "request-detail",
+            requestIndex: requestCount,
+            toolNames: Array.isArray(parsedBody.tools)
+              ? parsedBody.tools.map((tool) => tool?.function?.name ?? null)
+              : null,
+            messages: messages.map((message) => ({
+              role: message?.role ?? null,
+              content:
+                typeof message?.content === "string"
+                  ? message.content.slice(0, 200)
+                  : null,
+              toolCallNames: Array.isArray(message?.tool_calls)
+                ? message.tool_calls.map((call) => call?.function?.name ?? null)
+                : null,
+            })),
+          }),
+        );
+      } catch (error) {
+        console.log(JSON.stringify({ event: "request-parse-error", message: String(error) }));
+      }
+    }
     response.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache",
     });
+    if (
+      options.toolName !== null &&
+      options.toolArgumentsJson !== null &&
+      requestCount === 1
+    ) {
+      // 首个请求返回脚本化工具调用；后续请求返回完成控制事件（工具由本地循环真实执行）。
+      writeSseToolCall(response, options.toolName, options.toolArgumentsJson);
+      response.end();
+      return;
+    }
     writeSseChunk(response, { role: "assistant" }, null);
     writeSseChunk(
       response,

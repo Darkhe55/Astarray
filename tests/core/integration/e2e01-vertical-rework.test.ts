@@ -69,6 +69,7 @@ afterEach(async () => {
     await new Promise<void>((resolve) => server?.close(() => resolve()));
     server = null;
   }
+  await new Promise((resolve) => setTimeout(resolve, 200));
   await fs.rm(stateDirectory, { recursive: true, force: true, maxRetries: 5 });
   for (const relativeDirectory of workspaceFixtureRelativeDirectories.splice(0)) {
     await fs
