@@ -356,6 +356,85 @@ export class HumanVerificationController {
     return parsed.data;
   }
 
+  /** 读取单个延迟核验任务（不存在返回 null；损坏 fail-closed）。 */
+  async readDeferredVerificationTask(
+    ownerAgentInstanceId: string,
+    taskIdentifier: string,
+  ): Promise<DeferredHumanVerificationTask | null> {
+    const filePath = this.deferredVerificationTaskFilePath(
+      ownerAgentInstanceId,
+      taskIdentifier,
+    );
+    let rawContent: string;
+    try {
+      rawContent = await fs.readFile(filePath, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return null;
+      }
+      throw error;
+    }
+    const parsed = deferredHumanVerificationTaskSchema.safeParse(
+      JSON.parse(rawContent),
+    );
+    if (!parsed.success) {
+      throw new DomainError(
+        "journal-corrupted",
+        "延迟核验任务损坏，拒绝读取: " + taskIdentifier,
+      );
+    }
+    return parsed.data;
+  }
+
+  /** 列出该 Agent 的全部延迟核验任务（重启对账/去重依据）。 */
+  async listDeferredVerificationTasks(
+    ownerAgentInstanceId: string,
+  ): Promise<DeferredHumanVerificationTask[]> {
+    const directoryPath = this.deferredVerificationTaskDirectoryPath(
+      ownerAgentInstanceId,
+    );
+    let fileNames: string[];
+    try {
+      fileNames = await fs.readdir(directoryPath);
+    } catch {
+      return [];
+    }
+    const tasks: DeferredHumanVerificationTask[] = [];
+    for (const fileName of fileNames
+      .filter((name) => name.endsWith(".json"))
+      .sort()) {
+      const task = await this.readDeferredVerificationTask(
+        ownerAgentInstanceId,
+        fileName.slice(0, -".json".length),
+      );
+      if (task !== null) {
+        tasks.push(task);
+      }
+    }
+    return tasks;
+  }
+
+  private deferredVerificationTaskDirectoryPath(
+    ownerAgentInstanceId: string,
+  ): string {
+    return path.join(
+      this.baseDirectory,
+      "agent-memory",
+      sanitizePathSegment(ownerAgentInstanceId),
+      "deferred-verification-tasks",
+    );
+  }
+
+  private deferredVerificationTaskFilePath(
+    ownerAgentInstanceId: string,
+    taskIdentifier: string,
+  ): string {
+    return path.join(
+      this.deferredVerificationTaskDirectoryPath(ownerAgentInstanceId),
+      sanitizePathSegment(taskIdentifier) + ".json",
+    );
+  }
+
   /**
    * 事后否决：重开节点（可选经图存储）、把相关全局决策标记 disputed、
    * 返回层级 1 返修任务提案；不执行任何破坏性回滚。

@@ -2148,3 +2148,109 @@ export async function executeRecoverAbandonCommand(
   return EXIT_CODES.SUCCESS;
 }
 
+/** T12A-R1-03：上下文事务只读对账与幂等重放。 */
+export interface ContextTransactionCommandOptions {
+  stateDirectory: string;
+  agentInstanceId: string;
+  missionIdentifier: string;
+  taskIdentifier: string;
+  modeKey: string;
+  taskDescription?: string;
+  summaryText?: string;
+  /** 缺省为只读对账；true 时执行幂等重放。 */
+  isReplayRequested?: boolean;
+  isJsonOutput: boolean;
+}
+
+export async function executeContextTransactionCommand(
+  options: ContextTransactionCommandOptions,
+): Promise<number> {
+  const { ContextTransactionRecoveryService } = await import(
+    "../../../core/src/orchestration/context-transaction-recovery.js"
+  );
+  const { ContextClosureCapsuleStore } = await import(
+    "../../../core/src/orchestration/context-closure-capsule-store.js"
+  );
+  const { LocalContextGraphStore } = await import(
+    "../../../core/src/orchestration/local-context-graph-store.js"
+  );
+  const { HumanVerificationController, HumanVerificationPolicyStore } =
+    await import(
+      "../../../core/src/orchestration/human-verification-controller.js"
+    );
+  const graphStore = new LocalContextGraphStore({
+    baseDirectory: options.stateDirectory,
+  });
+  const recoveryService = new ContextTransactionRecoveryService({
+    baseDirectory: options.stateDirectory,
+    graphStore,
+    capsuleStore: new ContextClosureCapsuleStore({
+      baseDirectory: options.stateDirectory,
+    }),
+    humanVerificationController: new HumanVerificationController({
+      baseDirectory: options.stateDirectory,
+      graphStore,
+    }),
+    humanVerificationPolicyStore: new HumanVerificationPolicyStore({
+      baseDirectory: options.stateDirectory,
+    }),
+  });
+  const isReplayRequested = options.isReplayRequested === true;
+  if (
+    isReplayRequested &&
+    (options.taskDescription === undefined || options.summaryText === undefined)
+  ) {
+    const message =
+      "--replay 需要 --description 与 --summary（不得用伪造摘要重放）";
+    if (options.isJsonOutput) {
+      process.stdout.write(`${JSON.stringify({ error: message })}\n`);
+    } else {
+      process.stderr.write(`${message}\n`);
+    }
+    return EXIT_CODES.FAILURE;
+  }
+  const inspectionInput = {
+    ownerAgentInstanceId: options.agentInstanceId,
+    missionId: options.missionIdentifier,
+    taskIdentifier: options.taskIdentifier,
+  };
+  const replayResult = isReplayRequested
+    ? await recoveryService.replay({
+        ...inspectionInput,
+        taskDescription: options.taskDescription ?? "",
+        summaryText: options.summaryText ?? "",
+        modeKey: options.modeKey,
+      })
+    : null;
+  const inspection = replayResult?.inspection ??
+    (await recoveryService.inspect(inspectionInput));
+  const view = {
+    missionIdentifier: options.missionIdentifier,
+    taskIdentifier: options.taskIdentifier,
+    agentInstanceId: options.agentInstanceId,
+    contextNodeIdentifier: inspection.contextNodeIdentifier,
+    graphRevision: inspection.graphRevision,
+    nodeState: inspection.nodeState,
+    terminalState: inspection.terminalState,
+    capsuleIdentifier: inspection.capsule?.capsuleIdentifier ?? null,
+    deferredVerificationTaskIdentifier:
+      inspection.deferredVerificationTask?.taskIdentifier ?? null,
+    deferredFragmentCount: inspection.deferredFragmentCount,
+    missingPieces: inspection.missingPieces,
+    isStaleCapsuleRevision: inspection.isStaleCapsuleRevision,
+    isComplete: inspection.isComplete,
+    replayedActions: replayResult?.replayedActions ?? [],
+    isReplayStable: replayResult?.isReplayStable ?? false,
+  };
+  if (options.isJsonOutput) {
+    process.stdout.write(`${JSON.stringify(view)}\n`);
+  } else {
+    process.stdout.write(
+      `mission ${view.missionIdentifier} / ${view.taskIdentifier}: 节点 ${view.nodeState ?? "未建立"}\n` +
+        `缺口: ${view.missingPieces.length === 0 ? "无" : view.missingPieces.join(", ")}\n` +
+        `本次补写: ${view.replayedActions.length === 0 ? "无" : view.replayedActions.join(", ")}\n`,
+    );
+  }
+  return view.isComplete ? EXIT_CODES.SUCCESS : EXIT_CODES.FAILURE;
+}
+

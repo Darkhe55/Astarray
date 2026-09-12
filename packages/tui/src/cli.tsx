@@ -12,6 +12,7 @@ import {
   executeContextMetricsCommand,
   executeContextRecallCommand,
   executeContextStatusCommand,
+  executeContextTransactionCommand,
   executeDoctorCommand,
   executeProfileCopyCommand,
   executeProfileCreateCommand,
@@ -125,6 +126,43 @@ contextCommand
         callerAgentInstanceId: options.agent,
         graphIdentifier: options.graph,
         requestJson: options.request,
+        isJsonOutput: options.json === true,
+      });
+    },
+  );
+contextCommand
+  .command("transaction <mission-id> <task-id>")
+  .description("上下文事务只读对账；--replay 幂等补齐缺口（不重复、不覆盖旧产物）")
+  .requiredOption("--agent <agent-id>", "owner agentInstanceId")
+  .option("--mode <mode-key>", "模式键（assist/devolve）", "assist")
+  .option("--description <text>", "任务描述（--replay 必填）")
+  .option("--summary <text>", "完成摘要（--replay 必填）")
+  .option("--replay", "执行幂等重放（只补齐缺口）")
+  .option("--json", "JSON 输出")
+  .action(
+    async (
+      missionIdentifier: string,
+      taskIdentifier: string,
+      options: {
+        agent: string;
+        mode: string;
+        description?: string;
+        summary?: string;
+        replay?: boolean;
+        json?: boolean;
+      },
+    ) => {
+      process.exitCode = await executeContextTransactionCommand({
+        stateDirectory: defaultStateDirectory(),
+        agentInstanceId: options.agent,
+        missionIdentifier,
+        taskIdentifier,
+        modeKey: options.mode,
+        ...(options.description !== undefined
+          ? { taskDescription: options.description }
+          : {}),
+        ...(options.summary !== undefined ? { summaryText: options.summary } : {}),
+        isReplayRequested: options.replay === true,
         isJsonOutput: options.json === true,
       });
     },

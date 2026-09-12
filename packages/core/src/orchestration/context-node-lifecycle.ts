@@ -12,6 +12,7 @@
  */
 import { createHash } from "node:crypto";
 
+import { DomainError } from "../core/errors.js";
 import type { ContextClosureCapsuleStore } from "./context-closure-capsule-store.js";
 import type {
   ContextClosureCapsule,
@@ -21,6 +22,7 @@ import type {
   HumanVerificationController,
   HumanVerificationPolicyStore,
 } from "./human-verification-controller.js";
+import { CLOSED_CONTEXT_NODE_STATES } from "./local-context-graph-store.js";
 import type { LocalContextGraphStore } from "./local-context-graph-store.js";
 
 export interface ContextNodeLifecycleOptions {
@@ -70,7 +72,7 @@ export class ContextNodeLifecycleController {
     taskIdentifier: string;
     taskDescription: string;
   }): Promise<{ contextNodeIdentifier: string; graphRevision: number }> {
-    const contextNodeIdentifier = "node-" + sanitizeNodeIdentifier(input.taskIdentifier);
+    const contextNodeIdentifier = buildContextNodeIdentifier(input.taskIdentifier);
     let graph = await this.graphStore.readGraph(
       input.ownerAgentInstanceId,
       input.missionId,
@@ -113,7 +115,10 @@ export class ContextNodeLifecycleController {
     const node = graph.nodes.find(
       (candidate) => candidate.contextNodeIdentifier === input.contextNodeIdentifier,
     );
-    if (node === undefined || node.state === "locally-verified") {
+    if (
+      node === undefined ||
+      (ALREADY_MARKED_NODE_STATES as readonly string[]).includes(node.state)
+    ) {
       return;
     }
     await this.graphStore.markNodeState({
@@ -125,7 +130,13 @@ export class ContextNodeLifecycleController {
     });
   }
 
-  /** 任务完成的产品级收口：按策略关闭/等待 + 生成真实胶囊与延迟核验任务。 */
+  /**
+   * 任务完成的产品级收口：按策略关闭/等待 + 生成真实胶囊与延迟核验任务。
+   *
+   * T12A-R1-03：本方法是跨存储多步写入（图状态 → 关闭胶囊 → 延迟核验任务），
+   * 必须可在任意崩溃点后重放：已完成的步骤跳过、既有胶囊按 (节点, revision)
+   * 复用、延迟核验任务按胶囊哈希复用或按 revision 追加，绝不重复或覆盖丢失。
+   */
   async completeTaskNode(
     input: CompleteTaskNodeInput,
   ): Promise<CompleteTaskNodeResult> {
@@ -144,71 +155,193 @@ export class ContextNodeLifecycleController {
       modeKey: input.modeKey === "devolve" ? "devolve" : "assist",
       customProfileDefaultPolicy: "block-until-verified",
     });
+    const desiredState: "deferred-review-closed" | "awaiting-user-acceptance" =
+      verificationPolicy === "continue-with-deferred-review"
+        ? "deferred-review-closed"
+        : "awaiting-user-acceptance";
     let graph = await this.graphStore.readGraph(
       input.ownerAgentInstanceId,
       input.missionId,
     );
-    const currentRevision = graph?.revision ?? begun.graphRevision;
-    if (verificationPolicy === "continue-with-deferred-review") {
-      graph = await this.graphStore.closeNode({
-        ownerAgentInstanceId: input.ownerAgentInstanceId,
-        graphIdentifier: input.missionId,
-        expectedGraphRevision: currentRevision,
-        contextNodeIdentifier: begun.contextNodeIdentifier,
-        targetState: "deferred-review-closed",
-      });
-    } else {
-      graph = await this.graphStore.markNodeState({
-        ownerAgentInstanceId: input.ownerAgentInstanceId,
-        graphIdentifier: input.missionId,
-        expectedGraphRevision: currentRevision,
-        contextNodeIdentifier: begun.contextNodeIdentifier,
-        state: "awaiting-user-acceptance",
-      });
+    const existingNode =
+      graph?.nodes.find(
+        (candidate) =>
+          candidate.contextNodeIdentifier === begun.contextNodeIdentifier,
+      ) ?? null;
+    const isAlreadyClosed =
+      existingNode !== null &&
+      (CLOSED_CONTEXT_NODE_STATES as readonly string[]).includes(
+        existingNode.state,
+      );
+    // 已关闭节点保持既有终态（重放不制造第二种终态、不膨胀 revision）。
+    const actualState:
+      | "awaiting-user-acceptance"
+      | "accepted-closed"
+      | "deferred-review-closed"
+      | null = isAlreadyClosed
+      ? existingNode.state === "superseded"
+        ? null
+        : (existingNode.state as
+            | "accepted-closed"
+            | "deferred-review-closed")
+      : desiredState;
+    let terminalRevision = graph?.revision ?? begun.graphRevision;
+    if (
+      graph !== null &&
+      existingNode !== null &&
+      existingNode.state !== actualState &&
+      !isAlreadyClosed
+    ) {
+      graph =
+        actualState === "deferred-review-closed"
+          ? await this.graphStore.closeNode({
+              ownerAgentInstanceId: input.ownerAgentInstanceId,
+              graphIdentifier: input.missionId,
+              expectedGraphRevision: graph.revision,
+              contextNodeIdentifier: begun.contextNodeIdentifier,
+              targetState: "deferred-review-closed",
+            })
+          : await this.graphStore.markNodeState({
+              ownerAgentInstanceId: input.ownerAgentInstanceId,
+              graphIdentifier: input.missionId,
+              expectedGraphRevision: graph.revision,
+              contextNodeIdentifier: begun.contextNodeIdentifier,
+              state: "awaiting-user-acceptance",
+            });
+      terminalRevision = graph.revision;
     }
-    const capsule = await this.capsuleStore.createCapsule({
-      capsuleIdentifier:
-        "capsule-" + begun.contextNodeIdentifier + "-" + graph.revision,
-      ownerAgentInstanceId: input.ownerAgentInstanceId,
+    if (actualState === null) {
+      throw new DomainError(
+        "context-node-not-closable",
+        "已 superseded 节点缺少对应关闭胶囊，需人工对账: " +
+          begun.contextNodeIdentifier,
+      );
+    }
+    const capsule = await this.ensureClosureCapsule({
+      input,
       contextNodeIdentifier: begun.contextNodeIdentifier,
-      missionId: input.missionId,
-      contextGraphRevision: graph.revision,
-      finalDecisionSummary: input.summaryText.slice(0, 200),
-      inputSummary: input.taskDescription.slice(0, 200),
-      outputSummary: input.summaryText.slice(0, 400),
-      verificationState:
-        verificationPolicy === "continue-with-deferred-review"
-          ? "deferred-review-closed"
-          : "awaiting-user-acceptance",
-      informationSource: {
-        sourceType: "agent",
-        agentInstanceId: input.ownerAgentInstanceId,
-      },
-      reopenCondition: "用户否决或依赖真实变化时重开该节点",
+      graphRevision: terminalRevision,
+      verificationState: actualState,
     });
     let deferredVerificationTask: DeferredHumanVerificationTask | null = null;
-    if (verificationPolicy === "continue-with-deferred-review") {
-      deferredVerificationTask =
-        await this.humanVerificationController.createDeferredVerificationTask({
-          taskIdentifier: "verify-" + input.taskIdentifier,
-          ownerAgentInstanceId: input.ownerAgentInstanceId,
-          contextNodeIdentifier: begun.contextNodeIdentifier,
-          contextGraphRevision: graph.revision,
-          closureCapsuleHash: capsule.contentHash,
-          humanSteps: "人工复核该任务的输出与风险后再追认",
-          priorityTier: 1,
-          risks: [],
-        });
+    if (actualState === "deferred-review-closed") {
+      deferredVerificationTask = await this.ensureDeferredVerificationTask({
+        input,
+        contextNodeIdentifier: begun.contextNodeIdentifier,
+        graphRevision: terminalRevision,
+        closureCapsuleHash: capsule.contentHash,
+      });
     }
     return {
       contextNodeIdentifier: begun.contextNodeIdentifier,
-      graphRevision: graph.revision,
+      graphRevision: terminalRevision,
       verificationPolicy,
       capsule,
       deferredVerificationTask,
     };
   }
+
+  /** 关闭胶囊按 (节点, 图 revision) 幂等复用；不同 revision 各留一份，不覆盖。 */
+  private async ensureClosureCapsule(input: {
+    input: CompleteTaskNodeInput;
+    contextNodeIdentifier: string;
+    graphRevision: number;
+    verificationState:
+      | "deferred-review-closed"
+      | "awaiting-user-acceptance"
+      | "accepted-closed";
+  }): Promise<ContextClosureCapsule> {
+    const existingCapsules = (
+      await this.capsuleStore.listCapsules(input.input.ownerAgentInstanceId)
+    ).filter(
+      (capsule) => capsule.contextNodeIdentifier === input.contextNodeIdentifier,
+    );
+    const reusable = existingCapsules.find(
+      (capsule) => capsule.contextGraphRevision === input.graphRevision,
+    );
+    if (reusable !== undefined) {
+      return reusable;
+    }
+    return this.capsuleStore.createCapsule({
+      capsuleIdentifier:
+        "capsule-" + input.contextNodeIdentifier + "-" + input.graphRevision,
+      ownerAgentInstanceId: input.input.ownerAgentInstanceId,
+      contextNodeIdentifier: input.contextNodeIdentifier,
+      missionId: input.input.missionId,
+      contextGraphRevision: input.graphRevision,
+      finalDecisionSummary: input.input.summaryText.slice(0, 200),
+      inputSummary: input.input.taskDescription.slice(0, 200),
+      outputSummary: input.input.summaryText.slice(0, 400),
+      verificationState: input.verificationState,
+      informationSource: {
+        sourceType: "agent",
+        agentInstanceId: input.input.ownerAgentInstanceId,
+      },
+      reopenCondition: "用户否决或依赖真实变化时重开该节点",
+    });
+  }
+
+  /**
+   * 延迟核验任务幂等：同一胶囊哈希直接复用；不同 revision 追加新任务标识，
+   * 旧任务保留（补充核验不重复、不丢失）。
+   */
+  private async ensureDeferredVerificationTask(input: {
+    input: CompleteTaskNodeInput;
+    contextNodeIdentifier: string;
+    graphRevision: number;
+    closureCapsuleHash: string;
+  }): Promise<DeferredHumanVerificationTask> {
+    const existingTasks =
+      await this.humanVerificationController.listDeferredVerificationTasks(
+        input.input.ownerAgentInstanceId,
+      );
+    const reusable = existingTasks.find(
+      (task) =>
+        task.contextNodeIdentifier === input.contextNodeIdentifier &&
+        task.closureCapsuleHash === input.closureCapsuleHash,
+    );
+    if (reusable !== undefined) {
+      return reusable;
+    }
+    const baseIdentifier = "verify-" + input.input.taskIdentifier;
+    const hasBaseTask = existingTasks.some(
+      (task) => task.taskIdentifier === baseIdentifier,
+    );
+    const taskIdentifier = hasBaseTask
+      ? baseIdentifier + "-r" + input.graphRevision
+      : baseIdentifier;
+    const existingWithIdentifier = existingTasks.find(
+      (task) => task.taskIdentifier === taskIdentifier,
+    );
+    if (existingWithIdentifier !== undefined) {
+      return existingWithIdentifier;
+    }
+    return this.humanVerificationController.createDeferredVerificationTask({
+      taskIdentifier,
+      ownerAgentInstanceId: input.input.ownerAgentInstanceId,
+      contextNodeIdentifier: input.contextNodeIdentifier,
+      contextGraphRevision: input.graphRevision,
+      closureCapsuleHash: input.closureCapsuleHash,
+      humanSteps: "人工复核该任务的输出与风险后再追认",
+      priorityTier: 1,
+      risks: [],
+    });
+  }
 }
+
+/** 任务 → 上下文节点标识（恢复/重放必须与首次写入完全一致）。 */
+export function buildContextNodeIdentifier(taskIdentifier: string): string {
+  return "node-" + sanitizeNodeIdentifier(taskIdentifier);
+}
+
+/** 已推进过的节点状态：重复标记本地验收必须幂等跳过。 */
+const ALREADY_MARKED_NODE_STATES = [
+  "locally-verified",
+  "awaiting-user-acceptance",
+  "accepted-closed",
+  "deferred-review-closed",
+  "superseded",
+] as const;
 
 function sha256Fingerprint(content: string): string {
   return "sha256:" + createHash("sha256").update(content).digest("hex");
