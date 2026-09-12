@@ -296,6 +296,9 @@ describe("T12A dist 可达性", () => {
       "recovery-identity-budget-service",
       "readonly-reconciliation-service",
       "recovery-reconciliation-ports",
+      // BRIDGE-01-02：MCP stdio 桥接随 CLI 入口进入 bundle
+      "mcp-tool-bridge",
+      "mcp-stdio-server",
     ];
     for (const moduleName of moduleNames) {
       const found = await (async () => {

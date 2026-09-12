@@ -34,6 +34,7 @@ import {
   executeSessionElevationListCommand,
   executeSessionRevokeElevationCommand,
   executeSessionShutdownCommand,
+  executeMcpServeCommand,
   executeStatusCommand,
   executeWorkflowScenarioCommand,
 } from "./cli/commands.js";
@@ -533,6 +534,18 @@ workflowCommand
       });
     },
   );
+
+const mcpCommand = program
+  .command("mcp")
+  .description("MCP 外部工具桥接（BRIDGE-01：stdio，仅最小工具面）");
+mcpCommand
+  .command("serve")
+  .description("以 stdio 运行 MCP 服务器（换行分隔 JSON-RPC；stdout 仅 MCP 消息）")
+  .action(async () => {
+    process.exitCode = await executeMcpServeCommand({
+      stateDirectory: defaultStateDirectory(),
+    });
+  });
 
 sessionCommand
   .command("elevation-list")

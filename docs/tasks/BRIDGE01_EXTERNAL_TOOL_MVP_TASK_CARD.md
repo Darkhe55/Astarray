@@ -1,6 +1,6 @@
 # BRIDGE-01：外部工具接入 MVP
 
-> 状态：in_progress（BRIDGE-01-01 done）
+> 状态：in_progress（BRIDGE-01-01/02 done）
 > 创建日期：2026-09-10
 > 类型：后续扩展；高风险工作按检查点执行
 > 来源：用户授权布置；本文件为Agent派生实施方案，运行态节点默认层级1或以下，不冒充用户层级0
@@ -25,7 +25,7 @@
 
 ### BRIDGE-01-02：最小工具映射
 
-- 状态：pending。
+- 状态：done（2026-09-12；证据 docs/reports/BRIDGE01_02_TOOL_MAPPING_EVIDENCE.md）。
 - 工作：提供submit/query/cancel/read-result最小工具面，绑定认证主体、任务ID、来源及幂等键；复用应用服务。
 - 验收：接受回执不误报完成；外部Agent不能冒充用户优先级0；字符串user前缀或schema通过不构成认证。
 - 前驱：BRIDGE-01-01。先通过前驱，再执行本节点。
@@ -56,7 +56,7 @@
 - 本检查点实现与入口证据：BRIDGE-01-01 冻结记录 docs/adr/0032-external-tool-bridge-mcp-stdio.md（协议/传输/认证/取消/异步语义/工具面/兼容矩阵）与 docs/reports/BRIDGE01_01_PROTOCOL_FREEZE.md（验收对照 + 官方规范引用）。
 - 测试命令、退出码和产物哈希：本轮为决策/冻结检查点，无产品代码变更（未跑覆盖率）；上一轮门禁结果 178 文件/1504 用例、全局 branch 86.54%、关键安全模块 22/22 ≥95%、tarball 回归 exit 0（见 docs/reports/E2E01_04_QUALITY_STATEMENT.md）。
 - 人工/外部依赖及剩余风险：BRIDGE-01-04 的真实 MCP 客户端属待确认依赖（按协同安装门禁先询问用户，不隐式下载）；Linux/macOS 平台未验证；Streamable HTTP/A2A/通用 HTTP 明确不在本批范围。
-- 本地提交、推送尝试与结果：BRIDGE-01-01 `175d40b`；`git push` 第 1 次成功（`d2c85bc..175d40b`，`origin/main`）。
+- 本地提交、推送尝试与结果：BRIDGE-01-01 `175d40b`、补记 `ca8acba`；BRIDGE-01-02 提交与推送结果见后续补记。
 
 ## 首轮执行指令
 

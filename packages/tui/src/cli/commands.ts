@@ -2505,4 +2505,53 @@ export async function executeWorkflowScenarioCommand(
   }
 }
 
+/** BRIDGE-01-02：MCP stdio 服务器（最小工具面：submit/query/cancel/read-result）。 */
+export interface McpServeCommandOptions {
+  stateDirectory: string;
+}
+
+export async function executeMcpServeCommand(
+  options: McpServeCommandOptions,
+): Promise<number> {
+  const { AstarrayApplicationFacade } = await import(
+    "../../../core/src/public-sdk.js"
+  );
+  const { McpToolBridge } = await import(
+    "../../../core/src/bridge/mcp-tool-bridge.js"
+  );
+  const { runMcpStdioSession } = await import(
+    "../../../core/src/bridge/mcp-stdio-server.js"
+  );
+  const sessionId = "mcp-session-stdio";
+  const application = await AstarrayApplicationFacade.create({
+    stateDirectory: options.stateDirectory,
+    mode: "assist",
+    runtime: "mock",
+    statusPollIntervalMilliseconds: 25,
+  });
+  application.createSession({ sessionId, mode: "assist" });
+  const bridge = new McpToolBridge({ applicationPort: application });
+  // 认证主体由本地 harness 注入（环境变量缺省为本地 stdio 主体）；
+  // 绝不从 JSON-RPC 消息内容或工具参数推断身份。
+  const principal = {
+    authenticatedPrincipalIdentifier:
+      process.env["ASTARRAY_MCP_PRINCIPAL"] ?? "external-harness:stdio",
+    sourceKind: "agent" as const,
+    agentInstanceId: process.env["ASTARRAY_MCP_AGENT"] ?? "mcp-client-stdio-1",
+    sessionId,
+  };
+  try {
+    await runMcpStdioSession({
+      input: process.stdin,
+      output: process.stdout,
+      bridge,
+      principal,
+    });
+    return EXIT_CODES.SUCCESS;
+  } finally {
+    await application.shutdown();
+  }
+}
+
+
 
