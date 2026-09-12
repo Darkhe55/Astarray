@@ -204,9 +204,7 @@ export async function executeResumeCommand(
       options.missionId,
       "续接",
     );
-    await bootstrap.controller.handleUserMessage(
-      `恢复任务 ${options.missionId}`,
-    );
+    await bootstrap.controller.resumeMission(options.missionId);
     const finalStatus = await waitForResumeResult(bootstrap, options.missionId);
     if (!options.isJsonOutput) {
       process.stdout.write(`resumed: ${options.missionId} (${finalStatus})\n`);
@@ -2074,17 +2072,47 @@ export interface RecoverResumeCommandOptions {
   stateDirectory: string;
   isJsonOutput: boolean;
   missionIdentifier: string;
+  /** T12A-R1-04：true 时在安全对账通过后真正续接既有 mission 完成未完成任务。 */
+  isExecutionRequested?: boolean;
 }
 
-/** recover resume：只恢复安全节点；需裁决项逐项 blocked（不默认允许）。 */
+/**
+ * recover resume：先做 T12A 安全对账（检查点/对账/终态裁决），
+ * 通过后按需真正续接 mission 完成未完成任务并产出产物（--execute）。
+ */
 export async function executeRecoverResumeCommand(
   options: RecoverResumeCommandOptions,
 ): Promise<number> {
+  const { MissionLeaseStore } = await import(
+    "../../../core/src/infra/mission-lease-store.js"
+  );
+  const isExecutionRequested = options.isExecutionRequested === true;
+  const leaseStore = new MissionLeaseStore({
+    stateDirectory: options.stateDirectory,
+  });
+  // 双跑门禁：其他进程仍持有活动租约时拒绝，且在对账改写状态之前返回。
+  if (isExecutionRequested) {
+    const lease = await leaseStore.readLeaseSummary(
+      options.missionIdentifier,
+      "recover-resume-execute-guard",
+    );
+    if (lease.exists && lease.isActive) {
+      const message = `mission-locked: mission 正在其他进程运行（属主 ${lease.ownerProcessInstanceId ?? "未知"}），拒绝续接以避免双跑: ${options.missionIdentifier}`;
+      if (options.isJsonOutput) {
+        process.stdout.write(
+          `${JSON.stringify({ missionIdentifier: options.missionIdentifier, error: message, status: "mission-locked" })}\n`,
+        );
+      } else {
+        process.stderr.write(`${message}\n`);
+      }
+      return EXIT_CODES.FAILURE;
+    }
+  }
   const controller = await createRecoveryCenterController(
     options.stateDirectory,
   );
   const result = await controller.resumeMission(options.missionIdentifier);
-  const view = {
+  const view: Record<string, unknown> = {
     missionIdentifier: result.missionIdentifier,
     resumed: result.resumed,
     recoveredSafeNodes: result.recoveredSafeNodes,
@@ -2097,22 +2125,97 @@ export async function executeRecoverResumeCommand(
     feedbackReplayEnqueueRange: result.feedbackReplayEnqueueRange,
     lostTimeWindowDescription: result.lostTimeWindowDescription,
     requiresUserDecision: result.resumed ? false : true,
+    executed: false,
+    status: null as string | null,
+    leaseTakeoverPerformed: false,
+    completedTaskCount: 0,
   };
-  if (options.isJsonOutput) {
-    process.stdout.write(`${JSON.stringify(view)}\n`);
-  } else if (result.resumed) {
-    process.stdout.write(
-      `mission ${result.missionIdentifier}: 已恢复（安全节点 ${result.recoveredSafeNodes.length}）\n`,
-    );
-  } else {
-    process.stdout.write(
-      `mission ${result.missionIdentifier}: 未恢复，需裁决 ${result.blockedDecisionItems.length} 项\n` +
-        result.blockedDecisionItems
-          .map((item) => `  - ${item.item}: ${item.decision}\n`)
-          .join(""),
-    );
+  if (!result.resumed) {
+    if (options.isJsonOutput) {
+      process.stdout.write(`${JSON.stringify(view)}\n`);
+    } else {
+      process.stdout.write(
+        `mission ${result.missionIdentifier}: 未恢复，需裁决 ${result.blockedDecisionItems.length} 项\n` +
+          result.blockedDecisionItems
+            .map((item) => `  - ${item.item}: ${item.decision}\n`)
+            .join(""),
+      );
+    }
+    return EXIT_CODES.FAILURE;
   }
-  return result.resumed ? EXIT_CODES.SUCCESS : EXIT_CODES.FAILURE;
+  if (!isExecutionRequested) {
+    if (options.isJsonOutput) {
+      process.stdout.write(`${JSON.stringify(view)}\n`);
+    } else {
+      process.stdout.write(
+        `mission ${result.missionIdentifier}: 已恢复（安全节点 ${result.recoveredSafeNodes.length}）；未请求执行\n`,
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  }
+  // 过期租约显式接管后释放，让续接会话自行取得新租约（不双调度）。
+  let leaseTakeoverPerformed = false;
+  const staleLease = await leaseStore.readLease(options.missionIdentifier);
+  if (staleLease !== null) {
+    const staleSummary = await leaseStore.readLeaseSummary(
+      options.missionIdentifier,
+      "recover-resume-execute-guard",
+    );
+    if (!staleSummary.isActive) {
+      const takenOver = await leaseStore.takeOverExpiredLease(
+        options.missionIdentifier,
+        staleLease.leaseRevision,
+        {
+          missionId: options.missionIdentifier,
+          processInstanceId: "recover-resume-execute-takeover",
+          purpose: "recover",
+          claimantDescription: "recover resume --execute 接管过期租约",
+        },
+      );
+      await leaseStore.releaseLease(
+        options.missionIdentifier,
+        takenOver.leaseRevision,
+        "recover-resume-execute-takeover",
+      );
+      leaseTakeoverPerformed = true;
+    }
+  }
+  const bootstrap = await bootstrapCli({
+    mode: "assist",
+    stateDirectory: options.stateDirectory,
+    concurrency: 4,
+    failureThreshold: 3,
+    maxLoopIterations: 8,
+    useFeedbackProcess: false,
+    streamOutput: () => {},
+  });
+  try {
+    await bootstrap.controller.resumeMission(options.missionIdentifier);
+    const finalStatus = await waitForResumeResult(
+      bootstrap,
+      options.missionIdentifier,
+    );
+    const missionStatus = await bootstrap.controller.queryMissionStatus(
+      options.missionIdentifier,
+    );
+    const completedTaskCount =
+      missionStatus.taskChain?.tasks.filter((task) => task.status === "done")
+        .length ?? 0;
+    view.executed = true;
+    view.status = finalStatus;
+    view.leaseTakeoverPerformed = leaseTakeoverPerformed;
+    view.completedTaskCount = completedTaskCount;
+    if (options.isJsonOutput) {
+      process.stdout.write(`${JSON.stringify(view)}\n`);
+    } else {
+      process.stdout.write(
+        `mission ${options.missionIdentifier}: 续接完成 status=${finalStatus}（已完成任务 ${completedTaskCount}）\n`,
+      );
+    }
+    return finalStatus === "done" ? EXIT_CODES.SUCCESS : EXIT_CODES.FAILURE;
+  } finally {
+    await bootstrap.shutdown();
+  }
 }
 
 export interface RecoverAbandonCommandOptions {

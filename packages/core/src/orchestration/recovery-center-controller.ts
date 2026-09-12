@@ -77,7 +77,8 @@ export interface RecoveryDecisionItem {
     | "blocked-state-corrupted"
     | "checkpoint-not-found"
     | "blocked-reconciliation-discrepancy"
-    | "blocked-reconciliation-unavailable";
+    | "blocked-reconciliation-unavailable"
+    | "mission-already-terminal";
   reason: string;
 }
 
@@ -254,6 +255,27 @@ export class RecoveryCenterController {
             item: "mission-state-corrupted",
             decision: "blocked-state-corrupted",
             reason: "mission summary/task-chain 损坏，禁止静默重建为恢复成功",
+          },
+        ],
+        reauthorizationRequiredTypes: [],
+        reconciliation: buildReconciliationNotRequired(),
+        feedbackReplayEnqueueRange: null,
+        lostTimeWindowDescription: null,
+      };
+    }
+    if (probe.summaryStatus === "done" || probe.summaryStatus === "cancelled") {
+      return {
+        missionIdentifier,
+        resumed: false,
+        recoveredSafeNodes: [],
+        readySetTaskNodeIdentifiers: [],
+        requiresHandoffIdentity: false,
+        identityRecoveries: [],
+        blockedDecisionItems: [
+          {
+            item: `mission-status-${probe.summaryStatus}`,
+            decision: "mission-already-terminal",
+            reason: "mission 已处于终态（done/cancelled），禁止重复执行",
           },
         ],
         reauthorizationRequiredTypes: [],

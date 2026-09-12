@@ -214,14 +214,18 @@ recoverCommand
 recoverCommand
   .command("resume <mission-id>")
   .description("只恢复安全节点；需裁决项逐项 blocked（不默认允许）")
+  .option("--execute", "安全对账通过后真正续接 mission 完成未完成任务")
   .option("--json", "JSON 输出")
-  .action(async (missionIdentifier: string, options: { json?: boolean }) => {
-    process.exitCode = await executeRecoverResumeCommand({
-      stateDirectory: defaultStateDirectory(),
-      missionIdentifier,
-      isJsonOutput: options.json === true,
-    });
-  });
+  .action(
+    async (missionIdentifier: string, options: { execute?: boolean; json?: boolean }) => {
+      process.exitCode = await executeRecoverResumeCommand({
+        stateDirectory: defaultStateDirectory(),
+        missionIdentifier,
+        isJsonOutput: options.json === true,
+        isExecutionRequested: options.execute === true,
+      });
+    },
+  );
 recoverCommand
   .command("abandon <mission-id>")
   .description("只关闭调度并保留可审计存档（不删除数据）")

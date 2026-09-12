@@ -6,6 +6,8 @@
  */
 import { randomUUID } from "node:crypto";
 
+import { DomainError } from "../core/errors.js";
+
 import type {
   AgentMode,
   AgentRuntime,
@@ -208,6 +210,38 @@ export class MainController {
       this.launchDevolveMission(missionId, taskNodes);
     }
     return missionId;
+  }
+
+  /**
+   * T12A-R1-04：真正续接既有 mission（不新建 mission、不复用旧身份）。
+   * 读取持久化任务链中的未完成任务，按原 mode 重新调度；无未完成任务则幂等返回。
+   */
+  async resumeMission(missionId: string): Promise<void> {
+    const missionStatus =
+      await this.options.missionManager.getMissionStatus(missionId);
+    if (missionStatus.taskChain === null) {
+      throw new DomainError("mission-not-found", `任务不存在: ${missionId}`);
+    }
+    const incompleteTasks = missionStatus.taskChain.tasks.filter(
+      (task) => task.status !== "done",
+    );
+    if (incompleteTasks.length === 0) {
+      return;
+    }
+    const mode =
+      missionStatus.summary?.mode ?? this.options.modeMachine.getCurrentMode();
+    if (mode === "ponder") {
+      throw new DomainError(
+        "invalid-mode-transition",
+        `Ponder 模式不产生 mission 续接: ${missionId}`,
+      );
+    }
+    await this.options.missionManager.updateMissionStatus(missionId, "running");
+    if (mode === "devolve") {
+      this.launchDevolveMission(missionId, incompleteTasks);
+    } else {
+      this.launchAssistMission(missionId, incompleteTasks);
+    }
   }
 
   /** 用户裁决：允许（含会话级）或拒绝权限请求。 */
