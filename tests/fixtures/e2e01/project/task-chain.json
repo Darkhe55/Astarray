@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "missionId": "fixture-mission",
+  "revision": 1,
+  "updatedAtIso": "2026-09-10T00:00:00.000Z",
+  "tasks": [
+    {
+      "id": "T-001",
+      "description": "侦察",
+      "dependsOn": [],
+      "taskType": "data",
+      "toolNames": [
+        "readFile"
+      ],
+      "assignedAgentId": null,
+      "status": "done",
+      "resultLocation": null
+    },
+    {
+      "id": "T-002",
+      "description": "实现",
+      "dependsOn": [
+        "T-001"
+      ],
+      "taskType": "data",
+      "toolNames": [
+        "readFile",
+        "writeFile"
+      ],
+      "assignedAgentId": null,
+      "status": "done",
+      "resultLocation": null
+    },
+    {
+      "id": "T-003",
+      "description": "测试",
+      "dependsOn": [
+        "T-002"
+      ],
+      "taskType": "data",
+      "toolNames": [
+        "readFile"
+      ],
+      "assignedAgentId": null,
+      "status": "pending",
+      "resultLocation": null
+    },
+    {
+      "id": "T-004",
+      "description": "独立验收",
+      "dependsOn": [
+        "T-003"
+      ],
+      "taskType": "data",
+      "toolNames": [
+        "readFile"
+      ],
+      "assignedAgentId": null,
+      "status": "pending",
+      "resultLocation": null
+    }
+  ]
+}

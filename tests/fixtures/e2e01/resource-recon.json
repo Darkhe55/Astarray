@@ -1,0 +1,12 @@
+{
+  "nodeVersionRequired": ">=20",
+  "fixtureDependencies": [],
+  "requiresNetwork": false,
+  "requiresInstallation": false,
+  "requiresCredentials": false,
+  "baselineFailureReason": "目标模块 src/summarize-tasks.mjs 为冻结桩实现（抛 E2E01_TARGET_NOT_IMPLEMENTED），冻结测试必然失败",
+  "notes": [
+    "仅使用 Node 标准库与已安装的 astarray；不隐式下载依赖",
+    "E2E-01-03 的真实 Provider 场景需要用户凭据与费用授权；缺授权时该检查点保持 blocked"
+  ]
+}

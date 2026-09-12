@@ -1,0 +1,28 @@
+{
+  "requiredArtifactPaths": [
+    "out/summary.json",
+    "out/test-evidence.json"
+  ],
+  "requiredFieldsByPath": {
+    "out/summary.json": [
+      "totalCount",
+      "doneCount",
+      "pendingTaskIdentifiers",
+      "summaryText"
+    ],
+    "out/test-evidence.json": [
+      "testCommand",
+      "exitCode",
+      "passed"
+    ]
+  },
+  "expectedSummary": {
+    "totalCount": 4,
+    "doneCount": 2,
+    "pendingTaskIdentifiers": [
+      "T-003",
+      "T-004"
+    ],
+    "summaryText": "已完成 2/4；待处理 2 项"
+  }
+}

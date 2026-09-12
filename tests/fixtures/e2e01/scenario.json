@@ -1,0 +1,52 @@
+{
+  "scenarioIdentifier": "E2E01-VERTICAL-001",
+  "targetFeature": "任务链摘要 summarizeTaskChain（统计完成数并列出待处理任务标识）",
+  "steps": [
+    {
+      "step": "reconnaissance",
+      "requiredAgentRole": "tertiary",
+      "produces": "PROJECT_CONTEXT_DIGEST_V1"
+    },
+    {
+      "step": "planning",
+      "requiredAgentRole": "secondary"
+    },
+    {
+      "step": "implementation",
+      "requiredAgentRole": "tertiary",
+      "identityKey": "implementation"
+    },
+    {
+      "step": "testing",
+      "requiredAgentRole": "tertiary",
+      "identityKey": "testing",
+      "identityMustDifferFrom": [
+        "implementation"
+      ]
+    },
+    {
+      "step": "independent-acceptance",
+      "requiredAgentRole": "tertiary",
+      "identityKey": "acceptance",
+      "identityMustDifferFrom": [
+        "implementation",
+        "testing"
+      ]
+    },
+    {
+      "step": "rework-once",
+      "requiredAgentRole": "tertiary",
+      "forceOneTestFailure": true
+    },
+    {
+      "step": "secondary-integration",
+      "requiredAgentRole": "secondary",
+      "rejectUnauthorizedMerge": true
+    },
+    {
+      "step": "main-report-read-on-demand",
+      "requiredAgentRole": "main",
+      "mustNotInterrupt": true
+    }
+  ]
+}

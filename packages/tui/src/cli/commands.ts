@@ -217,15 +217,28 @@ export async function executeResumeCommand(
   }
 }
 
+/**
+ * 等待续接结果：缺省**不设固定上限**，直到 mission 进入终态
+ * （避免 T07D-R2-03 指出的"固定 60 秒上限误报失败"）；调用方可显式给上限。
+ */
 async function waitForResumeResult(
   bootstrap: Awaited<ReturnType<typeof bootstrapCli>>,
   missionId: string,
+  options: { timeoutMilliseconds?: number | null } = {},
 ): Promise<string> {
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
+  const deadlineMilliseconds =
+    options.timeoutMilliseconds === undefined ||
+    options.timeoutMilliseconds === null
+      ? null
+      : Date.now() + options.timeoutMilliseconds;
+  while (deadlineMilliseconds === null || Date.now() < deadlineMilliseconds) {
     const missionStatus = await bootstrap.controller.queryMissionStatus(missionId);
     const summaryStatus = missionStatus.summary?.status ?? "running";
-    if (summaryStatus === "done" || summaryStatus === "cancelled") {
+    if (
+      summaryStatus === "done" ||
+      summaryStatus === "cancelled" ||
+      summaryStatus === "blocked"
+    ) {
       return summaryStatus;
     }
     await new Promise((resolve) => setTimeout(resolve, 50));

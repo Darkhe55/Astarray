@@ -29,7 +29,8 @@
     "test:coverage": "vitest run --coverage",
     "check": "npm run typecheck && npm run lint && npm run build && npm run test",
     "prepack": "npm run check",
-    "verify:sdk-consumer": "node scripts/verify-sdk-consumer.mjs"
+    "verify:sdk-consumer": "node scripts/verify-sdk-consumer.mjs",
+    "verify:e2e01": "node scripts/e2e01-acceptance.mjs fixture"
   },
   "dependencies": {
     "commander": "^15.0.0",

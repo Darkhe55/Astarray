@@ -10,6 +10,7 @@ export default tseslint.config(
       ".tmp/",
       ".astarray/",
       "scripts/",
+      "tests/fixtures/",
       ".verify-*/",
     ],
   },

@@ -1,0 +1,17 @@
+{
+  "modeKey": "assist",
+  "runtime": "mock",
+  "providerProfileId": "local-scripted",
+  "modelProfileId": "scripted-mock-v1",
+  "allowedToolNames": [
+    "readFile",
+    "writeFile"
+  ],
+  "installationAllowed": false,
+  "concurrency": 1,
+  "failureThreshold": 1,
+  "maxLoopIterations": 8,
+  "contextBudgetTokens": 4096,
+  "workingSetMaximumFiles": 10,
+  "humanVerificationPolicy": "block-until-verified"
+}

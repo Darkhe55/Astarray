@@ -1,0 +1,8 @@
+{
+  "name": "e2e01-fixture-project",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "test": "node test/run-tests.mjs"
+  }
+}
