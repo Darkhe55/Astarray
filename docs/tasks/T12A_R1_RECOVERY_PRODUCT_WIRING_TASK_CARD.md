@@ -56,7 +56,7 @@ pn是反馈单次退避上限，不是三小时自动授权或数据清理期限
 - 本检查点实现与入口证据：docs/reports/T12A_R1_01_RECOVERY_CENTER_EVIDENCE.md（§3 dist 端到端命令与退出码、§4 行为反例、§5 门禁结果）。
 - 测试命令、退出码：`npm run check` exit 0（166 文件/1450 用例）；`npm run test:coverage` exit 0（全局 branch 86.96%，≥85%）；聚焦 `recover-center-commands` 7/7、`t12a06-cli-wiring` 9/9；dist E2E exit 0/0/0/1/0。
 - 人工/外部依赖及剩余风险：`readonly-reconciliation-service` 对账已在 T12A-R1-02 接线完成；检查点生产端记录 `gitStateRecovery`、恢复后任务重新派发与真实 Provider/tarball 重启证据属 T12A-R1-03/-04 与 E2E-01。无人工阻塞项。
-- 本地提交、推送尝试与结果：T12A-R1-01 实现提交 `7582dad`、补记 `dcb0288`（均第 1 次推送成功）；T12A-R1-02 实现提交 `daf7cd1`、补记 `d59cc74`（均第 1 次推送成功）；T12A-R1-03 提交与推送结果见后续补记。
+- 本地提交、推送尝试与结果：T12A-R1-01 实现提交 `7582dad`、补记 `dcb0288`；T12A-R1-02 实现提交 `daf7cd1`、补记 `d59cc74`；T12A-R1-03 实现提交 `e826e12`（`git push` 第 1 次成功，`8465952..e826e12`）。三次阶段推送均一次成功。
 
 ## 首轮执行指令
 
