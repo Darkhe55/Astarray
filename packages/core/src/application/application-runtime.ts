@@ -92,6 +92,8 @@ export interface ApplicationRuntime {
   missionLeaseStore: MissionLeaseStore;
   /** T12-02：本 CLI 进程不可复用实例标识。 */
   processInstanceId: string;
+  /** B6R-09：已注册 Agent 目录（报告来源认证的登记入口）。 */
+  registeredAgentDirectory: RegisteredAgentDirectory;
   /** 权威执行结果摘要（来自 Agent 工作存档的 result 条目；T07D-R1-03）。 */
   readMissionResultSummaries: (
     missionId: string,
@@ -573,6 +575,7 @@ export async function createApplicationRuntime(
     feedbackClient,
     missionLeaseStore,
     processInstanceId,
+    registeredAgentDirectory,
     readMissionResultSummaries,
     shutdown,
   };
