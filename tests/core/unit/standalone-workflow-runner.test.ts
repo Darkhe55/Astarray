@@ -57,7 +57,9 @@ async function makeRunner() {
   const reconnaissanceController = new ProjectReconnaissanceController({
     digestStore,
     sensitivePathMatchPort: { matchSensitivePathName: () => null },
-    sourceAuthenticationPort: { isRegisteredReconnaissance: async () => true },
+    sourceAuthenticationPort: {
+      isRegisteredReconnaissance: async () => ({ valid: true, reason: null }),
+    },
   });
   const runner = new StandaloneWorkflowRunner({
     directDispatchController,

@@ -381,12 +381,12 @@ export async function createApplicationRuntime(
           : null,
     },
     sourceAuthenticationPort: {
-      isRegisteredReconnaissance: async (agentInstanceId) =>
-        registeredAgentDirectory.verifyReportSource({
-          reportingAgentInstanceId: agentInstanceId,
-          missionId: "mission-cli",
-          taskBundleId: "bundle-cli",
-        }).valid,
+      // 按侦察摘要的扫描范围（mission）校验来源，不再写死 CLI 会话作用域。
+      isRegisteredReconnaissance: async (input) =>
+        registeredAgentDirectory.verifyReconnaissanceSource({
+          reportingAgentInstanceId: input.agentInstanceId,
+          missionId: input.scanningScope,
+        }),
     },
   });
   const appointmentRegistry = new AgentAppointmentRegistry();

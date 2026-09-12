@@ -67,6 +67,30 @@ export class RegisteredAgentDirectory {
     return { valid: true, reason: null };
   }
 
+  /**
+   * 侦察来源认证：按 mission（侦察摘要的扫描范围）校验，不要求绑定任务包。
+   * 侦察型三级 Agent 由次级为某 mission 创建，摘要只在该 mission 作用域内有效。
+   */
+  verifyReconnaissanceSource(input: {
+    reportingAgentInstanceId: string;
+    missionId: string;
+  }): { valid: boolean; reason: string | null } {
+    const entry = this.entriesByAgentId.get(input.reportingAgentInstanceId);
+    if (entry === undefined) {
+      return { valid: false, reason: "Agent 未登记（非空字符串不是认证）" };
+    }
+    if (entry.agentRole !== "tertiary") {
+      return { valid: false, reason: "侦察来源必须是三级 Agent" };
+    }
+    if (entry.missionId !== input.missionId) {
+      return {
+        valid: false,
+        reason: "Agent 登记 mission 与侦察扫描范围不匹配",
+      };
+    }
+    return { valid: true, reason: null };
+  }
+
   /** 撤销登记（Agent 回收时）。 */
   unregisterAgent(agentInstanceId: string): void {
     this.entriesByAgentId.delete(agentInstanceId);

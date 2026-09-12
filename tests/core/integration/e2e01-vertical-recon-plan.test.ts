@@ -47,13 +47,12 @@ describe("E2E-01-02 切片 6：产品级侦察与规划", () => {
   it("侦察：只读任务子集受控；已登记来源的 PROJECT_CONTEXT_DIGEST_V1 落盘且旧摘要转 stale", async () => {
     const runtime = await createRuntime();
     try {
-      // 运行时把侦察来源认证绑定到 CLI 会话的固定 mission/bundle（见证据文档"已知限制"）
       runtime.registeredAgentDirectory.registerAgent({
         agentInstanceId: RECON_AGENT,
         agentRole: "tertiary",
-        missionId: "mission-cli",
+        missionId: MISSION_ID,
         owningSecondaryAgentInstanceId: SECONDARY_AGENT,
-        boundTaskBundleId: "bundle-cli",
+        boundTaskBundleId: null,
         registeredAtIso: new Date().toISOString(),
       });
 
@@ -139,6 +138,17 @@ describe("E2E-01-02 切片 6：产品级侦察与规划", () => {
             ...digest,
             digestId: "digest-evil",
             reconnaissanceAgentInstanceId: "agent-unregistered",
+          },
+        }),
+      ).rejects.toMatchObject({ errorCode: "task-sequence-permission-denied" });
+
+      // 侦察来源认证必须按 mission 匹配：扫描范围与登记 mission 不一致时拒绝
+      await expect(
+        runtime.reconnaissanceController.recordDigest({
+          digest: {
+            ...digest,
+            digestId: "digest-wrong-scope",
+            scanningScope: "mission-other",
           },
         }),
       ).rejects.toMatchObject({ errorCode: "task-sequence-permission-denied" });

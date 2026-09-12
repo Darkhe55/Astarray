@@ -28,7 +28,11 @@ export interface SensitivePathMatchPort {
 
 /** 侦察 Agent 来源认证端口（具体侦察 Agent 是否由本次级创建/已登记）。 */
 export interface ReconnaissanceSourceAuthenticationPort {
-  isRegisteredReconnaissance(agentInstanceId: string): Promise<boolean>;
+  isRegisteredReconnaissance(input: {
+    agentInstanceId: string;
+    /** 侦察摘要的扫描范围（mission）：来源认证必须按该作用域校验。 */
+    scanningScope: string;
+  }): Promise<{ valid: boolean; reason: string | null }>;
 }
 
 export interface ProjectReconnaissanceControllerOptions {
@@ -95,13 +99,15 @@ export class ProjectReconnaissanceController {
       );
     }
     const digest = parsedDigest.data;
-    const isRegistered = await this.sourceAuthenticationPort.isRegisteredReconnaissance(
-      digest.reconnaissanceAgentInstanceId,
-    );
-    if (!isRegistered) {
+    const sourceVerification =
+      await this.sourceAuthenticationPort.isRegisteredReconnaissance({
+        agentInstanceId: digest.reconnaissanceAgentInstanceId,
+        scanningScope: digest.scanningScope,
+      });
+    if (!sourceVerification.valid) {
       throw new DomainError(
         "task-sequence-permission-denied",
-        `侦察 Agent 未登记（非空字符串不是认证）: ${digest.reconnaissanceAgentInstanceId}`,
+        `侦察来源认证失败: ${sourceVerification.reason ?? "未登记"}（${digest.reconnaissanceAgentInstanceId}）`,
       );
     }
     for (const reference of digest.relevantFileReferences) {

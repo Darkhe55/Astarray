@@ -15,9 +15,9 @@
 | 新 revision 使旧摘要 stale | 同扫描范围写入 `digest-2` 后 `digest-1.isStale === true` |
 | 未登记来源 | 被拒（`task-sequence-permission-denied`，"非空字符串不是认证"） |
 
-**已知限制（下一片修复）**：运行时把侦察来源认证绑定到写死的 `mission-cli`/`bundle-cli`
-（`application-runtime.ts` 的 `isRegisteredReconnaissance` 端口只传这两个常量），因此真实 mission
-的侦察摘要无法写入——端口需要接收 mission/任务包，而不是固定 CLI 会话作用域。
+**原限制（已在切片 6b 修复）**：运行时曾把侦察来源认证绑定到写死的 `mission-cli`/`bundle-cli`，
+真实 mission 的侦察摘要无法写入；现改为按摘要 `scanningScope` 校验（见
+docs/reports/E2E01_02_RECON_SCOPE_EVIDENCE.md）。
 
 ## 2. 规划（任务插入提案）
 

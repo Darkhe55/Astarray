@@ -81,8 +81,10 @@ function makeHarness(options: {
         sensitiveSet.has(filePath) ? "env-file" : null,
     },
     sourceAuthenticationPort: {
-      isRegisteredReconnaissance: async (agentInstanceId) =>
-        registered.has(agentInstanceId),
+      isRegisteredReconnaissance: async (input) =>
+        registered.has(input.agentInstanceId)
+          ? { valid: true, reason: null }
+          : { valid: false, reason: "未登记" },
     },
   });
   return { store, controller };
