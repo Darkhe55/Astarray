@@ -40,7 +40,7 @@
 
 ### E2E-01-04：质量与交付声明
 
-- 状态：pending。
+- 状态：in_progress（本地可证项已通过：178 文件/1504 用例、全局 branch 86.54%、关键安全模块 22/22 ≥95%、tarball 回归 exit 0；证据 docs/reports/E2E01_04_QUALITY_STATEMENT.md。未决必选项：人工体验结论、Linux/macOS 平台、真实 Provider 场景）。
 - 工作：运行check、coverage、安全关键模块专项及tarball回归；绑定平台结果和人工体验结论，纠正支持矩阵。
 - 验收：总体分支≥85%，适用安全关键模块≥95%；未跑平台明确未验证；mock/fake/真实及正式/待人工追认状态区分；未决必选项不得done。
 - 前驱：E2E-01-03。先通过前驱，再执行本节点。

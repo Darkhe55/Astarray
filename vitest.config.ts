@@ -13,7 +13,7 @@ export default defineConfig({
         "packages/gui/**",
         "packages/core/src/feedback-process/child-bootstrap.ts",
       ],
-      reporter: ["text", "html"],
+      reporter: ["text", "html", "json-summary"],
       thresholds: {
         lines: 85,
         functions: 85,
