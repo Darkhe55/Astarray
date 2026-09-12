@@ -66,12 +66,29 @@ describe("CLI 命令（直接调用）", () => {
     const exitCode = await executeRunCommand({
       prompt: "x",
       mode: "assist",
+      runtime: "bogus-runtime",
+      isJsonOutput: true,
+      stateDirectory,
+    }).catch(() => 2);
+    expect(exitCode).toBe(2);
+    expect(stderrChunks.join("")).toContain("配置非法");
+  });
+
+  it("run：openai-compatible 缺 --provider-endpoint 退出码 2（不回退 mock）", async () => {
+    const stderrChunks: string[] = [];
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+      stderrChunks.push(String(chunk));
+      return true;
+    });
+    const exitCode = await executeRunCommand({
+      prompt: "x",
+      mode: "assist",
       runtime: "openai-compatible",
       isJsonOutput: true,
       stateDirectory,
     }).catch(() => 2);
     expect(exitCode).toBe(2);
-    expect(stderrChunks.join("")).toContain("尚未支持");
+    expect(stderrChunks.join("")).toContain("provider-endpoint");
   });
 
   it("run：非 --json 退出码 2", async () => {

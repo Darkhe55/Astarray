@@ -6,7 +6,13 @@
 import path from "node:path";
 
 import { AstarrayApplicationFacade } from "../../../core/src/public-sdk.js";
+import type { PublicProviderConfiguration } from "../../../core/src/public-sdk.js";
 import { runConfigSchema } from "../../../core/src/core/schemas.js";
+import {
+  OPENAI_COMPATIBLE_PROVIDER_ID,
+  createOpenAiCompatibleProviderRegistration,
+} from "../../../core/src/runtime/openai-compatible-provider-registration.js";
+import { ProviderRuntimeRegistry } from "../../../core/src/runtime/provider-runtime-registry.js";
 import { EXIT_CODES, failWith, logToStderr, printJson } from "./json-output.js";
 
 export interface RunCommandOptions {
@@ -17,6 +23,12 @@ export interface RunCommandOptions {
   stateDirectory: string;
   /** T07D-R2-03：等待上限秒数；缺省不设固定上限（等待任务终态）。 */
   timeoutSeconds?: number;
+  /** openai-compatible 运行时的本地/远端协议端点（必填；不静默回退 mock）。 */
+  providerEndpoint?: string;
+  /** Provider 模型标识（必填）。 */
+  providerModelIdentifier?: string;
+  /** 存放 API key 的环境变量名；缺省读取 ASTARRAY_PROVIDER_API_KEY（不落盘/不回显）。 */
+  providerApiKeyEnvironmentVariable?: string;
 }
 
 export async function executeRunCommand(options: RunCommandOptions): Promise<number> {
@@ -31,12 +43,6 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
     );
   }
   const runConfig = parsedConfig.data;
-  if (runConfig.runtime !== "mock") {
-    failWith(
-      new Error("--runtime " + runConfig.runtime + " 尚未支持（v0.1 仅 mock）"),
-      EXIT_CODES.USAGE_ERROR,
-    );
-  }
   if (!options.isJsonOutput) {
     failWith(
       new Error("headless run 必须使用 --json（或 TTY 下使用 TUI）"),
@@ -44,10 +50,59 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
     );
   }
 
+  let runtimeSelection: {
+    runtime: "mock" | "provider";
+    providerRuntimeRegistry?: ProviderRuntimeRegistry;
+    provider?: PublicProviderConfiguration;
+  } = { runtime: "mock" };
+  if (runConfig.runtime === "openai-compatible") {
+    const endpoint = options.providerEndpoint;
+    const modelIdentifier = options.providerModelIdentifier;
+    if (endpoint === undefined || endpoint === "") {
+      failWith(
+        new Error(
+          "--runtime openai-compatible 需要 --provider-endpoint（本地协议服务器地址）",
+        ),
+        EXIT_CODES.USAGE_ERROR,
+      );
+    }
+    if (modelIdentifier === undefined || modelIdentifier === "") {
+      failWith(
+        new Error("--runtime openai-compatible 需要 --provider-model"),
+        EXIT_CODES.USAGE_ERROR,
+      );
+    }
+    const apiKeyEnvironmentVariable =
+      options.providerApiKeyEnvironmentVariable ?? "ASTARRAY_PROVIDER_API_KEY";
+    const apiKey =
+      process.env[apiKeyEnvironmentVariable] ?? "local-no-auth-required";
+    const registry = new ProviderRuntimeRegistry({
+      protectedCredentialStore: {
+        doesReferenceExist: async () => true,
+        // 端点由本次调用的受控参数给出；API key 只从环境变量读取，不落盘、不回显。
+        readCredential: async () => ({ baseUrl: endpoint, apiKey }),
+      },
+    });
+    registry.register(createOpenAiCompatibleProviderRegistration());
+    runtimeSelection = {
+      runtime: "provider",
+      providerRuntimeRegistry: registry,
+      provider: {
+        // 仅本地/受控端点：真实服务必须由用户授权并写入受保护凭据存储。
+        providerId: OPENAI_COMPATIBLE_PROVIDER_ID,
+        modelIdentifier,
+        allowedModelIdentifiers: [modelIdentifier],
+        requiredCapabilities: ["streaming", "tool-calling"],
+        baseUrl: endpoint,
+        protectedCredentialReferenceId: "credential-reference:cli-provider",
+      },
+    };
+  }
+
   const application = await AstarrayApplicationFacade.create({
     stateDirectory: options.stateDirectory,
     mode: runConfig.mode,
-    runtime: "mock",
+    ...runtimeSelection,
     concurrency: runConfig.concurrency,
     failureThreshold: runConfig.toolFailureThreshold,
     maximumLoopIterations: 8,

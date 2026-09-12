@@ -58,10 +58,27 @@ program
     "--timeout-seconds <seconds>",
     "等待上限秒数；缺省不设固定上限，等待任务终态",
   )
+  .option(
+    "--provider-endpoint <url>",
+    "openai-compatible 协议端点（本地协议服务器或真实服务；必填）",
+  )
+  .option("--provider-model <identifier>", "Provider 模型标识（必填）")
+  .option(
+    "--provider-api-key-env <variable>",
+    "存放 API key 的环境变量名（缺省 ASTARRAY_PROVIDER_API_KEY；不落盘、不回显）",
+  )
   .action(
     async (
       prompt: string,
-      options: { mode?: string; runtime?: string; json?: boolean; timeoutSeconds?: string },
+      options: {
+        mode?: string;
+        runtime?: string;
+        json?: boolean;
+        timeoutSeconds?: string;
+        providerEndpoint?: string;
+        providerModel?: string;
+        providerApiKeyEnv?: string;
+      },
     ) => {
       process.exitCode = await executeRunCommand({
         prompt,
@@ -73,6 +90,15 @@ program
           options.timeoutSeconds === undefined
             ? undefined
             : Number.parseInt(options.timeoutSeconds, 10),
+        ...(options.providerEndpoint !== undefined
+          ? { providerEndpoint: options.providerEndpoint }
+          : {}),
+        ...(options.providerModel !== undefined
+          ? { providerModelIdentifier: options.providerModel }
+          : {}),
+        ...(options.providerApiKeyEnv !== undefined
+          ? { providerApiKeyEnvironmentVariable: options.providerApiKeyEnv }
+          : {}),
       });
     },
   );
