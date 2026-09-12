@@ -75,6 +75,11 @@ export class ProjectReconnaissanceController {
     return task;
   }
 
+  /** 只读列出已落盘的侦察摘要（主 Agent/CLI 按需读取用）。 */
+  async listDigests() {
+    return this.digestStore.listDigests();
+  }
+
   /**
    * 记录侦察摘要：校验 schema、来源侦察 Agent 已登记、token 预算非负、
    * 文件引用路径不涉敏感内容；写存储并标记同扫描范围旧摘要为 stale。

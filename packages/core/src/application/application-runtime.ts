@@ -56,6 +56,8 @@ import {
   SessionShutdownCoordinator,
 } from "../tools/session-shutdown-and-export.js";
 import { RegisteredAgentDirectory } from "../orchestration/registered-agent-directory.js";
+import type { ProjectReconnaissanceController } from "../orchestration/project-reconnaissance-controller.js";
+import type { TaskSequenceManageController } from "../orchestration/task-sequence-controllers.js";
 import { MainAgentReportArchiveIngestor } from "../orchestration/main-agent-report-archive.js";
 import { ConversationTaskInsertionController } from "../orchestration/conversation-task-insertion-controller.js";
 import { UnboundedAgentInstanceRegistry } from "../orchestration/unbounded-agent-registry.js";
@@ -94,6 +96,10 @@ export interface ApplicationRuntime {
   processInstanceId: string;
   /** B6R-09：已注册 Agent 目录（报告来源认证的登记入口）。 */
   registeredAgentDirectory: RegisteredAgentDirectory;
+  /** T08C-04：项目侦察（只读侦察任务 + PROJECT_CONTEXT_DIGEST_V1 落盘）。 */
+  reconnaissanceController: ProjectReconnaissanceController;
+  /** T08A：任务序列管理面（发布序列/插入任务/状态流转的本地控制面入口）。 */
+  taskSequenceManageController: TaskSequenceManageController;
   /** 权威执行结果摘要（来自 Agent 工作存档的 result 条目；T07D-R1-03）。 */
   readMissionResultSummaries: (
     missionId: string,
@@ -268,14 +274,16 @@ export async function createApplicationRuntime(
         Promise.resolve(registeredAgentDirectory.verifyReportSource(input)),
     },
   });
+  // 任务序列管理面（发布/插入/状态流转）：装配一次，供提案控制面与只读查询复用。
+  const sequenceManageController = new (await import(
+    "../orchestration/task-sequence-controllers.js"
+  )).TaskSequenceManageController(
+    new (await import(
+      "../orchestration/agent-task-sequence-store.js"
+    )).AgentTaskSequenceStore({ baseDirectory: stateDirectory }),
+  );
   const conversationTaskInsertionController = new ConversationTaskInsertionController({
-    manageController: new (await import(
-      "../orchestration/task-sequence-controllers.js"
-    )).TaskSequenceManageController(
-      new (await import(
-        "../orchestration/agent-task-sequence-store.js"
-      )).AgentTaskSequenceStore({ baseDirectory: stateDirectory }),
-    ),
+    manageController: sequenceManageController,
     authenticatedUserId: options.authenticatedUserId ?? "local-user",
   });
   // B6R-09：次级持续调度循环（生产装配；派发链回调由编排层注入）
@@ -332,13 +340,6 @@ export async function createApplicationRuntime(
   );
   const { QuaternaryGitBranchPolicy } = await import(
     "../orchestration/quaternary-boundary-guards.js"
-  );
-  const sequenceManageController = new (await import(
-    "../orchestration/task-sequence-controllers.js"
-  )).TaskSequenceManageController(
-    new (await import(
-      "../orchestration/agent-task-sequence-store.js"
-    )).AgentTaskSequenceStore({ baseDirectory: stateDirectory }),
   );
   const directDispatchController = new DirectDispatchController({
     authenticatedUserId: "cli-user",
@@ -576,6 +577,8 @@ export async function createApplicationRuntime(
     missionLeaseStore,
     processInstanceId,
     registeredAgentDirectory,
+    reconnaissanceController,
+    taskSequenceManageController: sequenceManageController,
     readMissionResultSummaries,
     shutdown,
   };
