@@ -53,10 +53,10 @@
 ## 验收记录
 
 - 当前提交/工作树基线：`4749e5d`（T12A-R1 收口）。用户并行改动（IMPLEMENTATION_PLAN.md、PLAN_STATUS.md、docs/tasks/README.md 及 4 张未跟踪卡）保持未暂存。
-- 本检查点实现与入口证据：E2E-01-01 见 docs/reports/E2E01_01_FIXTURE_EVIDENCE.md；E2E-01-02 切片 1 见 docs/reports/E2E01_02_PROVIDER_ENTRY_SLICE_EVIDENCE.md（本地协议服务器 + Provider 运行时公共入口）；切片 2 见 docs/reports/E2E01_02_GAP_ANALYSIS.md（缺口 1 工作区写入权限、缺口 2 完成门禁未对账真实产物、缺口 3 纵向编排缺失，含切片 3/4/5 计划）。
+- 本检查点实现与入口证据：E2E-01-01 见 docs/reports/E2E01_01_FIXTURE_EVIDENCE.md；E2E-01-02 切片 1 见 docs/reports/E2E01_02_PROVIDER_ENTRY_SLICE_EVIDENCE.md（本地协议服务器 + Provider 运行时公共入口）；切片 2 见 docs/reports/E2E01_02_GAP_ANALYSIS.md（缺口 1 工作区写入权限、缺口 2 完成门禁未对账真实产物、缺口 3 纵向编排缺失）；切片 3 见 docs/reports/E2E01_02_COMPLETION_GATE_EVIDENCE.md（缺口 2 已修复：未解决的写操作失败不得以文本声明结案）。
 - 测试命令、退出码和产物哈希：`npm run check` exit 0（172 文件/1488 用例）；`npm run test:coverage` exit 0（全局 branch 86.58%）；`npm run verify:e2e01` exit 0；fixture fingerprint `sha256:6512b2a6322fb6b6730b68fb4029b622b8fc7f06e1f3adee0342b7d044e94c7c`（11 文件）；产物 `out/summary.json` sha256 `fc1328fbf46322119135a516954d200d99f5afa4cc047f0ec48f5d5b09e5830d`、`out/test-evidence.json` sha256 `ddbf68abff3dc115b418bf4edf306aa6b04bf7a2d055116d5258d77ba4f95db3`；tarball `astarray-0.1.0.tgz` sha256 `be07c8abf43173fa61e856d6a91bf9b9c9010877787716b0275869150bd90f6f`（621004 字节）；runIdentifier `e2e01-01-20260912T035944Z`。
 - 人工/外部依赖及剩余风险：人工走查与真实 Provider 观察均为 `pending-manual`（证据包强制）；E2E-01-03 需用户真实 Provider 凭据与费用授权，当前缺失须保持 blocked/pending。
-- 本地提交、推送尝试与结果：E2E-01-01 `23f38eb`、补记 `9eca588`；E2E-01-02 切片 1 `d5430d9`、补记 `48ea32d`；切片 2 `a900fc5`（均第 1 次推送成功）。
+- 本地提交、推送尝试与结果：E2E-01-01 `23f38eb`、补记 `9eca588`；E2E-01-02 切片 1 `d5430d9`、补记 `48ea32d`；切片 2 `a900fc5`、补记 `09a4c8f`；切片 3 `3b3d2d9`（均第 1 次推送成功）。
 
 ## 首轮执行指令
 
