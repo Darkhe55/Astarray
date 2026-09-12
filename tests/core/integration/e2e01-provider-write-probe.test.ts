@@ -1,12 +1,14 @@
 /**
- * E2E-01-02 能力探针：provider worker 在 assist 默认权限下无法写入项目文件，
- * 却仍能把任务标成 done（**已确认缺陷**，记录于
- * docs/reports/E2E01_02_GAP_ANALYSIS.md 缺口 2）。
+ * E2E-01-02 能力探针与完成门禁回归：provider worker 在 assist 默认权限下
+ * 无法写入项目文件时，**不得以文本声明结案**。
  *
  * - `replaceFileContent` 需要 project.modify + project.destructive-mutate；
- *   assist 默认对 destructive-mutate 为 deny。
- * - 本文件同时包含：① 必须成立的不变量（当前失败 → it.fails），
- *   ② 当前行为的特征记录（修复后应删除）。
+ *   assist 默认对 destructive-mutate 为 deny（缺口 1，见
+ *   docs/reports/E2E01_02_GAP_ANALYSIS.md）。
+ * - 完成门禁必须与本轮真实工具结果对账：存在未成功的写操作时拒绝结案
+ *   （缺口 2 的修复，T12A/E2E-01-02 切片 3）。
+ *
+ * 本用例在修复前会失败（当时任务仍以 done 收口），修复后必须通过。
  */
 import { promises as fs } from "node:fs";
 import http from "node:http";
@@ -148,11 +150,9 @@ async function createProviderApplication(stateDirectory: string, endpoint: strin
 
 describe("E2E-01-02 能力探针：assist 默认权限下的项目写入", () => {
   /**
-   * 必须成立的不变量：没有任何真实产物写入时，任务不得声称完成。
-   * 当前实现会返回 done（缺陷 2），故本用例以 it.fails 记录；
-   * 修复后应改为普通 it 并保持通过。
+   * 必须成立的不变量：写操作未成功、没有任何真实产物时，任务不得声称完成。
    */
-  it.fails("未写入产物时不得声称完成（当前为缺陷：会 done）", async () => {
+  it("未写入产物时不得声称完成（fail-closed）", async () => {
     const acceptance = (await import(
       /* @vite-ignore */ acceptanceModuleUrl
     )) as unknown as AcceptanceModule;
@@ -196,8 +196,8 @@ describe("E2E-01-02 能力探针：assist 默认权限下的项目写入", () =>
     expect(await fs.readFile(stubPath, "utf8")).toBe(stubContent);
   });
 
-  /** 当前行为特征记录（缺陷 2）：完成事件被接受但目标文件未变；修复后删除本用例。 */
-  it("特征记录：当前会以 done 收口，但目标文件保持桩实现", async () => {
+  /** 补充证据：写操作失败被记为任务失败（而不是静默 done）。 */
+  it("写操作失败后任务链标记为 failed，且目标文件保持桩实现", async () => {
     const acceptance = (await import(
       /* @vite-ignore */ acceptanceModuleUrl
     )) as unknown as AcceptanceModule;
@@ -233,7 +233,7 @@ describe("E2E-01-02 能力探针：assist 默认权限下的项目写入", () =>
     }
     await application.shutdown();
 
-    expect(status).toBe("done");
+    expect(status).not.toBe("done");
     expect(await fs.readFile(stubPath, "utf8")).toBe(stubContent);
     expect(receivedBodies.length).toBeGreaterThanOrEqual(1);
   });

@@ -24,8 +24,9 @@
   assist 默认对 destructive-mutate 为 **deny**，`writeFileTemporary` 只能写临时目录
   （`project.create`，assist 默认 ask）。因此在 frozen fixture 的 assist + block-until-verified
   配置下，**实现步骤没有合法写入通道**。
-- **缺口 2（完成门禁缺陷）**：即使工具调用被拒且没有任何产物，任务仍以 **done** 收口。
-  这正是共同契约 §4 禁止的"字符串成功"——完成控制事件缺少与真实产物的对账。
+- **缺口 2（完成门禁缺陷）——已在切片 3 修复**（见 docs/reports/E2E01_02_COMPLETION_GATE_EVIDENCE.md）：
+  修复前工具调用被拒且没有任何产物时任务仍以 **done** 收口；修复后未解决的写操作失败会拒绝结案
+  并以 failure 升级给用户。
 
 ## 2. 尚未具备的纵向能力（缺口 3）
 

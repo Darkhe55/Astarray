@@ -87,11 +87,24 @@ export interface WorkerAgentOptions {
   archiveAttachments?: AgentWorkArchiveAttachment[];
 }
 
+/**
+ * 会改变本地状态（工作区/备份）的工具：一旦本轮未成功，就不得仅凭文本声明结案
+ * （E2E-01-02 缺口 2：完成事件必须与真实工具结果对账）。
+ */
+const MUTATING_TOOL_NAMES = new Set([
+  "replaceFileContent",
+  "writeFileTemporary",
+  "backupVault",
+  "deleteBackup",
+]);
+
 export class WorkerAgent {
   private readonly cancellationController = new AbortController();
   private readonly toolCallsByCallId = new Map<string, string>();
   private lastToolCall: { toolName: string; argumentsJson: string } | null = null;
   private readonly outputTextChunks: string[] = [];
+  /** 本轮尚未被同工具成功调用覆盖的写操作失败。 */
+  private readonly unresolvedMutatingToolFailures = new Set<string>();
 
   constructor(private readonly options: WorkerAgentOptions) {}
 
@@ -195,8 +208,12 @@ export class WorkerAgent {
             if (thresholdReached) {
               toolFailureThresholdHit.add(toolName);
             }
+            if (MUTATING_TOOL_NAMES.has(toolName)) {
+              this.unresolvedMutatingToolFailures.add(toolName);
+            }
           } else {
             this.options.failureCounter.recordSuccess(toolName);
+            this.unresolvedMutatingToolFailures.delete(toolName);
           }
           break;
         }
@@ -208,11 +225,25 @@ export class WorkerAgent {
             const completionGateFailure = this.options.requireCompletionEvent
               ? this.verifyCompletionControlEvent()
               : null;
+            const unresolvedMutatingTools = [
+              ...this.unresolvedMutatingToolFailures,
+            ];
             if (completionGateFailure !== null) {
               finalReason = {
                 outcome: "failure",
                 toolName: null,
                 failureReason: completionGateFailure,
+                stateSummary: summarize(this.outputTextChunks),
+              };
+            } else if (unresolvedMutatingTools.length > 0) {
+              // 完成声明与本地工具结果不一致：写操作未成功，禁止以文本结案。
+              finalReason = {
+                outcome: "failure",
+                toolName: unresolvedMutatingTools[0] ?? null,
+                failureReason:
+                  "完成声明与本地工具结果不一致：" +
+                  unresolvedMutatingTools.join("、") +
+                  " 未成功（不得以文本声明结案）",
                 stateSummary: summarize(this.outputTextChunks),
               };
             } else {
