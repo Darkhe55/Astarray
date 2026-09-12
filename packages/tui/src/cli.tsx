@@ -35,6 +35,7 @@ import {
   executeSessionRevokeElevationCommand,
   executeSessionShutdownCommand,
   executeStatusCommand,
+  executeWorkflowScenarioCommand,
 } from "./cli/commands.js";
 
 const program = new Command();
@@ -466,6 +467,73 @@ profileCommand
 
 // B6R-06：会话提升控制面（认证设置控制面；不提供"提升主 Agent"）
 const sessionCommand = program.command("session").description("会话提升与关闭导出（认证设置控制面）");
+const workflowCommand = program
+  .command("workflow")
+  .description("独立工作助手纵向闭环（本地控制面；仅登记本次派出的 Agent）");
+workflowCommand
+  .command("run")
+  .description("运行纵向闭环场景：readonly-analysis | small-coding")
+  .requiredOption("--scenario <name>", "readonly-analysis | small-coding")
+  .option("--mission <mission-id>", "mission 标识（readonly-analysis）")
+  .option("--scope <text>", "侦察范围描述（readonly-analysis）")
+  .option("--digest-file <path>", "PROJECT_CONTEXT_DIGEST_V1 JSON 文件路径")
+  .option("--task <task-id>", "任务标识（small-coding）")
+  .option("--task-revision <n>", "任务 revision（缺省 1）")
+  .option("--appointment <appointment-id>", "任命标识")
+  .option("--implementation-agent <agent-id>", "实现者 agentInstanceId")
+  .option("--testing-agent <agent-id>", "测试者 agentInstanceId")
+  .option("--acceptance-agent <agent-id>", "验收者 agentInstanceId")
+  .option("--commit <hash>", "贡献提交哈希")
+  .option("--json", "JSON 输出")
+  .action(
+    async (options: {
+      scenario: string;
+      mission?: string;
+      scope?: string;
+      digestFile?: string;
+      task?: string;
+      taskRevision?: string;
+      appointment?: string;
+      implementationAgent?: string;
+      testingAgent?: string;
+      acceptanceAgent?: string;
+      commit?: string;
+      json?: boolean;
+    }) => {
+      process.exitCode = await executeWorkflowScenarioCommand({
+        stateDirectory: defaultStateDirectory(),
+        scenario: options.scenario,
+        isJsonOutput: options.json === true,
+        ...(options.mission !== undefined
+          ? { missionIdentifier: options.mission }
+          : {}),
+        ...(options.scope !== undefined ? { scopeQuery: options.scope } : {}),
+        ...(options.digestFile !== undefined
+          ? { digestFilePath: options.digestFile }
+          : {}),
+        ...(options.task !== undefined ? { taskIdentifier: options.task } : {}),
+        ...(options.taskRevision !== undefined
+          ? { taskRevision: Number.parseInt(options.taskRevision, 10) }
+          : {}),
+        ...(options.appointment !== undefined
+          ? { appointmentId: options.appointment }
+          : {}),
+        ...(options.implementationAgent !== undefined
+          ? { implementationAgentInstanceId: options.implementationAgent }
+          : {}),
+        ...(options.testingAgent !== undefined
+          ? { testingAgentInstanceId: options.testingAgent }
+          : {}),
+        ...(options.acceptanceAgent !== undefined
+          ? { acceptanceAgentInstanceId: options.acceptanceAgent }
+          : {}),
+        ...(options.commit !== undefined
+          ? { contributionCommitHash: options.commit }
+          : {}),
+      });
+    },
+  );
+
 sessionCommand
   .command("elevation-list")
   .description("查看会话级/个体级临时提升")

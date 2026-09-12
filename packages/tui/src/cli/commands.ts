@@ -2370,3 +2370,139 @@ export async function executeContextTransactionCommand(
   return view.isComplete ? EXIT_CODES.SUCCESS : EXIT_CODES.FAILURE;
 }
 
+/** T07D-07：独立工作助手纵向闭环（场景 A 只读分析 / 场景 B 小型代码任务）。 */
+export interface WorkflowScenarioCommandOptions {
+  stateDirectory: string;
+  scenario: string;
+  isJsonOutput: boolean;
+  missionIdentifier?: string;
+  scopeQuery?: string;
+  digestFilePath?: string;
+  taskIdentifier?: string;
+  taskRevision?: number;
+  appointmentId?: string;
+  implementationAgentInstanceId?: string;
+  testingAgentInstanceId?: string;
+  acceptanceAgentInstanceId?: string;
+  contributionCommitHash?: string;
+}
+
+/** workflow run：经公共入口运行纵向闭环场景（本地控制面登记本次派出的 Agent）。 */
+export async function executeWorkflowScenarioCommand(
+  options: WorkflowScenarioCommandOptions,
+): Promise<number> {
+  if (
+    options.scenario !== "readonly-analysis" &&
+    options.scenario !== "small-coding"
+  ) {
+    failWithCode("--scenario 必须是 readonly-analysis 或 small-coding");
+  }
+  const { readFile } = await import("node:fs/promises");
+  const bootstrap = await bootstrapCli({
+    mode: "assist",
+    stateDirectory: options.stateDirectory,
+    concurrency: 1,
+    failureThreshold: 1,
+    maxLoopIterations: 8,
+    useFeedbackProcess: false,
+    streamOutput: () => {},
+  });
+  try {
+    if (options.scenario === "readonly-analysis") {
+      if (
+        options.missionIdentifier === undefined ||
+        options.scopeQuery === undefined ||
+        options.digestFilePath === undefined
+      ) {
+        failWithCode("readonly-analysis 需要 --mission、--scope 与 --digest-file");
+      }
+      const digestInput = JSON.parse(await readFile(options.digestFilePath, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      const reconnaissanceAgentInstanceId = String(
+        digestInput["reconnaissanceAgentInstanceId"] ?? "",
+      );
+      // 本地控制面登记本次派出的侦察三级与所属次级（非空字符串不是认证）
+      bootstrap.registeredAgentDirectory.registerAgent({
+        agentInstanceId: reconnaissanceAgentInstanceId,
+        agentRole: "tertiary",
+        missionId: String(
+          digestInput["scanningScope"] ?? options.missionIdentifier,
+        ),
+        owningSecondaryAgentInstanceId: "secondary-1",
+        boundTaskBundleId: null,
+        registeredAtIso: new Date().toISOString(),
+      });
+      bootstrap.registeredAgentDirectory.registerAgent({
+        agentInstanceId: "secondary-1",
+        agentRole: "secondary",
+        missionId: "mission-cli",
+        owningSecondaryAgentInstanceId: null,
+        boundTaskBundleId: "bundle-cli",
+        registeredAtIso: new Date().toISOString(),
+      });
+      const result = await bootstrap.standaloneWorkflowRunner.runReadonlyAnalysisScenario({
+        missionIdentifier: options.missionIdentifier,
+        scopeQuery: options.scopeQuery,
+        reconnaissanceAgentInstanceId,
+        digestInput: digestInput as never,
+      });
+      const allPassed = result.steps.every((step) => step.status === "passed");
+      if (options.isJsonOutput) {
+        process.stdout.write(`${JSON.stringify(result)}\n`);
+      } else {
+        process.stdout.write(
+          result.steps.map((step) => `${step.step}: ${step.status}\n`).join(""),
+        );
+      }
+      return allPassed && !result.mainAgentContextInjected
+        ? EXIT_CODES.SUCCESS
+        : EXIT_CODES.FAILURE;
+    }
+    if (
+      options.taskIdentifier === undefined ||
+      options.appointmentId === undefined ||
+      options.implementationAgentInstanceId === undefined ||
+      options.testingAgentInstanceId === undefined ||
+      options.acceptanceAgentInstanceId === undefined ||
+      options.contributionCommitHash === undefined
+    ) {
+      failWithCode(
+        "small-coding 需要 --task、--appointment、--implementation-agent、--testing-agent、--acceptance-agent 与 --commit",
+      );
+    }
+    bootstrap.registeredAgentDirectory.registerAgent({
+      agentInstanceId: "secondary-1",
+      agentRole: "secondary",
+      missionId: "mission-cli",
+      owningSecondaryAgentInstanceId: null,
+      boundTaskBundleId: "bundle-cli",
+      registeredAtIso: new Date().toISOString(),
+    });
+    const result = await bootstrap.standaloneWorkflowRunner.runSmallCodingScenario({
+      taskIdentifier: options.taskIdentifier,
+      taskRevision: options.taskRevision ?? 1,
+      appointmentId: options.appointmentId,
+      implementationAgentInstanceId: options.implementationAgentInstanceId,
+      testingAgentInstanceId: options.testingAgentInstanceId,
+      acceptanceAgentInstanceId: options.acceptanceAgentInstanceId,
+      contributionCommitHash: options.contributionCommitHash,
+    });
+    const allPassed = result.steps.every((step) => step.status === "passed");
+    if (options.isJsonOutput) {
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+    } else {
+      process.stdout.write(
+        result.steps.map((step) => `${step.step}: ${step.status}\n`).join(""),
+      );
+    }
+    return allPassed && result.isMergeReady ? EXIT_CODES.SUCCESS : EXIT_CODES.FAILURE;
+  } catch (error) {
+    failWith(error as Error);
+  } finally {
+    await bootstrap.shutdown();
+  }
+}
+
+

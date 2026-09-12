@@ -57,6 +57,7 @@ import {
 } from "../tools/session-shutdown-and-export.js";
 import { RegisteredAgentDirectory } from "../orchestration/registered-agent-directory.js";
 import type { ProjectReconnaissanceController } from "../orchestration/project-reconnaissance-controller.js";
+import { StandaloneWorkflowRunner } from "../orchestration/standalone-workflow-runner.js";
 import type { TaskSequenceManageController } from "../orchestration/task-sequence-controllers.js";
 import { MainAgentReportArchiveIngestor } from "../orchestration/main-agent-report-archive.js";
 import { ConversationTaskInsertionController } from "../orchestration/conversation-task-insertion-controller.js";
@@ -100,6 +101,8 @@ export interface ApplicationRuntime {
   reconnaissanceController: ProjectReconnaissanceController;
   /** T08A：任务序列管理面（发布序列/插入任务/状态流转的本地控制面入口）。 */
   taskSequenceManageController: TaskSequenceManageController;
+  /** T07D-07：独立工作助手纵向闭环（场景 A 只读分析 / 场景 B 小型代码任务）。 */
+  standaloneWorkflowRunner: StandaloneWorkflowRunner;
   /** 权威执行结果摘要（来自 Agent 工作存档的 result 条目；T07D-R1-03）。 */
   readMissionResultSummaries: (
     missionId: string,
@@ -397,6 +400,15 @@ export async function createApplicationRuntime(
     isTertiaryAgentActive: () => true,
   });
   const quaternaryGitBranchPolicy = new QuaternaryGitBranchPolicy();
+  // 独立工作助手纵向闭环运行器（场景 A 只读分析 / 场景 B 小型代码任务）
+  const standaloneWorkflowRunner = new StandaloneWorkflowRunner({
+    directDispatchController,
+    appointmentRegistry,
+    acceptanceVerdictGate,
+    summaryController: t08cSummaryController,
+    reconnaissanceController,
+    reconnaissanceDigestStore,
+  });
   const t08cRoutingFacade = {
     directDispatchController,
     secondarySummaryController: t08cSummaryController,
@@ -579,6 +591,7 @@ export async function createApplicationRuntime(
     registeredAgentDirectory,
     reconnaissanceController,
     taskSequenceManageController: sequenceManageController,
+    standaloneWorkflowRunner,
     readMissionResultSummaries,
     shutdown,
   };
