@@ -19,11 +19,11 @@
 
 两个独立事实：
 
-- **缺口 1（权限可达性）**：worker 可用工具中，唯一能写工作区文件的是 `replaceFileContent`，
-  它映射 `project.modify` + `project.destructive-mutate`（`permission-capability-catalog.ts`）；
-  assist 默认对 destructive-mutate 为 **deny**，`writeFileTemporary` 只能写临时目录
-  （`project.create`，assist 默认 ask）。因此在 frozen fixture 的 assist + block-until-verified
-  配置下，**实现步骤没有合法写入通道**。
+- **缺口 1（权限可达性）——已在切片 3b 提供受控通道**（见 docs/reports/E2E01_02_CREATE_FILE_CHANNEL_EVIDENCE.md）：
+  原状：worker 可用工具中唯一能写工作区文件的是 `replaceFileContent`（映射 `project.modify` +
+  `project.destructive-mutate`，assist 默认 deny），`writeFileTemporary` 只能写临时目录。
+  现新增 `createProjectFile`（仅新建、`project.create`：devolve 默认 allow、assist 默认 ask
+  → 无应答方时 fail-closed）。
 - **缺口 2（完成门禁缺陷）——已在切片 3 修复**（见 docs/reports/E2E01_02_COMPLETION_GATE_EVIDENCE.md）：
   修复前工具调用被拒且没有任何产物时任务仍以 **done** 收口；修复后未解决的写操作失败会拒绝结案
   并以 failure 升级给用户。

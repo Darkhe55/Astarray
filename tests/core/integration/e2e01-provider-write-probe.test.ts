@@ -38,6 +38,25 @@ interface AcceptanceModule {
 let temporaryDirectory: string;
 let server: http.Server | null = null;
 const receivedBodies: string[] = [];
+/** 工作区内的 fixture 目录（工具只能写工作区内路径）。 */
+const workspaceFixtureRelativeDirectories: string[] = [];
+
+function createWorkspaceFixtureDirectory(name: string): {
+  absoluteDirectory: string;
+  relativeDirectory: string;
+} {
+  const relativeDirectory = path.join(
+    ".tmp",
+    "e2e01",
+    "probe-" + Date.now().toString(36) + "-" + Math.random().toString(16).slice(2, 8),
+    name,
+  );
+  workspaceFixtureRelativeDirectories.push(relativeDirectory);
+  return {
+    absoluteDirectory: path.join(process.cwd(), relativeDirectory),
+    relativeDirectory,
+  };
+}
 
 beforeEach(async () => {
   temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "astarray-e2e01-probe-"));
@@ -50,6 +69,15 @@ afterEach(async () => {
     server = null;
   }
   await fs.rm(temporaryDirectory, { recursive: true, force: true, maxRetries: 5 });
+  for (const relativeDirectory of workspaceFixtureRelativeDirectories.splice(0)) {
+    await fs
+      .rm(path.join(process.cwd(), relativeDirectory), {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+      })
+      .catch(() => {});
+  }
 });
 
 function completionMarkerLine(): string {
@@ -92,7 +120,11 @@ function sseContent(text: string): string {
   );
 }
 
-async function startScriptedServer(targetFileRelativePath: string, content: string) {
+async function startScriptedServer(
+  targetFileRelativePath: string,
+  content: string,
+  toolName = "replaceFileContent",
+) {
   server = http.createServer((request, response) => {
     let rawBody = "";
     request.on("data", (chunk) => {
@@ -104,7 +136,7 @@ async function startScriptedServer(targetFileRelativePath: string, content: stri
       if (receivedBodies.length === 1) {
         response.write(
           sseToolCall(
-            "replaceFileContent",
+            toolName,
             JSON.stringify({ filePath: targetFileRelativePath, content }),
           ),
         );
@@ -120,7 +152,11 @@ async function startScriptedServer(targetFileRelativePath: string, content: stri
   return "http://127.0.0.1:" + address.port + "/v1/chat/completions";
 }
 
-async function createProviderApplication(stateDirectory: string, endpoint: string) {
+async function createProviderApplication(
+  stateDirectory: string,
+  endpoint: string,
+  mode: "assist" | "devolve" = "assist",
+) {
   const registry = new ProviderRuntimeRegistry({
     protectedCredentialStore: {
       doesReferenceExist: async () => true,
@@ -130,7 +166,7 @@ async function createProviderApplication(stateDirectory: string, endpoint: strin
   registry.register(createOpenAiCompatibleProviderRegistration());
   const application = await AstarrayApplicationFacade.create({
     stateDirectory,
-    mode: "assist",
+    mode,
     runtime: "provider",
     providerRuntimeRegistry: registry,
     provider: {
@@ -144,7 +180,7 @@ async function createProviderApplication(stateDirectory: string, endpoint: strin
     },
     statusPollIntervalMilliseconds: 10,
   });
-  application.createSession({ sessionId: "session-1", mode: "assist" });
+  application.createSession({ sessionId: "session-1", mode });
   return application;
 }
 
@@ -236,5 +272,117 @@ describe("E2E-01-02 能力探针：assist 默认权限下的项目写入", () =>
     expect(status).not.toBe("done");
     expect(await fs.readFile(stubPath, "utf8")).toBe(stubContent);
     expect(receivedBodies.length).toBeGreaterThanOrEqual(1);
+  });
+
+  /**
+   * 缺口 1（切片 3b）：受控的"新建项目文件"通道。
+   * assist 默认（project.create=ask）→ 无应答方时 fail-closed：不落盘、任务不 done。
+   */
+  it("createProjectFile 在 assist 默认下 fail-closed（不落盘、不 done）", async () => {
+    const acceptance = (await import(
+      /* @vite-ignore */ acceptanceModuleUrl
+    )) as unknown as AcceptanceModule;
+    const fixtureTarget = createWorkspaceFixtureDirectory("fixture-assist");
+    acceptance.scaffoldFixture(fixtureTarget.absoluteDirectory);
+    const createdPath = path.join(
+      fixtureTarget.absoluteDirectory,
+      "project",
+      "src",
+      "created-by-assist.mjs",
+    );
+    const createdRelativePath = path.join(
+      fixtureTarget.relativeDirectory,
+      "project",
+      "src",
+      "created-by-assist.mjs",
+    );
+
+    const endpoint = await startScriptedServer(
+      createdRelativePath,
+      "export const created = true;\n",
+      "createProjectFile",
+    );
+    const application = await createProviderApplication(temporaryDirectory, endpoint);
+    await application.submitTask({
+      sessionId: "session-1",
+      taskIdentifier: "task-create-assist",
+      prompt: "新建项目文件（assist）",
+    });
+    let status = "accepted";
+    const deadline = Date.now() + 50_000;
+    while (
+      !["done", "failed", "blocked", "cancelled"].includes(status) &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      status = (
+        await application.queryTask({
+          sessionId: "session-1",
+          taskIdentifier: "task-create-assist",
+        })
+      ).status;
+    }
+    await application.shutdown();
+
+    expect(status).not.toBe("done");
+    await expect(fs.access(createdPath)).rejects.toThrow();
+  });
+
+  /**
+   * 缺口 1（切片 3b）：devolve 默认（project.create=allow）→ 受控通道真实落盘，
+   * 且任务在写成功后结案（完成门禁与真实结果一致）。
+   */
+  it("createProjectFile 在 devolve 默认下真实写入并完成（真实产物）", async () => {
+    const acceptance = (await import(
+      /* @vite-ignore */ acceptanceModuleUrl
+    )) as unknown as AcceptanceModule;
+    const fixtureTarget = createWorkspaceFixtureDirectory("fixture-devolve");
+    acceptance.scaffoldFixture(fixtureTarget.absoluteDirectory);
+    const createdPath = path.join(
+      fixtureTarget.absoluteDirectory,
+      "project",
+      "src",
+      "created-by-devolve.mjs",
+    );
+    const createdRelativePath = path.join(
+      fixtureTarget.relativeDirectory,
+      "project",
+      "src",
+      "created-by-devolve.mjs",
+    );
+
+    const endpoint = await startScriptedServer(
+      createdRelativePath,
+      "export const created = true;\n",
+      "createProjectFile",
+    );
+    const application = await createProviderApplication(
+      temporaryDirectory,
+      endpoint,
+      "devolve",
+    );
+    await application.submitTask({
+      sessionId: "session-1",
+      taskIdentifier: "task-create-devolve",
+      prompt: "新建项目文件（devolve）",
+    });
+    let status = "accepted";
+    const deadline = Date.now() + 50_000;
+    while (
+      !["done", "failed", "blocked", "cancelled"].includes(status) &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      status = (
+        await application.queryTask({
+          sessionId: "session-1",
+          taskIdentifier: "task-create-devolve",
+        })
+      ).status;
+    }
+    await application.shutdown();
+
+    expect(status).toBe("done");
+    expect(await fs.readFile(createdPath, "utf8")).toContain("created = true");
   });
 });

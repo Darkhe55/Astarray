@@ -51,6 +51,7 @@ const TOOL_NAME_CLASS: Record<string, SensitiveOperationClass> = {
   readFile: "readonly-file",
   listDirectory: "readonly-file",
   writeFileTemporary: "file-mutation",
+  createProjectFile: "file-mutation",
   replaceFileContent: "file-mutation",
   backupVault: "backup-access",
   deleteBackup: "backup-access",

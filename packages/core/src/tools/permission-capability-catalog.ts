@@ -90,6 +90,8 @@ const DEFAULT_TOOL_CAPABILITY_MAPPINGS: Record<string, string[]> = {
   readFile: ["project.read"],
   listDirectory: ["project.read"],
   writeFileTemporary: ["project.create"],
+  // 仅新建（不覆盖）：Assist 下 project.create 默认 ask，需显式授权
+  createProjectFile: ["project.create"],
   // 覆盖写是破坏性变更：Assist 下 destructive-mutate 默认 deny → 整体 deny
   replaceFileContent: ["project.modify", "project.destructive-mutate"],
   backupVault: ["backup.read"],

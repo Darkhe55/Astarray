@@ -109,6 +109,22 @@ export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
     },
   },
   {
+    name: "createProjectFile",
+    summary: "在工作区内新建文件（仅创建，不覆盖；目标已存在时拒绝）",
+    category: "restricted",
+    mutationKind: "create-only",
+    backupPolicy: "not-required",
+    authorizationPolicy: "standard",
+    supportedTaskTypes: ["doc", "code", "data"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        filePath: { type: "string" },
+        content: { type: "string" },
+      },
+    },
+  },
+  {
     name: "replaceFileContent",
     summary: "覆盖工作区内文件内容（破坏性；变更前自动备份完整 pre-image）",
     category: "restricted",
@@ -312,6 +328,38 @@ export async function executeBuiltinTool(
       await writeFile(resolvedTargetPath, content, { encoding: "utf8", flag: "wx" });
       return {
         outputText: `已写入临时文件: ${fileName}`,
+        isSideEffectFree: false,
+      };
+    }
+    case "createProjectFile": {
+      const filePath = args["filePath"];
+      const content = args["content"];
+      if (typeof filePath !== "string" || typeof content !== "string") {
+        throw new Error("createProjectFile 参数 filePath/content 缺失或非法");
+      }
+      // 预检 + 复检（AR-01a）：拦截检查间隙被替换为链接的 TOCTOU。
+      await resolveAndAssertAccess(executionContext, filePath, "create");
+      const createdTargetPath = await resolveAndAssertAccess(
+        executionContext,
+        filePath,
+        "create",
+      );
+      const { writeFile } = await import("node:fs/promises");
+      try {
+        await writeFile(createdTargetPath, content, {
+          encoding: "utf8",
+          flag: "wx",
+        });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+          throw new Error("createProjectFile 拒绝覆盖已存在文件: " + filePath, {
+            cause: error,
+          });
+        }
+        throw error;
+      }
+      return {
+        outputText: `已新建项目文件: ${filePath}`,
         isSideEffectFree: false,
       };
     }

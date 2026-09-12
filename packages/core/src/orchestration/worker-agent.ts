@@ -92,6 +92,7 @@ export interface WorkerAgentOptions {
  * （E2E-01-02 缺口 2：完成事件必须与真实工具结果对账）。
  */
 const MUTATING_TOOL_NAMES = new Set([
+  "createProjectFile",
   "replaceFileContent",
   "writeFileTemporary",
   "backupVault",
