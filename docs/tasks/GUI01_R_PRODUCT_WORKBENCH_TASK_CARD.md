@@ -67,7 +67,7 @@
 - GUI-01-R-03a 实现与入口证据：docs/reports/GUI01_R_03_SETTINGS_RECOVERY_EVIDENCE.md（预算写入→下一真实装配按新 revision、过期 revision 409、权限组跨界面一致、恢复只读视图与字段过滤、能力缺失 501 的红→绿反例）。
 - GUI-01-R-03a 测试命令、退出码：`npx tsc --noEmit` 0；`npx eslint .` 0；`npx vitest run tests/gui` 0（28 passed）；关联回归 20 passed（public-sdk/application-sdk-*/cli-sdk-parity/context-*）。
 - GUI-01-R-03a 门禁缺口（未通过，不得当成已通过）：受限沙箱下 `tsup`（esbuild 服务）与 forks 池会 `spawn EPERM`；本轮 `npm run check`/`npm run test:coverage` 升级重试 4 次均在审批通道 600s 超时、命令未执行 → 门禁未完成，需在下一阶段（或审批可用时）重跑，并连带补跑累积的 tarball 回归。
-- GUI-01-R-03a 本地提交、推送尝试与结果：实现提交见提交记录小节；`git push` 与门禁同因审批通道不可用跳过，累积推送。
+- GUI-01-R-03a 本地提交、推送尝试与结果：实现提交 `12e80eb`（6 文件）。`git push` 第 1 次受限沙箱失败（`couldn't create signal pipe, Win32 error 5`，exit 128），升级重试因审批通道不可用未执行 → 累积待推送 `b5e3be1`、`2dd9fdd`、`12e80eb`。
 - GUI-01-R-03a 人工/外部依赖及剩余风险：已验收/待追认与人工裁决属 03b；真实浏览器人工体验属 04；Linux/macOS 未验证。
 
 ## 首轮执行指令

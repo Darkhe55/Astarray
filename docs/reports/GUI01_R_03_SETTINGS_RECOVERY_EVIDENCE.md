@@ -52,5 +52,6 @@
 - Linux/macOS 未验证（仅 Windows 本机）。
 ## 6. 提交与推送
 
-- 实现提交：见 git 记录（本检查点文件：`application-runtime.ts`、`public-sdk.ts`、`gui-server.ts`、`tests/gui/integration/gui-settings-recovery.test.ts`、本证据与任务卡）。
-- 门禁/推送状态：`npm run check` 与 `npm run test:coverage` 因审批通道不可用未执行（4 次升级重试均 600s 超时）；`git push` 同因跳过，累积到下一阶段与 `b5e3be1` 一并推送。
+- 实现提交：`12e80eb` `feat(gui): GUI-01-R-03a 设置与恢复交互（预算/权限组/恢复只读）`（6 文件，+929/−5；仅暂存本检查点文件，用户并行改动保持未暂存）。
+- 门禁状态：`npm run check` 与 `npm run test:coverage` 因审批通道不可用未执行（4 次升级重试均 600s 超时）；本地等价证据：`npx tsc --noEmit` 0、`npx eslint .` 0、GUI 28 用例与关联 20 用例全通过。**门禁缺口按未通过记录，下一阶段带审批重跑。**
+- 推送状态：`git push` 第 1 次受限沙箱失败（`couldn't create signal pipe, Win32 error 5`，exit 128）；升级重试因审批通道不可用未执行。累积待推送：`b5e3be1`、`2dd9fdd`、`12e80eb`。
