@@ -1,6 +1,7 @@
 /**
  * status / resume / cancel / doctor / config init 命令（T11）。
  */
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -8,7 +9,7 @@ import path from "node:path";
 
 import { runConfigSchema } from "../../../core/src/core/schemas.js";
 import { bootstrapCli } from "./bootstrap.js";
-import { EXIT_CODES, failWith, printJson } from "./json-output.js";
+import { EXIT_CODES, failWith, logToStderr, printJson } from "./json-output.js";
 import { defaultStateDirectory } from "./run-command.js";
 
 export interface StatusCommandOptions {
@@ -2548,6 +2549,104 @@ export async function executeMcpServeCommand(
     return EXIT_CODES.SUCCESS;
   } finally {
     bridge.closeSession(session.sessionIdentifier);
+    await application.shutdown();
+  }
+}
+
+/** GUI-01-R-02：本地 GUI 工作台（loopback HTTP + SSE，复用公共应用门面）。 */
+export interface GuiServeCommandOptions {
+  stateDirectory: string;
+  /** 监听端口；缺省为 0（由操作系统分配）。 */
+  port?: number;
+  /** 是否尝试打开本地浏览器（`--no-open` 关闭）。 */
+  isBrowserOpenEnabled?: boolean;
+  /** 本地关闭信号（默认等待 SIGINT/SIGTERM；测试可注入已结算信号）。 */
+  shutdownSignal?: Promise<void>;
+}
+
+function resolveBrowserOpenCommand(url: string): {
+  command: string;
+  args: string[];
+} {
+  if (process.platform === "win32") {
+    return { command: "cmd", args: ["/c", "start", "", url] };
+  }
+  if (process.platform === "darwin") {
+    return { command: "open", args: [url] };
+  }
+  return { command: "xdg-open", args: [url] };
+}
+
+function openLocalBrowser(url: string): void {
+  const { command, args } = resolveBrowserOpenCommand(url);
+  try {
+    spawn(command, args, { detached: true, stdio: "ignore" }).unref();
+  } catch (error) {
+    // 打开浏览器为尽力而为；失败不影响本地 GUI 服务。
+    void error;
+  }
+}
+
+function waitForLocalShutdownSignal(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const handleSignal = (): void => {
+      process.off("SIGINT", handleSignal);
+      process.off("SIGTERM", handleSignal);
+      resolve();
+    };
+    process.on("SIGINT", handleSignal);
+    process.on("SIGTERM", handleSignal);
+  });
+}
+
+export async function executeGuiServeCommand(
+  options: GuiServeCommandOptions,
+): Promise<number> {
+  if (
+    options.port !== undefined &&
+    (!Number.isInteger(options.port) ||
+      options.port < 0 ||
+      options.port > 65535)
+  ) {
+    logToStderr(`端口无效：${String(options.port)}`);
+    return EXIT_CODES.USAGE_ERROR;
+  }
+  const { AstarrayApplicationFacade } = await import(
+    "../../../core/src/public-sdk.js"
+  );
+  const { startGuiServer } = await import(
+    "../../../gui/src/server/gui-server.js"
+  );
+  const sessionId = "gui-session-local";
+  const sessionMode = "assist" as const;
+  const application = await AstarrayApplicationFacade.create({
+    stateDirectory: options.stateDirectory,
+    mode: sessionMode,
+    runtime: "mock",
+    statusPollIntervalMilliseconds: 25,
+  });
+  application.createSession({ sessionId, mode: sessionMode });
+  let guiHandle: Awaited<ReturnType<typeof startGuiServer>> | undefined;
+  try {
+    guiHandle = await startGuiServer({
+      applicationService: application,
+      sessionId,
+      mode: sessionMode,
+      ...(options.port !== undefined ? { port: options.port } : {}),
+    });
+    process.stdout.write(
+      `Astarray GUI 已启动：${guiHandle.url}（仅监听本机 loopback）\n`,
+    );
+    if (options.isBrowserOpenEnabled !== false) {
+      openLocalBrowser(guiHandle.url);
+    }
+    // 本地服务为前台进程；收到中断信号后关闭监听并释放状态目录。
+    await (options.shutdownSignal ?? waitForLocalShutdownSignal());
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    return failWith(error as Error);
+  } finally {
+    await guiHandle?.close();
     await application.shutdown();
   }
 }

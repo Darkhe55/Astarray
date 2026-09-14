@@ -44,10 +44,16 @@ export interface PublicTaskResult {
 }
 
 /** 公开事件（订阅用；不含凭据/内部执行细节）。 */
-export type PublicAstarrayEvent =
+export type PublicAstarrayEvent = (
   | { eventType: "session-status"; sessionId: string; status: PublicSessionState["status"] }
   | { eventType: "task-status"; taskIdentifier: string; status: PublicTaskStatus }
-  | { eventType: "task-finished"; taskIdentifier: string; status: PublicTaskStatus };
+  | { eventType: "task-finished"; taskIdentifier: string; status: PublicTaskStatus }
+) & {
+  /** 权威状态 revision（任务链 revision；会话事件用会话内单调计数）。 */
+  revision: number;
+  /** 幂等 ID：同一事件重复投递时可用于去重。 */
+  idempotencyId: string;
+};
 
 /** 状态订阅端口（不暴露 IPC 地址）。 */
 export interface PublicEventSubscriptionPort {
@@ -127,6 +133,8 @@ interface TaskRecord {
   missionIdentifier: string | null;
   status: PublicTaskStatus;
   summaryPreview: string | null;
+  /** 任务链 revision（权威状态版本；未拿到时保持上一次值）。 */
+  revision: number;
 }
 
 /**
@@ -249,7 +257,13 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       status: "idle",
     };
     this.sessionStates.set(input.sessionId, state);
-    this.emit({ eventType: "session-status", sessionId: input.sessionId, status: "idle" });
+    this.emit({
+      eventType: "session-status",
+      sessionId: input.sessionId,
+      status: "idle",
+      revision: this.nextSessionEventRevision(input.sessionId),
+      idempotencyId: this.nextEventIdempotencyId(),
+    });
     return { ...state };
   }
 
@@ -383,6 +397,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       missionIdentifier,
       status: "accepted",
       summaryPreview: null,
+      revision: 0,
     };
     this.tasksByTaskIdentifier.set(input.taskIdentifier, record);
     if (input.idempotencyKey !== undefined) {
@@ -395,6 +410,8 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       eventType: "task-status",
       taskIdentifier: input.taskIdentifier,
       status: "accepted",
+      revision: record.revision,
+      idempotencyId: this.nextEventIdempotencyId(),
     });
     this.startTaskMonitor(input.taskIdentifier);
     return this.toTaskResult(input.taskIdentifier, record);
@@ -441,6 +458,8 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       eventType: "task-finished",
       taskIdentifier: input.taskIdentifier,
       status: "cancelled",
+      revision: record.revision,
+      idempotencyId: this.nextEventIdempotencyId(),
     });
   }
 
@@ -462,7 +481,13 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     this.isClosedFlag = true;
     for (const [sessionId, state] of this.sessionStates) {
       state.status = "closed";
-      this.emit({ eventType: "session-status", sessionId, status: "closed" });
+      this.emit({
+        eventType: "session-status",
+        sessionId,
+        status: "closed",
+        revision: this.nextSessionEventRevision(sessionId),
+        idempotencyId: this.nextEventIdempotencyId(),
+      });
     }
     for (const taskIdentifier of [...this.taskMonitors.keys()]) {
       this.stopTaskMonitor(taskIdentifier);
@@ -542,12 +567,21 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     }
     let status: PublicTaskStatus;
     try {
-      status = this.mapMissionStatus(
-        (await this.runtime.controller.queryMissionStatus(record.missionIdentifier)) as {
-          summary?: { status?: string } | null;
-          taskChain?: { tasks: Array<{ status: string }> } | null;
-        },
-      );
+      const missionStatus = (await this.runtime.controller.queryMissionStatus(
+        record.missionIdentifier,
+      )) as {
+        summary?: { status?: string } | null;
+        taskChain?: { revision?: number; tasks: Array<{ status: string }> } | null;
+      };
+      const taskChainRevision = missionStatus.taskChain?.revision;
+      if (
+        typeof taskChainRevision === "number" &&
+        Number.isFinite(taskChainRevision) &&
+        taskChainRevision > record.revision
+      ) {
+        record.revision = taskChainRevision;
+      }
+      status = this.mapMissionStatus(missionStatus);
     } catch {
       status = "blocked";
     }
@@ -561,10 +595,22 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       if (this.isClosedFlag) {
         return;
       }
-      this.emit({ eventType: "task-finished", taskIdentifier, status });
+      this.emit({
+      eventType: "task-finished",
+      taskIdentifier,
+      status,
+      revision: record.revision,
+      idempotencyId: this.nextEventIdempotencyId(),
+    });
       return;
     }
-    this.emit({ eventType: "task-status", taskIdentifier, status });
+    this.emit({
+      eventType: "task-status",
+      taskIdentifier,
+      status,
+      revision: record.revision,
+      idempotencyId: this.nextEventIdempotencyId(),
+    });
   }
 
   private assertOpen(): void {
@@ -623,6 +669,20 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       missionIdentifier: record.missionIdentifier,
       summaryPreview: record.summaryPreview,
     };
+  }
+
+  private eventCounter = 0;
+  private readonly sessionEventRevisionBySessionId = new Map<string, number>();
+
+  private nextEventIdempotencyId(): string {
+    this.eventCounter += 1;
+    return `event-${Date.now().toString(36)}-${this.eventCounter.toString(36)}`;
+  }
+
+  private nextSessionEventRevision(sessionId: string): number {
+    const nextRevision = (this.sessionEventRevisionBySessionId.get(sessionId) ?? 0) + 1;
+    this.sessionEventRevisionBySessionId.set(sessionId, nextRevision);
+    return nextRevision;
   }
 
   private emit(event: PublicAstarrayEvent): void {

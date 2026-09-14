@@ -34,6 +34,7 @@ import {
   executeSessionElevationListCommand,
   executeSessionRevokeElevationCommand,
   executeSessionShutdownCommand,
+  executeGuiServeCommand,
   executeMcpServeCommand,
   executeStatusCommand,
   executeWorkflowScenarioCommand,
@@ -544,6 +545,23 @@ mcpCommand
   .action(async () => {
     process.exitCode = await executeMcpServeCommand({
       stateDirectory: defaultStateDirectory(),
+    });
+  });
+
+program
+  .command("gui")
+  .description("本地 GUI 工作台（loopback HTTP + SSE；默认自动打开浏览器）")
+  .option(
+    "--port <port>",
+    "监听端口（0 为自动分配）",
+    (value: string) => Number.parseInt(value, 10),
+  )
+  .option("--no-open", "不自动打开浏览器")
+  .action(async (options: { port?: number; open?: boolean }) => {
+    process.exitCode = await executeGuiServeCommand({
+      stateDirectory: defaultStateDirectory(),
+      ...(options.port !== undefined ? { port: options.port } : {}),
+      isBrowserOpenEnabled: options.open !== false,
     });
   });
 
