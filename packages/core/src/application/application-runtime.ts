@@ -111,6 +111,12 @@ export interface ApplicationRuntime {
   globalContextBudgetStore: GlobalContextBudgetStore;
   /** T09A-R1-04：真实装配事件（指标复算与"下一请求生效"证据）。 */
   contextRuntimeEventStore: ContextRuntimeEventStore;
+  /** T09A-R1-03：人工核验（延迟核验任务/签收/否决）。 */
+  humanVerificationController: HumanVerificationController;
+  /** T09A-R1-03：关闭胶囊存储（裁决时按内容哈希定位所属 mission）。 */
+  contextClosureCapsuleStore: ContextClosureCapsuleStore;
+  /** T09A-R1-01：本地上下文图存储（裁决按所属 Agent 隔离读取）。 */
+  contextGraphStore: LocalContextGraphStore;
   /** 本进程主 Agent 实例标识（延迟核验/追认归属用，不进入前端 DTO）。 */
   mainAgentInstanceId: string;
   shutdown: () => Promise<void>;
@@ -602,6 +608,9 @@ export async function createApplicationRuntime(
     readMissionResultSummaries,
     globalContextBudgetStore,
     contextRuntimeEventStore,
+    humanVerificationController,
+    contextClosureCapsuleStore,
+    contextGraphStore,
     mainAgentInstanceId,
     shutdown,
   };

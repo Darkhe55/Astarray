@@ -5,6 +5,9 @@
  * 消费者不导入 MainController、TUI bootstrap 或内部存储路径。
  * 会话/任务状态迁移在此冻结；提交/查询/取消委托给同一主控制器。
  */
+import { promises as fs } from "node:fs";
+import path from "node:path";
+
 import type { AgentMode, AgentRuntime, TaskDependencyNode } from "./core/types.js";
 import type { MainController } from "./orchestration/main-controller.js";
 import type { PermissionProfileReference } from "./tools/permission-profile-store.js";
@@ -125,6 +128,31 @@ export interface PublicRecoveryMissionView {
 export interface PublicRecoveryOverview {
   missions: PublicRecoveryMissionView[];
   requiresDecisionMissions: string[];
+}
+
+/**
+ * 公开待追认项（GUI-01-R-03b）。
+ * 每个条目绑定具体 `agentInstanceId`（owner），不合并不同 Agent 的上下文。
+ */
+export interface PublicPendingVerification {
+  ownerAgentInstanceId: string;
+  taskIdentifier: string;
+  contextNodeIdentifier: string;
+  contextGraphRevision: number;
+  humanSteps: string;
+  risks: string[];
+  artifactOrCommitReferences: string[];
+  automaticTestReferences: string[];
+  createdAtIso: string;
+}
+
+/** 公开人工裁决结果（签收写入归属 Agent 存档；否决只重开节点不破坏性回滚）。 */
+export interface PublicVerificationDecisionResult {
+  ownerAgentInstanceId: string;
+  taskIdentifier: string;
+  decision: "accepted" | "rejected";
+  acceptanceIdentifier: string | null;
+  reopenedNodeIdentifiers: string[];
 }
 
 function toPublicRecoveryMissionView(view: {
@@ -485,6 +513,155 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     const controller = await this.createRecoveryCenterController();
     const { view } = await controller.inspectMission(missionIdentifier);
     return view.exists ? toPublicRecoveryMissionView(view) : null;
+  }
+
+  /**
+   * GUI-01-R-03b：列出本地存档中所有 Agent 的待追认项。
+   * 按 owner（`agentInstanceId`）分组返回，不做跨 Agent 合并或推断。
+   */
+  async listPendingVerifications(): Promise<PublicPendingVerification[]> {
+    this.assertOpen();
+    const pending: PublicPendingVerification[] = [];
+    for (const ownerAgentInstanceId of await this.listAgentMemoryOwners()) {
+      const tasks =
+        await this.runtime.humanVerificationController.listDeferredVerificationTasks(
+          ownerAgentInstanceId,
+        );
+      for (const task of tasks) {
+        pending.push({
+          ownerAgentInstanceId,
+          taskIdentifier: task.taskIdentifier,
+          contextNodeIdentifier: task.contextNodeIdentifier,
+          contextGraphRevision: task.contextGraphRevision,
+          humanSteps: task.humanSteps,
+          risks: [...task.risks],
+          artifactOrCommitReferences: [...task.artifactOrCommitReferences],
+          automaticTestReferences: [...task.automaticTestReferences],
+          createdAtIso: task.createdAtIso,
+        });
+      }
+    }
+    return pending.sort((left, right) => {
+      if (left.ownerAgentInstanceId !== right.ownerAgentInstanceId) {
+        return left.ownerAgentInstanceId.localeCompare(right.ownerAgentInstanceId);
+      }
+      return left.taskIdentifier.localeCompare(right.taskIdentifier);
+    });
+  }
+
+  /**
+   * GUI-01-R-03b：人工裁决（签收/否决）。
+   * 任务必须属于给定 owner（跨 Agent 访问一律拒绝）；签收绑定上下文图 revision，
+   * 图已前进时以 `stale-revision` 失败而不是覆盖。
+   */
+  async recordVerificationDecision(input: {
+    ownerAgentInstanceId: string;
+    taskIdentifier: string;
+    decision: "accepted" | "rejected";
+    reason?: string;
+  }): Promise<PublicVerificationDecisionResult> {
+    this.assertOpen();
+    if (this.stateDirectory === null) {
+      throw new PublicApplicationError(
+        "verification-unavailable",
+        "应用未绑定状态目录，无法裁决核验任务",
+      );
+    }
+    const task =
+      await this.runtime.humanVerificationController.readDeferredVerificationTask(
+        input.ownerAgentInstanceId,
+        input.taskIdentifier,
+      );
+    if (task === null) {
+      throw new PublicApplicationError(
+        "verification-not-found",
+        "待追认任务不存在或不属于该 Agent: " + input.taskIdentifier,
+      );
+    }
+    const capsules =
+      await this.runtime.contextClosureCapsuleStore.listCapsules(
+        input.ownerAgentInstanceId,
+      );
+    const capsule = capsules.find(
+      (candidate) => candidate.contentHash === task.closureCapsuleHash,
+    );
+    if (capsule === undefined) {
+      throw new PublicApplicationError(
+        "verification-context-missing",
+        "未找到待追认任务对应的关闭胶囊: " + input.taskIdentifier,
+      );
+    }
+    const graph = await this.runtime.contextGraphStore.readGraph(
+      input.ownerAgentInstanceId,
+      capsule.missionId,
+    );
+    if (graph === null) {
+      throw new PublicApplicationError(
+        "context-graph-not-found",
+        "上下文图不存在，拒绝裁决: " + capsule.missionId,
+      );
+    }
+    try {
+      if (input.decision === "accepted") {
+        const acceptance =
+          await this.runtime.humanVerificationController.recordUserAcceptance({
+            ownerAgentInstanceId: input.ownerAgentInstanceId,
+            contextGraphRevision: task.contextGraphRevision,
+            currentContextGraphRevision: graph.revision,
+            nodeIdentifiers: [task.contextNodeIdentifier],
+            summaryHash: task.closureCapsuleHash,
+            userId: "authenticated-user",
+          });
+        return {
+          ownerAgentInstanceId: input.ownerAgentInstanceId,
+          taskIdentifier: input.taskIdentifier,
+          decision: "accepted",
+          acceptanceIdentifier: acceptance.acceptanceIdentifier,
+          reopenedNodeIdentifiers: [],
+        };
+      }
+      const rejection =
+        await this.runtime.humanVerificationController.recordUserRejection({
+          ownerAgentInstanceId: input.ownerAgentInstanceId,
+          graphIdentifier: capsule.missionId,
+          allNodeIdentifiers: [task.contextNodeIdentifier],
+          reason: input.reason ?? "认证用户否决",
+        });
+      return {
+        ownerAgentInstanceId: input.ownerAgentInstanceId,
+        taskIdentifier: input.taskIdentifier,
+        decision: "rejected",
+        acceptanceIdentifier: null,
+        reopenedNodeIdentifiers: [...rejection.reopenedNodeIdentifiers],
+      };
+    } catch (error) {
+      if (error instanceof DomainError) {
+        throw new PublicApplicationError(error.errorCode, error.message);
+      }
+      throw error;
+    }
+  }
+
+  /** 本地存档中的 Agent 目录名（每 Agent 独立存档域；失败即空，不猜测）。 */
+  private async listAgentMemoryOwners(): Promise<string[]> {
+    if (this.stateDirectory === null) {
+      return [];
+    }
+    try {
+      const entries = await fs.readdir(
+        path.join(this.stateDirectory, "agent-memory"),
+        { withFileTypes: true },
+      );
+      return entries
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .sort();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return [];
+      }
+      throw error;
+    }
   }
 
   private async createRecoveryCenterController(): Promise<RecoveryCenterController> {

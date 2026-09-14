@@ -1,6 +1,6 @@
 # GUI-01-R：GUI 任务卡更新与产品接线
 
-> 状态：in_progress（GUI-01-R-01、GUI-01-R-02 done；GUI-01-R-03a done，03b pending）
+> 状态：in_progress（GUI-01-R-01、GUI-01-R-02、GUI-01-R-03 done；GUI-01-R-04 pending）
 > 创建日期：2026-09-10
 > 类型：后续扩展；高风险工作按检查点执行
 > 来源：用户授权布置；本文件为Agent派生实施方案，运行态节点默认层级1或以下，不冒充用户层级0
@@ -32,13 +32,13 @@
 
 ### GUI-01-R-03：设置与恢复交互
 
-- 状态：in_progress（03a done；03b pending）。
+- 状态：done（2026-09-13；03a + 03b）。
 - 工作：接入预算配置/实际值、已验收/待追认、人工裁决、权限组、恢复差异及状态。
 - 验收：界面修改后下一模型请求实际变化；敏感信息不进入前端；多界面状态一致而各Agent上下文隔离。
 - 前驱：GUI-01-R-02。先通过前驱，再执行本节点。
 - 按可构建边界拆分：
   - **GUI-01-R-03a（done，2026-09-13）**：预算配置/实际值（界面写入 → 下一真实请求按新 revision 装配）、权限组读/切换的跨界面一致、恢复差异与状态只读视图；证据 docs/reports/GUI01_R_03_SETTINGS_RECOVERY_EVIDENCE.md。
-  - **GUI-01-R-03b（pending）**：已验收/待追认（延迟核验任务）、人工裁决（签收/否决）、各 Agent 上下文隔离与多界面一致性的剩余验收项。
+  - **GUI-01-R-03b（done，2026-09-13）**：待追认（延迟核验任务）按 Agent 隔离列表、人工裁决（签收/否决）经真实核验与上下文图存储写入；陈旧签字 409、跨 Agent 裁决 404；证据 docs/reports/GUI01_R_03B_VERIFICATION_DECISION_EVIDENCE.md。
 
 ### GUI-01-R-04：用户体验及打包
 
@@ -68,9 +68,13 @@
 - GUI-01-R-03a 测试命令、退出码：`npx tsc --noEmit` 0；`npx eslint .` 0；`npx vitest run tests/gui` 0（28 passed）；关联回归 20 passed（public-sdk/application-sdk-*/cli-sdk-parity/context-*）。
 - GUI-01-R-03a 门禁缺口（未通过，不得当成已通过）：受限沙箱下 `tsup`（esbuild 服务）与 forks 池会 `spawn EPERM`；本轮 `npm run check`/`npm run test:coverage` 升级重试 4 次均在审批通道 600s 超时、命令未执行 → 门禁未完成，需在下一阶段（或审批可用时）重跑，并连带补跑累积的 tarball 回归。
 - GUI-01-R-03a 本地提交、推送尝试与结果：实现提交 `12e80eb`（6 文件）。`git push` 第 1 次受限沙箱失败（`couldn't create signal pipe, Win32 error 5`，exit 128），升级重试因审批通道不可用未执行 → 累积待推送 `b5e3be1`、`2dd9fdd`、`12e80eb`。
-- GUI-01-R-03a 人工/外部依赖及剩余风险：已验收/待追认与人工裁决属 03b；真实浏览器人工体验属 04；Linux/macOS 未验证。
+- GUI-01-R-03a 人工/外部依赖及剩余风险：已验收/待追认与人工裁决属 03b（已完成）；真实浏览器人工体验属 04；Linux/macOS 未验证。
+- GUI-01-R-03b 实现与入口证据：docs/reports/GUI01_R_03B_VERIFICATION_DECISION_EVIDENCE.md（真实 Devolve 链路生成延迟核验任务 → GUI 列表/追认落盘/否决重开节点；跨 Agent 404 与陈旧签字 409 反例）。
+- GUI-01-R-03b 测试命令与退出码：`npx tsc --noEmit` 0；`npx eslint .` 0；`npx vitest run tests/gui` 0（32 passed）；关联回归 27 passed。
+- GUI-01-R-03b 门禁缺口（未通过）：`npm run check`/`npm run test:coverage` 升级重试 2 次均因审批通道 600s 超时未执行，需在审批可用时重跑（与 03a 门禁、累积推送一起补）。
+- GUI-01-R-03b 本地提交、推送尝试与结果：实现提交见提交记录小节；`git push` 与门禁同因审批通道不可用跳过，累积推送。
 
 ## 首轮执行指令
 
-读取共同实施规则与本卡，核对前驱动态证据。本轮执行 GUI-01-R-03b（已验收/待追认、人工裁决、各 Agent 上下文隔离）；先记录基线和失败场景，再完成该检查点。不要领取后继，未满足条件不得标记done。
+读取共同实施规则与本卡，核对前驱动态证据。本轮执行 GUI-01-R-04（用户体验及打包）；先记录基线和失败场景，再完成该检查点。人工体验/平台证据缺失时按明确范围保留 pending/blocked，不用说明文字覆盖未满足门禁。
 

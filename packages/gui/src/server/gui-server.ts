@@ -80,6 +80,13 @@ export interface GuiApplicationPort {
   inspectRecoveryMission?(
     missionIdentifier: string,
   ): Promise<GuiRecoveryMissionView | null>;
+  listPendingVerifications?(): Promise<GuiPendingVerificationView[]>;
+  recordVerificationDecision?(input: {
+    ownerAgentInstanceId: string;
+    taskIdentifier: string;
+    decision: "accepted" | "rejected";
+    reason?: string;
+  }): Promise<GuiVerificationDecisionView>;
 }
 
 /** GUI-01-R-03：上下文预算 DTO（结构兼容 PublicContextSettings，无内部字段）。 */
@@ -119,6 +126,27 @@ export interface GuiRecoveryMissionView {
 export interface GuiRecoveryOverviewView {
   missions: GuiRecoveryMissionView[];
   requiresDecisionMissions: string[];
+}
+
+/** GUI-01-R-03b：待追认项（按 owner Agent 隔离，不合并上下文）。 */
+export interface GuiPendingVerificationView {
+  ownerAgentInstanceId: string;
+  taskIdentifier: string;
+  contextNodeIdentifier: string;
+  contextGraphRevision: number;
+  humanSteps: string;
+  risks: string[];
+  artifactOrCommitReferences: string[];
+  automaticTestReferences: string[];
+  createdAtIso: string;
+}
+
+export interface GuiVerificationDecisionView {
+  ownerAgentInstanceId: string;
+  taskIdentifier: string;
+  decision: "accepted" | "rejected";
+  acceptanceIdentifier: string | null;
+  reopenedNodeIdentifiers: string[];
 }
 
 export interface GuiServerOptions {
@@ -262,6 +290,12 @@ ul { margin: 8px 0 0; padding-left: 20px; }
     <button id="refresh-recovery" type="button">刷新</button>
     <ul id="recovery" aria-live="polite"></ul>
   </section>
+  <section aria-labelledby="verifications-heading">
+    <h2 id="verifications-heading">待追认（按 Agent 隔离）</h2>
+    <button id="refresh-verifications" type="button">刷新</button>
+    <ul id="verifications" aria-live="polite"></ul>
+    <p id="verification-result" role="status" aria-live="polite"></p>
+  </section>
 </main>
 <script>
 (function () {
@@ -403,8 +437,73 @@ ul { margin: 8px 0 0; padding-left: 20px; }
       .catch(function () {});
   }
   document.getElementById("refresh-recovery").addEventListener("click", refreshRecovery);
+  var verificationsElement = document.getElementById("verifications");
+  var verificationResultElement = document.getElementById("verification-result");
+  function decideVerification(entry, decision) {
+    fetch("/commands/verification-decision", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
+      body: JSON.stringify({
+        ownerAgentInstanceId: entry.ownerAgentInstanceId,
+        taskIdentifier: entry.taskIdentifier,
+        decision: decision,
+        reason: "GUI 人工裁决",
+      }),
+    })
+      .then(function (response) {
+        return response.json().then(function (payload) {
+          return { isOk: response.ok, payload: payload };
+        });
+      })
+      .then(function (outcome) {
+        if (!outcome.isOk) {
+          verificationResultElement.textContent = "裁决失败：" + outcome.payload.error;
+        } else if (outcome.payload.decision === "accepted") {
+          verificationResultElement.textContent = "已追认：" + outcome.payload.acceptanceIdentifier;
+        } else {
+          verificationResultElement.textContent = "已否决，重开节点：" +
+            (outcome.payload.reopenedNodeIdentifiers || []).join(", ");
+        }
+        refreshVerifications();
+      })
+      .catch(function (error) { verificationResultElement.textContent = "裁决失败：" + String(error); });
+  }
+  function renderVerifications(entries) {
+    verificationsElement.textContent = "";
+    if (entries.length === 0) {
+      var emptyItem = document.createElement("li");
+      emptyItem.textContent = "无待追认项";
+      verificationsElement.appendChild(emptyItem);
+      return;
+    }
+    entries.forEach(function (entry) {
+      var item = document.createElement("li");
+      var label = document.createElement("span");
+      label.textContent = entry.ownerAgentInstanceId + " · " + entry.taskIdentifier +
+        " · 节点 " + entry.contextNodeIdentifier +
+        " · r" + entry.contextGraphRevision +
+        " · " + entry.humanSteps;
+      item.appendChild(label);
+      [["accepted", "追认"], ["rejected", "否决"]].forEach(function (pair) {
+        var button = document.createElement("button");
+        button.type = "button";
+        button.textContent = pair[1];
+        button.addEventListener("click", function () { decideVerification(entry, pair[0]); });
+        item.appendChild(button);
+      });
+      verificationsElement.appendChild(item);
+    });
+  }
+  function refreshVerifications() {
+    fetch("/verifications", { headers: { accept: "application/json" } })
+      .then(function (response) { return response.json(); })
+      .then(function (payload) { renderVerifications(payload.entries || []); })
+      .catch(function () {});
+  }
+  document.getElementById("refresh-verifications").addEventListener("click", refreshVerifications);
   refreshSettings();
   refreshRecovery();
+  refreshVerifications();
   var source = new EventSource("/events");
   source.onopen = function () { statusElement.textContent = "已连接"; };
   source.onerror = function () { statusElement.textContent = "重连中…"; };
@@ -621,6 +720,72 @@ export async function startGuiServer(
         200,
         await applicationService.queryRecoveryOverview(),
       );
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/verifications") {
+      const applicationService = options.applicationService;
+      if (applicationService.listPendingVerifications === undefined) {
+        writeCapabilityUnavailable(response);
+        return;
+      }
+      writeJsonResponse(response, 200, {
+        entries: await applicationService.listPendingVerifications(),
+      });
+      return;
+    }
+    if (
+      request.method === "POST" &&
+      requestUrl.pathname === "/commands/verification-decision"
+    ) {
+      const applicationService = options.applicationService;
+      if (applicationService.recordVerificationDecision === undefined) {
+        writeCapabilityUnavailable(response);
+        return;
+      }
+      const parsedBody = JSON.parse((await readBody(request)) || "{}") as {
+        ownerAgentInstanceId?: unknown;
+        taskIdentifier?: unknown;
+        decision?: unknown;
+        reason?: unknown;
+      };
+      const ownerAgentInstanceId = parsedBody.ownerAgentInstanceId;
+      const taskIdentifier = parsedBody.taskIdentifier;
+      const decision = parsedBody.decision;
+      if (
+        typeof ownerAgentInstanceId !== "string" ||
+        ownerAgentInstanceId === "" ||
+        typeof taskIdentifier !== "string" ||
+        taskIdentifier === "" ||
+        (decision !== "accepted" && decision !== "rejected")
+      ) {
+        writeJsonResponse(response, 400, { error: "invalid-arguments" });
+        return;
+      }
+      try {
+        const result = await applicationService.recordVerificationDecision({
+          ownerAgentInstanceId,
+          taskIdentifier,
+          decision,
+          ...(typeof parsedBody.reason === "string"
+            ? { reason: parsedBody.reason }
+            : {}),
+        });
+        writeJsonResponse(response, 200, result);
+      } catch (error) {
+        const errorCode = readApplicationErrorCode(error);
+        if (errorCode === "stale-revision") {
+          writeJsonResponse(response, 409, { error: "stale-revision" });
+          return;
+        }
+        if (
+          errorCode === "verification-not-found" ||
+          errorCode === "verification-context-missing"
+        ) {
+          writeJsonResponse(response, 404, { error: errorCode });
+          return;
+        }
+        throw error;
+      }
       return;
     }
     if (
