@@ -48,3 +48,8 @@
 - 真实浏览器人工体验（键盘、中文输入法、缩放、可访问性、视觉）与从安装包打开 GUI → GUI-01-R-04（人工结论，不能用自动断言替代）。
 - 断线重连自定义退避的端到端体验校验 → GUI-01-R-04。
 - Linux/macOS 未验证（仅 Windows 本机）。
+## 6. 提交与推送
+
+- 实现提交：`4ed4c14` `feat(gui): GUI-01-R-03b 待追认与人工裁决（按 Agent 隔离）`（6 文件，+727/−5；仅暂存本检查点文件，用户并行改动保持未暂存）。
+- 门禁状态：`npm run check` 与 `npm run test:coverage` 因审批通道不可用未执行（升级重试 2 次均 600s 超时）；本地等价证据：`npx tsc --noEmit` 0、`npx eslint .` 0、GUI 32 用例与关联 27 用例全通过。**门禁缺口按未通过记录。**
+- 推送状态：`git push` 受限沙箱失败（`couldn't create signal pipe, Win32 error 5`，exit 128）；升级重试因审批通道不可用未执行。累积待推送：`b5e3be1`、`2dd9fdd`、`12e80eb`、`6cb1a2d`、`4ed4c14`。

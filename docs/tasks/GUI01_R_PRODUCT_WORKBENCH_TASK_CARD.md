@@ -72,7 +72,7 @@
 - GUI-01-R-03b 实现与入口证据：docs/reports/GUI01_R_03B_VERIFICATION_DECISION_EVIDENCE.md（真实 Devolve 链路生成延迟核验任务 → GUI 列表/追认落盘/否决重开节点；跨 Agent 404 与陈旧签字 409 反例）。
 - GUI-01-R-03b 测试命令与退出码：`npx tsc --noEmit` 0；`npx eslint .` 0；`npx vitest run tests/gui` 0（32 passed）；关联回归 27 passed。
 - GUI-01-R-03b 门禁缺口（未通过）：`npm run check`/`npm run test:coverage` 升级重试 2 次均因审批通道 600s 超时未执行，需在审批可用时重跑（与 03a 门禁、累积推送一起补）。
-- GUI-01-R-03b 本地提交、推送尝试与结果：实现提交见提交记录小节；`git push` 与门禁同因审批通道不可用跳过，累积推送。
+- GUI-01-R-03b 本地提交、推送尝试与结果：实现提交 `4ed4c14`（6 文件）。`git push` 受限沙箱失败（`couldn't create signal pipe, Win32 error 5`，exit 128），升级重试因审批通道不可用未执行 → 累积待推送 `b5e3be1`、`2dd9fdd`、`12e80eb`、`6cb1a2d`、`4ed4c14`。
 
 ## 首轮执行指令
 
