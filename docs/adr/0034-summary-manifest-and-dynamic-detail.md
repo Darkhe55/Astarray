@@ -62,3 +62,22 @@
 - docs/LONG_SESSION_AND_RUNTIME_STEERING_PROPOSAL.md（用户已选方案）
 - ADR-0029（读预算）、ADR-0031（上下文节点收口与回访）、ADR-0018（敏感禁读）
 - 原型与测试：`packages/core/src/summarization/summary-manifest.ts`、`tests/core/unit/summary-manifest.test.ts`
+## 补充（SUM-01-02 冻结：受控保存与原子发布）
+
+12. **完整性指纹**：清单增加 `chunkChainHash`（按分块顺序逐块折叠的链式指纹，尾部追加为 O(1) 增量，
+    乱序补齐按全量重算）与 `manifestIntegrityHash`（绑定分块链 + 覆盖元数据 + 叙述 + 清单 revision）。
+    校验不通过一律 fail-closed（`integrity-violation`），**绝不把被篡改/半写的清单当作有效摘要返回**。
+13. **覆盖区间不变量**：已发布清单必须满足"1..`coveredThroughSourceRevision` 内每个 revision 都能被某个分块的
+    `sourceRevisionFrom..To` 覆盖，或显式列在 `pendingSourceRevisions`"；违反即 `journal-corrupted`。
+    该不变量正是"新摘要不得指向旧正文/空洞"的可执行形式。
+14. **事实与叙述分离**：`chunks[].summaryText` 只承载**本地权威事实**（确定性提取，不改写语义）；
+    模型生成的叙述放在清单的 `narrativeText` 字段，两者不混同，叙述可单独更新（`updateSummaryNarrative`）。
+15. **pending 生成草稿**：生成过程先原子写入 `pending.json`（Agent/来源键、已提取事实、待并入 revision、
+    草稿叙述、基线清单 revision），崩溃后可续跑；续跑复用已提取事实与草稿叙述，**不重复提取、不重复生成**。
+16. **发布为 CAS + 原子替换**：`publishManifest` 以 `expectedRevision` 做比较交换（陈旧发布抛 `stale-publish`），
+    经"临时文件 → fsync → 原子 rename + 备份"落盘；写入前备份主文件（ADR-0009）。
+17. **single-flight**：同一 (Agent, 来源) 的生成任务在进程内合并，并发请求只执行一次叙述生成。
+18. **读取路径只读**：`readManifest`/`detectSourceInvalidation` 只读清单与本地哈希，
+    外部变化只标记失效（`source-advanced`/`source-content-changed`/`no-manifest`），**不触发任何重摘要或模型调用**。
+19. **按 Agent 隔离**：清单与 pending 落在 `agent-memory/<agentInstanceId>/summaries/<sourceKind>-<sourceIdentifier>/`，
+    不同 Agent 的同名来源互不可见。

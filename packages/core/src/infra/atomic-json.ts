@@ -66,6 +66,22 @@ async function renameWithRetryOnWindowsContention(
   throw lastError;
 }
 
+/**
+ * 删除 JSON 主文件前先备份为 .bak（破坏性操作集中在底层模块，调用方不直接 rm）。
+ * 主文件不存在时返回 false；删除失败由调用方处理。
+ */
+export async function removeJsonFileWithBackup(
+  filePath: string,
+  backupPath: string,
+): Promise<boolean> {
+  const hasBackedUp = await backupExistingFile(filePath, backupPath);
+  if (!hasBackedUp) {
+    return false;
+  }
+  await fs.rm(filePath, { force: true });
+  return true;
+}
+
 /** 将现有主文件复制为备份；主文件不存在时返回 false。 */
 export async function backupExistingFile(
   filePath: string,

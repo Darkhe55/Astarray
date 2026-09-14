@@ -35,7 +35,9 @@ export type SummaryContractErrorCode =
   | "stale-cursor"
   | "invalid-page-request"
   | "duplicate-source-revision"
-  | "invalid-manifest";
+  | "invalid-manifest"
+  | "integrity-violation"
+  | "stale-publish";
 
 export class SummaryContractError extends Error {
   constructor(
@@ -86,9 +88,15 @@ export const summaryManifestSchema = z
     /** 覆盖区间内尚未并入摘要的来源 revision（显式 pending 尾部，可为空）。 */
     pendingSourceRevisions: z.array(z.number().int().positive()),
     chunks: z.array(summaryChunkSchema),
+    /** 后台模型生成的叙述（SUM-01-02）；权威事实在分块证据指针里，两者分离。 */
+    narrativeText: z.string().nullable(),
     manifestRevision: z.number().int().positive(),
     generatorVersion: z.string().min(1),
     updatedAtIso: z.iso.datetime(),
+    /** 分块链指纹（SUM-01-02）：按分块顺序折叠，支持增量追加且可全量复核。 */
+    chunkChainHash: z.string().min(1),
+    /** 清单完整性指纹（SUM-01-02）：任何字段被篡改即无法通过校验。 */
+    manifestIntegrityHash: z.string().min(1),
   })
   .strict();
 export type SummaryManifest = z.infer<typeof summaryManifestSchema>;
@@ -115,6 +123,8 @@ export interface AppendSummarySourceInput {
   estimatedUnitCount: number;
   evidencePointers?: SummaryEvidencePointer[];
   detailLevels?: SummaryDetailLevel[];
+  /** 后台生成的叙述；不传表示沿用上一版（`updateSummaryNarrative` 可单独更新）。 */
+  narrativeText?: string | null;
 }
 
 export interface AppendSummarySourceResult {
@@ -142,6 +152,81 @@ function sha256Hex(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
+const CHUNK_CHAIN_SEED = "summary-chunk-chain-v1";
+
+function chunkFingerprint(chunk: SummaryChunk): string {
+  return sha256Hex(
+    JSON.stringify({
+      chunkIdentifier: chunk.chunkIdentifier,
+      sourceRevisionFrom: chunk.sourceRevisionFrom,
+      sourceRevisionTo: chunk.sourceRevisionTo,
+      themeIdentifier: chunk.themeIdentifier,
+      detailLevels: [...chunk.detailLevels],
+      evidencePointers: chunk.evidencePointers.map((pointer) => ({
+        sourceKind: pointer.sourceKind,
+        sourceIdentifier: pointer.sourceIdentifier,
+        sourceRevision: pointer.sourceRevision,
+        contentHash: pointer.contentHash,
+      })),
+      estimatedUnitCount: chunk.estimatedUnitCount,
+      summaryText: chunk.summaryText,
+    }),
+  );
+}
+
+/** 分块链指纹：按分块顺序逐块折叠（全量复核用；增量追加另有 O(1) 路径）。 */
+export function computeSummaryChunkChainHash(chunks: SummaryChunk[]): string {
+  let chainHash = sha256Hex(CHUNK_CHAIN_SEED);
+  for (const chunk of chunks) {
+    chainHash = sha256Hex(chainHash + "|" + chunkFingerprint(chunk));
+  }
+  return chainHash;
+}
+
+function extendChunkChainHash(previousChainHash: string, chunk: SummaryChunk): string {
+  return sha256Hex(previousChainHash + "|" + chunkFingerprint(chunk));
+}
+
+/**
+ * 清单完整性指纹：绑定分块链指纹与覆盖元数据。
+ * 用于"新摘要指旧正文"的反面：被篡改/半写的清单必须校验失败，绝不当作有效摘要返回。
+ */
+export function computeSummaryManifestIntegrityHash(
+  manifest: Omit<SummaryManifest, "manifestIntegrityHash">,
+): string {
+  return sha256Hex(
+    [
+      "summary-manifest-integrity-v1",
+      manifest.chunkChainHash,
+      String(manifest.coveredThroughSourceRevision),
+      manifest.coveredContentHash,
+      manifest.pendingSourceRevisions.join(","),
+      manifest.narrativeText ?? "",
+      String(manifest.manifestRevision),
+      manifest.updatedAtIso,
+    ].join("|"),
+  );
+}
+
+function withIntegrityHash(
+  manifest: Omit<SummaryManifest, "manifestIntegrityHash">,
+): SummaryManifest {
+  return {
+    ...manifest,
+    manifestIntegrityHash: computeSummaryManifestIntegrityHash(manifest),
+  };
+}
+
+/** 去掉完整性指纹，得到待重算的清单字段集合。 */
+function withoutIntegrityHash(
+  manifest: SummaryManifest,
+): Omit<SummaryManifest, "manifestIntegrityHash"> {
+  const { manifestIntegrityHash, ...rest } = manifest;
+  // 指纹字段只用于剥离，不参与重算输入。
+  void manifestIntegrityHash;
+  return rest;
+}
+
 function collectThemeIdentifiers(manifest: SummaryManifest): string[] {
   return [...new Set(manifest.chunks.map((chunk) => chunk.themeIdentifier))].sort();
 }
@@ -153,7 +238,7 @@ export function createSummaryManifest(input: {
   generatorVersion: string;
   nowIso?: string;
 }): SummaryManifest {
-  const manifest: SummaryManifest = {
+  const manifest = withIntegrityHash({
     schemaVersion: SUMMARY_MANIFEST_SCHEMA_VERSION,
     manifestIdentifier:
       "summary-" + input.sourceKind + "-" + sha256Hex(input.sourceIdentifier).slice(0, 16),
@@ -164,10 +249,12 @@ export function createSummaryManifest(input: {
     coveredContentHash: sha256Hex(""),
     pendingSourceRevisions: [],
     chunks: [],
+    narrativeText: null,
+    chunkChainHash: sha256Hex(CHUNK_CHAIN_SEED),
     manifestRevision: 1,
     generatorVersion: input.generatorVersion,
     updatedAtIso: input.nowIso ?? new Date().toISOString(),
-  };
+  });
   return summaryManifestSchema.parse(manifest);
 }
 
@@ -178,6 +265,18 @@ export function validateSummaryManifest(manifest: unknown): SummaryManifest {
     throw new SummaryContractError(
       "invalid-manifest",
       "摘要清单非法: " + parsed.error.message,
+    );
+  }
+  const { manifestIntegrityHash, ...rest } = parsed.data;
+  const recomputedChunkChainHash = computeSummaryChunkChainHash(parsed.data.chunks);
+  if (
+    recomputedChunkChainHash !== parsed.data.chunkChainHash ||
+    computeSummaryManifestIntegrityHash(rest) !== manifestIntegrityHash
+  ) {
+    throw new SummaryContractError(
+      "integrity-violation",
+      "摘要清单完整性指纹不匹配，拒绝作为有效摘要返回: " +
+        parsed.data.manifestIdentifier,
     );
   }
   return parsed.data;
@@ -278,8 +377,22 @@ export function appendSummarySource(
     return left.chunkIdentifier.localeCompare(right.chunkIdentifier);
   });
 
-  const next: SummaryManifest = {
-    ...manifest,
+  const previousChunkChainHash = manifest.chunkChainHash;
+  const manifestWithoutHash = withoutIntegrityHash(manifest);
+  const isAppendedAtEnd =
+    manifest.chunks.length === 0 ||
+    input.sourceRevision >
+      (manifest.chunks.at(-1)?.sourceRevisionFrom ?? 0);
+  const next = withIntegrityHash({
+    ...manifestWithoutHash,
+    narrativeText:
+      input.narrativeText !== undefined
+        ? input.narrativeText
+        : manifest.narrativeText,
+    // 尾部追加走 O(1) 增量折叠；乱序补齐（罕见）按全量重算，保证链与顺序一致。
+    chunkChainHash: isAppendedAtEnd
+      ? extendChunkChainHash(previousChunkChainHash, chunk)
+      : computeSummaryChunkChainHash(chunks),
     coveredThroughSourceRevision: Math.max(
       previousCovered,
       input.sourceRevision,
@@ -291,8 +404,22 @@ export function appendSummarySource(
     chunks,
     manifestRevision: manifest.manifestRevision + 1,
     updatedAtIso: new Date().toISOString(),
-  };
+  });
   return { manifest: next, wasDuplicate: false, wasGapFill };
+}
+
+/** 单独更新后台叙述（分块链不变，仅重算清单指纹）。 */
+export function updateSummaryNarrative(
+  manifest: SummaryManifest,
+  narrativeText: string | null,
+  nowIso?: string,
+): SummaryManifest {
+  const manifestWithoutHash = withoutIntegrityHash(manifest);
+  return withIntegrityHash({
+    ...manifestWithoutHash,
+    narrativeText,
+    updatedAtIso: nowIso ?? new Date().toISOString(),
+  });
 }
 
 export function summarizeManifestCoverage(
