@@ -65,3 +65,10 @@
 - `git push` **exit 0**：`0946530..28705b2`（推送 GUI-01-R-02/03a/03b/04a 与 WB-00-01 等 8 个提交；`origin/main` = `28705b2`）。
 - 并行改动仍全部未暂存；`docs/tasks/WB00_MICRO_EDIT_WORKBENCH_PROTOTYPE_TASK_CARD.md` 为未跟踪用户文件，本轮未修改未暂存（注意：第 4 节所述"未跟踪卡"里 GUI-01-R 卡已在 GUI-01-R-01 时入库）。
 - 仍待人工/平台：GUI-01-R-04b 真实用户人工体验结论（键盘/中文/缩放/可访问性/断线恢复）与 Linux/macOS 证据；WB-00-02 实现需等 GUI-01-R 交付验收（本卡仅允许概念提前）。
+## 7. 后续进度（2026-09-13，SUM 批次启动）
+
+- **WB-00-01**（细节微淘能力边界）：ADR-0033 + `docs/reports/WB00_01_SCOPE_FREEZE.md`，提交 `28705b2`。WB-00-02 需等 GUI-01-R 交付验收。
+- **SUM-01-01**（摘要清单/游标/动态详细度契约）：ADR-0034 + `packages/core/src/summarization/summary-manifest.ts`（原型）+ 7 个反例用例 + `docs/reports/SUM01_01_MANIFEST_CONTRACT.md`，提交 `33071ec`。
+  - 门禁：`npm run check` exit 0（188 文件/1573 用例）；`test:coverage` exit 0（93.60/86.38/92.04/93.63）；`git push` 成功 `1103da4..33071ec`。
+- 下一轮：SUM-01-02（增量索引受控保存与原子发布：崩溃不出现"新摘要指旧正文"、single-flight、旧文件迁移/外部变化失效）。
+- 仍待用户/外部输入：GUI-01-R-04b 人工体验与 Linux/macOS；BRIDGE-01-04 真实 MCP 客户端；E2E-01-03 真实 Provider 凭据/费用授权；E2E-01-04 人工结论。
