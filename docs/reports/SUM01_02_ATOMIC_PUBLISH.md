@@ -38,7 +38,19 @@
 
 ## 4. 门禁与推送
 
-（本轮复跑后回填。）
+| 命令 | 结果 |
+| --- | --- |
+| `npm run check` | **exit 0**：typecheck + lint + build + test；**189 文件 / 1580 用例全通过** |
+| `npm run test:coverage` | **exit 0**：189 文件 / 1580 用例通过；全局 statements **93.46%** / branch **86.20%** / functions **92.01%** / lines **93.49%**（阈值 85）；`packages/core/src/summarization` 目录 89.05% / **80.86%** / 92.53% / 88.84% |
+| `git push` | **exit 0**：`98c4297..e606578`（`origin/main` = `e606578`） |
+
+**首轮门禁红态（真实架构守卫拦截）**：`npm run check` 首跑 1 失败 —— `tests/architecture/destructive-file-api-guard.test.ts` 报告
+`summary-index-store.ts: 不在白名单却使用破坏性 API rm`。修法不是加白名单，而是把"删除 pending 草稿"改为
+底层 `removeJsonFileWithBackup`（先 .bak 备份再删除，破坏性 API 仍集中在已审查的 `infra/atomic-json.ts`），
+调用方不再直接 rm；复跑 189/1580 全通过。
+
+**已知分支覆盖缺口**：新目录 branch 80.86%（低于 95% 专项阈值，但该目录属新增功能而非既有 22 个安全模块清单）；
+SUM-01-03 读取路径会覆盖陈旧/跨 Agent 游标与失效分支，届时一并抬升；本检查点不虚报达标。
 
 ## 5. 未满足项与后续
 

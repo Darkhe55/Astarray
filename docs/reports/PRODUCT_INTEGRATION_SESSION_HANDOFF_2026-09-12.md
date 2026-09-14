@@ -70,5 +70,9 @@
 - **WB-00-01**（细节微淘能力边界）：ADR-0033 + `docs/reports/WB00_01_SCOPE_FREEZE.md`，提交 `28705b2`。WB-00-02 需等 GUI-01-R 交付验收。
 - **SUM-01-01**（摘要清单/游标/动态详细度契约）：ADR-0034 + `packages/core/src/summarization/summary-manifest.ts`（原型）+ 7 个反例用例 + `docs/reports/SUM01_01_MANIFEST_CONTRACT.md`，提交 `33071ec`。
   - 门禁：`npm run check` exit 0（188 文件/1573 用例）；`test:coverage` exit 0（93.60/86.38/92.04/93.63）；`git push` 成功 `1103da4..33071ec`。
-- 下一轮：SUM-01-02（增量索引受控保存与原子发布：崩溃不出现"新摘要指旧正文"、single-flight、旧文件迁移/外部变化失效）。
+- **SUM-01-02**（增量索引受控保存与原子发布）：`summary-fact-extractor.ts`、`summary-index-store.ts`、`summary-generation-service.ts` + ADR-0034 §12–19 + `docs/reports/SUM01_02_ATOMIC_PUBLISH.md`，提交 `e606578`。
+  - 门禁：`npm run check` exit 0（189 文件/1580 用例）；`test:coverage` exit 0（93.46/86.20/92.01/93.49）；`git push` `98c4297..e606578`。
+  - 首轮被 `destructive-file-api-guard` 拦截（新模块直接 rm），改为底层 `removeJsonFileWithBackup`（先备份再删）后全绿——**不得靠扩白名单绕过**。
+  - 已知：`summarization` 目录 branch 80.86%，待 SUM-01-03 读取分支补齐。
+- 下一轮：SUM-01-03（默认摘要与章节展开、分页与有界读取、来源校验、陈旧/跨 Agent 游标拒绝的端到端读取路径；源码/媒体旁置索引）。
 - 仍待用户/外部输入：GUI-01-R-04b 人工体验与 Linux/macOS；BRIDGE-01-04 真实 MCP 客户端；E2E-01-03 真实 Provider 凭据/费用授权；E2E-01-04 人工结论。
