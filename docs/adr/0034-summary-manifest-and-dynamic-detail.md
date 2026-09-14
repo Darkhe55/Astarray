@@ -95,3 +95,17 @@
 23. **源码/媒体旁置索引**：`sidecar-index.json` 只保存指针（相对标识、revision、内容哈希、字节数、媒体类型），
     **不复制正文、不改写原格式**；写入与读回都经过 pointer-only 断言，出现 `content`/`text`/`base64` 等
     正文键或任何未声明字段即 `journal-corrupted` 拒绝。
+## 补充（SUM-01-04a 冻结：产品入口接线与资源观测）
+
+24. **公共门面入口**：`summarizeArchivedMission`（真实工作存档 → 事实 → 叙述 → 原子发布）、
+    `listSummarySources`（来源概要，不含路径/正文）、`readSummaryView`（四级读取 + 翻页一致性）、
+    `expandSummarySectionView`（定点章节展开）。消费者不接触存储路径与内部控制器。
+25. **真实来源首期接线**：`work-archive`（mission 维度：合并该 mission 下各 Agent 个体存档条目，
+    按时间稳定排序、重排 revision、重复条目不双计）；证据指针保留 `agentInstanceId#archiveEntryId`
+    以回溯到**原始个体存档**，不把不同 Agent 的记忆域合并成一份可变存档。会话历史/报告/延后文件适配器后续接入。
+26. **生成器版本必须可区分**：首期默认**本地抽取式**叙述 `local-extractive-1`（确定性统计，不调用模型），
+    与 SUM-02 接入的模型生成器并存；任何一方的结果都不得冒充另一方。
+27. **资源观测与诚实状态**：每次读取返回 `manifestFileBytes`、`chunkCount`、`narrativeCharacterCount`、
+    `returnedUnitCount`、`wallMilliseconds`、`sourceAccessCount`（读取路径必须为 0）、
+    `diskReadOperationCount`（如实声明）与 `isReturnBounded`。资源不足只裁剪**本次返回**，
+    清单与正文不裁剪；来源缺失显式抛 `summary-not-found`；翻页 `expectedManifestRevision` 不符抛 `stale-cursor`。

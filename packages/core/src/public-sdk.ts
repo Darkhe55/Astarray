@@ -21,6 +21,17 @@ import { createApplicationRuntime } from "./application/application-runtime.js";
 import { DomainError } from "./core/errors.js";
 import { resolveContextBudget } from "./orchestration/context-prompt-assembler.js";
 import type { RecoveryCenterController } from "./orchestration/recovery-center-controller.js";
+import {
+  createManifestChunkReader,
+  createSummaryCursor,
+  readSummaryPage,
+  type SummaryChunk,
+  type SummaryDetailLevel,
+} from "./summarization/summary-manifest.js";
+import { buildLocalExtractiveNarrative, buildWorkArchiveSummaryEntries } from "./summarization/summary-source-adapters.js";
+import { measureSummaryOperation } from "./summarization/summary-resource-metrics.js";
+import { advanceSummaryGeneration } from "./summarization/summary-generation-service.js";
+import { SummaryIndexStore } from "./summarization/summary-index-store.js";
 
 /** SDK 版本（与 package.json 同步语义版本）。 */
 export const ASTARRAY_SDK_VERSION = "0.1.0";
@@ -144,6 +155,86 @@ export interface PublicPendingVerification {
   artifactOrCommitReferences: string[];
   automaticTestReferences: string[];
   createdAtIso: string;
+}
+
+/** SUM-01-04a：摘要来源概要（工作台/CLI 列表用；不含本地路径）。 */
+export interface PublicSummarySourceSummary {
+  sourceKind: "conversation" | "work-archive" | "report" | "deferred-file";
+  sourceIdentifier: string;
+  manifestRevision: number;
+  coveredThroughSourceRevision: number;
+  chunkCount: number;
+  pendingSourceRevisionCount: number;
+  narrativeCharacterCount: number;
+  generatorVersion: string;
+}
+
+/** 公开资源观测（磁盘索引大小、返回量、耗时、原文访问次数）。 */
+export interface PublicSummaryResourceMetrics {
+  manifestFileBytes: number;
+  chunkCount: number;
+  narrativeCharacterCount: number;
+  returnedUnitCount: number;
+  wallMilliseconds: number;
+  sourceAccessCount: number;
+  diskReadOperationCount: number;
+  isReturnBounded: boolean;
+}
+
+export interface PublicSummaryEvidencePointer {
+  sourceIdentifier: string;
+  sourceRevision: number;
+  contentHash: string;
+}
+
+export interface PublicSummaryChunkView {
+  chunkIdentifier: string;
+  sourceRevisionFrom: number;
+  sourceRevisionTo: number;
+  themeIdentifier: string;
+  excerpt: string;
+  isExcerptBounded: boolean;
+  evidencePointers: PublicSummaryEvidencePointer[];
+}
+
+export interface PublicSummaryView {
+  kind: "page";
+  sourceIdentifier: string;
+  detailLevel: SummaryDetailLevel;
+  manifestRevision: number;
+  chunks: PublicSummaryChunkView[];
+  hasMore: boolean;
+  nextPageIndex: number | null;
+  coverage: {
+    coveredThroughSourceRevision: number;
+    pendingSourceRevisions: number[];
+    chunkCount: number;
+  };
+  themeSummaries: Array<{ themeIdentifier: string; chunkCount: number }> | null;
+  isReturnBounded: boolean;
+  returnedUnitCount: number;
+  resourceMetrics: PublicSummaryResourceMetrics;
+}
+
+export interface PublicSummarySectionView {
+  kind: "section";
+  sourceIdentifier: string;
+  chunkIdentifier: string;
+  manifestRevision: number;
+  excerpt: string;
+  isExcerptBounded: boolean;
+  narrativeExcerpt: string | null;
+  evidencePointers: PublicSummaryEvidencePointer[];
+  resourceMetrics: PublicSummaryResourceMetrics;
+}
+
+export interface PublicSummaryBuildResult {
+  sourceIdentifier: string;
+  manifestRevision: number;
+  chunkCount: number;
+  coveredThroughSourceRevision: number;
+  entryCount: number;
+  generatorVersion: string;
 }
 
 /** 公开人工裁决结果（签收写入归属 Agent 存档；否决只重开节点不破坏性回滚）。 */
@@ -662,6 +753,286 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       }
       throw error;
     }
+  }
+
+  // ─── SUM-01-04a：摘要读取的产品入口（工作台/CLI 共用；只读已发布索引） ───
+
+  private async createSummaryIndexStore(): Promise<SummaryIndexStore> {
+    if (this.stateDirectory === null) {
+      throw new PublicApplicationError(
+        "summary-unavailable",
+        "应用未绑定状态目录，无法读取摘要索引",
+      );
+    }
+    return new SummaryIndexStore({ baseDirectory: this.stateDirectory });
+  }
+
+  private toPublicSummaryChunk(
+    chunk: SummaryChunk,
+    maximumExcerptCharacters: number,
+  ): PublicSummaryChunkView {
+    return {
+      chunkIdentifier: chunk.chunkIdentifier,
+      sourceRevisionFrom: chunk.sourceRevisionFrom,
+      sourceRevisionTo: chunk.sourceRevisionTo,
+      themeIdentifier: chunk.themeIdentifier,
+      excerpt: chunk.summaryText.slice(0, maximumExcerptCharacters),
+      isExcerptBounded: chunk.summaryText.length > maximumExcerptCharacters,
+      evidencePointers: chunk.evidencePointers.map((pointer) => ({
+        sourceIdentifier: pointer.sourceIdentifier,
+        sourceRevision: pointer.sourceRevision,
+        contentHash: pointer.contentHash,
+      })),
+    };
+  }
+
+  /**
+   * 把一个 mission 的真实工作存档（多个 Agent 个体存档）汇总为摘要来源并原子发布。
+   * 生成器默认是本地抽取式（`local-extractive-1`，不调用模型）；真实模型生成器由 SUM-02 接入。
+   */
+  async summarizeArchivedMission(input: {
+    missionId: string;
+  }): Promise<PublicSummaryBuildResult> {
+    this.assertOpen();
+    const store = await this.createSummaryIndexStore();
+    const { AgentWorkArchiveStore } = await import(
+      "./orchestration/work-archive-store.js"
+    );
+    const archiveStore = new AgentWorkArchiveStore({
+      baseDirectory: this.stateDirectory ?? "",
+    });
+    const agentInstanceIds = await archiveStore.listAgentIdsWithArchive(
+      input.missionId,
+    );
+    const sources: Array<{
+      missionId: string;
+      agentInstanceId: string;
+      entries: Array<{
+        archiveEntryId: string;
+        recordedAtIso: string;
+        taskId: string | null;
+        entryType:
+          | "assignment"
+          | "progress"
+          | "decision"
+          | "result"
+          | "failure"
+          | "handoff";
+        summary: string;
+        artifactReferences: string[];
+      }>;
+    }> = [];
+    for (const agentInstanceId of agentInstanceIds) {
+      const archive = await archiveStore.readArchive(
+        input.missionId,
+        agentInstanceId,
+      );
+      if (archive === null || archive.entries.length === 0) {
+        continue;
+      }
+      sources.push({
+        missionId: input.missionId,
+        agentInstanceId,
+        entries: archive.entries,
+      });
+    }
+    const entries = buildWorkArchiveSummaryEntries(sources);
+    const ownerAgentInstanceId = this.runtime.mainAgentInstanceId;
+    const generatorVersion = "local-extractive-1";
+    const generation = await advanceSummaryGeneration({
+      store,
+      agentInstanceId: ownerAgentInstanceId,
+      sourceKind: "work-archive",
+      sourceIdentifier: input.missionId,
+      entries,
+      narrativeGenerator: {
+        generateNarrative: async (generationInput) =>
+          buildLocalExtractiveNarrative(generationInput.facts),
+      },
+      generatorVersion,
+    });
+    if (generation.manifest === null) {
+      return {
+        sourceIdentifier: input.missionId,
+        manifestRevision: 0,
+        chunkCount: 0,
+        coveredThroughSourceRevision: 0,
+        entryCount: entries.length,
+        generatorVersion,
+      };
+    }
+    return {
+      sourceIdentifier: input.missionId,
+      manifestRevision: generation.manifest.manifestRevision,
+      chunkCount: generation.manifest.chunks.length,
+      coveredThroughSourceRevision:
+        generation.manifest.coveredThroughSourceRevision,
+      entryCount: entries.length,
+      generatorVersion,
+    };
+  }
+
+  /** 列出当前会话 Agent 已发布的摘要来源（不含路径与正文）。 */
+  async listSummarySources(): Promise<PublicSummarySourceSummary[]> {
+    this.assertOpen();
+    const store = await this.createSummaryIndexStore();
+    const views = await store.listSourceKeys(this.runtime.mainAgentInstanceId);
+    return views.map((view) => ({ ...view }));
+  }
+
+  /**
+   * 默认摘要读取（四级详细度）。`expectedManifestRevision` 用于翻页一致性：
+   * 清单已前进时拒绝，避免把跨 revision 的页拼在一起。
+   */
+  async readSummaryView(input: {
+    sourceIdentifier: string;
+    sourceKind?: PublicSummarySourceSummary["sourceKind"];
+    detailLevel?: SummaryDetailLevel;
+    pageSize?: number;
+    pageIndex?: number;
+    expectedManifestRevision?: number;
+    maximumExcerptCharacters?: number;
+    maximumReturnUnitCount?: number;
+  }): Promise<PublicSummaryView> {
+    this.assertOpen();
+    const store = await this.createSummaryIndexStore();
+    const key = {
+      agentInstanceId: this.runtime.mainAgentInstanceId,
+      sourceKind: input.sourceKind ?? ("work-archive" as const),
+      sourceIdentifier: input.sourceIdentifier,
+    };
+    const manifest = await store.readManifest(key);
+    if (manifest === null) {
+      throw new PublicApplicationError(
+        "summary-not-found",
+        "没有已发布的摘要来源: " + input.sourceIdentifier,
+      );
+    }
+    if (
+      input.expectedManifestRevision !== undefined &&
+      input.expectedManifestRevision !== manifest.manifestRevision
+    ) {
+      throw new PublicApplicationError(
+        "stale-cursor",
+        "摘要清单已前进（期望 r" +
+          String(input.expectedManifestRevision) +
+          "，现有 r" +
+          String(manifest.manifestRevision) +
+          "），请重新取页",
+      );
+    }
+    const detailLevel = input.detailLevel ?? "summary";
+    const cursor = createSummaryCursor({
+      manifest,
+      detailLevel,
+      nextChunkIndex: input.pageIndex ?? 0,
+    });
+    const page = readSummaryPage({
+      manifest,
+      cursor,
+      pageSize: input.pageSize ?? 10,
+      chunkReader: createManifestChunkReader(manifest),
+      ...(input.maximumReturnUnitCount !== undefined
+        ? { maximumReturnUnitCount: input.maximumReturnUnitCount }
+        : {}),
+    });
+    const maximumExcerptCharacters = input.maximumExcerptCharacters ?? 400;
+    const { metrics } = await measureSummaryOperation({
+      operation: async () => page,
+      readManifestFileBytes: async () => store.manifestFileSizeBytes(key),
+      extract: (measured) => ({
+        chunkCount: manifest.chunks.length,
+        narrativeCharacterCount: manifest.narrativeText?.length ?? 0,
+        returnedUnitCount: measured.returnedUnitCount,
+        sourceAccessCount: 0,
+        isReturnBounded: measured.isReturnBounded,
+        diskReadOperationCount: 1,
+      }),
+    });
+    return {
+      kind: "page",
+      sourceIdentifier: input.sourceIdentifier,
+      detailLevel,
+      manifestRevision: manifest.manifestRevision,
+      chunks: page.chunks.map((chunk) =>
+        this.toPublicSummaryChunk(chunk, maximumExcerptCharacters),
+      ),
+      hasMore: page.nextCursor !== null,
+      nextPageIndex: page.nextCursor?.nextChunkIndex ?? null,
+      coverage: {
+        coveredThroughSourceRevision:
+          page.coverage.coveredThroughSourceRevision,
+        pendingSourceRevisions: [...page.coverage.pendingSourceRevisions],
+        chunkCount: page.coverage.chunkCount,
+      },
+      themeSummaries: page.themeSummaries,
+      isReturnBounded: page.isReturnBounded,
+      returnedUnitCount: page.returnedUnitCount,
+      resourceMetrics: { ...metrics },
+    };
+  }
+
+  /** 章节展开：定点取一节（有界节选 + 证据指针）。 */
+  async expandSummarySectionView(input: {
+    sourceIdentifier: string;
+    chunkIdentifier: string;
+    sourceKind?: PublicSummarySourceSummary["sourceKind"];
+    maximumExcerptCharacters?: number;
+  }): Promise<PublicSummarySectionView> {
+    this.assertOpen();
+    const store = await this.createSummaryIndexStore();
+    const key = {
+      agentInstanceId: this.runtime.mainAgentInstanceId,
+      sourceKind: input.sourceKind ?? ("work-archive" as const),
+      sourceIdentifier: input.sourceIdentifier,
+    };
+    const manifest = await store.readManifest(key);
+    if (manifest === null) {
+      throw new PublicApplicationError(
+        "summary-not-found",
+        "没有已发布的摘要来源: " + input.sourceIdentifier,
+      );
+    }
+    const chunk = manifest.chunks.find(
+      (candidate) => candidate.chunkIdentifier === input.chunkIdentifier,
+    );
+    if (chunk === undefined) {
+      throw new PublicApplicationError(
+        "chunk-not-found",
+        "摘要清单中不存在该章节: " + input.chunkIdentifier,
+      );
+    }
+    const maximumExcerptCharacters = input.maximumExcerptCharacters ?? 800;
+    const { metrics } = await measureSummaryOperation({
+      operation: async () => chunk,
+      readManifestFileBytes: async () => store.manifestFileSizeBytes(key),
+      extract: () => ({
+        chunkCount: manifest.chunks.length,
+        narrativeCharacterCount: manifest.narrativeText?.length ?? 0,
+        returnedUnitCount: chunk.estimatedUnitCount,
+        sourceAccessCount: 0,
+        isReturnBounded: chunk.summaryText.length > maximumExcerptCharacters,
+        diskReadOperationCount: 1,
+      }),
+    });
+    return {
+      kind: "section",
+      sourceIdentifier: input.sourceIdentifier,
+      chunkIdentifier: chunk.chunkIdentifier,
+      manifestRevision: manifest.manifestRevision,
+      excerpt: chunk.summaryText.slice(0, maximumExcerptCharacters),
+      isExcerptBounded: chunk.summaryText.length > maximumExcerptCharacters,
+      narrativeExcerpt:
+        manifest.narrativeText === null
+          ? null
+          : manifest.narrativeText.slice(0, maximumExcerptCharacters),
+      evidencePointers: chunk.evidencePointers.map((pointer) => ({
+        sourceIdentifier: pointer.sourceIdentifier,
+        sourceRevision: pointer.sourceRevision,
+        contentHash: pointer.contentHash,
+      })),
+      resourceMetrics: { ...metrics },
+    };
   }
 
   private async createRecoveryCenterController(): Promise<RecoveryCenterController> {

@@ -9,6 +9,7 @@
  * - 生成过程先落 pending 草稿（含本地权威事实），崩溃后可续跑且不重复提取；
  * - 读取路径只读清单，不触发任何重摘要或模型调用。
  */
+import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import { z } from "zod";
@@ -312,6 +313,90 @@ export class SummaryIndexStore {
     const entries = Array.isArray(content.entries) ? content.entries : [];
     assertSidecarIndexIsPointerOnly(entries);
     return entries as SummarySidecarIndexEntry[];
+  }
+
+  /** 清单文件字节数（资源观测；不存在记 0）。 */
+  async manifestFileSizeBytes(
+    input: { agentInstanceId: string } & SummarySourceKey,
+  ): Promise<number> {
+    try {
+      const stats = await fs.stat(
+        this.manifestFilePath(input.agentInstanceId, input),
+      );
+      return stats.size;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** 列出该 Agent 已发布摘要的来源键（逐目录读清单，按标识排序）。 */
+  async listSourceKeys(agentInstanceId: string): Promise<
+    Array<{
+      sourceKind: SummarySourceKind;
+      sourceIdentifier: string;
+      manifestRevision: number;
+      coveredThroughSourceRevision: number;
+      chunkCount: number;
+      pendingSourceRevisionCount: number;
+      narrativeCharacterCount: number;
+      generatorVersion: string;
+    }>
+  > {
+    const summariesDirectoryPath = path.join(
+      this.options.baseDirectory,
+      "agent-memory",
+      sanitizePathSegment(agentInstanceId),
+      "summaries",
+    );
+    let directoryNames: string[];
+    try {
+      const entries = await fs.readdir(summariesDirectoryPath, {
+        withFileTypes: true,
+      });
+      directoryNames = entries
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name);
+    } catch {
+      return [];
+    }
+    const views: Array<{
+      sourceKind: SummarySourceKind;
+      sourceIdentifier: string;
+      manifestRevision: number;
+      coveredThroughSourceRevision: number;
+      chunkCount: number;
+      pendingSourceRevisionCount: number;
+      narrativeCharacterCount: number;
+      generatorVersion: string;
+    }> = [];
+    for (const directoryName of directoryNames) {
+      try {
+        const rawContent = await fs.readFile(
+          path.join(summariesDirectoryPath, directoryName, "manifest.json"),
+          "utf8",
+        );
+        const manifest = validateSummaryManifest(JSON.parse(rawContent));
+        views.push({
+          sourceKind: manifest.sourceKind,
+          sourceIdentifier: manifest.sourceIdentifier,
+          manifestRevision: manifest.manifestRevision,
+          coveredThroughSourceRevision: manifest.coveredThroughSourceRevision,
+          chunkCount: manifest.chunks.length,
+          pendingSourceRevisionCount: manifest.pendingSourceRevisions.length,
+          narrativeCharacterCount: manifest.narrativeText?.length ?? 0,
+          generatorVersion: manifest.generatorVersion,
+        });
+      } catch {
+        // 损坏或半写目录不参与列表（读取单个来源时会显式 fail-closed）。
+        continue;
+      }
+    }
+    return views.sort((left, right) => {
+      if (left.sourceKind !== right.sourceKind) {
+        return left.sourceKind.localeCompare(right.sourceKind);
+      }
+      return left.sourceIdentifier.localeCompare(right.sourceIdentifier);
+    });
   }
 
   /** 同一来源键的生成任务 single-flight：并发请求只执行一次。 */

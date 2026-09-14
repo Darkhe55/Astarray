@@ -41,6 +41,8 @@ export interface AdvanceSummaryGenerationInput {
   factExtractor?: (entries: SummarySourceEntry[]) => SummaryFact[];
   maximumFactsPerBatch?: number;
   nowIso?: () => string;
+  /** 叙述生成器版本（本地抽取式 vs 后续模型生成器必须可区分）。 */
+  generatorVersion?: string;
 }
 
 export interface AdvanceSummaryGenerationResult {
@@ -196,7 +198,7 @@ export async function advanceSummaryGeneration(
           agentInstanceId: input.agentInstanceId,
           sourceKind: input.sourceKind,
           sourceIdentifier: input.sourceIdentifier,
-          generatorVersion: "generation-service-1",
+          generatorVersion: input.generatorVersion ?? "generation-service-1",
           nowIso: nowIso(),
         });
       // 续跑时 pending 里已有的事实同样要落地（否则崩溃恢复会丢掉已提取事实）。
