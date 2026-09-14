@@ -60,7 +60,7 @@
 - GUI-01-R-02 实现与入口证据：docs/reports/GUI01_R_02_LOCAL_SERVER_EVIDENCE.md（loopback/Host/Origin/CSRF/清洗/SSE 首帧与重连/监听失败/退出收口的红→绿反例；公共门面真实提交到 `done`；`astarray gui [--port <n>] [--no-open]`；打包 CLI 冒烟 URL/状态/端口释放）。
 - GUI-01-R-02 测试命令、退出码和产物哈希：`npx tsc --noEmit` 0；`npx eslint .` 0；`npx vitest run tests/gui` 0（23 passed）；`npm run check` 构建通过、1553/1554 用例通过（唯一失败为既有计时波动 `provider-runtime-registry`，隔离复跑 6/6 通过）；`npm run test:coverage` 0（184 文件/1554 用例全通过，statements 93.52% / branch 86.44% / functions 91.68% / lines 93.55%）。受限沙箱下 tsup/forks 池会 `spawn EPERM`，门禁在获准完整访问下执行。
 - GUI-01-R-02 人工/外部依赖及剩余风险：真实浏览器人工体验（键盘/中文/缩放/可访问性）留给 GUI-01-R-04，本检查点不做结论；SSE 客户端退避使用浏览器原生重连（约 3s，落在 1–30s 区间）+ 服务端首帧快照，端到端体验校验留给 -04；Linux/macOS 未验证。
-- GUI-01-R-02 本地提交、推送尝试与结果：见本文件后续「提交记录」小节。
+- GUI-01-R-02 本地提交、推送尝试与结果：实现提交 `b5e3be1`（11 文件；用户并行改动未暂存）。`git push` 4 次：第 1 次受限沙箱失败（`couldn't create signal pipe, Win32 error 5`，exit 128）；第 2–4 次升级重试均因审批通道 600s 超时未执行 → 本轮跳过上传，累积到下一阶段一并再试。
 
 ## 首轮执行指令
 
