@@ -1,6 +1,6 @@
 # GUI-01-R：GUI 任务卡更新与产品接线
 
-> 状态：in_progress（GUI-01-R-01、GUI-01-R-02、GUI-01-R-03 done；GUI-01-R-04 pending）
+> 状态：in_progress（GUI-01-R-01~03 done；GUI-01-R-04a done，04b pending/blocked：人工体验与 tarball 实跑）
 > 创建日期：2026-09-10
 > 类型：后续扩展；高风险工作按检查点执行
 > 来源：用户授权布置；本文件为Agent派生实施方案，运行态节点默认层级1或以下，不冒充用户层级0
@@ -42,10 +42,13 @@
 
 ### GUI-01-R-04：用户体验及打包
 
-- 状态：pending。
+- 状态：in_progress（04a done；04b pending/blocked）。
 - 工作：进行键盘、中文、缩放、可访问性、断线恢复与资源观察；从安装包打开GUI。
 - 验收：真实用户完成一次提交、授权、查看差异、验收和恢复；自动截图或DOM断言不能替代人工体验结论。
-- 前驱：GUI-01-R-03。先通过前驱，再执行本节点。
+- 前驱：GUI-01-R-03（done）。先通过前驱，再执行本节点。
+- 按可构建/可验证边界拆分：
+  - **GUI-01-R-04a（done，2026-09-13）**：自动可验证部分——页面可访问性静态契约（语言/视口/配色方案/label 关联/aria-live/按钮类型）、离线自足（无外部资源、无未净化 HTML）、关闭时资源回收（取消订阅、结束 SSE、端口重用）；人工验收清单与打包命令清单落盘。证据 docs/reports/GUI01_R_04A_UX_STATIC_EVIDENCE.md、docs/reports/GUI01_R_04_MANUAL_ACCEPTANCE_CHECKLIST.md。
+  - **GUI-01-R-04b（pending/blocked）**：真实用户人工体验结论（键盘/中文/缩放/可访问性/断线恢复/资源观察）、从 tarball 隔离安装打开 GUI、Linux/macOS 平台证据；前者需人工，后者与门禁同需完整访问。
 
 ## 注意事项
 
@@ -73,8 +76,13 @@
 - GUI-01-R-03b 测试命令与退出码：`npx tsc --noEmit` 0；`npx eslint .` 0；`npx vitest run tests/gui` 0（32 passed）；关联回归 27 passed。
 - GUI-01-R-03b 门禁缺口（未通过）：`npm run check`/`npm run test:coverage` 升级重试 2 次均因审批通道 600s 超时未执行，需在审批可用时重跑（与 03a 门禁、累积推送一起补）。
 - GUI-01-R-03b 本地提交、推送尝试与结果：实现提交 `4ed4c14`（6 文件）。`git push` 受限沙箱失败（`couldn't create signal pipe, Win32 error 5`，exit 128），升级重试因审批通道不可用未执行 → 累积待推送 `b5e3be1`、`2dd9fdd`、`12e80eb`、`6cb1a2d`、`4ed4c14`。
+- GUI-01-R-04a 实现与入口证据：docs/reports/GUI01_R_04A_UX_STATIC_EVIDENCE.md（3 个新用例：可访问性静态契约、离线自足、关闭时资源回收）；人工验收步骤与打包命令清单见 docs/reports/GUI01_R_04_MANUAL_ACCEPTANCE_CHECKLIST.md（未执行）。
+- GUI-01-R-04a 测试命令与退出码：`npx tsc --noEmit` 0；`npx eslint .` 0；`npx vitest run tests/gui` 0（35 passed，7 文件）。
+- GUI-01-R-04a 门禁缺口（未通过）：`npm run check`/`npm run test:coverage` 与打包验收（`npm pack`、`verify-package`、`smoke-install`）升级重试均因审批通道 600s 超时未执行；受限沙箱下这些命令本身会 `spawn EPERM`。未执行即未通过，需审批可用时补跑。
+- GUI-01-R-04a 人工/外部依赖及剩余风险：真实用户人工体验结论、从安装包打开 GUI、Linux/macOS 平台证据属 04b，当前为 pending/blocked，不以自动断言替代。
+- GUI-01-R-04a 本地提交、推送尝试与结果：实现提交见提交记录小节；`git push` 同因审批通道不可用跳过，累积推送。
 
 ## 首轮执行指令
 
-读取共同实施规则与本卡，核对前驱动态证据。本轮执行 GUI-01-R-04（用户体验及打包）；先记录基线和失败场景，再完成该检查点。人工体验/平台证据缺失时按明确范围保留 pending/blocked，不用说明文字覆盖未满足门禁。
+读取共同实施规则与本卡，核对前驱动态证据。本轮执行 GUI-01-R-04b（人工体验与 tarball 实跑）并补跑累积门禁/推送；人工体验结论缺失时保持 pending/blocked，不用说明文字覆盖未满足门禁。
 
