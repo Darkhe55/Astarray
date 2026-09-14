@@ -107,6 +107,12 @@ export interface ApplicationRuntime {
   readMissionResultSummaries: (
     missionId: string,
   ) => Promise<Array<{ taskId: string | null; entryType: string; summary: string }>>;
+  /** T09A-R1-02：全局上下文预算策略（CLI/GUI 共用同一权威存储）。 */
+  globalContextBudgetStore: GlobalContextBudgetStore;
+  /** T09A-R1-04：真实装配事件（指标复算与"下一请求生效"证据）。 */
+  contextRuntimeEventStore: ContextRuntimeEventStore;
+  /** 本进程主 Agent 实例标识（延迟核验/追认归属用，不进入前端 DTO）。 */
+  mainAgentInstanceId: string;
   shutdown: () => Promise<void>;
 }
 
@@ -152,6 +158,7 @@ export async function createApplicationRuntime(
   options: ApplicationRuntimeOptions,
 ): Promise<ApplicationRuntime> {
   const stateDirectory = options.stateDirectory;
+  const mainAgentInstanceId = options.mainAgentInstanceId ?? "main-agent";
   const processInstanceId = `process-${randomUUID()}`;
   const missionLeaseStore = new MissionLeaseStore({ stateDirectory });
   const taskStore = new TaskStore({ baseDirectory: stateDirectory });
@@ -356,7 +363,7 @@ export async function createApplicationRuntime(
       }).valid,
   });
   const t08cSummaryController = new SecondaryUserFacingSummaryController({
-    authenticatedMainAgentInstanceId: options.mainAgentInstanceId ?? "main-agent",
+    authenticatedMainAgentInstanceId: mainAgentInstanceId,
     reportIndexPort: {
       insertSummaryEntry: async () => undefined,
     },
@@ -593,6 +600,9 @@ export async function createApplicationRuntime(
     taskSequenceManageController: sequenceManageController,
     standaloneWorkflowRunner,
     readMissionResultSummaries,
+    globalContextBudgetStore,
+    contextRuntimeEventStore,
+    mainAgentInstanceId,
     shutdown,
   };
 }

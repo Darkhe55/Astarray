@@ -60,6 +60,65 @@ export interface GuiApplicationPort {
     sessionId: string;
     taskIdentifier: string;
   }): Promise<void>;
+  // ─── GUI-01-R-03：设置与恢复（可选能力；缺失时服务端显式 501，不静默降级） ───
+  queryContextSettings?(): Promise<GuiContextSettingsView>;
+  updateContextBudget?(input: {
+    expectedRevision: number;
+    configuredMaximumGlobalContextTokenCount: number;
+  }): Promise<GuiContextSettingsView>;
+  getCurrentPermissionProfileReference?(): Promise<GuiPermissionProfileReferenceView | null>;
+  listPermissionProfiles?(input: { page: number; pageSize: number }): Promise<{
+    profiles: GuiPermissionProfileSummaryView[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }>;
+  switchPermissionProfile?(
+    reference: GuiPermissionProfileReferenceView,
+  ): Promise<void>;
+  queryRecoveryOverview?(): Promise<GuiRecoveryOverviewView>;
+  inspectRecoveryMission?(
+    missionIdentifier: string,
+  ): Promise<GuiRecoveryMissionView | null>;
+}
+
+/** GUI-01-R-03：上下文预算 DTO（结构兼容 PublicContextSettings，无内部字段）。 */
+export interface GuiContextSettingsView {
+  configuredMaximumGlobalContextTokenCount: number;
+  effectiveMaximumGlobalContextTokenCount: number;
+  budgetPolicyRevision: number;
+  budgetReductionReason: string | null;
+  assemblySampleSize: number;
+  lastAssemblyBudgetPolicyRevision: number | null;
+}
+
+export interface GuiPermissionProfileReferenceView {
+  kind: "builtin" | "custom";
+  profileId: string;
+}
+
+export interface GuiPermissionProfileSummaryView {
+  permissionProfileId: string;
+  displayName: string;
+  isBuiltin: boolean;
+  revision: number;
+}
+
+/** GUI-01-R-03：恢复 mission 只读视图（不含租约持有进程标识）。 */
+export interface GuiRecoveryMissionView {
+  missionIdentifier: string;
+  exists: boolean;
+  reconciliationRequired: boolean;
+  status: string | null;
+  isCorrupted: boolean;
+  pendingTaskCount: number | null;
+  hasTrustedCheckpoint: boolean;
+  isLeaseActive: boolean;
+}
+
+export interface GuiRecoveryOverviewView {
+  missions: GuiRecoveryMissionView[];
+  requiresDecisionMissions: string[];
 }
 
 export interface GuiServerOptions {
@@ -186,6 +245,23 @@ ul { margin: 8px 0 0; padding-left: 20px; }
     <h2 id="tasks-heading">任务</h2>
     <ul id="tasks" aria-live="polite"></ul>
   </section>
+  <section aria-labelledby="settings-heading">
+    <h2 id="settings-heading">设置（上下文预算与权限组）</h2>
+    <p id="budget" aria-live="polite">读取中…</p>
+    <label for="budget-tokens">全局上下文预算（token）</label>
+    <input id="budget-tokens" name="budget-tokens" type="number" min="0" step="1" />
+    <button id="save-budget" type="button">保存预算</button>
+    <p id="budget-result" role="status" aria-live="polite"></p>
+    <label for="profile">权限组</label>
+    <select id="profile"></select>
+    <button id="switch-profile" type="button">切换权限组</button>
+    <p id="profile-result" role="status" aria-live="polite"></p>
+  </section>
+  <section aria-labelledby="recovery-heading">
+    <h2 id="recovery-heading">恢复中心（只读状态与差异）</h2>
+    <button id="refresh-recovery" type="button">刷新</button>
+    <ul id="recovery" aria-live="polite"></ul>
+  </section>
 </main>
 <script>
 (function () {
@@ -224,6 +300,111 @@ ul { margin: 8px 0 0; padding-left: 20px; }
       })
       .catch(function (error) { resultElement.textContent = "提交失败：" + String(error); });
   });
+  var budgetElement = document.getElementById("budget");
+  var budgetResultElement = document.getElementById("budget-result");
+  var budgetTokensElement = document.getElementById("budget-tokens");
+  var profileElement = document.getElementById("profile");
+  var profileResultElement = document.getElementById("profile-result");
+  var recoveryElement = document.getElementById("recovery");
+  var currentBudgetRevision = null;
+  function refreshSettings() {
+    fetch("/settings", { headers: { accept: "application/json" } })
+      .then(function (response) { return response.json(); })
+      .then(function (payload) {
+        var context = payload.context;
+        if (!context) { budgetElement.textContent = "预算能力不可用"; return; }
+        budgetElement.textContent = "配置 " + context.configuredMaximumGlobalContextTokenCount +
+          " token · 生效 " + context.effectiveMaximumGlobalContextTokenCount +
+          " token · r" + context.budgetPolicyRevision +
+          " · 装配样本 " + context.assemblySampleSize +
+          (context.lastAssemblyBudgetPolicyRevision === null
+            ? ""
+            : " · 最近装配 r" + context.lastAssemblyBudgetPolicyRevision);
+        currentBudgetRevision = context.budgetPolicyRevision;
+        budgetTokensElement.value = String(context.configuredMaximumGlobalContextTokenCount);
+        var profiles = payload.permissionProfiles || {};
+        profileElement.textContent = "";
+        (profiles.available || []).forEach(function (profile) {
+          var option = document.createElement("option");
+          option.value = profile.permissionProfileId;
+          option.textContent = profile.displayName +
+            (profiles.current && profiles.current.profileId === profile.permissionProfileId ? "（当前）" : "");
+          profileElement.appendChild(option);
+        });
+      })
+      .catch(function () {});
+  }
+  document.getElementById("save-budget").addEventListener("click", function () {
+    var tokens = parseInt(budgetTokensElement.value, 10);
+    fetch("/commands/set-context-budget", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
+      body: JSON.stringify({
+        expectedRevision: currentBudgetRevision,
+        configuredMaximumGlobalContextTokenCount: tokens,
+      }),
+    })
+      .then(function (response) {
+        return response.json().then(function (payload) {
+          return { isOk: response.ok, payload: payload };
+        });
+      })
+      .then(function (outcome) {
+        budgetResultElement.textContent = outcome.isOk
+          ? "已保存 r" + outcome.payload.context.budgetPolicyRevision
+          : "保存失败：" + outcome.payload.error;
+        refreshSettings();
+      })
+      .catch(function (error) { budgetResultElement.textContent = "保存失败：" + String(error); });
+  });
+  document.getElementById("switch-profile").addEventListener("click", function () {
+    var profileId = profileElement.value;
+    var isBuiltin = ["ponder", "assist", "devolve"].indexOf(profileId) !== -1;
+    fetch("/commands/switch-permission-profile", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
+      body: JSON.stringify({ kind: isBuiltin ? "builtin" : "custom", profileId: profileId }),
+    })
+      .then(function (response) {
+        return response.json().then(function (payload) {
+          return { isOk: response.ok, payload: payload };
+        });
+      })
+      .then(function (outcome) {
+        profileResultElement.textContent = outcome.isOk
+          ? "已切换到 " + outcome.payload.reference.profileId
+          : "切换失败：" + outcome.payload.error;
+        refreshSettings();
+      })
+      .catch(function (error) { profileResultElement.textContent = "切换失败：" + String(error); });
+  });
+  function refreshRecovery() {
+    fetch("/recovery", { headers: { accept: "application/json" } })
+      .then(function (response) { return response.json(); })
+      .then(function (payload) {
+        recoveryElement.textContent = "";
+        var missions = payload.missions || [];
+        if (missions.length === 0) {
+          var emptyItem = document.createElement("li");
+          emptyItem.textContent = "无可恢复 mission";
+          recoveryElement.appendChild(emptyItem);
+          return;
+        }
+        missions.forEach(function (mission) {
+          var item = document.createElement("li");
+          item.textContent = mission.missionIdentifier + " · " + (mission.status || "未知") +
+            (mission.isCorrupted ? " · 损坏" : "") +
+            (mission.isLeaseActive ? " · 租约活跃" : "") +
+            (mission.hasTrustedCheckpoint ? " · 有可信检查点" : "") +
+            (mission.reconciliationRequired ? " · 需先对账" : "");
+          recoveryElement.appendChild(item);
+        });
+      })
+      .catch(function () {});
+  }
+  document.getElementById("refresh-recovery").addEventListener("click", refreshRecovery);
+  refreshSettings();
+  refreshRecovery();
   var source = new EventSource("/events");
   source.onopen = function () { statusElement.textContent = "已连接"; };
   source.onerror = function () { statusElement.textContent = "重连中…"; };
@@ -284,6 +465,30 @@ export async function startGuiServer(
       chunks.push(buffer);
     }
     return Buffer.concat(chunks).toString("utf8");
+  }
+
+  function writeJsonResponse(
+    response: http.ServerResponse,
+    statusCode: number,
+    payload: unknown,
+  ): void {
+    response.writeHead(statusCode, {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    response.end(JSON.stringify(payload));
+  }
+
+  function writeCapabilityUnavailable(response: http.ServerResponse): void {
+    writeJsonResponse(response, 501, { error: "capability-unavailable" });
+  }
+
+  function readApplicationErrorCode(error: unknown): string | null {
+    if (error === null || typeof error !== "object") {
+      return null;
+    }
+    const candidate = (error as { errorCode?: unknown }).errorCode;
+    return typeof candidate === "string" ? candidate : null;
   }
 
   async function handleRequest(
@@ -373,6 +578,127 @@ export async function startGuiServer(
       sseResponses.add(response);
       request.on("close", () => {
         sseResponses.delete(response);
+      });
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/settings") {
+      const applicationService = options.applicationService;
+      const contextSettings =
+        applicationService.queryContextSettings === undefined
+          ? null
+          : await applicationService.queryContextSettings();
+      const currentReference =
+        applicationService.getCurrentPermissionProfileReference === undefined
+          ? null
+          : await applicationService.getCurrentPermissionProfileReference();
+      const profilePage =
+        applicationService.listPermissionProfiles === undefined
+          ? null
+          : await applicationService.listPermissionProfiles({
+              page: 1,
+              pageSize: 50,
+            });
+      writeJsonResponse(response, 200, {
+        sessionId: options.sessionId,
+        mode: options.mode,
+        context: contextSettings,
+        permissionProfiles: {
+          current: currentReference,
+          available: profilePage?.profiles ?? [],
+          total: profilePage?.total ?? 0,
+        },
+      });
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/recovery") {
+      const applicationService = options.applicationService;
+      if (applicationService.queryRecoveryOverview === undefined) {
+        writeCapabilityUnavailable(response);
+        return;
+      }
+      writeJsonResponse(
+        response,
+        200,
+        await applicationService.queryRecoveryOverview(),
+      );
+      return;
+    }
+    if (
+      request.method === "POST" &&
+      requestUrl.pathname === "/commands/set-context-budget"
+    ) {
+      const applicationService = options.applicationService;
+      if (applicationService.updateContextBudget === undefined) {
+        writeCapabilityUnavailable(response);
+        return;
+      }
+      const parsedBody = JSON.parse((await readBody(request)) || "{}") as {
+        expectedRevision?: unknown;
+        configuredMaximumGlobalContextTokenCount?: unknown;
+      };
+      const expectedRevision = parsedBody.expectedRevision;
+      const configuredMaximumGlobalContextTokenCount =
+        parsedBody.configuredMaximumGlobalContextTokenCount;
+      if (
+        typeof expectedRevision !== "number" ||
+        !Number.isInteger(expectedRevision) ||
+        expectedRevision < 1 ||
+        typeof configuredMaximumGlobalContextTokenCount !== "number" ||
+        !Number.isInteger(configuredMaximumGlobalContextTokenCount) ||
+        configuredMaximumGlobalContextTokenCount < 0
+      ) {
+        writeJsonResponse(response, 400, { error: "invalid-arguments" });
+        return;
+      }
+      try {
+        const updated = await applicationService.updateContextBudget({
+          expectedRevision,
+          configuredMaximumGlobalContextTokenCount,
+        });
+        writeJsonResponse(response, 200, { context: updated });
+      } catch (error) {
+        const errorCode = readApplicationErrorCode(error);
+        if (errorCode === "stale-revision") {
+          writeJsonResponse(response, 409, { error: "stale-revision" });
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
+    if (
+      request.method === "POST" &&
+      requestUrl.pathname === "/commands/switch-permission-profile"
+    ) {
+      const applicationService = options.applicationService;
+      if (applicationService.switchPermissionProfile === undefined) {
+        writeCapabilityUnavailable(response);
+        return;
+      }
+      const parsedBody = JSON.parse((await readBody(request)) || "{}") as {
+        kind?: unknown;
+        profileId?: unknown;
+      };
+      const kind = parsedBody.kind;
+      const profileId = parsedBody.profileId;
+      const isBuiltinProfileId =
+        profileId === "ponder" || profileId === "assist" || profileId === "devolve";
+      if (
+        (kind !== "builtin" && kind !== "custom") ||
+        typeof profileId !== "string" ||
+        profileId === "" ||
+        (kind === "builtin" && !isBuiltinProfileId)
+      ) {
+        writeJsonResponse(response, 400, { error: "invalid-arguments" });
+        return;
+      }
+      await applicationService.switchPermissionProfile({
+        kind,
+        profileId,
+      });
+      writeJsonResponse(response, 200, {
+        status: "switched",
+        reference: { kind, profileId },
       });
       return;
     }

@@ -15,6 +15,9 @@ import type {
 } from "./runtime/provider-runtime-registry.js";
 import type { ApplicationRuntime } from "./application/application-runtime.js";
 import { createApplicationRuntime } from "./application/application-runtime.js";
+import { DomainError } from "./core/errors.js";
+import { resolveContextBudget } from "./orchestration/context-prompt-assembler.js";
+import type { RecoveryCenterController } from "./orchestration/recovery-center-controller.js";
 
 /** SDK 版本（与 package.json 同步语义版本）。 */
 export const ASTARRAY_SDK_VERSION = "0.1.0";
@@ -48,6 +51,11 @@ export type PublicAstarrayEvent = (
   | { eventType: "session-status"; sessionId: string; status: PublicSessionState["status"] }
   | { eventType: "task-status"; taskIdentifier: string; status: PublicTaskStatus }
   | { eventType: "task-finished"; taskIdentifier: string; status: PublicTaskStatus }
+  | {
+      eventType: "budget-policy-updated";
+      budgetPolicyRevision: number;
+      configuredMaximumGlobalContextTokenCount: number;
+    }
 ) & {
   /** 权威状态 revision（任务链 revision；会话事件用会话内单调计数）。 */
   revision: number;
@@ -85,6 +93,60 @@ export type PublicApplicationService = Pick<
 export interface PublicMissionState {
   missionIdentifier: string;
   status: PublicTaskStatus;
+}
+
+/**
+ * 公开上下文预算与装配实际值（GUI-01-R-03）。
+ * 只含配置值、有效值、revision 与样本数；不含状态目录、凭据或模型上下文正文。
+ */
+export interface PublicContextSettings {
+  configuredMaximumGlobalContextTokenCount: number;
+  effectiveMaximumGlobalContextTokenCount: number;
+  budgetPolicyRevision: number;
+  budgetReductionReason: string | null;
+  /** 已记录的上下文装配事件样本数（实际值分母）。 */
+  assemblySampleSize: number;
+  /** 最近一次真实装配使用的预算 revision（证明"下一次请求已按新配置生效"）。 */
+  lastAssemblyBudgetPolicyRevision: number | null;
+}
+
+/** 公开恢复 mission 视图（不含租约持有进程标识等内部字段）。 */
+export interface PublicRecoveryMissionView {
+  missionIdentifier: string;
+  exists: boolean;
+  reconciliationRequired: boolean;
+  status: string | null;
+  isCorrupted: boolean;
+  pendingTaskCount: number | null;
+  hasTrustedCheckpoint: boolean;
+  isLeaseActive: boolean;
+}
+
+export interface PublicRecoveryOverview {
+  missions: PublicRecoveryMissionView[];
+  requiresDecisionMissions: string[];
+}
+
+function toPublicRecoveryMissionView(view: {
+  missionIdentifier: string;
+  exists: boolean;
+  reconciliationRequired: boolean;
+  status: string | null;
+  isCorrupted: boolean;
+  pendingTaskCount: number | null;
+  hasTrustedCheckpoint: boolean;
+  isLeaseActive: boolean;
+}): PublicRecoveryMissionView {
+  return {
+    missionIdentifier: view.missionIdentifier,
+    exists: view.exists,
+    reconciliationRequired: view.reconciliationRequired,
+    status: view.status,
+    isCorrupted: view.isCorrupted,
+    pendingTaskCount: view.pendingTaskCount,
+    hasTrustedCheckpoint: view.hasTrustedCheckpoint,
+    isLeaseActive: view.isLeaseActive,
+  };
 }
 
 /** 应用创建选项：由消费者从公开 exports 传入，不接触内部控制器。 */
@@ -212,16 +274,24 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     });
     return new AstarrayApplicationFacade(runtime, {
       statusPollIntervalMilliseconds: options.statusPollIntervalMilliseconds ?? 25,
+      stateDirectory: options.stateDirectory,
     });
   }
 
   constructor(
     private readonly runtime: ApplicationRuntime,
-    options: { statusPollIntervalMilliseconds?: number } = {},
+    options: {
+      statusPollIntervalMilliseconds?: number;
+      stateDirectory?: string;
+    } = {},
   ) {
     this.statusPollIntervalMilliseconds =
       options.statusPollIntervalMilliseconds ?? 25;
+    this.stateDirectory = options.stateDirectory ?? null;
   }
+
+  private readonly stateDirectory: string | null;
+  private recoveryCenterController: RecoveryCenterController | null = null;
 
   private readonly sessionStates = new Map<string, PublicSessionState>();
   private readonly tasksByTaskIdentifier = new Map<string, TaskRecord>();
@@ -332,6 +402,108 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
 
   async switchPermissionProfile(reference: PermissionProfileReference): Promise<void> {
     return this.runtime.controller.switchPermissionProfile(reference);
+  }
+
+  /**
+   * GUI-01-R-03：读取上下文预算配置与真实装配实际值。
+   * 数据来自全局预算权威存储与真实装配事件，不复制状态机、不引入前端缓存。
+   */
+  async queryContextSettings(): Promise<PublicContextSettings> {
+    this.assertOpen();
+    const policy = await this.runtime.globalContextBudgetStore.readPolicy();
+    const resolution = resolveContextBudget({
+      configuredMaximumGlobalContextTokenCount:
+        policy.configuredMaximumGlobalContextTokenCount,
+      budgetPolicyRevision: policy.globalContextBudgetPolicyRevision,
+    });
+    const assemblyEvents = await this.runtime.contextRuntimeEventStore.readAll();
+    const lastAssembly = assemblyEvents.at(-1) ?? null;
+    return {
+      configuredMaximumGlobalContextTokenCount:
+        resolution.configuredMaximumGlobalContextTokenCount,
+      effectiveMaximumGlobalContextTokenCount:
+        resolution.effectiveMaximumGlobalContextTokenCount,
+      budgetPolicyRevision: resolution.budgetPolicyRevision,
+      budgetReductionReason: resolution.budgetReductionReason,
+      assemblySampleSize: assemblyEvents.length,
+      lastAssemblyBudgetPolicyRevision: lastAssembly?.budgetPolicyRevision ?? null,
+    };
+  }
+
+  /**
+   * GUI-01-R-03：以 CAS 写入预算策略；下一模型请求的装配按新 revision 生效
+   * （装配提供者从同一存储读取，revision 变化使选择缓存失效）。
+   */
+  async updateContextBudget(input: {
+    expectedRevision: number;
+    configuredMaximumGlobalContextTokenCount: number;
+  }): Promise<PublicContextSettings> {
+    this.assertOpen();
+    try {
+      await this.runtime.globalContextBudgetStore.updatePolicy({
+        expectedRevision: input.expectedRevision,
+        configuredMaximumGlobalContextTokenCount:
+          input.configuredMaximumGlobalContextTokenCount,
+        updatedByUserId: "authenticated-user",
+      });
+    } catch (error) {
+      if (error instanceof DomainError) {
+        throw new PublicApplicationError(error.errorCode, error.message);
+      }
+      throw error;
+    }
+    const settings = await this.queryContextSettings();
+    this.emit({
+      eventType: "budget-policy-updated",
+      budgetPolicyRevision: settings.budgetPolicyRevision,
+      configuredMaximumGlobalContextTokenCount:
+        settings.configuredMaximumGlobalContextTokenCount,
+      revision: settings.budgetPolicyRevision,
+      idempotencyId: this.nextEventIdempotencyId(),
+    });
+    return settings;
+  }
+
+  /** GUI-01-R-03：恢复中心只读概览（真实 RecoveryCenterController）。 */
+  async queryRecoveryOverview(): Promise<PublicRecoveryOverview> {
+    this.assertOpen();
+    const controller = await this.createRecoveryCenterController();
+    const { missions, requiresDecisionMissions } = await controller.listMissions();
+    return {
+      missions: missions.map((mission) =>
+        toPublicRecoveryMissionView(mission),
+      ),
+      requiresDecisionMissions: [...requiresDecisionMissions],
+    };
+  }
+
+  /** GUI-01-R-03：单个 mission 的磁盘状态/损坏/检查点/租约视图。 */
+  async inspectRecoveryMission(
+    missionIdentifier: string,
+  ): Promise<PublicRecoveryMissionView | null> {
+    this.assertOpen();
+    const controller = await this.createRecoveryCenterController();
+    const { view } = await controller.inspectMission(missionIdentifier);
+    return view.exists ? toPublicRecoveryMissionView(view) : null;
+  }
+
+  private async createRecoveryCenterController(): Promise<RecoveryCenterController> {
+    if (this.stateDirectory === null) {
+      throw new PublicApplicationError(
+        "recovery-unavailable",
+        "应用未绑定状态目录，无法读取恢复中心",
+      );
+    }
+    if (this.recoveryCenterController === null) {
+      const { RecoveryCenterController } = await import(
+        "./orchestration/recovery-center-controller.js"
+      );
+      this.recoveryCenterController = new RecoveryCenterController({
+        baseDirectory: this.stateDirectory,
+        currentProcessInstanceId: this.runtime.processInstanceId,
+      });
+    }
+    return this.recoveryCenterController;
   }
 
   /** 按 mission 标识查询权威状态（CLI 与 SDK 共用同一状态源）。 */
