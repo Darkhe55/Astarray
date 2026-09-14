@@ -53,3 +53,8 @@
 - 实现提交：`4ed4c14` `feat(gui): GUI-01-R-03b 待追认与人工裁决（按 Agent 隔离）`（6 文件，+727/−5；仅暂存本检查点文件，用户并行改动保持未暂存）。
 - 门禁状态：`npm run check` 与 `npm run test:coverage` 因审批通道不可用未执行（升级重试 2 次均 600s 超时）；本地等价证据：`npx tsc --noEmit` 0、`npx eslint .` 0、GUI 32 用例与关联 27 用例全通过。**门禁缺口按未通过记录。**
 - 推送状态：`git push` 受限沙箱失败（`couldn't create signal pipe, Win32 error 5`，exit 128）；升级重试因审批通道不可用未执行。累积待推送：`b5e3be1`、`2dd9fdd`、`12e80eb`、`6cb1a2d`、`4ed4c14`。
+---
+
+## 附：门禁/推送缺口补齐（2026-09-13）
+
+本文件正文记录的"门禁未完成/推送跳过"已在本轮补齐并验证：`npm run check`、`npm run test:coverage`（93.61/86.40/91.98/93.64，187 文件 1566 用例）、`verify:security-coverage`（22/22）、`npm pack`+`verify-package`（207 文件）+`smoke-install` 均 exit 0；`git push` 成功 `0946530..28705b2`。详见 `docs/reports/PRODUCT_INTEGRATION_SESSION_HANDOFF_2026-09-12.md` §6。

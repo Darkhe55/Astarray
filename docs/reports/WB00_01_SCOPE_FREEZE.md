@@ -62,7 +62,7 @@ JSON 键顺序均不规范化）；**明确不宣称全部格式可无损编辑*
 ## 6. 测试与门禁
 
 - 本检查点为**概念/边界冻结（无产品代码变更）**：未新增或修改产品代码，故不跑 check/coverage（与 INT-00、BRIDGE-01-01、GUI-01-R-01 同类判定）。
-- 累积门禁缺口（GUI-01-R-03a/03b/04a 的 `npm run check`、`test:coverage`、`npm pack`+`verify-package`+`smoke-install`）与推送仍因审批通道不可用未执行，需在审批可用时一并补跑。
+- 累积门禁缺口已在本轮补齐并验证：`npm run check` exit 0（187 文件/1566 用例）、`npm run test:coverage` exit 0（statements 93.61% / branch 86.40% / functions 91.98% / lines 93.64%）、`verify:security-coverage` 22/22、`npm pack`+`verify-package`（207 文件）+`smoke-install` exit 0、tarball sha256 `e709427a6d52c7bbd7ebae923f5755b7ff653c67236bac886d2edea02f7e7f7e`；从隔离安装包启动 GUI 冒烟通过（`GET /` 200、`/state` 脱敏）。
 
 ## 7. 未满足项与风险
 
@@ -73,4 +73,4 @@ JSON 键顺序均不规范化）；**明确不宣称全部格式可无损编辑*
 ## 8. 提交与推送
 
 - 本轮提交：`docs/adr/0033-micro-edit-workbench-scope.md` 与本证据文件（见 git 记录）。
-- 推送：`git push` 受限沙箱失败（`couldn't create signal pipe`，exit 128），升级重试因审批通道不可用未执行 → 累积待推送自 `b5e3be1` 起。
+- 推送：`git push` exit 0，`0946530..28705b2`（本轮记录提交随下一次推送补发）。

@@ -41,3 +41,8 @@ node scripts/smoke-install.mjs
 - 真实用户人工体验结论（键盘、中文输入法、200% 缩放、深色模式与屏幕阅读器、断线恢复、资源观察）→ 04b。
 - 从 tarball 隔离安装打开 GUI → 04b（需完整访问）。
 - Linux/macOS → 未验证。
+---
+
+## 附：门禁/推送缺口补齐（2026-09-13）
+
+本文件正文记录的"门禁未完成/推送跳过"已在本轮补齐并验证：`npm run check`、`npm run test:coverage`（93.61/86.40/91.98/93.64，187 文件 1566 用例）、`verify:security-coverage`（22/22）、`npm pack`+`verify-package`（207 文件）+`smoke-install` 均 exit 0；`git push` 成功 `0946530..28705b2`。详见 `docs/reports/PRODUCT_INTEGRATION_SESSION_HANDOFF_2026-09-12.md` §6。

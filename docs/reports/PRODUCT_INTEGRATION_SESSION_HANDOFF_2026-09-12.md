@@ -55,3 +55,13 @@
 - 新增辅助命令：`npm run verify:e2e01`（fixture 闭环）、`npm run verify:security-coverage`
   （关键安全模块专项）、本地协议服务器 `scripts/e2e01-local-protocol-server.mjs`。
 - 恢复目标：认领 goal `goal-20b28d68-310d-486e-b0a8-6a92c84586ff` 并 `resume`，从 BRIDGE-01-03 继续。
+## 6. 门禁与推送补齐（2026-09-13，本轮）
+
+- `npm run check` **exit 0**：typecheck + lint + build + test；187 文件 / 1566 用例全通过。
+- `npm run test:coverage` **exit 0**（复跑；首跑仅 `cli-commands`、`run-command-gaps` 两个已知超时波动用例失败）：187 文件 / 1566 用例通过；全局 statements **93.61%** / branch **86.40%** / functions **91.98%** / lines **93.64%**（阈值 85）。
+- `npm run verify:security-coverage` **exit 0**：关键安全模块 **22/22** 达标（单模块 ≥95%）。
+- 打包验收：`npm pack` exit 0；`verify-package` exit 0（**207 文件**，shebang/BOM 正确，反馈进程入口已包含）；`smoke-install` exit 0（隔离安装 + `doctor --json` + `run --runtime mock` → done + 全局 shim 与反馈入口加载）；tarball sha256 `e709427a6d52c7bbd7ebae923f5755b7ff653c67236bac886d2edea02f7e7f7e`。
+- 安装包 GUI 冒烟：从隔离安装的 `astarray.cmd gui --port 0 --no-open` 启动 → `GET /` 200（12415 字节，含设置/恢复/待追认面板），`GET /state` 返回脱敏快照，终止后端口释放（04b 的"从安装包打开 GUI"自动部分已补齐；人工视觉/键盘结论仍未做）。
+- `git push` **exit 0**：`0946530..28705b2`（推送 GUI-01-R-02/03a/03b/04a 与 WB-00-01 等 8 个提交；`origin/main` = `28705b2`）。
+- 并行改动仍全部未暂存；`docs/tasks/WB00_MICRO_EDIT_WORKBENCH_PROTOTYPE_TASK_CARD.md` 为未跟踪用户文件，本轮未修改未暂存（注意：第 4 节所述"未跟踪卡"里 GUI-01-R 卡已在 GUI-01-R-01 时入库）。
+- 仍待人工/平台：GUI-01-R-04b 真实用户人工体验结论（键盘/中文/缩放/可访问性/断线恢复）与 Linux/macOS 证据；WB-00-02 实现需等 GUI-01-R 交付验收（本卡仅允许概念提前）。

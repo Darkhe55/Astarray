@@ -1,6 +1,6 @@
 # GUI-01-R：GUI 任务卡更新与产品接线
 
-> 状态：in_progress（GUI-01-R-01~03 done；GUI-01-R-04a done，04b pending/blocked：人工体验与 tarball 实跑）
+> 状态：in_progress（GUI-01-R-01~03 done；GUI-01-R-04a done；04b 仅剩真实用户人工体验结论与 Linux/macOS 证据——从安装包打开 GUI 的自动部分已补齐）
 > 创建日期：2026-09-10
 > 类型：后续扩展；高风险工作按检查点执行
 > 来源：用户授权布置；本文件为Agent派生实施方案，运行态节点默认层级1或以下，不冒充用户层级0
@@ -69,18 +69,18 @@
 - GUI-01-R-02 本地提交、推送尝试与结果：实现提交 `b5e3be1`（11 文件；用户并行改动未暂存）。`git push` 4 次：第 1 次受限沙箱失败（`couldn't create signal pipe, Win32 error 5`，exit 128）；第 2–4 次升级重试均因审批通道 600s 超时未执行 → 本轮跳过上传，累积到下一阶段一并再试。
 - GUI-01-R-03a 实现与入口证据：docs/reports/GUI01_R_03_SETTINGS_RECOVERY_EVIDENCE.md（预算写入→下一真实装配按新 revision、过期 revision 409、权限组跨界面一致、恢复只读视图与字段过滤、能力缺失 501 的红→绿反例）。
 - GUI-01-R-03a 测试命令、退出码：`npx tsc --noEmit` 0；`npx eslint .` 0；`npx vitest run tests/gui` 0（28 passed）；关联回归 20 passed（public-sdk/application-sdk-*/cli-sdk-parity/context-*）。
-- GUI-01-R-03a 门禁缺口（未通过，不得当成已通过）：受限沙箱下 `tsup`（esbuild 服务）与 forks 池会 `spawn EPERM`；本轮 `npm run check`/`npm run test:coverage` 升级重试 4 次均在审批通道 600s 超时、命令未执行 → 门禁未完成，需在下一阶段（或审批可用时）重跑，并连带补跑累积的 tarball 回归。
-- GUI-01-R-03a 本地提交、推送尝试与结果：实现提交 `12e80eb`（6 文件）。`git push` 第 1 次受限沙箱失败（`couldn't create signal pipe, Win32 error 5`，exit 128），升级重试因审批通道不可用未执行 → 累积待推送 `b5e3be1`、`2dd9fdd`、`12e80eb`。
+- GUI-01-R-03a 门禁缺口（已补齐，2026-09-13）：`npm run check` exit 0（187 文件/1566 用例）；`npm run test:coverage` exit 0（statements 93.61% / branch 86.40% / functions 91.98% / lines 93.64%）；`verify:security-coverage` 22/22；`npm pack`+`verify-package`（207 文件）+`smoke-install` exit 0（tarball sha256 `e709427a…7e7f7e`）。首跑覆盖率仅两个已知超时波动用例失败，复跑即绿。
+- GUI-01-R-03a 本地提交、推送尝试与结果：实现提交 `12e80eb`（6 文件）；`git push` 于 2026-09-13 成功（`0946530..28705b2`，含 `b5e3be1`、`2dd9fdd`、`12e80eb`）。
 - GUI-01-R-03a 人工/外部依赖及剩余风险：已验收/待追认与人工裁决属 03b（已完成）；真实浏览器人工体验属 04；Linux/macOS 未验证。
 - GUI-01-R-03b 实现与入口证据：docs/reports/GUI01_R_03B_VERIFICATION_DECISION_EVIDENCE.md（真实 Devolve 链路生成延迟核验任务 → GUI 列表/追认落盘/否决重开节点；跨 Agent 404 与陈旧签字 409 反例）。
 - GUI-01-R-03b 测试命令与退出码：`npx tsc --noEmit` 0；`npx eslint .` 0；`npx vitest run tests/gui` 0（32 passed）；关联回归 27 passed。
-- GUI-01-R-03b 门禁缺口（未通过）：`npm run check`/`npm run test:coverage` 升级重试 2 次均因审批通道 600s 超时未执行，需在审批可用时重跑（与 03a 门禁、累积推送一起补）。
-- GUI-01-R-03b 本地提交、推送尝试与结果：实现提交 `4ed4c14`（6 文件）。`git push` 受限沙箱失败（`couldn't create signal pipe, Win32 error 5`，exit 128），升级重试因审批通道不可用未执行 → 累积待推送 `b5e3be1`、`2dd9fdd`、`12e80eb`、`6cb1a2d`、`4ed4c14`。
+- GUI-01-R-03b 门禁缺口（已补齐，2026-09-13）：同 03a，`npm run check`/`npm run test:coverage`/`verify:security-coverage` 与打包三项均 exit 0。
+- GUI-01-R-03b 本地提交、推送尝试与结果：实现提交 `4ed4c14`（6 文件）；已随 `0946530..28705b2` 推送。
 - GUI-01-R-04a 实现与入口证据：docs/reports/GUI01_R_04A_UX_STATIC_EVIDENCE.md（3 个新用例：可访问性静态契约、离线自足、关闭时资源回收）；人工验收步骤与打包命令清单见 docs/reports/GUI01_R_04_MANUAL_ACCEPTANCE_CHECKLIST.md（未执行）。
 - GUI-01-R-04a 测试命令与退出码：`npx tsc --noEmit` 0；`npx eslint .` 0；`npx vitest run tests/gui` 0（35 passed，7 文件）。
-- GUI-01-R-04a 门禁缺口（未通过）：`npm run check`/`npm run test:coverage` 与打包验收（`npm pack`、`verify-package`、`smoke-install`）升级重试均因审批通道 600s 超时未执行；受限沙箱下这些命令本身会 `spawn EPERM`。未执行即未通过，需审批可用时补跑。
+- GUI-01-R-04a 门禁缺口（已补齐，2026-09-13）：`npm run check`/`npm run test:coverage`/`verify:security-coverage` 与打包验收（`npm pack`、`verify-package` 207 文件、`smoke-install`）全部 exit 0；另从隔离安装包启动 GUI 冒烟通过（`GET /` 200、`/state` 脱敏、终止后端口释放）。04b 的人类体验与平台证据仍未做。
 - GUI-01-R-04a 人工/外部依赖及剩余风险：真实用户人工体验结论、从安装包打开 GUI、Linux/macOS 平台证据属 04b，当前为 pending/blocked，不以自动断言替代。
-- GUI-01-R-04a 本地提交、推送尝试与结果：实现提交 `b35cc9f`（4 文件）。`git push` 受限沙箱失败（exit 128），升级重试因审批通道不可用未执行 → 累积待推送 `b5e3be1`…`b35cc9f`（7 个提交）。
+- GUI-01-R-04a 本地提交、推送尝试与结果：实现提交 `b35cc9f`（4 文件）；已随 `0946530..28705b2` 推送。
 
 ## 首轮执行指令
 
