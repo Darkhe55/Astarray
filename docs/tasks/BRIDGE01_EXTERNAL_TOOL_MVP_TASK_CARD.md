@@ -1,6 +1,6 @@
 # BRIDGE-01：外部工具接入 MVP
 
-> 状态：in_progress（BRIDGE-01-01/02 done）
+> 状态：in_progress（BRIDGE-01-01/02/03 done；-04 待真实客户端）
 > 创建日期：2026-09-10
 > 类型：后续扩展；高风险工作按检查点执行
 > 来源：用户授权布置；本文件为Agent派生实施方案，运行态节点默认层级1或以下，不冒充用户层级0
@@ -32,7 +32,7 @@
 
 ### BRIDGE-01-03：边界与断连
 
-- 状态：pending。
+- 状态：done（2026-09-12；证据 docs/reports/BRIDGE01_03_BOUNDARIES_EVIDENCE.md）。
 - 工作：覆盖会话隔离、逐次权限、结果脱敏、断连重试、取消和服务关闭；协议层不直接执行底层写工具。
 - 验收：跨主体访问拒绝；重放不重复任务；输出注入、秘密回显和取消后续写反例通过。
 - 前驱：BRIDGE-01-02。先通过前驱，再执行本节点。
@@ -54,9 +54,9 @@
 
 - 当前提交/工作树基线：`d2c85bc`（E2E-01-04 本地可证项收口）。用户并行改动（IMPLEMENTATION_PLAN.md、PLAN_STATUS.md、docs/tasks/README.md 及 3 张未跟踪卡）保持未暂存。
 - 本检查点实现与入口证据：BRIDGE-01-01 冻结记录 docs/adr/0032-external-tool-bridge-mcp-stdio.md（协议/传输/认证/取消/异步语义/工具面/兼容矩阵）与 docs/reports/BRIDGE01_01_PROTOCOL_FREEZE.md；BRIDGE-01-02 工具映射 docs/reports/BRIDGE01_02_TOOL_MAPPING_EVIDENCE.md（桥接规则、stdio 会话、公共入口 `astarray mcp serve`、验收对照与覆盖率）。
-- 测试命令、退出码和产物哈希：BRIDGE-01-02：`npm run check` exit 0（180 文件/1528 用例）、`npm run test:coverage` exit 0（全局 branch 86.54%；`core/src/bridge` 目录 100% stmts/funcs/lines、88.49% branch）、`verify:security-coverage` 22/22 ≥95%；BRIDGE-01-01 为决策检查点（无代码变更）。
+- 测试命令、退出码和产物哈希：BRIDGE-01-03：`npm run check` exit 0（180 文件/1531 用例）、`npm run test:coverage` exit 0（全局 branch 86.52%；`core/src/bridge` 98.96% stmts/86.89% branch/100% funcs/98.95% lines）；BRIDGE-01-02：check 180/1528、branch 86.54%、bridge 目录 100% stmts/funcs/lines；BRIDGE-01-01 为决策检查点（无代码变更）。
 - 人工/外部依赖及剩余风险：BRIDGE-01-04 的真实 MCP 客户端属待确认依赖（按协同安装门禁先询问用户，不隐式下载）；Linux/macOS 平台未验证；Streamable HTTP/A2A/通用 HTTP 明确不在本批范围。
-- 本地提交、推送尝试与结果：BRIDGE-01-01 `175d40b`、补记 `ca8acba`；BRIDGE-01-02 `b652109`（均第 1 次推送成功）。
+- 本地提交、推送尝试与结果：BRIDGE-01-01 `175d40b`、补记 `ca8acba`；BRIDGE-01-02 `b652109`、补记 `401196f`；BRIDGE-01-03 提交与推送结果见后续补记。
 
 ## 首轮执行指令
 

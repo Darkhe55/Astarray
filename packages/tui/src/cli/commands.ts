@@ -2532,23 +2532,22 @@ export async function executeMcpServeCommand(
   application.createSession({ sessionId, mode: "assist" });
   const bridge = new McpToolBridge({ applicationPort: application });
   // 认证主体由本地 harness 注入（环境变量缺省为本地 stdio 主体）；
-  // 绝不从 JSON-RPC 消息内容或工具参数推断身份。
-  const principal = {
+  // 绝不从 JSON-RPC 消息内容或工具参数推断身份。每次连接一个桥接会话。
+  const session = bridge.openSession({
     authenticatedPrincipalIdentifier:
       process.env["ASTARRAY_MCP_PRINCIPAL"] ?? "external-harness:stdio",
-    sourceKind: "agent" as const,
-    agentInstanceId: process.env["ASTARRAY_MCP_AGENT"] ?? "mcp-client-stdio-1",
     sessionId,
-  };
+  });
   try {
     await runMcpStdioSession({
       input: process.stdin,
       output: process.stdout,
       bridge,
-      principal,
+      principal: session.principal,
     });
     return EXIT_CODES.SUCCESS;
   } finally {
+    bridge.closeSession(session.sessionIdentifier);
     await application.shutdown();
   }
 }

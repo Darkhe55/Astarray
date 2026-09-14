@@ -27,6 +27,8 @@ export interface McpStdioSessionOptions {
   principal: McpBridgePrincipal;
   serverName?: string;
   serverVersion?: string;
+  /** 输入流结束时是否关闭桥接会话（默认 true：断连即会话收口）。 */
+  closeSessionOnInputEnd?: boolean;
 }
 
 interface JsonRpcRequest {
@@ -174,7 +176,15 @@ export async function runMcpStdioSession(
     });
     options.input.on("error", (error: Error) => reject(error));
     options.input.on("end", () => {
-      processingChain.then(() => resolve()).catch(reject);
+      processingChain
+        .then(() => {
+          if (options.closeSessionOnInputEnd !== false) {
+            // 断连即会话收口：之后的调用一律 bridge-session-closed
+            options.bridge.closeSession(options.principal.sessionIdentifier);
+          }
+          resolve();
+        })
+        .catch(reject);
     });
   });
 }

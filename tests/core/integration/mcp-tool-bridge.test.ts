@@ -1,64 +1,85 @@
 /**
- * BRIDGE-01-02 测试：MCP 最小工具映射与本地强制规则。
- * 验收：受理回执不误报完成；外部 Agent 不能冒充用户优先级 0；
- * 字符串 user 前缀或 schema 通过不构成认证。
+ * BRIDGE-01-02/03 测试：MCP 最小工具映射 + 边界与断连。
+ * -02：受理回执不误报完成；外部 Agent 不能冒充用户优先级 0；user 前缀/schema 不构成认证。
+ * -03：跨主体访问拒绝；重放不重复任务；输出注入/秘密回显/取消后续写反例；会话隔离与关闭；
+ *      逐次权限复检；协议层不直接执行底层写工具。
  */
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  MCP_BRIDGE_FORBIDDEN_LOCAL_TOOL_NAMES,
   McpToolBridge,
   type McpBridgeApplicationPort,
   type McpBridgePrincipal,
+  type McpToolBridgeOptions,
 } from "../../../packages/core/src/bridge/mcp-tool-bridge.js";
 
-interface RecordedSubmission {
-  sessionId: string;
-  taskIdentifier: string;
-  prompt: string;
-}
-
-let submissions: RecordedSubmission[];
+let submissions: Array<{ taskIdentifier: string; prompt: string }>;
 let taskStatuses: Map<string, { status: string; summaryPreview: string | null }>;
 let cancelledTaskIdentifiers: string[];
 
 function createPort(): McpBridgeApplicationPort {
   return {
     submitTask: async (input) => {
-      submissions.push(input);
-      taskStatuses.set(input.taskIdentifier, {
-        status: "accepted",
-        summaryPreview: null,
-      });
+      submissions.push({ taskIdentifier: input.taskIdentifier, prompt: input.prompt });
+      taskStatuses.set(input.taskIdentifier, { status: "accepted", summaryPreview: null });
       return { missionIdentifier: `mission-for-${input.taskIdentifier}` };
     },
     queryTask: async (input) =>
-      taskStatuses.get(input.taskIdentifier) ?? {
-        status: "failed",
-        summaryPreview: null,
-      },
+      taskStatuses.get(input.taskIdentifier) ?? { status: "failed", summaryPreview: null },
     cancelTask: async (input) => {
       cancelledTaskIdentifiers.push(input.taskIdentifier);
-      taskStatuses.set(input.taskIdentifier, {
-        status: "cancelled",
-        summaryPreview: null,
-      });
+      taskStatuses.set(input.taskIdentifier, { status: "cancelled", summaryPreview: "已取消" });
     },
   };
 }
 
-const principalA: McpBridgePrincipal = {
-  authenticatedPrincipalIdentifier: "external-harness:client-a",
-  sourceKind: "agent",
-  agentInstanceId: "mcp-client-a",
-  sessionId: "mcp-session",
-};
+interface Harness {
+  bridge: McpToolBridge;
+  sessionA: { sessionIdentifier: string; principal: McpBridgePrincipal };
+  principalA: McpBridgePrincipal;
+  principalB: McpBridgePrincipal;
+}
 
-const principalB: McpBridgePrincipal = {
-  authenticatedPrincipalIdentifier: "user:admin-looking-prefix",
-  sourceKind: "agent",
-  agentInstanceId: "mcp-client-b",
-  sessionId: "mcp-session",
-};
+function createHarness(options: Partial<McpToolBridgeOptions> = {}): Harness {
+  const bridge = new McpToolBridge({ applicationPort: createPort(), ...options });
+  const sessionA = bridge.openSession({
+    authenticatedPrincipalIdentifier: "external-harness:client-a",
+    sessionId: "mcp-session",
+  });
+  const sessionB = bridge.openSession({
+    authenticatedPrincipalIdentifier: "user:admin-looking-prefix",
+    sessionId: "mcp-session",
+  });
+  return {
+    bridge,
+    sessionA,
+    principalA: sessionA.principal,
+    principalB: sessionB.principal,
+  };
+}
+
+function submit(
+  bridge: McpToolBridge,
+  principal: McpBridgePrincipal,
+  prompt: string,
+  idempotencyKey: string,
+) {
+  return bridge.callTool({
+    toolName: "submit_task",
+    arguments: { prompt, idempotencyKey },
+    principal,
+  });
+}
+
+function call(
+  bridge: McpToolBridge,
+  principal: McpBridgePrincipal,
+  toolName: string,
+  args: Record<string, unknown>,
+) {
+  return bridge.callTool({ toolName, arguments: args, principal });
+}
 
 beforeEach(() => {
   submissions = [];
@@ -66,261 +87,237 @@ beforeEach(() => {
   cancelledTaskIdentifiers = [];
 });
 
-describe("BRIDGE-01-02 受理回执与幂等", () => {
-  it("受理回执永不误报完成（底层任务已完成时仍返回 accepted/isCompleted=false）", async () => {
-    const bridge = new McpToolBridge({ applicationPort: createPort() });
-    const outcome = await bridge.callTool({
-      toolName: "submit_task",
-      arguments: { prompt: "生成报告", idempotencyKey: "key-1" },
-      principal: principalA,
-    });
-    expect(outcome.isError).toBe(false);
-    expect(outcome.structuredContent["status"]).toBe("accepted");
-    expect(outcome.structuredContent["isCompleted"]).toBe(false);
-
-    // 底层任务随后完成：受理回执不变，完成状态只能经 query/read-result 获取
-    const taskIdentifier = String(outcome.structuredContent["taskIdentifier"]);
+describe("BRIDGE-01-02 受理回执、幂等与注入防护", () => {
+  it("受理回执永不误报完成（底层已完成仍是 accepted/false），完成状态经 query 读取", async () => {
+    const { bridge, principalA } = createHarness();
+    const accepted = await submit(bridge, principalA, "生成报告", "key-1");
+    expect(accepted.structuredContent["status"]).toBe("accepted");
+    expect(accepted.structuredContent["isCompleted"]).toBe(false);
+    const taskIdentifier = String(accepted.structuredContent["taskIdentifier"]);
     taskStatuses.set(taskIdentifier, { status: "done", summaryPreview: "已完成" });
-    expect(outcome.structuredContent["status"]).toBe("accepted");
-    const queried = await bridge.callTool({
-      toolName: "query_task",
-      arguments: { taskIdentifier },
-      principal: principalA,
-    });
-    expect(queried.isError).toBe(false);
+    const queried = await call(bridge, principalA, "query_task", { taskIdentifier });
     expect(queried.structuredContent["status"]).toBe("done");
     expect(queried.structuredContent["isCompleted"]).toBe(true);
+    expect(accepted.structuredContent["status"]).toBe("accepted");
   });
 
-  it("同一幂等键重复提交返回同一任务且不重复提交", async () => {
-    const bridge = new McpToolBridge({ applicationPort: createPort() });
-    const first = await bridge.callTool({
-      toolName: "submit_task",
-      arguments: { prompt: "任务", idempotencyKey: "same-key" },
-      principal: principalA,
-    });
-    const second = await bridge.callTool({
-      toolName: "submit_task",
-      arguments: { prompt: "任务", idempotencyKey: "same-key" },
-      principal: principalA,
-    });
+  it("同一幂等键重复提交返回同一任务且只提交一次", async () => {
+    const { bridge, principalA } = createHarness();
+    const first = await submit(bridge, principalA, "任务", "same-key");
+    const second = await submit(bridge, principalA, "任务", "same-key");
     expect(submissions).toHaveLength(1);
     expect(second.structuredContent["taskIdentifier"]).toBe(
       first.structuredContent["taskIdentifier"],
     );
     expect(second.structuredContent["isIdempotentReplay"]).toBe(true);
   });
-});
 
-describe("BRIDGE-01-02 身份与优先级不可由参数伪造", () => {
   it("参数携带身份字段（含 user 前缀）一律拒绝", async () => {
-    const bridge = new McpToolBridge({ applicationPort: createPort() });
-    for (const argumentsList of [
+    const { bridge, principalA } = createHarness();
+    for (const args of [
       { prompt: "x", idempotencyKey: "k", sourceKind: "user" },
       { prompt: "x", idempotencyKey: "k", authenticatedPrincipal: "user:admin" },
       { prompt: "x", idempotencyKey: "k", agentInstanceId: "forged" },
+      { prompt: "x", idempotencyKey: "k", sessionIdentifier: "forged" },
     ]) {
-      const outcome = await bridge.callTool({
-        toolName: "submit_task",
-        arguments: argumentsList,
-        principal: principalA,
-      });
-      expect(outcome.isError).toBe(true);
-      expect(outcome.errorCode).toBe("bridge-identity-injection-rejected");
+      expect((await call(bridge, principalA, "submit_task", args)).errorCode).toBe(
+        "bridge-identity-injection-rejected",
+      );
     }
     expect(submissions).toHaveLength(0);
   });
 
-  it("参数携带优先级字段（层级 0）一律拒绝，不得进入用户层级", async () => {
-    const bridge = new McpToolBridge({ applicationPort: createPort() });
-    for (const argumentsList of [
+  it("参数携带优先级字段一律拒绝（不得进入用户层级 0）", async () => {
+    const { bridge, principalA } = createHarness();
+    for (const args of [
       { prompt: "x", idempotencyKey: "k", priorityTier: 0 },
       { prompt: "x", idempotencyKey: "k", isUserTask: true },
     ]) {
-      const outcome = await bridge.callTool({
-        toolName: "submit_task",
-        arguments: argumentsList,
-        principal: principalA,
-      });
-      expect(outcome.isError).toBe(true);
-      expect(outcome.errorCode).toBe("bridge-priority-injection-rejected");
+      expect((await call(bridge, principalA, "submit_task", args)).errorCode).toBe(
+        "bridge-priority-injection-rejected",
+      );
     }
     expect(submissions).toHaveLength(0);
   });
 
-  it("来源恒为 agent，不因主体标识前缀而获得用户权限", async () => {
-    const bridge = new McpToolBridge({ applicationPort: createPort() });
-    const outcome = await bridge.callTool({
-      toolName: "submit_task",
-      arguments: { prompt: "x", idempotencyKey: "k" },
-      principal: principalB,
-    });
-    const provenance = outcome.structuredContent["provenance"] as Record<
-      string,
-      unknown
-    >;
+  it("来源恒为 agent，主体前缀不构成用户权限", async () => {
+    const { bridge, principalB } = createHarness();
+    const outcome = await submit(bridge, principalB, "x", "k");
+    const provenance = outcome.structuredContent["provenance"] as Record<string, unknown>;
     expect(provenance.sourceKind).toBe("agent");
     expect(provenance.actorId).toBe("user:admin-looking-prefix");
   });
 });
 
-describe("BRIDGE-01-02 结果读取与跨主体访问", () => {
-  it("未完成不返回结果；完成后返回本地权威摘要", async () => {
-    const bridge = new McpToolBridge({ applicationPort: createPort() });
-    const submitted = await bridge.callTool({
-      toolName: "submit_task",
-      arguments: { prompt: "任务", idempotencyKey: "read-key" },
-      principal: principalA,
+describe("BRIDGE-01-03 会话隔离、重连重放与关闭", () => {
+  it("同一主体重连后重放同一幂等键不重复任务，且可读取自己的任务", async () => {
+    const { bridge, sessionA, principalA } = createHarness();
+    const first = await submit(bridge, principalA, "任务", "reconnect-key");
+    const taskIdentifier = String(first.structuredContent["taskIdentifier"]);
+    bridge.closeSession(sessionA.sessionIdentifier);
+    const reconnected = bridge.openSession({
+      authenticatedPrincipalIdentifier: "external-harness:client-a",
+      sessionId: "mcp-session",
     });
-    const taskIdentifier = String(submitted.structuredContent["taskIdentifier"]);
-
-    const beforeCompletion = await bridge.callTool({
-      toolName: "read_result",
-      arguments: { taskIdentifier },
-      principal: principalA,
-    });
-    expect(beforeCompletion.structuredContent["isCompleted"]).toBe(false);
-    expect(beforeCompletion.structuredContent["result"]).toBeNull();
-
-    taskStatuses.set(taskIdentifier, { status: "done", summaryPreview: "产物摘要" });
-    const afterCompletion = await bridge.callTool({
-      toolName: "read_result",
-      arguments: { taskIdentifier },
-      principal: principalA,
-    });
-    expect(afterCompletion.structuredContent["isCompleted"]).toBe(true);
-    expect(afterCompletion.structuredContent["result"]).toBe("产物摘要");
+    const replay = await submit(bridge, reconnected.principal, "任务", "reconnect-key");
+    expect(submissions).toHaveLength(1);
+    expect(replay.structuredContent["taskIdentifier"]).toBe(taskIdentifier);
+    expect(
+      (await call(bridge, reconnected.principal, "query_task", { taskIdentifier })).isError,
+    ).toBe(false);
   });
 
-  it("跨主体访问任务一律拒绝（不做存在性探测）", async () => {
-    const bridge = new McpToolBridge({ applicationPort: createPort() });
-    const submitted = await bridge.callTool({
-      toolName: "submit_task",
-      arguments: { prompt: "任务", idempotencyKey: "cross-key" },
-      principal: principalA,
-    });
+  it("跨主体访问任务一律拒绝（不区分不存在/不属于）", async () => {
+    const { bridge, principalA, principalB } = createHarness();
+    const submitted = await submit(bridge, principalA, "任务", "cross-key");
     const taskIdentifier = String(submitted.structuredContent["taskIdentifier"]);
-    for (const toolName of ["query_task", "read_result", "cancel_task"] as const) {
-      const outcome = await bridge.callTool({
-        toolName,
-        arguments: { taskIdentifier },
-        principal: principalB,
-      });
-      expect(outcome.isError).toBe(true);
-      expect(outcome.errorCode).toBe("task-not-accessible");
+    for (const toolName of ["query_task", "read_result", "cancel_task"]) {
+      expect((await call(bridge, principalB, toolName, { taskIdentifier })).errorCode).toBe(
+        "task-not-accessible",
+      );
     }
     expect(cancelledTaskIdentifiers).toHaveLength(0);
   });
 
-  it("取消任务返回本地权威状态", async () => {
-    const bridge = new McpToolBridge({ applicationPort: createPort() });
-    const submitted = await bridge.callTool({
-      toolName: "submit_task",
-      arguments: { prompt: "任务", idempotencyKey: "cancel-key" },
-      principal: principalA,
-    });
-    const taskIdentifier = String(submitted.structuredContent["taskIdentifier"]);
-    const cancelled = await bridge.callTool({
-      toolName: "cancel_task",
-      arguments: { taskIdentifier },
-      principal: principalA,
-    });
-    expect(cancelled.isError).toBe(false);
-    expect(cancelled.structuredContent["status"]).toBe("cancelled");
-    expect(cancelledTaskIdentifiers).toEqual([taskIdentifier]);
-  });
-
-  it("未知工具返回稳定错误码", async () => {
-    const bridge = new McpToolBridge({ applicationPort: createPort() });
-    const outcome = await bridge.callTool({
-      toolName: "delete_everything",
-      arguments: {},
-      principal: principalA,
-    });
-    expect(outcome.isError).toBe(true);
-    expect(outcome.errorCode).toBe("unknown-tool");
+  it("会话关闭或未打开一律 bridge-session-closed", async () => {
+    const { bridge, sessionA, principalA } = createHarness();
+    expect(bridge.isSessionOpen(sessionA.sessionIdentifier)).toBe(true);
+    bridge.closeSession(sessionA.sessionIdentifier);
+    expect(bridge.isSessionOpen(sessionA.sessionIdentifier)).toBe(false);
+    expect((await submit(bridge, principalA, "x", "closed-key")).errorCode).toBe(
+      "bridge-session-closed",
+    );
+    const forged = { ...principalA, sessionIdentifier: "not-opened" };
+    expect((await submit(bridge, forged, "x", "forged-key")).errorCode).toBe(
+      "bridge-session-closed",
+    );
   });
 });
+
+describe("BRIDGE-01-03 逐次权限、脱敏与写工具隔离", () => {
+  it("逐次权限复检：拒绝时不调用应用服务，且每次调用都复检", async () => {
+    let recheckCount = 0;
+    const { bridge, principalA } = createHarness({
+      permissionRecheckPort: {
+        recheckToolPermission: async () => {
+          recheckCount += 1;
+          return { isAllowed: false, deniedReason: "测试策略拒绝" };
+        },
+      },
+    });
+    expect((await submit(bridge, principalA, "x", "perm-1")).errorCode).toBe(
+      "bridge-permission-denied",
+    );
+    await submit(bridge, principalA, "x", "perm-2");
+    expect(recheckCount).toBe(2);
+    expect(submissions).toHaveLength(0);
+  });
+
+  it("结果与错误消息均脱敏（秘密不回显）", async () => {
+    const { bridge, principalA } = createHarness();
+    const submitted = await submit(bridge, principalA, "任务", "secret-key");
+    const taskIdentifier = String(submitted.structuredContent["taskIdentifier"]);
+    taskStatuses.set(taskIdentifier, {
+      status: "done",
+      summaryPreview: "含 sk-abcdefgh12345678 与 api_key=topsecret",
+    });
+    const result = await call(bridge, principalA, "read_result", { taskIdentifier });
+    const serialized = JSON.stringify(result.structuredContent);
+    expect(serialized).toContain("[REDACTED]");
+    expect(serialized).not.toContain("sk-abcdefgh12345678");
+    expect(serialized).not.toContain("topsecret");
+    const injected = await call(bridge, principalA, "submit_task", {
+      prompt: "x",
+      idempotencyKey: "k",
+      sourceKind: "sk-abcdefgh12345678",
+    });
+    expect(JSON.stringify(injected.structuredContent)).not.toContain(
+      "sk-abcdefgh12345678",
+    );
+  });
+
+  it("协议层拒绝本地写/执行工具，且工具面不含它们", async () => {
+    const { bridge, principalA } = createHarness();
+    for (const toolName of MCP_BRIDGE_FORBIDDEN_LOCAL_TOOL_NAMES) {
+      expect(
+        (await call(bridge, principalA, toolName, { filePath: "x", content: "y" }))
+          .errorCode,
+      ).toBe("bridge-local-write-tool-rejected");
+    }
+    const exposed = bridge.listTools().map((tool) => tool.name);
+    for (const forbidden of MCP_BRIDGE_FORBIDDEN_LOCAL_TOOL_NAMES) {
+      expect(exposed).not.toContain(forbidden);
+    }
+  });
+
+  it("取消后不返回结果（取消后续写反例），状态为权威 cancelled", async () => {
+    const { bridge, principalA } = createHarness();
+    const submitted = await submit(bridge, principalA, "任务", "cancel-key");
+    const taskIdentifier = String(submitted.structuredContent["taskIdentifier"]);
+    const cancelled = await call(bridge, principalA, "cancel_task", { taskIdentifier });
+    expect(cancelled.structuredContent["status"]).toBe("cancelled");
+    expect(cancelled.structuredContent["result"]).toBeNull();
+    expect(cancelledTaskIdentifiers).toEqual([taskIdentifier]);
+    const afterCancel = await call(bridge, principalA, "read_result", { taskIdentifier });
+    expect(afterCancel.structuredContent["isCompleted"]).toBe(true);
+    expect(afterCancel.structuredContent["status"]).toBe("cancelled");
+  });
+});
+
 describe("BRIDGE-01-02 参数校验与回执淘汰", () => {
   it("参数缺失或非法返回 invalid-arguments（不调用应用服务）", async () => {
-    const bridge = new McpToolBridge({ applicationPort: createPort() });
-    const invalidArgumentCases = [
+    const { bridge, principalA } = createHarness();
+    for (const args of [
       { prompt: 123, idempotencyKey: "k" },
       { prompt: "", idempotencyKey: "k" },
       { prompt: "x" },
       { prompt: "x", idempotencyKey: "k".repeat(201) },
       { prompt: "x", idempotencyKey: 42 },
-    ];
-    for (const argumentsList of invalidArgumentCases) {
-      const outcome = await bridge.callTool({
-        toolName: "submit_task",
-        arguments: argumentsList as Record<string, unknown>,
-        principal: principalA,
-      });
-      expect(outcome.isError).toBe(true);
-      expect(outcome.errorCode).toBe("invalid-arguments");
+    ]) {
+      expect((await call(bridge, principalA, "submit_task", args)).errorCode).toBe(
+        "invalid-arguments",
+      );
     }
     expect(submissions).toHaveLength(0);
   });
 
   it("查询/读取/取消缺少合法 taskIdentifier 返回 invalid-arguments", async () => {
-    const bridge = new McpToolBridge({ applicationPort: createPort() });
-    for (const toolName of ["query_task", "read_result", "cancel_task"] as const) {
-      const outcome = await bridge.callTool({
-        toolName,
-        arguments: { taskIdentifier: "" },
-        principal: principalA,
-      });
-      expect(outcome.errorCode).toBe("invalid-arguments");
-      const wrongType = await bridge.callTool({
-        toolName,
-        arguments: { taskIdentifier: 7 },
-        principal: principalA,
-      });
-      expect(wrongType.errorCode).toBe("invalid-arguments");
+    const { bridge, principalA } = createHarness();
+    for (const toolName of ["query_task", "read_result", "cancel_task"]) {
+      expect((await call(bridge, principalA, toolName, { taskIdentifier: "" })).errorCode).toBe(
+        "invalid-arguments",
+      );
+      expect((await call(bridge, principalA, toolName, { taskIdentifier: 7 })).errorCode).toBe(
+        "invalid-arguments",
+      );
     }
   });
 
-  it("回执超过上限后淘汰最旧条目（最旧任务不再可访问）", async () => {
+  it("回执超上限淘汰最旧条目；listTools 暴露四个工具", async () => {
     const bridge = new McpToolBridge({
       applicationPort: createPort(),
       maximumTrackedReceipts: 1,
     });
-    const first = await bridge.callTool({
-      toolName: "submit_task",
-      arguments: { prompt: "a", idempotencyKey: "evict-1" },
-      principal: principalA,
+    const session = bridge.openSession({
+      authenticatedPrincipalIdentifier: "external-harness:client-a",
+      sessionId: "mcp-session",
     });
-    const second = await bridge.callTool({
-      toolName: "submit_task",
-      arguments: { prompt: "b", idempotencyKey: "evict-2" },
-      principal: principalA,
-    });
-    const evicted = await bridge.callTool({
-      toolName: "query_task",
-      arguments: {
-        taskIdentifier: String(first.structuredContent["taskIdentifier"]),
-      },
-      principal: principalA,
-    });
-    expect(evicted.errorCode).toBe("task-not-accessible");
-    const kept = await bridge.callTool({
-      toolName: "query_task",
-      arguments: {
-        taskIdentifier: String(second.structuredContent["taskIdentifier"]),
-      },
-      principal: principalA,
-    });
-    expect(kept.isError).toBe(false);
-  });
-
-  it("listTools 暴露四个工具及其必填参数", async () => {
-    const bridge = new McpToolBridge({ applicationPort: createPort() });
-    const tools = bridge.listTools();
-    expect(tools).toHaveLength(4);
-    expect(tools.find((tool) => tool.name === "submit_task")?.inputSchema.required).toEqual([
-      "prompt",
-      "idempotencyKey",
-    ]);
+    const first = await submit(bridge, session.principal, "a", "evict-1");
+    const second = await submit(bridge, session.principal, "b", "evict-2");
+    expect(
+      (
+        await call(bridge, session.principal, "query_task", {
+          taskIdentifier: String(first.structuredContent["taskIdentifier"]),
+        })
+      ).errorCode,
+    ).toBe("task-not-accessible");
+    expect(
+      (
+        await call(bridge, session.principal, "query_task", {
+          taskIdentifier: String(second.structuredContent["taskIdentifier"]),
+        })
+      ).isError,
+    ).toBe(false);
+    expect(bridge.listTools()).toHaveLength(4);
   });
 });

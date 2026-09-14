@@ -1,7 +1,8 @@
 /**
- * BRIDGE-01-02 测试：MCP stdio 会话（换行分隔 JSON-RPC）。
+ * BRIDGE-01-02/03 测试：MCP stdio 会话（换行分隔 JSON-RPC）。
  * 验收：工具面可用；stdout 只输出合法 MCP 消息；取消以通知表达；
- * 协议版本按冻结值协商；解析/方法错误有稳定 JSON-RPC 错误码。
+ * 协议版本按冻结值协商；解析/方法错误有稳定 JSON-RPC 错误码；
+ * 断连（输入流结束）即会话收口，之后调用一律 bridge-session-closed。
  */
 import { PassThrough } from "node:stream";
 
@@ -44,12 +45,12 @@ function createPort(): McpBridgeApplicationPort {
   };
 }
 
-const principal: McpBridgePrincipal = {
-  authenticatedPrincipalIdentifier: "external-harness:stdio-client",
-  sourceKind: "agent",
-  agentInstanceId: "mcp-client-stdio-1",
-  sessionId: "mcp-session-stdio",
-};
+function openBridgeSession(bridge: McpToolBridge): McpBridgePrincipal {
+  return bridge.openSession({
+    authenticatedPrincipalIdentifier: "external-harness:stdio-client",
+    sessionId: "mcp-session-stdio",
+  }).principal;
+}
 
 beforeEach(() => {
   taskStatuses = new Map();
@@ -63,11 +64,12 @@ async function runSession(lines: string[]): Promise<Record<string, unknown>[]> {
   output.on("data", (chunk: Buffer | string) => {
     collected.push(String(chunk));
   });
+  const bridge = new McpToolBridge({ applicationPort: createPort() });
   const session = runMcpStdioSession({
     input,
     output,
-    bridge: new McpToolBridge({ applicationPort: createPort() }),
-    principal,
+    bridge,
+    principal: openBridgeSession(bridge),
   });
   for (const line of lines) {
     input.write(line + "\n");
@@ -184,11 +186,12 @@ describe("BRIDGE-01-02 MCP stdio 会话", () => {
     output.on("data", (chunk: Buffer | string) => {
       collected.push(String(chunk));
     });
+    const stdoutBridge = new McpToolBridge({ applicationPort: createPort() });
     const session = runMcpStdioSession({
       input,
       output,
-      bridge: new McpToolBridge({ applicationPort: createPort() }),
-      principal,
+      bridge: stdoutBridge,
+      principal: openBridgeSession(stdoutBridge),
     });
     input.write(
       JSON.stringify({ jsonrpc: "2.0", id: "list-2", method: "tools/list" }) + "\n",
@@ -258,11 +261,12 @@ describe("BRIDGE-01-02 stdio 会话边界", () => {
     const output = new PassThrough();
     const collected: string[] = [];
     output.on("data", (chunk: Buffer | string) => collected.push(String(chunk)));
+    const failingBridge = new McpToolBridge({ applicationPort: failingPort });
     const session = runMcpStdioSession({
       input,
       output,
-      bridge: new McpToolBridge({ applicationPort: failingPort }),
-      principal,
+      bridge: failingBridge,
+      principal: openBridgeSession(failingBridge),
     });
     input.write(
       JSON.stringify({
@@ -290,11 +294,12 @@ describe("BRIDGE-01-02 stdio 会话边界", () => {
     const output = new PassThrough();
     const collected: string[] = [];
     output.on("data", (chunk: Buffer | string) => collected.push(String(chunk)));
+    const multiBridge = new McpToolBridge({ applicationPort: createPort() });
     const session = runMcpStdioSession({
       input,
       output,
-      bridge: new McpToolBridge({ applicationPort: createPort() }),
-      principal,
+      bridge: multiBridge,
+      principal: openBridgeSession(multiBridge),
     });
     input.write(
       JSON.stringify({ jsonrpc: "2.0", id: "multi-1", method: "tools/list" }) +
@@ -314,13 +319,31 @@ describe("BRIDGE-01-02 stdio 会话边界", () => {
   it("输入流错误时会话以拒绝结束", async () => {
     const input = new PassThrough();
     const output = new PassThrough();
+    const errorBridge = new McpToolBridge({ applicationPort: createPort() });
     const session = runMcpStdioSession({
       input,
       output,
-      bridge: new McpToolBridge({ applicationPort: createPort() }),
-      principal,
+      bridge: errorBridge,
+      principal: openBridgeSession(errorBridge),
     });
     input.emit("error", new Error("stdin broken"));
     await expect(session).rejects.toThrow("stdin broken");
+  });
+
+  it("断连（输入流结束）即关闭桥接会话，之后调用一律 bridge-session-closed", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const bridge = new McpToolBridge({ applicationPort: createPort() });
+    const principal = openBridgeSession(bridge);
+    const session = runMcpStdioSession({ input, output, bridge, principal });
+    input.end();
+    await session;
+    expect(bridge.isSessionOpen(principal.sessionIdentifier)).toBe(false);
+    const outcome = await bridge.callTool({
+      toolName: "submit_task",
+      arguments: { prompt: "断连后提交", idempotencyKey: "after-disconnect" },
+      principal,
+    });
+    expect(outcome.errorCode).toBe("bridge-session-closed");
   });
 });
