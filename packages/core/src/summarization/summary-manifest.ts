@@ -37,7 +37,9 @@ export type SummaryContractErrorCode =
   | "duplicate-source-revision"
   | "invalid-manifest"
   | "integrity-violation"
-  | "stale-publish";
+  | "stale-publish"
+  | "manifest-not-found"
+  | "chunk-not-found";
 
 export class SummaryContractError extends Error {
   constructor(

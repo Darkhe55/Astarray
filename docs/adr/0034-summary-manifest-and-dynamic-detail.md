@@ -81,3 +81,17 @@
     外部变化只标记失效（`source-advanced`/`source-content-changed`/`no-manifest`），**不触发任何重摘要或模型调用**。
 19. **按 Agent 隔离**：清单与 pending 落在 `agent-memory/<agentInstanceId>/summaries/<sourceKind>-<sourceIdentifier>/`，
     不同 Agent 的同名来源互不可见。
+## 补充（SUM-01-03 冻结：读取路径、旁置索引与证据定位）
+
+20. **默认摘要与章节展开**：读取服务提供四级视图 —— 默认 `summary`（概览：主题计数 + 覆盖率 + pending 尾部，
+    **零分块读取**）、`outline`（主题 + 来源范围）、`section`（摘要分块，支持 `expandSummarySection` 按
+    `chunkIdentifier` 定点展开一节）、`detail`（摘要 + 证据指针）。概览/大纲不返回分块正文。
+21. **有界读取**：分页读取经 `SummaryChunkReaderPort`，每页只读一页（读取量上界 = 页数 × 页大小）；
+    不读取原文、不现场重算全文哈希。读取路径接受"原文访问观察端口"作为可观测证据，
+    **实现从不调用它**（测试断言计数为 0）。
+22. **来源校验与证据定位**：返回的每个证据指针都可在清单内定位（`verifyEvidenceLocator`），
+    区分 `located` / `content-hash-mismatch`（同 revision 不同哈希）/ `not-indexed`，
+    全程不读取原文；需要原文时由调用方另行经权限受控的正常读取路径获取。
+23. **源码/媒体旁置索引**：`sidecar-index.json` 只保存指针（相对标识、revision、内容哈希、字节数、媒体类型），
+    **不复制正文、不改写原格式**；写入与读回都经过 pointer-only 断言，出现 `content`/`text`/`base64` 等
+    正文键或任何未声明字段即 `journal-corrupted` 拒绝。

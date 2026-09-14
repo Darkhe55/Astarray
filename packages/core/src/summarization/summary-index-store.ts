@@ -28,6 +28,10 @@ import {
   type SummaryManifest,
   type SummarySourceKind,
 } from "./summary-manifest.js";
+import {
+  assertSidecarIndexIsPointerOnly,
+  type SummarySidecarIndexEntry,
+} from "./summary-sidecar-index.js";
 
 export interface SummarySourceKey {
   sourceKind: SummarySourceKind;
@@ -268,6 +272,46 @@ export class SummaryIndexStore {
   ): Promise<void> {
     const filePath = this.pendingFilePath(input.agentInstanceId, input);
     await removeJsonFileWithBackup(filePath, filePath + ".bak");
+  }
+
+  private sidecarFilePath(
+    agentInstanceId: string,
+    key: SummarySourceKey,
+  ): string {
+    return path.join(
+      this.summaryDirectoryPath(agentInstanceId, key),
+      "sidecar-index.json",
+    );
+  }
+
+  /** 写入源码/媒体旁置索引（只存指针；写入前经 pointer-only 断言）。 */
+  async writeSidecarIndex(
+    input: { agentInstanceId: string } & SummarySourceKey & {
+        entries: SummarySidecarIndexEntry[];
+      },
+  ): Promise<void> {
+    assertSidecarIndexIsPointerOnly(input.entries);
+    await writeAtomicJson(this.sidecarFilePath(input.agentInstanceId, input), {
+      schemaVersion: 1,
+      entries: input.entries,
+    });
+  }
+
+  async readSidecarIndex(
+    input: { agentInstanceId: string } & SummarySourceKey,
+  ): Promise<SummarySidecarIndexEntry[] | null> {
+    const filePath = this.sidecarFilePath(input.agentInstanceId, input);
+    const readResult = await readJsonWithBackupRecovery(
+      filePath,
+      filePath + ".bak",
+    );
+    if (readResult === null) {
+      return null;
+    }
+    const content = readResult.content as { entries?: unknown };
+    const entries = Array.isArray(content.entries) ? content.entries : [];
+    assertSidecarIndexIsPointerOnly(entries);
+    return entries as SummarySidecarIndexEntry[];
   }
 
   /** 同一来源键的生成任务 single-flight：并发请求只执行一次。 */
