@@ -38,7 +38,16 @@
 
 ## 4. 门禁与推送
 
-（本轮复跑后回填。）
+| 命令 | 结果 |
+| --- | --- |
+| `npm run check` | **exit 0**：typecheck + lint + build + test；**190 文件 / 1587 用例全通过** |
+| `npm run test:coverage` | **exit 0**：190 文件 / 1587 用例通过；全局 statements **93.54%** / branch **86.20%** / functions **92.20%** / lines **93.57%**；`packages/core/src/summarization` 目录 91.76% / **81.64%**（较 02 的 80.86% 提升）/ 96.47% / 91.64% |
+| `git push` | **exit 0**：`5664aac..4c8993e`（`origin/main` = `4c8993e`） |
+
+**覆盖率首跑红态（已修复，非放宽断言）**：首跑 `test:coverage` 2 失败 —— `e2e01-vertical-rework`（既有资源竞争波动）
+与 `gui-settings-recovery`（**本仓既有用例**在插桩下真实任务链路超过 5s 默认超时）。修法：为该文件设置
+`vi.setConfig({ testTimeout: 30_000 })`（仅调整超时，断言不变），并复跑覆盖率（190/1587 全通过）。
+途中一次误用 read(20 行)+write 组合改写测试文件导致内容截断，已用 `git checkout --` 还原后改用定点 `edit`。
 
 ## 5. 未满足项与后续
 

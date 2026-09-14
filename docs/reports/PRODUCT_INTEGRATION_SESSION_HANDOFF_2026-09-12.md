@@ -74,5 +74,8 @@
   - 门禁：`npm run check` exit 0（189 文件/1580 用例）；`test:coverage` exit 0（93.46/86.20/92.01/93.49）；`git push` `98c4297..e606578`。
   - 首轮被 `destructive-file-api-guard` 拦截（新模块直接 rm），改为底层 `removeJsonFileWithBackup`（先备份再删）后全绿——**不得靠扩白名单绕过**。
   - 已知：`summarization` 目录 branch 80.86%，待 SUM-01-03 读取分支补齐。
-- 下一轮：SUM-01-03（默认摘要与章节展开、分页与有界读取、来源校验、陈旧/跨 Agent 游标拒绝的端到端读取路径；源码/媒体旁置索引）。
+- **SUM-01-03**（默认摘要读取/章节展开/旁置索引）：`summary-read-service.ts`、`summary-sidecar-index.ts` + ADR-0034 §20–23 + `docs/reports/SUM01_03_READ_PATH.md`，提交 `b68c1bc`。
+  - 门禁：`npm run check` exit 0（190 文件/1587 用例）；`test:coverage` exit 0（93.54/86.20/92.20/93.57；summarization 目录 91.76/81.64/96.47/91.64）；`git push` `5664aac..4c8993e`。
+  - 附：`test(gui)` 提交 `4c8993e` 为既有 GUI 用例加整文件 30s 超时（覆盖率插桩下真实任务链路超 5s 默认值）。
+- 下一轮：SUM-01-04（应用/CLI/TUI 接线、安装包消费与资源指标；接真实会话历史/工作存档/报告/延后文件来源）。
 - 仍待用户/外部输入：GUI-01-R-04b 人工体验与 Linux/macOS；BRIDGE-01-04 真实 MCP 客户端；E2E-01-03 真实 Provider 凭据/费用授权；E2E-01-04 人工结论。
