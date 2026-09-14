@@ -80,7 +80,7 @@
 - GUI-01-R-04a 测试命令与退出码：`npx tsc --noEmit` 0；`npx eslint .` 0；`npx vitest run tests/gui` 0（35 passed，7 文件）。
 - GUI-01-R-04a 门禁缺口（未通过）：`npm run check`/`npm run test:coverage` 与打包验收（`npm pack`、`verify-package`、`smoke-install`）升级重试均因审批通道 600s 超时未执行；受限沙箱下这些命令本身会 `spawn EPERM`。未执行即未通过，需审批可用时补跑。
 - GUI-01-R-04a 人工/外部依赖及剩余风险：真实用户人工体验结论、从安装包打开 GUI、Linux/macOS 平台证据属 04b，当前为 pending/blocked，不以自动断言替代。
-- GUI-01-R-04a 本地提交、推送尝试与结果：实现提交见提交记录小节；`git push` 同因审批通道不可用跳过，累积推送。
+- GUI-01-R-04a 本地提交、推送尝试与结果：实现提交 `b35cc9f`（4 文件）。`git push` 受限沙箱失败（exit 128），升级重试因审批通道不可用未执行 → 累积待推送 `b5e3be1`…`b35cc9f`（7 个提交）。
 
 ## 首轮执行指令
 

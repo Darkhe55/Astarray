@@ -29,7 +29,12 @@ node scripts/verify-package.mjs <本次生成的tarball实际路径>
 node scripts/smoke-install.mjs
 ```
 
-本轮尝试以 `danger-full-access` 执行上述命令 + `test:coverage`，审批通道等待 600s 超时未执行（记录在案，不计为通过）。
+本轮以 `danger-full-access` 尝试执行上述命令 + `test:coverage` 共 2 次，审批通道均等待 600s 超时、命令未执行（记录在案，**不计为通过**）。
+
+## 5. 提交与推送
+
+- 实现提交：`b35cc9f` `feat(gui): GUI-01-R-04a 可访问性静态契约与关闭时资源回收`（4 文件，+274/−4；用户并行改动未暂存）。
+- 推送：`git push` 受限沙箱失败（`couldn't create signal pipe`，exit 128）；升级重试因审批通道不可用未执行 → 累积待推送（自 `b5e3be1` 起共 7 个提交）。
 
 ## 4. 未满足项（不声称已验收）
 
