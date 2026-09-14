@@ -1,14 +1,15 @@
 # Astarray 返修序列补充任务卡：GUI MVP
 
-> 状态：待执行；**依赖纠偏 2026-09-10**：旧边 `B6R-10 → GUI-01 → T08B` 作废（GUI 不再阻塞已实现的 `T08B`），新批以 `T07D-R1 → GUI-01-R` 取代，见 `docs/reports/INT00_STATUS_RECONCILIATION.md`  
+> 状态：待执行（由 GUI-01-R 接管执行）；**依赖纠偏 2026-09-10**：旧边 `B6R-10 → GUI-01 → T08B` 作废（GUI 不再阻塞已实现的 `T08B`），新批以 `T07D-R1 → GUI-01-R` 取代，见 `docs/reports/INT00_STATUS_RECONCILIATION.md`  
+> **范围/依赖更新 2026-09-13（GUI-01-R-01）**：本卡作为 GUI-01-R 的功能与安全依据继续有效；执行顺序、检查点拆分与状态以 [GUI-01-R](./GUI01_R_PRODUCT_WORKBENCH_TASK_CARD.md) 为准。首期视图冻结与"真实可用 / 占位"划分见 `docs/reports/GUI01_R_01_SCOPE_FREEZE.md`（会话可用；任务图/Agent/权限待处理项/上下文/恢复需 Phase-2 只读 read model）。公共事件必须携带 revision（当前 `PublicAstarrayEvent` 尚无 revision，属 GUI-01-R-02 关闭项）。未实现前不得宣称 GUI 已交付。  
 > 编制日期：2026-08-16  
 > 任务编号：GUI-01  
 > 任务来源：用户  
 > 优先级层级：0  
 > 风险等级：高  
 > 预计时长：不超过 3 小时  
-> 前驱：`B6R-10`  
-> 后继：`T08B`
+> 前驱：`T07D-R1`（原 `B6R-10` 已解除；见上）  
+> 后继：无（原 `T08B` 边作废；交付验收改为 GUI-01-R 自身检查点）
 
 ## 1. 插入位置
 
