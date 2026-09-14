@@ -8,6 +8,9 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// 覆盖率插桩下真实 mission 链路变慢：仅调整超时，断言不变。
+vi.setConfig({ testTimeout: 60_000 });
+
 import { executeRunCommand } from "../../../packages/tui/src/cli/run-command.js";
 import { bootstrapCli } from "../../../packages/tui/src/cli/bootstrap.js";
 
@@ -53,7 +56,7 @@ describe("run-command 剩余分支", () => {
     });
     void streamed;
     expect(exitCode).toBe(0);
-  }, 20_000);
+  }, 60_000);
 
   it("bootstrap useFeedbackProcess:true：启动独立反馈进程并干净关闭（102-108）", async () => {
     const bootstrap = await bootstrapCli({

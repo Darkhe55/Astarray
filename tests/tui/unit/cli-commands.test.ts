@@ -15,6 +15,9 @@ import { executeStatusCommand } from "../../../packages/tui/src/cli/commands.js"
 import { executeRunCommand } from "../../../packages/tui/src/cli/run-command.js";
 import { MissionLeaseStore } from "../../../packages/core/src/infra/mission-lease-store.js";
 
+// 覆盖率插桩 + Windows 临时目录竞争下，真实 mission 链路会明显变慢：仅调整超时，断言不变。
+vi.setConfig({ testTimeout: 60_000 });
+
 let stateDirectory: string;
 let originalCwd: string;
 
@@ -136,7 +139,7 @@ describe("CLI 命令（直接调用）", () => {
     };
     expect(detailParsed.missionId).toBe(missionId);
     expect(detailParsed.tasks.length).toBeGreaterThanOrEqual(1);
-  }, 20_000);
+  }, 60_000);
 
   it("status：文本输出", async () => {
     const stdoutCapture = captureStdout();
