@@ -77,5 +77,8 @@
 - **SUM-01-03**（默认摘要读取/章节展开/旁置索引）：`summary-read-service.ts`、`summary-sidecar-index.ts` + ADR-0034 §20–23 + `docs/reports/SUM01_03_READ_PATH.md`，提交 `b68c1bc`。
   - 门禁：`npm run check` exit 0（190 文件/1587 用例）；`test:coverage` exit 0（93.54/86.20/92.20/93.57；summarization 目录 91.76/81.64/96.47/91.64）；`git push` `5664aac..4c8993e`。
   - 附：`test(gui)` 提交 `4c8993e` 为既有 GUI 用例加整文件 30s 超时（覆盖率插桩下真实任务链路超 5s 默认值）。
-- 下一轮：SUM-01-04（应用/CLI/TUI 接线、安装包消费与资源指标；接真实会话历史/工作存档/报告/延后文件来源）。
+- **SUM-01-04a**（摘要产品入口接线与资源观测）：`summary-source-adapters.ts`（工作存档→来源条目）、`summary-resource-metrics.ts`、门面 `summarizeArchivedMission/listSummarySources/readSummaryView/expandSummarySectionView` + ADR-0034 §24–27 + `docs/reports/SUM01_04A_PRODUCT_WIRING.md`，提交 `dae16e1`。
+  - 门禁：`npm run check` exit 0（192 文件）；`test:coverage` exit 0（93.53/86.07/92.34/93.54；summarization 91.25/80.61/95.95/91.12）；`git push` `c40dc2f..ebd5aad`。
+  - 附：`ebd5aad` 为既有 CLI/E2E 用例的 60s 超时加固（插桩+Windows 临时目录竞争下的真实 mission 链路；断言不变）。注意 `--pool=threads` 下 `process.chdir` 不可用，cwd 类用例只能以 forks 门禁为准。
+- 下一轮：SUM-01-04b（CLI/TUI 接线 + 安装包消费大历史摘要再展开 + 资源不足诚实状态与资源测量记录表）。
 - 仍待用户/外部输入：GUI-01-R-04b 人工体验与 Linux/macOS；BRIDGE-01-04 真实 MCP 客户端；E2E-01-03 真实 Provider 凭据/费用授权；E2E-01-04 人工结论。

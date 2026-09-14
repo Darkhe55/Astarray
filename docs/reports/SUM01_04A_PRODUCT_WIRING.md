@@ -36,12 +36,21 @@
 | 命令 | 结果 |
 | --- | --- |
 | `npx vitest run`（适配器 + 产品接线） | 0；**6 passed** |
-| `npx tsc --noEmit` / `npx eslint .` | 见 §4 |
-| `npm run check` / `test:coverage` / `git push` | 见 §4 |
+| `npx tsc --noEmit` / `npx eslint .` | 0 / 0 |
 
 ## 4. 门禁与推送
 
-（本轮复跑后回填。）
+| 命令 | 结果 |
+| --- | --- |
+| `npm run check` | **exit 0**：typecheck + lint + build + test；**192 文件全通过** |
+| `npm run test:coverage` | **exit 0**：192 文件全通过；全局 statements **93.53%** / branch **86.07%** / functions **92.34%** / lines **93.54%**；`packages/core/src/summarization` 目录 91.25% / **80.61%** / 95.95% / 91.12% |
+| `git push` | **exit 0**：`c40dc2f..ebd5aad`（含本检查点提交；`origin/main` = `ebd5aad`） |
+
+**门禁首跑红态（均为既有用例的插桩/负载波动，非本检查点回归）**：
+1. `check` 命中 `e2e01-vertical-rework`（`running` vs `done` 竞态，90s）与 `run-command-gaps`（真实 mock mission 超 20s）；
+2. `coverage` 命中 `cli-commands`（同一类超时）。
+修法：为这三个**既有**用例文件设置整文件 60s 超时（含逐例 `20_000` → `60_000`），**不放宽任何断言**，提交 `ebd5aad`；复跑 `check` 与 `coverage` 均 192 文件全通过。
+另记：`--pool=threads` 下 `process.chdir` 在 worker 线程不可用，故这批 `process.chdir` 用例的本地线程池验证无意义，必须以 forks 门禁为准。
 
 ## 5. 未满足项（属 04b）
 
