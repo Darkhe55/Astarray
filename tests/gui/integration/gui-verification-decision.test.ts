@@ -7,7 +7,10 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// 覆盖率插桩下真实任务链路会变慢：沿用整文件超时，不放宽任何断言。
+vi.setConfig({ testTimeout: 30_000 });
 
 import { LocalContextGraphStore } from "../../../packages/core/src/orchestration/local-context-graph-store.js";
 import { AstarrayApplicationFacade } from "../../../packages/core/src/public-sdk.js";
