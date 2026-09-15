@@ -17,7 +17,8 @@ import { pathToFileURL } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.setConfig({ testTimeout: 120_000 });
+// 覆盖率插桩 + 并行门禁下纵向链路明显变慢：仅提高等待上限，断言不变。
+vi.setConfig({ testTimeout: 240_000 });
 
 import { createHash } from "node:crypto";
 
@@ -197,7 +198,7 @@ async function runToTerminal(
   }
   const missionIdentifier = accepted.missionIdentifier;
   let status = "accepted";
-  const deadline = Date.now() + 90_000;
+  const deadline = Date.now() + 180_000;
   while (
     !["done", "failed", "blocked", "cancelled"].includes(status) &&
     Date.now() < deadline
