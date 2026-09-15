@@ -92,5 +92,9 @@
 - **SUM-02-03**（摘要事实核验与重建）：`packages/core/src/measurement/summary-fact-verification.ts` + ADR-0036 + `docs/reports/SUM02_03_FACT_VERIFICATION.md`，提交 `36017d8`。
   - 规则：五类权威字段本地提取；引用存在≠语义正确（数值冲突/无出处数值断言/关键遗漏/引用错误分别报告）；拒绝摘要再摘要与无出处输入；重建叙述带来源指针并可被同一核验器判 supported。
   - 门禁：`npm run check` exit 0（196 文件/1615 用例）；`test:coverage` exit 0（93.46/85.93/92.41/93.48；measurement 99.55/88.05/100/99.54）；`git push` `6b0f2f5..36017d8`。
-- 下一轮：**SUM-02-04**（内容缓存与计量缓存分离、真实产品请求捕获及 tarball 联测、人工标注样本质量评估——不能用生成模型自评通过）。
+- **SUM-02-04**（缓存分离/usage 捕获/质量评估）：`measurement-cache.ts`、`provider-usage-capture.ts`、`quality-evaluation.ts`、公共 exports、`scripts/verify-measurement-package.mjs`、`scripts/evaluate-summary-quality.mjs` + ADR-0037 + `docs/reports/SUM02_04_CACHE_CAPTURE_QUALITY.md`，提交 `df03aa3`、`efe9eaa`（后者为既有用例超时加固）。
+  - `npm run check` exit 0（199 文件/1625 用例）；打包链全绿（tarball sha256 `c0c383ac…`、verify/smoke/summary-package/**measurement-package 10/10**/quality CLI）。
+  - **未完成**：`npm run test:coverage`（复跑命中既有波动用例 + 审批通道 600s 超时）与 `git push`（同一原因）→ 下一轮先补覆盖率与推送。
+  - 遗留：真实 Provider usage 捕获需凭据/费用授权（blocked）；真实人工标注样本未提供（工具已就绪并拒绝模型自评）。
+- 下一轮：①补跑 `test:coverage` 并推送 `df03aa3`、`efe9eaa`（SUM-02 收口）；②按 steering 顺序进入 **GUIDE-01-01**（事件来源/资源/任务作用域、sequence/有效期、指导 revision 与工具取消能力契约）。
 - 仍待用户/外部输入：GUI-01-R-04b 人工体验与 Linux/macOS；BRIDGE-01-04 真实 MCP 客户端；E2E-01-03 真实 Provider 凭据/费用授权；E2E-01-04 人工结论。

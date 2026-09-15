@@ -39,7 +39,17 @@ capture 往返、usage 权威（1250）、离线状态诚实、人类标注评�
 
 ## 4. 门禁与推送
 
-（本轮复跑后回填；含 tarball 隔离安装后的联测。）
+| 命令 | 结果 |
+| --- | --- |
+| `npm run check` | **exit 0**（提交 `df03aa3`）：199 文件 / **1625 用例全通过** |
+| `npm run test:coverage` | **未完成（不得记为通过）**：多次复跑分别命中既有波动用例（`e2e01-vertical-rework`、`headless-cli`、`e2e01-provider-write-probe`、`context-runtime-cache-events`、`run-provider-entry`）；已为其中两个既有用例提高等待上限（提交 `efe9eaa`，90s→180s / 默认→60s，**断言不变**）；最终复跑因审批通道 600s 超时未执行 |
+| `npm pack` | exit 0；tarball sha256 `c0c383ac3f575a761c56a6e719c692e27540ef886193823f037691c2a25de206` |
+| `node scripts/verify-package.mjs` | exit 0 |
+| `node scripts/smoke-install.mjs` | exit 0（第 1 次命中既有波动，第 2 次通过） |
+| `node scripts/verify-summary-package.mjs`（安装包） | exit 0 |
+| `node scripts/verify-measurement-package.mjs`（安装包） | **exit 0：10/10 检查通过**（内容/model 分离、指标复算、重建叙述 supported、预算分页无重无漏、capture 往返、usage 权威 1250、离线诚实、人类标注可用、模型自评被拒） |
+| `node scripts/evaluate-summary-quality.mjs`（安装包） | exit 0（示例人工标注 fixture：precision 0.5 / recall 1 / falseSupportRate 1） |
+| `git push` | **未执行**（审批通道 600s 超时 ×3）→ 累积待推送 `df03aa3`、`efe9eaa` |
 
 ## 5. 未满足项（不声称完成）
 
