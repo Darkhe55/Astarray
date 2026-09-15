@@ -89,5 +89,8 @@
 - **SUM-02-02**（完整请求计量与包装/输出预留）：`packages/core/src/measurement/request-budget.ts` + ADR-0035 §9–14 + `docs/reports/SUM02_02_REQUEST_BUDGET.md`，提交 `446a539`。
   - 规则：有效预算=min(全局配置,模型输入空间)−输出/包装预留；记录级选入、只分页不裁剪、必要约束 blocked、优先级全序、模型切换重新计量；并验证装配不改动已发布清单字节/revision。
   - 门禁：`npm run check` exit 0（195 文件/1608 用例）；`test:coverage` exit 0（93.41/85.94/92.40/93.44；measurement 100/89.24/100/100）；`git push` `d02b4eb..446a539`。
-- 下一轮：**SUM-02-03**（权威字段本地提取、叙述引用证据、依据原始分块重建摘要；对照原文检查事实支持/关键遗漏/错误归因，不能仅摘要再摘要）。
+- **SUM-02-03**（摘要事实核验与重建）：`packages/core/src/measurement/summary-fact-verification.ts` + ADR-0036 + `docs/reports/SUM02_03_FACT_VERIFICATION.md`，提交 `36017d8`。
+  - 规则：五类权威字段本地提取；引用存在≠语义正确（数值冲突/无出处数值断言/关键遗漏/引用错误分别报告）；拒绝摘要再摘要与无出处输入；重建叙述带来源指针并可被同一核验器判 supported。
+  - 门禁：`npm run check` exit 0（196 文件/1615 用例）；`test:coverage` exit 0（93.46/85.93/92.41/93.48；measurement 99.55/88.05/100/99.54）；`git push` `6b0f2f5..36017d8`。
+- 下一轮：**SUM-02-04**（内容缓存与计量缓存分离、真实产品请求捕获及 tarball 联测、人工标注样本质量评估——不能用生成模型自评通过）。
 - 仍待用户/外部输入：GUI-01-R-04b 人工体验与 Linux/macOS；BRIDGE-01-04 真实 MCP 客户端；E2E-01-03 真实 Provider 凭据/费用授权；E2E-01-04 人工结论。
