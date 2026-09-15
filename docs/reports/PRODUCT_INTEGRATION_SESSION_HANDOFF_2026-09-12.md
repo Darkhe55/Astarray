@@ -86,5 +86,8 @@
 - SUM-01 四检查点（01~04a/b）就此收口。
 - **SUM-02-01**（token 计量适配端口与来源 schema）：`packages/core/src/measurement/token-measurement.ts` + ADR-0035 + `docs/reports/SUM02_01_TOKEN_MEASUREMENT.md`，提交 `f620463`。
   - 门禁：`npm run check` exit 0（194 文件/1601 用例）；`test:coverage` exit 0（93.38/85.99/92.29/93.40；measurement 目录 100/94.11/100/100）；`git push` `067ab46..f620463`。
-- 下一轮：**SUM-02-02**（完整请求计量与包装/输出预留，选入完整记录，模型切换重新计量；只分页不裁剪存档摘要）。
+- **SUM-02-02**（完整请求计量与包装/输出预留）：`packages/core/src/measurement/request-budget.ts` + ADR-0035 §9–14 + `docs/reports/SUM02_02_REQUEST_BUDGET.md`，提交 `446a539`。
+  - 规则：有效预算=min(全局配置,模型输入空间)−输出/包装预留；记录级选入、只分页不裁剪、必要约束 blocked、优先级全序、模型切换重新计量；并验证装配不改动已发布清单字节/revision。
+  - 门禁：`npm run check` exit 0（195 文件/1608 用例）；`test:coverage` exit 0（93.41/85.94/92.40/93.44；measurement 100/89.24/100/100）；`git push` `d02b4eb..446a539`。
+- 下一轮：**SUM-02-03**（权威字段本地提取、叙述引用证据、依据原始分块重建摘要；对照原文检查事实支持/关键遗漏/错误归因，不能仅摘要再摘要）。
 - 仍待用户/外部输入：GUI-01-R-04b 人工体验与 Linux/macOS；BRIDGE-01-04 真实 MCP 客户端；E2E-01-03 真实 Provider 凭据/费用授权；E2E-01-04 人工结论。

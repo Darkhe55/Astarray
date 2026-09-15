@@ -34,7 +34,11 @@
 
 ## 4. 门禁与推送
 
-（本轮复跑后回填。）
+| 命令 | 结果 |
+| --- | --- |
+| `npm run check` | **exit 0**：typecheck + lint + build + test；**195 文件 / 1608 用例全通过** |
+| `npm run test:coverage` | **exit 0**：195 文件 / 1608 用例通过；全局 statements **93.41%** / branch **85.94%** / functions **92.40%** / lines **93.44%**；`packages/core/src/measurement` 目录 **100%** / **89.24%** / **100%** / **100%** |
+| `git push` | **exit 0**：`d02b4eb..446a539`（`origin/main` = `446a539`） |
 
 ## 5. 未满足项与后续
 
