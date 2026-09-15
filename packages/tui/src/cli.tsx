@@ -36,6 +36,9 @@ import {
   executeSessionShutdownCommand,
   executeGuiServeCommand,
   executeMcpServeCommand,
+  executeSummaryBuildCommand,
+  executeSummaryListCommand,
+  executeSummaryShowCommand,
   executeStatusCommand,
   executeWorkflowScenarioCommand,
 } from "./cli/commands.js";
@@ -547,6 +550,82 @@ mcpCommand
       stateDirectory: defaultStateDirectory(),
     });
   });
+
+const summaryCommand = program
+  .command("summary")
+  .description("摘要（SUM-01：清单、分页读取与章节展开）");
+summaryCommand
+  .command("list")
+  .description("列出已发布摘要来源（无来源时状态为 no-summary）")
+  .option("--json", "JSON 输出")
+  .action(async (options: { json?: boolean }) => {
+    process.exitCode = await executeSummaryListCommand({
+      stateDirectory: defaultStateDirectory(),
+      isJsonOutput: options.json === true,
+    });
+  });
+summaryCommand
+  .command("build")
+  .description("把 mission 工作存档汇总为摘要并原子发布")
+  .argument("<mission-id>", "mission 标识")
+  .option("--json", "JSON 输出")
+  .action(async (missionId: string, options: { json?: boolean }) => {
+    process.exitCode = await executeSummaryBuildCommand({
+      stateDirectory: defaultStateDirectory(),
+      missionId,
+      isJsonOutput: options.json === true,
+    });
+  });
+summaryCommand
+  .command("show")
+  .description("读取摘要：默认概览，可用 --chunk 展开章节")
+  .argument("<source-identifier>", "摘要来源标识（通常为 mission id）")
+  .option("--level <level>", "详细度：summary|outline|section|detail", "summary")
+  .option(
+    "--page-size <size>",
+    "每页分块数",
+    (value: string) => Number.parseInt(value, 10),
+    10,
+  )
+  .option("--chunk <chunk-identifier>", "展开指定章节")
+  .option(
+    "--max-return-units <units>",
+    "单次返回计量单位上限（只裁剪本次返回）",
+    (value: string) => Number.parseInt(value, 10),
+  )
+  .option("--json", "JSON 输出")
+  .action(
+    async (
+      sourceIdentifier: string,
+      options: {
+        level: string;
+        pageSize: number;
+        chunk?: string;
+        maxReturnUnits?: number;
+        json?: boolean;
+      },
+    ) => {
+      const allowedDetailLevels = ["summary", "outline", "section", "detail"];
+      if (!allowedDetailLevels.includes(options.level)) {
+        process.stderr.write("非法详细度等级：" + options.level + "\n");
+        process.exitCode = 2;
+        return;
+      }
+      process.exitCode = await executeSummaryShowCommand({
+        stateDirectory: defaultStateDirectory(),
+        sourceIdentifier,
+        detailLevel: options.level as
+          | "summary"
+          | "outline"
+          | "section"
+          | "detail",
+        pageSize: options.pageSize,
+        chunkIdentifier: options.chunk,
+        maximumReturnUnitCount: options.maxReturnUnits,
+        isJsonOutput: options.json === true,
+      });
+    },
+  );
 
 program
   .command("gui")

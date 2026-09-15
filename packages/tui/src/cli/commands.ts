@@ -2651,5 +2651,232 @@ export async function executeGuiServeCommand(
   }
 }
 
+/** SUM-01-04b：摘要 CLI（经公共门面读取已发布索引，不接触内部路径）。 */
+export interface SummaryListCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+}
+
+async function createSummaryApplication(stateDirectory: string) {
+  const { AstarrayApplicationFacade } = await import(
+    "../../../core/src/public-sdk.js"
+  );
+  const application = await AstarrayApplicationFacade.create({
+    stateDirectory,
+    mode: "assist",
+    runtime: "mock",
+    statusPollIntervalMilliseconds: 25,
+  });
+  application.createSession({ sessionId: "summary-cli", mode: "assist" });
+  return application;
+}
+
+function readApplicationErrorCode(error: unknown): string | null {
+  if (error === null || typeof error !== "object") {
+    return null;
+  }
+  const candidate = (error as { errorCode?: unknown }).errorCode;
+  return typeof candidate === "string" ? candidate : null;
+}
+
+/** summary list：列出已发布摘要来源（无来源时状态诚实为 no-summary）。 */
+export async function executeSummaryListCommand(
+  options: SummaryListCommandOptions,
+): Promise<number> {
+  const application = await createSummaryApplication(options.stateDirectory);
+  try {
+    const sources = await application.listSummarySources();
+    const status = sources.length === 0 ? "no-summary" : "ok";
+    if (options.isJsonOutput) {
+      printJson({ status, sources });
+    } else if (sources.length === 0) {
+      process.stdout.write("no-summary\n");
+    } else {
+      process.stdout.write(
+        sources
+          .map(
+            (source) =>
+              source.sourceIdentifier +
+              " r" +
+              String(source.manifestRevision) +
+              " chunks=" +
+              String(source.chunkCount) +
+              " coverage=" +
+              String(source.coveredThroughSourceRevision) +
+              " pending=" +
+              String(source.pendingSourceRevisionCount),
+          )
+          .join("\n") + "\n",
+      );
+    }
+    return sources.length === 0 ? EXIT_CODES.FAILURE : EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr((error as Error).message);
+    return EXIT_CODES.FAILURE;
+  } finally {
+    await application.shutdown();
+  }
+}
+
+export interface SummaryBuildCommandOptions {
+  stateDirectory: string;
+  missionId: string;
+  isJsonOutput: boolean;
+}
+
+/** summary build：把真实 mission 工作存档汇总为摘要并原子发布。 */
+export async function executeSummaryBuildCommand(
+  options: SummaryBuildCommandOptions,
+): Promise<number> {
+  const application = await createSummaryApplication(options.stateDirectory);
+  try {
+    const result = await application.summarizeArchivedMission({
+      missionId: options.missionId,
+    });
+    if (result.entryCount === 0) {
+      // 诚实状态：没有可摘要记录时不写空摘要冒充成功。
+      if (options.isJsonOutput) {
+        printJson({ status: "no-history", missionId: options.missionId });
+      } else {
+        process.stdout.write("no-history\n");
+      }
+      return EXIT_CODES.FAILURE;
+    }
+    if (options.isJsonOutput) {
+      printJson({
+        status: "ok",
+        sourceIdentifier: result.sourceIdentifier,
+        manifestRevision: result.manifestRevision,
+        chunkCount: result.chunkCount,
+        coveredThroughSourceRevision: result.coveredThroughSourceRevision,
+        entryCount: result.entryCount,
+        generatorVersion: result.generatorVersion,
+      });
+    } else {
+      process.stdout.write(
+        "summary=" +
+          result.sourceIdentifier +
+          " r" +
+          String(result.manifestRevision) +
+          " entries=" +
+          String(result.entryCount) +
+          " chunks=" +
+          String(result.chunkCount) +
+          " generator=" +
+          result.generatorVersion +
+          "\n",
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr((error as Error).message);
+    return EXIT_CODES.FAILURE;
+  } finally {
+    await application.shutdown();
+  }
+}
+
+export interface SummaryShowCommandOptions {
+  stateDirectory: string;
+  sourceIdentifier: string;
+  detailLevel: "summary" | "outline" | "section" | "detail";
+  pageSize: number;
+  chunkIdentifier: string | undefined;
+  maximumReturnUnitCount: number | undefined;
+  isJsonOutput: boolean;
+}
+
+/** summary show：默认摘要/分页读取/章节展开（含资源观测与诚实状态）。 */
+export async function executeSummaryShowCommand(
+  options: SummaryShowCommandOptions,
+): Promise<number> {
+  const application = await createSummaryApplication(options.stateDirectory);
+  try {
+    if (options.chunkIdentifier !== undefined) {
+      const section = await application.expandSummarySectionView({
+        sourceIdentifier: options.sourceIdentifier,
+        chunkIdentifier: options.chunkIdentifier,
+      });
+      if (options.isJsonOutput) {
+        printJson({ status: "ok", section });
+      } else {
+        process.stdout.write(
+          "chunk " +
+            section.chunkIdentifier +
+            " [" +
+            String(section.sourceRevisionFrom) +
+            "-" +
+            String(section.sourceRevisionTo) +
+            "] " +
+            section.excerpt +
+            "\n",
+        );
+      }
+      return EXIT_CODES.SUCCESS;
+    }
+    const view = await application.readSummaryView({
+      sourceIdentifier: options.sourceIdentifier,
+      detailLevel: options.detailLevel,
+      pageSize: options.pageSize,
+      ...(options.maximumReturnUnitCount !== undefined
+        ? { maximumReturnUnitCount: options.maximumReturnUnitCount }
+        : {}),
+    });
+    if (options.isJsonOutput) {
+      printJson({ status: "ok", view });
+    } else {
+      process.stdout.write(
+        "source=" +
+          view.sourceIdentifier +
+          " level=" +
+          view.detailLevel +
+          " r" +
+          String(view.manifestRevision) +
+          " coverage=" +
+          String(view.coverage.coveredThroughSourceRevision) +
+          " chunks=" +
+          String(view.coverage.chunkCount) +
+          " returned=" +
+          String(view.returnedUnitCount) +
+          (view.isReturnBounded ? " (bounded)" : "") +
+          " manifestBytes=" +
+          String(view.resourceMetrics.manifestFileBytes) +
+          " sourceAccess=" +
+          String(view.resourceMetrics.sourceAccessCount) +
+          "\n",
+      );
+      for (const chunk of view.chunks) {
+        process.stdout.write(
+          "  " +
+            chunk.chunkIdentifier +
+            " [" +
+            chunk.themeIdentifier +
+            "] " +
+            chunk.excerpt +
+            "\n",
+        );
+      }
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    const errorCode = readApplicationErrorCode(error);
+    if (errorCode === "summary-not-found") {
+      if (options.isJsonOutput) {
+        printJson({
+          status: "summary-not-found",
+          sourceIdentifier: options.sourceIdentifier,
+        });
+      } else {
+        process.stdout.write("summary-not-found\n");
+      }
+      return EXIT_CODES.FAILURE;
+    }
+    logToStderr((error as Error).message);
+    return EXIT_CODES.FAILURE;
+  } finally {
+    await application.shutdown();
+  }
+}
+
 
 

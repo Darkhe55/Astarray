@@ -220,6 +220,8 @@ export interface PublicSummarySectionView {
   kind: "section";
   sourceIdentifier: string;
   chunkIdentifier: string;
+  sourceRevisionFrom: number;
+  sourceRevisionTo: number;
   manifestRevision: number;
   excerpt: string;
   isExcerptBounded: boolean;
@@ -1019,6 +1021,8 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       kind: "section",
       sourceIdentifier: input.sourceIdentifier,
       chunkIdentifier: chunk.chunkIdentifier,
+      sourceRevisionFrom: chunk.sourceRevisionFrom,
+      sourceRevisionTo: chunk.sourceRevisionTo,
       manifestRevision: manifest.manifestRevision,
       excerpt: chunk.summaryText.slice(0, maximumExcerptCharacters),
       isExcerptBounded: chunk.summaryText.length > maximumExcerptCharacters,
