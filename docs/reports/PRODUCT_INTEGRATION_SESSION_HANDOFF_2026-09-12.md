@@ -83,5 +83,8 @@
 - **SUM-01-04b**（摘要 CLI 接线与安装包消费）：`astarray summary list|build|show` + `scripts/verify-summary-package.mjs`（安装包公共 SDK 消费 2400 条大历史摘要、12 页分页、章节展开与资源观测）+ `docs/reports/SUM01_04B_PACKAGE_CONSUMPTION.md`，提交 `ca15e30`、`7315169`。
   - 门禁：`npm run check` exit 0（193 文件/1595 用例）；`test:coverage` exit 0（93.32/85.88/92.25/93.35；summarization 91.51/80.61/95.95/91.38）；`npm pack` sha256 `8ff87702…`；`verify-package` 209 文件 exit 0；`smoke-install` exit 0；`verify-summary-package` 8/8 检查通过。
   - 已知波动：`npm pack` 的 prepack 会重跑全量 check，本检查点两次命中既有 `e2e01-vertical-rework` 间歇失败；用有界重试（至多 2 次）通过，未跳过 prepack/测试、未放宽断言。
-- SUM-01 四检查点（01~04a/b）就此收口；下一轮按 steering 顺序进入 **SUM-02-01**（计量适配端口与来源 schema）。
+- SUM-01 四检查点（01~04a/b）就此收口。
+- **SUM-02-01**（token 计量适配端口与来源 schema）：`packages/core/src/measurement/token-measurement.ts` + ADR-0035 + `docs/reports/SUM02_01_TOKEN_MEASUREMENT.md`，提交 `f620463`。
+  - 门禁：`npm run check` exit 0（194 文件/1601 用例）；`test:coverage` exit 0（93.38/85.99/92.29/93.40；measurement 目录 100/94.11/100/100）；`git push` `067ab46..f620463`。
+- 下一轮：**SUM-02-02**（完整请求计量与包装/输出预留，选入完整记录，模型切换重新计量；只分页不裁剪存档摘要）。
 - 仍待用户/外部输入：GUI-01-R-04b 人工体验与 Linux/macOS；BRIDGE-01-04 真实 MCP 客户端；E2E-01-03 真实 Provider 凭据/费用授权；E2E-01-04 人工结论。
