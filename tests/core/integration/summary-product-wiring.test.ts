@@ -5,9 +5,12 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AstarrayApplicationFacade } from "../../../packages/core/src/public-sdk.js";
+
+// 并发门禁/覆盖率插桩下真实 mission 链路会超过 5s 默认超时：仅调整超时，断言不变。
+vi.setConfig({ testTimeout: 60_000 });
 
 let stateDirectory: string;
 let application: AstarrayApplicationFacade | null = null;
