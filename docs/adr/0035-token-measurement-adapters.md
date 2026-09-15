@@ -47,3 +47,22 @@ SUM-02 要求"跨模型预算与摘要事实可靠性"：持久化保存完整�
 - docs/tasks/SESSION_SUMMARY_AND_STEERING_TASK_CARDS.md（SUM-02 共同规则）
 - ADR-0029（读预算）、ADR-0034（摘要清单/详细度/资源观测）、ADR-0019（安装门禁）
 - 实现与测试：`packages/core/src/measurement/token-measurement.ts`、`tests/core/unit/token-measurement.test.ts`
+## 补充（SUM-02-02 冻结：完整请求计量与包装/输出预留）
+
+9. **有效预算**：`effective = min(configuredGlobalContextTokenCount, modelInputSpaceTokenCount) - reservedOutputTokenCount - reservedPackagingTokenCount`；
+   全局配置沿用可调的 4096 默认（GlobalContextBudgetStore），预留不足时返回 `blocked`（`budget-exhausted-by-reservations`），不产生"空装配"。
+10. **记录级选入**：选入单位是**完整记录**（稳定 `recordIdentifier` + 完整正文），装配过程**不读改写、不截断**记录；
+    只更新/复用 `measurement`，正文原样保留。
+11. **只分页不裁剪**：放不下的记录进入 `pagedRecordIdentifiers`（按 `pageSize` 分页，完整保留）；
+    选入 ∪ 分页必须无重无漏地覆盖全部记录；`status = requires-pagination`。
+12. **必要约束**：`isMandatory` 记录必须整体放下；放不下时整体 `blocked`（`mandatory-context-exceeds-budget`），
+    由调用方拆分任务，绝不静默丢弃或降级。
+13. **稳定选择顺序**：先按 `priorityTier` 升序、同级按 `recordIdentifier` 升序（全序），不依赖 Map/哈希迭代顺序。
+14. **模型切换重新计量**：`remeasureRecordsForTarget` 以 `providerIdentifier|modelIdentifier|tokenizer@version|serializationVersion`
+    为目标键；同目标且版本一致才复用既有计量，否则调用计量服务重新计算（未知 tokenizer 回落保守估算）。
+
+## 非目标（SUM-02-02 范围外）
+
+- 不实现 Provider 请求发送与 usage 回传捕获（SUM-02-04）。
+- 不做内容缓存与计量缓存的分离策略（SUM-02-04）。
+- 不修改上下文装配器本身的选入策略（本模块提供可被装配器调用的纯函数）。
