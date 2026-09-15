@@ -1,0 +1,2 @@
+{"sampleIdentifier":"s1","claimIdentifier":"claim-1","label":"supported","labelSource":"human","labeledByUserId":"user-1","labeledAtIso":"2026-09-15T00:00:00.000Z"}
+{"sampleIdentifier":"s2","claimIdentifier":"claim-2","label":"unsupported","labelSource":"human","labeledByUserId":"user-1","labeledAtIso":"2026-09-15T00:00:00.000Z"}

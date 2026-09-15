@@ -33,6 +33,60 @@ import { measureSummaryOperation } from "./summarization/summary-resource-metric
 import { advanceSummaryGeneration } from "./summarization/summary-generation-service.js";
 import { SummaryIndexStore } from "./summarization/summary-index-store.js";
 
+// ─── SUM-02：计量、请求预算、事实核验、缓存分离与质量评估的公开入口 ───
+export {
+  CONSERVATIVE_ESTIMATOR_VERSION,
+  PROMPT_SERIALIZATION_VERSION,
+  TOKEN_MEASUREMENT_SCHEMA_VERSION,
+  TokenMeasurementError,
+  TokenMeasurementService,
+  estimateTokensConservatively,
+  isMeasurementReusableFor,
+  type TokenMeasurement,
+  type TokenMeasurementSourceKind,
+} from "./measurement/token-measurement.js";
+export {
+  assembleRequestBudget,
+  buildMeasurementTargetKey,
+  isMeasurementReusableForTarget,
+  remeasureRecordsForTarget,
+  type RequestBudgetAssemblyResult,
+  type RequestBudgetRecord,
+  type RequestMeasurementTarget,
+} from "./measurement/request-budget.js";
+export {
+  SummaryFactVerificationError,
+  assertVerifiableOriginalSources,
+  extractAuthoritativeClaims,
+  rebuildNarrativeFromClaims,
+  verifyNarrativeAgainstClaims,
+  type AuthoritativeClaim,
+  type AuthoritativeRecord,
+  type NarrativeVerificationReport,
+} from "./measurement/summary-fact-verification.js";
+export {
+  MeasurementCache,
+  buildMeasurementCacheKey,
+  computeContentHash,
+  computeMeasurementCacheMetrics,
+  type MeasurementCacheMetrics,
+  type MeasurementCacheSnapshot,
+} from "./measurement/measurement-cache.js";
+export {
+  QualityEvaluationError,
+  evaluateSummaryQuality,
+  type QualityEvaluationMetrics,
+  type QualityLabeledSample,
+} from "./measurement/quality-evaluation.js";
+export {
+  attachProviderUsageToMeasurement,
+  createJsonlProviderUsageCapture,
+  describeOfflineCaptureStatus,
+  isCapturedUsageReusableForRequest,
+  type CapturedProviderUsage,
+  type ProviderUsageCapturePort,
+} from "./measurement/provider-usage-capture.js";
+
 /** SDK 版本（与 package.json 同步语义版本）。 */
 export const ASTARRAY_SDK_VERSION = "0.1.0";
 
