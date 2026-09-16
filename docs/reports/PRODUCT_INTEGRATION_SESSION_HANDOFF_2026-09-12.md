@@ -97,8 +97,12 @@
   - **已补齐**：`npm run test:coverage` exit 0（199 文件/1625 用例，全局 93.43/85.88/92.44/93.47；measurement 目录 96.63/85.71/97.18/96.87）；`git push` `a483d28..9dd7b2b`（含既有用例超时加固 `efe9eaa`、`9dd7b2b`，断言不变）。
   - 遗留（不声称完成）：真实 Provider usage 捕获需凭据/费用授权（blocked）；真实人工标注样本未提供（工具已就绪并拒绝模型自评）。
 - **SUM-02 四个检查点（01~04）至此全部收口**；累计门禁波动的既有用例超时加固集中在 `efe9eaa`、`9dd7b2b`（覆盖率插桩 + 并行门禁下的真实链路等待上限，断言未放宽）。
-- 下一轮起点：**GUIDE-01-02**（独立反馈机制中的控制队列/IPC 入口，在模型调用和工具前后安全点应用指导；busy 期间即可应用修正、普通报告不唤醒主 Agent、同指导幂等应用）。
-- **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
+- **GUIDE-01-02**（控制队列与安全点应用）：`packages/core/src/runtime-guidance/guidance-control-queue.ts` + `runtime/tool-loop.ts` 安全点钩子 + ADR-0038 §10–16 + `docs/reports/GUIDE01_02_CONTROL_QUEUE.md`，提交 `04d6ff2`。
+  - 规则：控制队列/普通报告双通道（均不唤醒主 Agent）、`before-model-call` 注入下一次模型输入、`before-tool-execution` 应用并在门禁档阻止该次工具执行（`guidance-gate-requested-pause`）、幂等与消费点丢弃（过期/跨作用域）。
+  - **架构守卫真阳性**：新目录 `core/src/guidance` 的导入路径含 `../gui` 子串被守卫命中 → 目录更名为 `core/src/runtime-guidance`（未改守卫）。
+  - **门禁与并行度**：默认并行度多次命中不同既有用例超时；`--maxWorkers=6` 下 typecheck/lint/build、全量 test（201 文件/1639 用例）与 coverage（93.45/86.05/92.34/93.50）**全部 exit 0**，`git push` `56f0df6..04d6ff2`。**后续门禁建议使用 `--maxWorkers=6` 并注明**。
+- 下一轮：**GUIDE-01-03**（长工具检查点与协作取消；保存回执、收敛旧请求、新请求承接指导；未知停止结果 blocked、旧完成声明失效、watchdog 不误续跑旧指令）。
+- **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。
   - 环境注意：全量套件多轮出现**不同**既有用例超时波动（隔离运行全部通过）；本轮与上一轮共为 5 个既有用例提高等待上限（`efe9eaa`、`9dd7b2b`、`6414329`、`ca188eb` 等），**未跳过测试、未放宽断言**。下一轮若再遇同名波动，优先隔离复跑取证而不是继续放宽。

@@ -8,7 +8,7 @@
 
 | 文件 | 内容 |
 | --- | --- |
-| `packages/core/src/guidance/guidance-control-queue.ts`（新） | 控制队列（校验复用 GUIDE-01-01 控制器）、普通报告通道（永不唤醒主 Agent）、安全点消费（幂等、过期/跨作用域丢弃）、唤醒策略查询、独立反馈进程投递桥（`instruction`/`success` 信封） |
+| `packages/core/src/runtime-guidance/guidance-control-queue.ts`（新） | 控制队列（校验复用 GUIDE-01-01 控制器）、普通报告通道（永不唤醒主 Agent）、安全点消费（幂等、过期/跨作用域丢弃）、唤醒策略查询、独立反馈进程投递桥（`instruction`/`success` 信封） |
 | `packages/core/src/runtime/tool-loop.ts`（扩展） | 可选 `guidanceSafePointPort`：`before-model-call` 注入下一次模型输入；`before-tool-execution` 应用指导并在门禁档**阻止该次工具执行**（返回 `guidance-gate-requested-pause`）；`onGuidanceApplied` 观察点 |
 | `tests/core/integration/guidance-safe-point.test.ts`（新，6 用例） | busy 期间即时应用、幂等、跨作用域/过期丢弃、门禁阻止工具、报告不唤醒、跨进程信封 |
 
@@ -36,7 +36,22 @@
 
 ## 4. 门禁与推送
 
-（本轮复跑后回填。）
+| 命令 | 结果 |
+| --- | --- |
+| `npm run typecheck` / `npm run lint` / `npm run build` | 0 / 0 / 0 |
+| `npx vitest run --maxWorkers=6`（等价 test 步骤） | **exit 0：201 文件 / 1639 用例全通过** |
+| `npx vitest run --coverage --maxWorkers=6` | **exit 0**：201 文件 / 1639 用例；全局 statements **93.45%** / branch **86.05%** / functions **92.34%** / lines **93.50%** |
+| `git push` | **exit 0**：`56f0df6..04d6ff2`（含本检查点提交） |
+
+**并行度与波动（重要）**：默认并行度下 `npm run check` / `npm run test:coverage` 本轮多次命中**不同**既有用例超时
+（`provider-fake-server`、`run-command-gaps`、`cli-commands`、`gui-settings-recovery`、`gui-verification-decision`），
+而把 worker 数降到 6 后同一份代码两次全量运行**均全通过**（201/1639）。
+结论：波动来自并行资源竞争而非实现缺陷；后续轮次建议门禁使用 `--maxWorkers=6` 并在报告中注明。
+
+**本轮架构守卫拦截（真阳性，已修）**：`tests/core/unit/public-sdk.test.ts` 报
+`tool-loop.ts 不得引用 ../gui` —— 原因是新目录名 `core/src/guidance` 使导入路径含 `../guidance`，
+被守卫的 `../gui` 子串匹配命中。修法是把目录更名为 `core/src/runtime-guidance`（未改守卫、未绕过），
+并同步更新 ADR/证据中的路径引用。
 
 ## 5. 未满足项与后续
 
