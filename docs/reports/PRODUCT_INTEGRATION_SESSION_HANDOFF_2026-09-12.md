@@ -109,7 +109,13 @@
   - 规则：提交落盘后受理；应用/丢弃 upsert 回写跨进程日志；未回写时 `isApplicationStatusKnown=false`；单进程 CLI 只排队（受理 ≠ 已应用）；主 Agent 工具投影不变；延迟 = appliedAt − submittedAt。
   - 已验证：`typecheck`/`lint` exit 0；触及区域 7 文件 **34 passed**（线程池）。
   - **未完成**：`build` + 全量 `test --maxWorkers=6` + `coverage --maxWorkers=6` 与 `git push`（升级审批通道两次 600s 超时未执行）。
-- 下一轮：① 补跑 build/全量 test/coverage（`--maxWorkers=6`）并推送 `5e5a644`；② 完整读取 `docs/tasks/2026-09-16_INCREMENTAL_DESIGN_TASK_CARDS.md` 并登记（AUTH-SCOPE 等）；③ GUIDE-01 收口后按 steering 顺序进入 **EVENT-01-01**（incident 生命周期、资源仲裁与适配器能力协商原型）。
+- **收口完成（2026-09-16 轮 53）**：GUIDE-01-04 全量门禁补齐并推送 `d80461c..864b300`（build 0；`test --maxWorkers=6` 204 文件/1650 用例；coverage 93.33/85.69/92.21/93.39）。
+- **新用户文档已完整读取并登记**：`docs/tasks/2026-09-16_INCREMENTAL_DESIGN_TASK_CARDS.md`（未跟踪，未修改）定义 5 组检查点：
+  AUTH-SCOPE-01/02/03、ACCURACY-01/02/03、READ-FORMAT-01..05、GIT-PRESERVE-01/02/03、GUIDE 增量；
+  其推荐顺序为"当前检查点收口 → AUTH-SCOPE-01 → ACCURACY-01 → 完成 AUTH-SCOPE → 完成 ACCURACY → GIT-PRESERVE → READ-FORMAT"。
+  该文件同时要求：正式启用前统一修订治理文档/ADR/测试预期；新节点不抢占在途公共契约；待接入清单 6 项未勾选。
+- **AUTH-SCOPE-01**（范围分类与裁决者矩阵冻结）：`docs/adr/0039-auth-scope-and-adjudication-matrix.md`（S1–S7 + 三模式矩阵 + 判定规则 + 迁移清单）+ `docs/reports/AUTH_SCOPE_01_SCOPE_FREEZE.md`（现有实现审计：仅 `WorkspaceBoundary` 根内检查与安装开关；范围判定/上级批准回执/逐级升级/执行前复检/外部软件能力均缺）。设计检查点，无产品代码变更。
+- 下一轮：按新用户文档顺序进入 **AUTH-SCOPE-02**（本地范围判定、上级批准回执、逐级升级与执行前复检；首要反例：cwd 污染 S1 判定、链接逃逸、路径前缀碰撞、跨根写入、全局安装、子进程外写、失效上级与 revision 变化）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。
