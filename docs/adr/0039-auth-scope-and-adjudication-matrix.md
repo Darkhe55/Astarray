@@ -54,3 +54,31 @@
 - ADR-0018（敏感内容禁读）、ADR-0019（安装门禁）、ADR-0020/0021（权限组与主 Agent 只读）、
   ADR-0022（默认控制流）、ADR-0025（次级直投与四级委派）、ADR-0028（人类/Agent 并发修改）
 - 用户增量设计：`docs/tasks/2026-09-16_INCREMENTAL_DESIGN_TASK_CARDS.md`（AUTH-SCOPE 段）
+## 补充（AUTH-SCOPE-02 冻结：范围判定、裁决矩阵、批准回执与执行前复检）
+
+9. **范围判定实现**（`packages/core/src/tools/scope-resolution.ts`）：
+   只使用**已登记项目根**与真实路径解析（`realpath`，目标不存在时对最近存在祖先解析后拼回剩余段）。
+   **不使用 cwd、路径字符串前缀或命令自述**；自述范围只记录在 `reasons` 中不参与判定。
+10. **不可结构化解析即未知**：空路径、含控制字符或 shell 展开/通配（`* ? < > | $ \` { } ( ) [ ] ! ~`）的目标一律判为 S4。
+11. **范围结果**：单个已登记根内 → S1（并给出 `projectIdentifier`）；多个根匹配或声明触及多根 → S2；
+    不在任何登记根内 → S3；安装类 → S5；外部软件控制 → S6；远端发布/备份删除 → S7；
+    范围类固定为 `S1..S7` 七态，不做"猜测边界"的中间态。
+12. **裁决者矩阵实现**：`decideScopeAuthorization` 输出 `allow | ask-superior | ask-user | deny` 与
+    `adjudicator`（本地只读策略/上级/认证用户/专用流程）。**deny 优先**；
+    思索模式只读放行、其余拒绝；协同 S1 由上级（可配置自动批准并留回执）、S2/S3/S4/S6 需认证用户；
+    S5 关闭开关即拒绝；S7 保持专用流程；放权默认按配置，但 **S4 必须上级裁决，不得把用户离线当同意**。
+13. **批准回执**：`ScopeApprovalReceipt` 绑定 `scopeClass` + `operationFingerprint`（操作类型/范围/项目/真实目标路径的 SHA-256）
+    + `authorizationRevision` + 有效期 + 批准者（上级 `agentInstanceId` 或认证用户）。
+    `verifyScopeApprovalReceipt` 返回 `valid | scope-mismatch | fingerprint-mismatch | stale-revision | expired`。
+14. **执行前复检**：`recheckBeforeExecution` 重新解析范围（链接/根可能已变化）并校验回执；
+    范围变化即 `scope-mismatch` 失效，必须先重新授权。
+15. **升级与回派**：`resolveEscalationTarget` —— S1 沿直属上级（四级→三级、三级→次级），
+    其余升至有权处理的次级；`isValidEscalationPath` 要求逐级向上、无重复层级、末级为次级、深度 ≤3。
+16. **未接线（AUTH-SCOPE-03）**：本模块尚未接入工具执行前门禁、设置界面与公共入口；
+    `WorkspaceBoundary` 当前仍以 `process.cwd()` 为根，接线时必须替换为已登记项目根。
+
+## 非目标（AUTH-SCOPE-02 范围外）
+
+- 不实现通用 shell 的静态副作用预测；不可解析即 S4。
+- 不改动既有安装门禁存储格式（只消费其开关状态）。
+- 不修改治理文档与既有测试预期（AUTH-SCOPE-03 及之后的统一修订）。
