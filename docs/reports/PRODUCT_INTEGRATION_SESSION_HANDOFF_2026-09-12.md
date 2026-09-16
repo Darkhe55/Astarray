@@ -97,5 +97,9 @@
   - **已补齐**：`npm run test:coverage` exit 0（199 文件/1625 用例，全局 93.43/85.88/92.44/93.47；measurement 目录 96.63/85.71/97.18/96.87）；`git push` `a483d28..9dd7b2b`（含既有用例超时加固 `efe9eaa`、`9dd7b2b`，断言不变）。
   - 遗留（不声称完成）：真实 Provider usage 捕获需凭据/费用授权（blocked）；真实人工标注样本未提供（工具已就绪并拒绝模型自评）。
 - **SUM-02 四个检查点（01~04）至此全部收口**；累计门禁波动的既有用例超时加固集中在 `efe9eaa`、`9dd7b2b`（覆盖率插桩 + 并行门禁下的真实链路等待上限，断言未放宽）。
-- 下一轮：按 steering 顺序进入 **GUIDE-01-01**（事件来源/资源/任务作用域、sequence/有效期、指导 revision 与工具取消能力契约）。
+- 下一轮起点：**GUIDE-01-02**（独立反馈机制中的控制队列/IPC 入口，在模型调用和工具前后安全点应用指导；busy 期间即可应用修正、普通报告不唤醒主 Agent、同指导幂等应用）。
+- **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
+  - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
+  - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。
+  - 环境注意：全量套件多轮出现**不同**既有用例超时波动（隔离运行全部通过）；本轮与上一轮共为 5 个既有用例提高等待上限（`efe9eaa`、`9dd7b2b`、`6414329`、`ca188eb` 等），**未跳过测试、未放宽断言**。下一轮若再遇同名波动，优先隔离复跑取证而不是继续放宽。
 - 仍待用户/外部输入：GUI-01-R-04b 人工体验与 Linux/macOS；BRIDGE-01-04 真实 MCP 客户端；E2E-01-03 真实 Provider 凭据/费用授权；E2E-01-04 人工结论。

@@ -35,7 +35,18 @@
 
 ## 4. 门禁与推送
 
-（本轮复跑后回填。）
+| 命令 | 结果 |
+| --- | --- |
+| `npm run check` | **exit 0**（提交 `6414329`）：typecheck + lint + build + test；**200 文件 / 1633 用例全通过** |
+| `npm run test:coverage` | **exit 0**（同批 200 文件 / 1633 用例）：全局 statements **93.45%** / branch **86.00%** / functions **92.42%** / lines **93.48%** |
+| `git push` | **exit 0**：`553cff6..6414329`（含本检查点提交） |
+
+**本轮门禁波动与处理（如实记录）**：全量套件在当前环境多次出现**不同**既有用例的超时波动
+（`cli-commands`、`provider-fake-server`、`headless-cli`、`provider-tool-loop`、`gui-verification-decision`）；
+隔离运行时这些用例全部通过（`npx vitest run cli-commands provider-fake-server` → 28/28）。
+处理方式是**只提高既有用例的等待上限**（`6414329` headless-cli 60s→180s、`ca188eb` GUI 真实 mission 30s→90s），
+**未跳过任何测试、未放宽任何断言**；生产代码自覆盖率通过的那次运行起未变（仅测试超时常量变化）。
+`check` 与 `coverage` 各自已在同一生产代码上取得 exit 0。
 
 ## 5. 未满足项与后续
 
