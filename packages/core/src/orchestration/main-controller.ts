@@ -31,6 +31,7 @@ import type { MissionManager } from "./mission-manager.js";
 import type { MissionLeaseStore } from "../infra/mission-lease-store.js";
 import type { GitIntegrationOrchestrationOptions } from "./mission-orchestrator.js";
 import type { ContextPromptProvider } from "./context-prompt-assembler.js";
+import type { GuidanceControlQueue } from "../runtime-guidance/guidance-control-queue.js";
 import type { ContextNodeLifecyclePort } from "./worker-agent.js";
 import type { PermissionProfileStore } from "../tools/permission-profile-store.js";
 import type { PermissionProfileReference } from "../tools/permission-profile-store.js";
@@ -76,6 +77,8 @@ export interface MainControllerOptions {
   requireCompletionControlEvent?: boolean;
   /** T09A-R1-01：上下文提示词装配提供者。 */
   contextPromptProvider?: ContextPromptProvider;
+  /** GUIDE-01-04：运行中指导控制队列（主 Agent 只读不变；指导由安全点消费）。 */
+  guidanceControlQueue?: GuidanceControlQueue;
   /** T09A-R1-03：任务完成后的上下文节点收口。 */
   contextNodeLifecycle?: ContextNodeLifecyclePort | null;
   /** 次级/主 Agent 的 LLM 运行时工厂。 */
@@ -633,6 +636,7 @@ export class MainController {
       gitIntegration: this.options.gitIntegration ?? null,
       requireCompletionControlEvent: this.options.requireCompletionControlEvent ?? false,
       contextPromptProvider: this.options.contextPromptProvider,
+      guidanceControlQueue: this.options.guidanceControlQueue,
       contextNodeLifecycle: this.options.contextNodeLifecycle ?? null,
       contextLifecycleModeKey: "assist",
       workerFactories: {
@@ -682,6 +686,7 @@ export class MainController {
       gitIntegration: this.options.gitIntegration ?? null,
       requireCompletionControlEvent: this.options.requireCompletionControlEvent ?? false,
       contextPromptProvider: this.options.contextPromptProvider,
+      guidanceControlQueue: this.options.guidanceControlQueue,
       contextNodeLifecycle: this.options.contextNodeLifecycle ?? null,
       contextLifecycleModeKey: "devolve",
       workerFactories: {

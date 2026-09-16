@@ -35,6 +35,8 @@ import {
   executeSessionRevokeElevationCommand,
   executeSessionShutdownCommand,
   executeGuiServeCommand,
+  executeGuideStatusCommand,
+  executeGuideSubmitCommand,
   executeMcpServeCommand,
   executeSummaryBuildCommand,
   executeSummaryListCommand,
@@ -548,6 +550,62 @@ mcpCommand
   .action(async () => {
     process.exitCode = await executeMcpServeCommand({
       stateDirectory: defaultStateDirectory(),
+    });
+  });
+
+const guideCommand = program
+  .command("guide")
+  .description("运行中指导（GUIDE-01：提交并在安全点应用）");
+guideCommand
+  .command("submit")
+  .description("提交运行中指导（受理不等于已应用）")
+  .argument("<instruction>", "指导文本")
+  .requiredOption("--mission <mission-id>", "mission 标识")
+  .requiredOption("--task <task-id>", "task 标识")
+  .option(
+    "--tier <tier>",
+    "行为档：record-only|safe-point-guidance|gate-and-request-pause",
+    "safe-point-guidance",
+  )
+  .option("--json", "JSON 输出")
+  .action(
+    async (
+      instruction: string,
+      options: { mission: string; task: string; tier: string; json?: boolean },
+    ) => {
+      const allowedTiers = [
+        "record-only",
+        "safe-point-guidance",
+        "gate-and-request-pause",
+      ];
+      if (!allowedTiers.includes(options.tier)) {
+        process.stderr.write("非法行为档：" + options.tier + "\n");
+        process.exitCode = 2;
+        return;
+      }
+      process.exitCode = await executeGuideSubmitCommand({
+        stateDirectory: defaultStateDirectory(),
+        missionIdentifier: options.mission,
+        taskIdentifier: options.task,
+        instructionText: instruction,
+        behaviorTier: options.tier as
+          | "record-only"
+          | "safe-point-guidance"
+          | "gate-and-request-pause",
+        isJsonOutput: options.json === true,
+      });
+    },
+  );
+guideCommand
+  .command("status")
+  .description("查看指导接收/应用状态与安全点应用延迟")
+  .option("--guidance <guidance-id>", "只查看某条指导")
+  .option("--json", "JSON 输出")
+  .action(async (options: { guidance?: string; json?: boolean }) => {
+    process.exitCode = await executeGuideStatusCommand({
+      stateDirectory: defaultStateDirectory(),
+      guidanceIdentifier: options.guidance,
+      isJsonOutput: options.json === true,
     });
   });
 

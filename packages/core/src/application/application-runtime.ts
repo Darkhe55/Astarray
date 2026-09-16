@@ -78,6 +78,10 @@ import {
 } from "../orchestration/human-verification-controller.js";
 import { ContextNodeLifecycleController } from "../orchestration/context-node-lifecycle.js";
 import { ContextRuntimeEventStore } from "../orchestration/context-runtime-event-store.js";
+import { GuidanceControlQueue } from "../runtime-guidance/guidance-control-queue.js";
+import { GuidanceSourceRegistry } from "../runtime-guidance/runtime-guidance.js";
+import { LongToolCheckpointController } from "../runtime-guidance/long-tool-checkpoint.js";
+import { GuidanceSubmissionJournal } from "../runtime-guidance/guidance-submission-journal.js";
 import { LocalContextGraphStore } from "../orchestration/local-context-graph-store.js";
 import {
   createContextPromptProvider,
@@ -111,6 +115,14 @@ export interface ApplicationRuntime {
   globalContextBudgetStore: GlobalContextBudgetStore;
   /** T09A-R1-04：真实装配事件（指标复算与"下一请求生效"证据）。 */
   contextRuntimeEventStore: ContextRuntimeEventStore;
+  /** GUIDE-01-04：运行中指导控制队列（公共入口/CLI 提交与查看状态）。 */
+  guidanceControlQueue: GuidanceControlQueue;
+  /** GUIDE-01-04：指导提交/应用状态日志（跨进程可读）。 */
+  guidanceSubmissionJournal: GuidanceSubmissionJournal;
+  /** 认证用户标识（指导来源必须绑定到具体人类个体）。 */
+  authenticatedUserId: string;
+  /** GUIDE-01-03：长工具检查点与协作取消控制器。 */
+  longToolCheckpointController: LongToolCheckpointController;
   /** T09A-R1-03：人工核验（延迟核验任务/签收/否决）。 */
   humanVerificationController: HumanVerificationController;
   /** T09A-R1-03：关闭胶囊存储（裁决时按内容哈希定位所属 mission）。 */
@@ -165,6 +177,7 @@ export async function createApplicationRuntime(
 ): Promise<ApplicationRuntime> {
   const stateDirectory = options.stateDirectory;
   const mainAgentInstanceId = options.mainAgentInstanceId ?? "main-agent";
+  const authenticatedUserId = options.authenticatedUserId ?? "local-user";
   const processInstanceId = `process-${randomUUID()}`;
   const missionLeaseStore = new MissionLeaseStore({ stateDirectory });
   const taskStore = new TaskStore({ baseDirectory: stateDirectory });
@@ -474,6 +487,50 @@ export async function createApplicationRuntime(
       runtimeEventSink: (event) => contextRuntimeEventStore.append(event),
     });
 
+  // GUIDE-01-04：运行中指导控制队列与长工具检查点（来源由本地控制面注册，模型无法注入）。
+  const guidanceSourceRegistry = new GuidanceSourceRegistry();
+  guidanceSourceRegistry.register({
+    sourceKind: "authenticated-user",
+    sourceIdentifier: authenticatedUserId,
+    maximumBehaviorTier: "gate-and-request-pause",
+    registeredAtIso: new Date().toISOString(),
+  });
+  guidanceSourceRegistry.register({
+    sourceKind: "file-task-observation",
+    sourceIdentifier: "local-observation",
+    maximumBehaviorTier: "safe-point-guidance",
+    registeredAtIso: new Date().toISOString(),
+  });
+  const guidanceSubmissionJournal = new GuidanceSubmissionJournal({
+    baseDirectory: stateDirectory,
+  });
+  const guidanceControlQueue = new GuidanceControlQueue({
+    sourceRegistry: guidanceSourceRegistry,
+    // 状态回写为 best-effort：提交由公共入口显式 await 落盘（此处跳过 queued，
+    // 否则会在提交写盘尚未完成时用空文档回写而丢条目）。
+    onStatusChanged: (entry) => {
+      if (entry.status === "queued") {
+        return;
+      }
+      void guidanceSubmissionJournal
+        .upsertEntry({
+          guidanceIdentifier: entry.guidanceIdentifier,
+          guidanceRevision: entry.guidanceRevision,
+          behaviorTier: entry.behaviorTier,
+          missionIdentifier: entry.missionIdentifier,
+          taskIdentifier: entry.taskIdentifier,
+          status: entry.status,
+          submittedAtIso: entry.submittedAtIso,
+          appliedAtIso: entry.appliedAtIso,
+          latencyMilliseconds: entry.latencyMilliseconds,
+          dropReason: entry.dropReason,
+          isApplicationStatusKnown: true,
+        })
+        .catch(() => {});
+    },
+  });
+  const longToolCheckpointController = new LongToolCheckpointController();
+
   const controller = new MainController({
     modeMachine,
     sessionManager,
@@ -553,6 +610,7 @@ export async function createApplicationRuntime(
         .filter((descriptor): descriptor is ToolDescriptor => descriptor !== undefined),
     requireCompletionControlEvent: options.requireCompletionControlEvent ?? false,
     contextPromptProvider,
+    guidanceControlQueue,
     contextNodeLifecycle,
     streamOutput: options.streamOutput,
   });
@@ -608,6 +666,10 @@ export async function createApplicationRuntime(
     readMissionResultSummaries,
     globalContextBudgetStore,
     contextRuntimeEventStore,
+    guidanceControlQueue,
+    longToolCheckpointController,
+    guidanceSubmissionJournal,
+    authenticatedUserId,
     humanVerificationController,
     contextClosureCapsuleStore,
     contextGraphStore,

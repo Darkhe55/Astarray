@@ -2651,6 +2651,133 @@ export async function executeGuiServeCommand(
   }
 }
 
+/** GUIDE-01-04：运行中指导 CLI（经公共门面；受理 ≠ 已应用）。 */
+export interface GuideSubmitCommandOptions {
+  stateDirectory: string;
+  missionIdentifier: string;
+  taskIdentifier: string;
+  instructionText: string;
+  behaviorTier:
+    | "record-only"
+    | "safe-point-guidance"
+    | "gate-and-request-pause";
+  isJsonOutput: boolean;
+}
+
+async function createGuidanceApplication(stateDirectory: string) {
+  const { AstarrayApplicationFacade } = await import(
+    "../../../core/src/public-sdk.js"
+  );
+  const application = await AstarrayApplicationFacade.create({
+    stateDirectory,
+    mode: "assist",
+    runtime: "mock",
+    statusPollIntervalMilliseconds: 25,
+  });
+  application.createSession({ sessionId: "guidance-cli", mode: "assist" });
+  return application;
+}
+
+/** guide submit：提交运行中指导并返回受理/排队状态（单进程调用只会排队）。 */
+export async function executeGuideSubmitCommand(
+  options: GuideSubmitCommandOptions,
+): Promise<number> {
+  if (options.instructionText.trim() === "") {
+    logToStderr("指导文本为空");
+    return EXIT_CODES.USAGE_ERROR;
+  }
+  const application = await createGuidanceApplication(options.stateDirectory);
+  try {
+    const result = await application.submitRuntimeGuidance({
+      missionIdentifier: options.missionIdentifier,
+      taskIdentifier: options.taskIdentifier,
+      instructionText: options.instructionText,
+      behaviorTier: options.behaviorTier,
+    });
+    if (options.isJsonOutput) {
+      printJson({
+        status: result.status,
+        guidanceIdentifier: result.guidanceIdentifier,
+        behaviorTier: result.behaviorTier,
+        reasons: result.reasons,
+        submittedAtIso: result.submittedAtIso,
+        note: "受理不等于已应用：需运行中的任务在安全点消费",
+      });
+    } else {
+      process.stdout.write(
+        "guidance=" +
+          result.guidanceIdentifier +
+          " status=" +
+          result.status +
+          " tier=" +
+          result.behaviorTier +
+          "\n",
+      );
+    }
+    return result.status === "rejected"
+      ? EXIT_CODES.FAILURE
+      : EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr((error as Error).message);
+    return EXIT_CODES.FAILURE;
+  } finally {
+    await application.shutdown();
+  }
+}
+
+export interface GuideStatusCommandOptions {
+  stateDirectory: string;
+  guidanceIdentifier: string | undefined;
+  isJsonOutput: boolean;
+}
+
+/** guide status：查看接收/应用状态与安全点应用延迟。 */
+export async function executeGuideStatusCommand(
+  options: GuideStatusCommandOptions,
+): Promise<number> {
+  const application = await createGuidanceApplication(options.stateDirectory);
+  try {
+    const entries = await application.queryGuidanceStatus(
+      options.guidanceIdentifier === undefined
+        ? {}
+        : { guidanceIdentifier: options.guidanceIdentifier },
+    );
+    if (options.isJsonOutput) {
+      printJson({
+        status: entries.length === 0 ? "no-guidance" : "ok",
+        entries,
+      });
+    } else if (entries.length === 0) {
+      process.stdout.write("no-guidance\n");
+    } else {
+      process.stdout.write(
+        entries
+          .map(
+            (entry) =>
+              entry.guidanceIdentifier +
+              " status=" +
+              entry.status +
+              " submitted=" +
+              entry.submittedAtIso +
+              " applied=" +
+              (entry.appliedAtIso ?? "-") +
+              " latencyMs=" +
+              (entry.latencyMilliseconds === null
+                ? "-"
+                : String(entry.latencyMilliseconds)),
+          )
+          .join("\n") + "\n",
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr((error as Error).message);
+    return EXIT_CODES.FAILURE;
+  } finally {
+    await application.shutdown();
+  }
+}
+
 /** SUM-01-04b：摘要 CLI（经公共门面读取已发布索引，不接触内部路径）。 */
 export interface SummaryListCommandOptions {
   stateDirectory: string;

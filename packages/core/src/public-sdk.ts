@@ -5,6 +5,7 @@
  * 消费者不导入 MainController、TUI bootstrap 或内部存储路径。
  * 会话/任务状态迁移在此冻结；提交/查询/取消委托给同一主控制器。
  */
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -32,6 +33,7 @@ import { buildLocalExtractiveNarrative, buildWorkArchiveSummaryEntries } from ".
 import { measureSummaryOperation } from "./summarization/summary-resource-metrics.js";
 import { advanceSummaryGeneration } from "./summarization/summary-generation-service.js";
 import { SummaryIndexStore } from "./summarization/summary-index-store.js";
+import { buildRuntimeGuidanceEvent } from "./runtime-guidance/runtime-guidance.js";
 
 // ─── SUM-02：计量、请求预算、事实核验、缓存分离与质量评估的公开入口 ───
 export {
@@ -291,6 +293,33 @@ export interface PublicSummaryBuildResult {
   coveredThroughSourceRevision: number;
   entryCount: number;
   generatorVersion: string;
+}
+
+/** GUIDE-01-04：运行中指导提交结果（受理 ≠ 已应用）。 */
+export interface PublicGuidanceSubmissionResult {
+  status: "accepted" | "recorded" | "rejected";
+  guidanceIdentifier: string;
+  guidanceRevision: number;
+  behaviorTier: "record-only" | "safe-point-guidance" | "gate-and-request-pause";
+  reasons: string[];
+  isDuplicateDelivery: boolean;
+  submittedAtIso: string;
+}
+
+/** GUIDE-01-04：指导接收/应用状态（含安全点应用延迟）。 */
+export interface PublicGuidanceStatusEntry {
+  guidanceIdentifier: string;
+  guidanceRevision: number;
+  behaviorTier: PublicGuidanceSubmissionResult["behaviorTier"];
+  missionIdentifier: string;
+  taskIdentifier: string | null;
+  status: "queued" | "applied" | "dropped" | "superseded";
+  submittedAtIso: string;
+  appliedAtIso: string | null;
+  latencyMilliseconds: number | null;
+  dropReason: string | null;
+  /** false 表示只有提交记录、尚无进程回写应用结果（不虚报已应用）。 */
+  isApplicationStatusKnown: boolean;
 }
 
 /** 公开人工裁决结果（签收写入归属 Agent 存档；否决只重开节点不破坏性回滚）。 */
@@ -1091,6 +1120,133 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       })),
       resourceMetrics: { ...metrics },
     };
+  }
+
+  // ─── GUIDE-01-04：运行中指导的公共入口（受理 ≠ 已应用；安全点应用） ───
+
+  private readonly guidanceSequenceBySource = new Map<string, number>();
+
+  /**
+   * 提交运行中指导：经 GUIDE-01-01 契约校验后进入控制队列。
+   * 是否真正改变行为取决于运行中的任务是否在安全点消费（单进程 CLI 调用只会排队）。
+   */
+  async submitRuntimeGuidance(input: {
+    missionIdentifier: string;
+    taskIdentifier: string;
+    instructionText: string;
+    behaviorTier?: PublicGuidanceSubmissionResult["behaviorTier"];
+    expiresAtIso?: string | null;
+    sourceKind?: "authenticated-user" | "file-task-observation";
+  }): Promise<PublicGuidanceSubmissionResult> {
+    this.assertOpen();
+    const instructionText = input.instructionText.trim();
+    if (instructionText === "") {
+      throw new PublicApplicationError(
+        "invalid-arguments",
+        "指导文本为空，拒绝提交",
+      );
+    }
+    const sourceKind = input.sourceKind ?? "authenticated-user";
+    const sourceIdentifier =
+      sourceKind === "authenticated-user"
+        ? this.runtime.authenticatedUserId
+        : "local-observation";
+    const sequenceKey = sourceKind + "|" + sourceIdentifier;
+    const sequence = (this.guidanceSequenceBySource.get(sequenceKey) ?? 0) + 1;
+    this.guidanceSequenceBySource.set(sequenceKey, sequence);
+    const submittedAtIso = new Date().toISOString();
+    const event = buildRuntimeGuidanceEvent({
+      guidanceIdentifier:
+        "guide-" +
+        createHash("sha256")
+          .update(
+            [input.missionIdentifier, input.taskIdentifier, instructionText, String(sequence)].join("|"),
+            "utf8",
+          )
+          .digest("hex")
+          .slice(0, 12),
+      guidanceRevision: 1,
+      sequence,
+      sourceKind,
+      sourceIdentifier,
+      issuedAtIso: submittedAtIso,
+      expiresAtIso: input.expiresAtIso ?? null,
+      behaviorTier: input.behaviorTier ?? "safe-point-guidance",
+      scope: {
+        scopeKind: "task",
+        missionIdentifier: input.missionIdentifier,
+        taskIdentifier: input.taskIdentifier,
+        resourceIdentifier: null,
+      },
+      instructionText,
+    });
+    const result = this.runtime.guidanceControlQueue.enqueueControlGuidance({
+      event,
+      target: {
+        missionIdentifier: input.missionIdentifier,
+        taskIdentifier: input.taskIdentifier,
+        resourceIdentifier: null,
+      },
+      nowIso: submittedAtIso,
+    });
+    if (result.status !== "rejected") {
+      // 提交必须落盘后才算受理：保证另一个进程/CLI 能查到接收状态。
+      await this.runtime.guidanceSubmissionJournal.recordSubmission({
+        guidanceIdentifier: event.guidanceIdentifier,
+        guidanceRevision: event.guidanceRevision,
+        behaviorTier: event.behaviorTier,
+        missionIdentifier: input.missionIdentifier,
+        taskIdentifier: input.taskIdentifier,
+        status: event.behaviorTier === "record-only" ? "applied" : "queued",
+        submittedAtIso,
+        appliedAtIso: event.behaviorTier === "record-only" ? submittedAtIso : null,
+        latencyMilliseconds: event.behaviorTier === "record-only" ? 0 : null,
+        dropReason: null,
+        isApplicationStatusKnown: event.behaviorTier === "record-only",
+      });
+    }
+    return {
+      status: result.status,
+      guidanceIdentifier: event.guidanceIdentifier,
+      guidanceRevision: event.guidanceRevision,
+      behaviorTier: result.behaviorTier,
+      reasons: [...result.reasons],
+      isDuplicateDelivery: result.isDuplicateDelivery,
+      submittedAtIso,
+    };
+  }
+
+  /**
+   * 查看指导接收/应用状态（含安全点应用延迟）。
+   * 内存队列（本进程）优先；其余来自跨进程状态日志，未回写时如实标注未知。
+   */
+  async queryGuidanceStatus(input?: {
+    guidanceIdentifier?: string;
+  }): Promise<PublicGuidanceStatusEntry[]> {
+    this.assertOpen();
+    const keyOf = (entry: {
+      guidanceIdentifier: string;
+      guidanceRevision: number;
+    }): string => entry.guidanceIdentifier + "@" + String(entry.guidanceRevision);
+    const merged = new Map<string, PublicGuidanceStatusEntry>();
+    for (const journalEntry of await this.runtime.guidanceSubmissionJournal.readAll()) {
+      merged.set(keyOf(journalEntry), { ...journalEntry });
+    }
+    for (const memoryEntry of this.runtime.guidanceControlQueue.listGuidanceStatus()) {
+      merged.set(keyOf(memoryEntry), {
+        ...memoryEntry,
+        isApplicationStatusKnown: true,
+      });
+    }
+    const entries = [...merged.values()].sort((left, right) =>
+      left.submittedAtIso.localeCompare(right.submittedAtIso),
+    );
+    if (input?.guidanceIdentifier === undefined) {
+      return entries.map((entry) => ({ ...entry }));
+    }
+    return entries
+      .filter((entry) => entry.guidanceIdentifier === input.guidanceIdentifier)
+      .map((entry) => ({ ...entry }));
   }
 
   private async createRecoveryCenterController(): Promise<RecoveryCenterController> {

@@ -20,6 +20,9 @@ import type { GitWorkerAllocation } from "../core/types.js";
 import type { GitIntegrationReport } from "../core/types.js";
 import type { ToolDescriptor } from "../core/types.js";
 import type { ContextPromptProvider } from "./context-prompt-assembler.js";
+import type { GuidanceControlQueue } from "../runtime-guidance/guidance-control-queue.js";
+import type { GuidanceSafePointPort } from "../runtime/tool-loop.js";
+import type { GuidanceScopeTarget } from "../runtime-guidance/runtime-guidance.js";
 import type { ContextNodeLifecyclePort } from "./worker-agent.js";
 import type { AgentWorkArchiveStore } from "./work-archive-store.js";
 import { DomainError } from "../core/errors.js";
@@ -78,6 +81,8 @@ export interface MissionOrchestratorOptions {
   requireCompletionControlEvent?: boolean;
   /** T09A-R1-01：上下文提示词装配提供者。 */
   contextPromptProvider?: ContextPromptProvider;
+  /** GUIDE-01-04：运行中指导控制队列（每个任务构造独立安全点端口）。 */
+  guidanceControlQueue?: GuidanceControlQueue;
   /** T09A-R1-03：任务完成后的上下文节点收口。 */
   contextNodeLifecycle?: ContextNodeLifecyclePort | null;
   /** T09A-R1-03：当前模式（人工验收策略来源）。 */
@@ -420,6 +425,17 @@ export class MissionOrchestrator {
         this.options.workerFactories.toolDescriptorFactory?.(task) ?? [],
       requireCompletionEvent: this.options.requireCompletionControlEvent ?? false,
       contextPromptProvider: this.options.contextPromptProvider,
+      guidanceSafePointPort:
+        this.options.guidanceControlQueue === undefined
+          ? undefined
+          : buildWorkerGuidanceSafePointPort({
+              queue: this.options.guidanceControlQueue,
+              target: {
+                missionIdentifier: missionId,
+                taskIdentifier: task.id,
+                resourceIdentifier: null,
+              },
+            }),
       contextNodeLifecycle: this.options.contextNodeLifecycle ?? null,
       contextLifecycleModeKey: this.options.contextLifecycleModeKey,
       runtime: this.options.workerFactories.runtimeFactory(agentInstanceId, task),
@@ -704,4 +720,24 @@ export class MissionOrchestrator {
     this.wakeResolve = null;
     resolver?.();
   }
+}
+
+/**
+ * GUIDE-01-04：把控制队列绑定到具体任务，构造 worker 的安全点端口。
+ * 安全点消费发生在模型调用前与工具执行前，busy 期间即可应用。
+ */
+export function buildWorkerGuidanceSafePointPort(input: {
+  queue: GuidanceControlQueue;
+  target: GuidanceScopeTarget;
+  nowIso?: () => string;
+}): GuidanceSafePointPort {
+  const nowIso = input.nowIso ?? (() => new Date().toISOString());
+  return {
+    consumeAtSafePoint: async ({ safePointKind }) =>
+      input.queue.consumeAtSafePoint({
+        safePointKind,
+        target: input.target,
+        nowIso: nowIso(),
+      }).applied,
+  };
 }

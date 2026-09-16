@@ -31,6 +31,23 @@ export interface AppliedGuidance {
   behaviorTier: RuntimeGuidanceEvent["behaviorTier"];
   instructionText: string;
   appliedAtSafePoint: GuidanceSafePointKind;
+  appliedAtIso: string;
+}
+
+export type GuidanceStatusKind = "queued" | "applied" | "dropped" | "superseded";
+
+export interface GuidanceStatusEntry {
+  guidanceIdentifier: string;
+  guidanceRevision: number;
+  behaviorTier: RuntimeGuidanceEvent["behaviorTier"];
+  missionIdentifier: string;
+  taskIdentifier: string | null;
+  status: GuidanceStatusKind;
+  submittedAtIso: string;
+  appliedAtIso: string | null;
+  /** 从提交到安全点应用的延迟（毫秒）；未应用时为 null。 */
+  latencyMilliseconds: number | null;
+  dropReason: DroppedGuidance["reason"] | null;
 }
 
 export interface DroppedGuidance {
@@ -102,10 +119,13 @@ export class GuidanceControlQueue {
   private readonly pending = new Map<string, PendingGuidance>();
   private readonly applied = new Map<string, AppliedGuidance>();
   private readonly reports: PlainReport[] = [];
+  private readonly statusByIdentifier = new Map<string, GuidanceStatusEntry>();
 
   constructor(private readonly options: {
     sourceRegistry: GuidanceSourceRegistry;
     nowIso?: () => string;
+    /** 状态变更回调（GUIDE-01-04：跨进程状态日志回写；best-effort）。 */
+    onStatusChanged?: (entry: GuidanceStatusEntry) => void;
   }) {
     this.controller = new RuntimeGuidanceController(options.sourceRegistry);
   }
@@ -121,11 +141,40 @@ export class GuidanceControlQueue {
     nowIso: string;
   }): GuidanceAcceptanceResult {
     const result = this.controller.acceptGuidance(input);
-    if (result.status !== "rejected" && result.behaviorTier !== "record-only") {
-      this.pending.set(guidanceKey(input.event), {
+    if (result.status === "rejected") {
+      return result;
+    }
+    const statusKey = guidanceKey(input.event);
+    // 更高 revision 取代旧指导：旧条目标记 superseded。
+    if (result.supersededGuidanceIdentifiers.length > 0) {
+      for (const supersededKey of result.supersededGuidanceIdentifiers) {
+        const supersededStatus = this.statusByIdentifier.get(supersededKey);
+        if (supersededStatus !== undefined) {
+          supersededStatus.status = "superseded";
+        }
+      }
+    }
+    this.statusByIdentifier.set(statusKey, {
+      guidanceIdentifier: input.event.guidanceIdentifier,
+      guidanceRevision: input.event.guidanceRevision,
+      behaviorTier: input.event.behaviorTier,
+      missionIdentifier: input.event.scope.missionIdentifier,
+      taskIdentifier: input.event.scope.taskIdentifier,
+      status: result.behaviorTier === "record-only" ? "applied" : "queued",
+      submittedAtIso: input.nowIso,
+      appliedAtIso: result.behaviorTier === "record-only" ? input.nowIso : null,
+      latencyMilliseconds: result.behaviorTier === "record-only" ? 0 : null,
+      dropReason: null,
+    });
+    if (result.behaviorTier !== "record-only") {
+      this.pending.set(statusKey, {
         event: input.event,
         target: input.target,
       });
+    }
+    const createdEntry = this.statusByIdentifier.get(statusKey);
+    if (createdEntry !== undefined) {
+      this.options.onStatusChanged?.({ ...createdEntry });
     }
     return result;
   }
@@ -171,6 +220,7 @@ export class GuidanceControlQueue {
           guidanceRevision: entry.event.guidanceRevision,
           reason: "cross-scope-at-safe-point",
         });
+        this.recordDrop(key, "cross-scope-at-safe-point");
         this.pending.delete(key);
         continue;
       }
@@ -183,6 +233,7 @@ export class GuidanceControlQueue {
           guidanceRevision: entry.event.guidanceRevision,
           reason: "expired-at-safe-point",
         });
+        this.recordDrop(key, "expired-at-safe-point");
         this.pending.delete(key);
         continue;
       }
@@ -192,12 +243,43 @@ export class GuidanceControlQueue {
         behaviorTier: entry.event.behaviorTier,
         instructionText: entry.event.instructionText,
         appliedAtSafePoint: input.safePointKind,
+        appliedAtIso: input.nowIso,
       };
       this.applied.set(key, application);
+      this.recordApplied(key, input.nowIso);
       this.pending.delete(key);
       applied.push(application);
     }
     return { applied, dropped };
+  }
+
+  private recordApplied(statusKey: string, appliedAtIso: string): void {
+    const entry = this.statusByIdentifier.get(statusKey);
+    if (entry === undefined) {
+      return;
+    }
+    entry.status = "applied";
+    entry.appliedAtIso = appliedAtIso;
+    entry.latencyMilliseconds = Math.max(
+      0,
+      Date.parse(appliedAtIso) - Date.parse(entry.submittedAtIso),
+    );
+    this.options.onStatusChanged?.({ ...entry });
+  }
+
+  private recordDrop(statusKey: string, reason: DroppedGuidance["reason"]): void {
+    const entry = this.statusByIdentifier.get(statusKey);
+    if (entry === undefined) {
+      return;
+    }
+    entry.status = "dropped";
+    entry.dropReason = reason;
+    this.options.onStatusChanged?.({ ...entry });
+  }
+
+  /** 通过公共入口/CLI 查看接收与应用状态（含延迟）。 */
+  listGuidanceStatus(): GuidanceStatusEntry[] {
+    return [...this.statusByIdentifier.values()].map((entry) => ({ ...entry }));
   }
 
   listPendingGuidance(): Array<{

@@ -19,6 +19,7 @@ import { CompletionControlParser } from "../core/completion-protocol.js";
 import { DomainError } from "../core/errors.js";
 import type { ContextPromptProvider } from "./context-prompt-assembler.js";
 import { runToolLoop } from "../runtime/tool-loop.js";
+import type { GuidanceSafePointPort } from "../runtime/tool-loop.js";
 import type { ToolFailureCounter } from "./failure-counter.js";
 
 export type WorkerOutcome =
@@ -64,6 +65,8 @@ export interface WorkerAgentOptions {
   requireCompletionEvent?: boolean;
   /** T09A-R1-01：上下文提示词装配（全局相关选择 + 局部活跃前沿）。 */
   contextPromptProvider?: ContextPromptProvider;
+  /** GUIDE-01-04：运行中指导安全点端口（缺省表示该 worker 不接受运行中指导）。 */
+  guidanceSafePointPort?: GuidanceSafePointPort;
   /** T09A-R1-03：任务完成后的上下文节点收口（建立/验证/关闭/胶囊/核验任务）。 */
   contextNodeLifecycle?: ContextNodeLifecyclePort | null;
   /** T09A-R1-03：当前模式（人工验收策略来源）。 */
@@ -176,6 +179,7 @@ export class WorkerAgent {
         toolPort: this.options.toolPort,
         maxLoopIterations: this.options.maxLoopIterations,
         cancellationSignal: this.cancellationController.signal,
+        guidanceSafePointPort: this.options.guidanceSafePointPort,
       },
     );
     for await (const event of events) {

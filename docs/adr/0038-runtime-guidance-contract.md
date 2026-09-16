@@ -98,3 +98,25 @@
 - 真实 Provider 侧的在途取消实现（契约已明确 `providerSupportsInFlightInsertion=false`）。
 - 把检查点回执写入工作存档与界面呈现（GUIDE-01-04）。
 - 紧急事件仲裁与抢占（EVENT-01）。
+## 补充（GUIDE-01-04 冻结：公共入口、跨进程状态与 CLI）
+
+24. **公共入口**：`submitRuntimeGuidance`（异步：提交**落盘后**才算受理）与
+    `queryGuidanceStatus`（本进程队列状态优先，其余来自跨进程状态日志；未回写时
+    `isApplicationStatusKnown = false`，不虚报已应用）。
+25. **跨进程状态日志**：`<状态目录>/guidance/submissions.json`（原子写）。提交由公共入口显式 await 落盘；
+    应用/丢弃由**实际应用的进程** best-effort upsert；日志缺少应用结果时状态保持 `queued`。
+26. **运行时接线**：application-runtime 创建控制队列、长工具检查点控制器与状态日志，
+    并把队列经 MainController → MissionOrchestrator → WorkerAgent 透传到 `runToolLoop` 安全点
+    （每个任务构造绑定该任务作用域的安全点端口）。
+27. **CLI**：`astarray guide submit <instruction> --mission <id> --task <id> [--tier <档>] [--json]` 与
+    `astarray guide status [--guidance <id>] [--json]`。单进程 CLI 调用只会**排队**（受理 ≠ 已应用），
+    延迟为 null，直到有进程在安全点应用并回写日志。
+28. **主 Agent 只读不变**：提交运行中指导不改变主 Agent 的工具投影；指导由次级/执行任务在安全点消费。
+29. **延迟记录**：`latencyMilliseconds = appliedAtIso − submittedAtIso`（应用时计算并回写）。
+30. **未接入（诚实声明）**：真实独立反馈进程的**控制车道 IPC** 尚未接线（当前为同进程安全点 + 跨进程状态日志可见）；
+    Provider 在途插入仍不支持（`providerSupportsInFlightInsertion=false`）。
+
+## 非目标（GUIDE-01-04 范围外）
+
+- 独立反馈进程控制车道的 IPC 生命周期接线（需要改动 feedback-process 协议，属后续增量）。
+- 长任务的延迟 p50/p95 统计与安装包端到端实测（后续增量卡）。
