@@ -380,6 +380,7 @@ describe("GUIDE-01-02 控制队列与安全点", () => {
       behaviorTier: "safe-point-guidance",
       instructionText: "改为只读校验",
       appliedAtSafePoint: "before-model-call",
+      appliedAtIso: NOW,
     });
     await publisher.publishPlainReport({
       reportIdentifier: "report-1",
