@@ -75,3 +75,26 @@
 - 长工具检查点、协作取消与回执收敛（GUIDE-01-03）。
 - 把控制队列接入真实 fork 反馈进程的 IPC 生命周期与 TUI/CLI 呈现（GUIDE-01-04）。
 - 紧急仲裁（EVENT-01）。
+## 补充（GUIDE-01-03 冻结：长工具检查点与协作取消）
+
+17. **长工具检查点**：`beginToolExecution`（登记工具调用、任务、执行世与"是否可在安全点取消"）、
+    `runCheckpoint`（工具运行中消费控制队列，生成回执：检查点序号、已耗时、已应用指导、
+    本检查点交付的取消请求）。
+18. **不假定在途插入**：取消请求初始状态恒为 `requested`；只有随某个检查点交付后才算送达
+    （`deliveredAtCheckpointCount` 从 0 → 1）；控制器**从不**在无回执时宣称已停止。
+19. **回执驱动终态**：只有 `acknowledgeCancellation(stopped|completed)` 才推进状态；
+    观察窗口（`maximumWaitMilliseconds`）内无回执 → `unknown-stop-outcome`，调用方**必须按 blocked 处理**。
+20. **完成声明校验**：`declareToolCompletion` 只有在执行世一致且无未知/已停止取消时才 `accepted`；
+    否则返回 `stale-epoch-invalidated`（旧世迟到声明）、`rejected-cancelled`（已停止）或 `unknown-stop-outcome`。
+21. **收敛旧请求**：新指导 revision 高于旧请求时，旧请求标记 `superseded` 并指向后继请求；
+    后继请求承接最新 revision，并以 `requested` 重新开始（不继承旧交付状态）。
+22. **watchdog 决策**：`decideWatchdogResume` 在 `cancellation-active`、`unknown-stop-outcome`、
+    `instruction-superseded` 三种情形下一律 `shouldResume = false`；只有无活跃取消时才允许续跑旧指令。
+23. **稳定错误**：未登记的工具调用/取消请求、非法执行世分别抛
+    `unknown-tool-call`、`unknown-cancellation-request`、`invalid-epoch`。
+
+## 非目标（GUIDE-01-03 范围外）
+
+- 真实 Provider 侧的在途取消实现（契约已明确 `providerSupportsInFlightInsertion=false`）。
+- 把检查点回执写入工作存档与界面呈现（GUIDE-01-04）。
+- 紧急事件仲裁与抢占（EVENT-01）。
