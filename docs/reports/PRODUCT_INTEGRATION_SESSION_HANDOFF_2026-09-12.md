@@ -105,7 +105,11 @@
   - 规则：检查点回执、取消仅检查点交付（不假定在途插入）、回执驱动终态、未知停止结果 `unknown-stop-outcome` 按 blocked、旧执行世声明 `stale-epoch-invalidated`、旧请求收敛 + 后继承接最新 revision、watchdog 在取消未收敛时一律不续跑。
   - 门禁：typecheck/lint/build 0；`npx vitest run --maxWorkers=6` **202 文件/1646 用例全通过**；`--coverage --maxWorkers=6` exit 0（93.43/85.92/92.34/93.49）。
   - **推送失败（网络）**：`Connection reset by 20.205.243.166 port 22`（TCP 可达、SSH 握手被重置）；已重试 2 次，累积待推送 `946ee90`（+ 本记录提交）。
-- 下一轮：① 先重试推送（≤5 次）并确认 `origin/main` 追上；② 进入 **GUIDE-01-04**（公共应用/CLI/TUI 提交指导并查看接收/应用状态；安装包长任务中途改目标的实测与延迟记录）。
+- **GUIDE-01-04**（公共入口、跨进程状态与 CLI）：`guidance-submission-journal.ts` + 队列状态视图 + 队列经 MainController→Orchestrator→WorkerAgent 透传到 `runToolLoop` 安全点 + `public-sdk` 的 `submitRuntimeGuidance`/`queryGuidanceStatus` + `astarray guide submit|status` + ADR-0038 §24–30 + `docs/reports/GUIDE01_04_PRODUCT_ENTRY.md`，提交 `5e5a644`（**本地未推送**）。
+  - 规则：提交落盘后受理；应用/丢弃 upsert 回写跨进程日志；未回写时 `isApplicationStatusKnown=false`；单进程 CLI 只排队（受理 ≠ 已应用）；主 Agent 工具投影不变；延迟 = appliedAt − submittedAt。
+  - 已验证：`typecheck`/`lint` exit 0；触及区域 7 文件 **34 passed**（线程池）。
+  - **未完成**：`build` + 全量 `test --maxWorkers=6` + `coverage --maxWorkers=6` 与 `git push`（升级审批通道两次 600s 超时未执行）。
+- 下一轮：① 补跑 build/全量 test/coverage（`--maxWorkers=6`）并推送 `5e5a644`；② 完整读取 `docs/tasks/2026-09-16_INCREMENTAL_DESIGN_TASK_CARDS.md` 并登记（AUTH-SCOPE 等）；③ GUIDE-01 收口后按 steering 顺序进入 **EVENT-01-01**（incident 生命周期、资源仲裁与适配器能力协商原型）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。

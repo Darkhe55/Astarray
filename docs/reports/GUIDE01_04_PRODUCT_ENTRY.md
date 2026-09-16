@@ -44,7 +44,15 @@
 
 ## 5. 门禁与推送
 
-（本轮复跑后回填。）
+| 命令 | 结果 |
+| --- | --- |
+| `npm run typecheck` | **exit 0**（本地直接执行） |
+| `npm run lint` | **exit 0**（本地直接执行） |
+| 触及区域套件（`--pool=threads`，7 文件） | **exit 0：34 passed**（guidance 产物入口/安全点/契约/长工具 + guide CLI + 计量/缓存） |
+| `npm run build` + `npx vitest run --maxWorkers=6` + `--coverage --maxWorkers=6` | **未完成**：升级执行两次均在审批通道等待 600s 超时（命令未执行） |
+| `git push` | **未执行**（同一原因）→ 累积待推送 `5e5a644`（+ 本记录提交） |
+
+说明：build/forks 池在受限沙箱下会 `spawn EPERM`，必须走升级审批；本轮审批通道不可用，故全量门禁与推送顺延到下一轮补跑。
 
 ## 6. 未满足项与后续
 
