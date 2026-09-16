@@ -123,7 +123,12 @@
   - 规则：未授权不触达内层工具（`auth-scope-denied`/`awaiting-user-authorization`/`awaiting-superior-approval`/`replay-rejected`/`authorization-expired`）；单次授权 + 重放保护；显式登记工程根取代隐式 cwd；默认上级端口只自动批准 S1。
   - 门禁：build 0；`test --maxWorkers=6` **206 文件/1669 用例全通过**；coverage exit 0（93.25/85.48/92.21/93.31；core/src/tools 95.32/90.42/96.90/95.32）。
   - 推送：网络恢复后 `864b300..40df2ed` 已推送；本提交 `c435442` 随后推送。
-- **AUTH-SCOPE 三检查点（01/02/03）完成**。下一轮按用户文档推荐顺序进入 **ACCURACY-01**（审计签收/完成链路，冻结档位、预算与跳过状态；先证明缺口，不重复实现已有能力）。
+- **AUTH-SCOPE 三检查点（01/02/03）完成并全部推送**（`98d0f8c`）。
+- **ACCURACY-01**（签收/完成链路审计与冻结）：`docs/adr/0040-accuracy-tiers-budget-and-skip-status.md` + `docs/reports/ACCURACY_01_AUDIT.md`，提交见记录。
+  - 审计结论：完成事件只有 `taskExecutionId/completionAttemptId/completedTaskIdentifiers/claimedStatus/taskSequenceRevision`（**无验收条目 ID/产物回执/证据来源**）；**档位/预算/跳过状态完全缺失**；证据包只在 factVerification 与交付脚本中使用，未接入完成门禁；worker 门禁只覆盖"未解决的可变工具失败"。
+  - 冻结：fast/standard/strict（standard 默认、认证用户可配、Agent 不得自行降级）、检查预算有界、`quality-check-skipped` 为独立状态（不得写成通过）、完成声明绑定 条目 ID+真实回执+版本+必需条目覆盖+证据来源。
+  - 未执行三项：未来 revision 显式反例、必需条目覆盖、空证据/部分完成结案 —— 均已登记为 ACCURACY-02 必测。
+- 下一轮：**ACCURACY-02**（幂等签收、可选理解确认、条目→证据覆盖、复用原完成验收器；必测反例：错收件人、重复派发、旧/未来版本、伪造证据、陈旧产物、崩溃重启、空证据、必需条目漏报、部分完成结案尝试）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。
