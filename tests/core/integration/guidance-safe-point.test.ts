@@ -7,13 +7,13 @@ import {
   GuidanceControlQueue,
   createGuidanceFeedbackLanePublisher,
   type AppliedGuidance,
-} from "../../../packages/core/src/guidance/guidance-control-queue.js";
+} from "../../../packages/core/src/runtime-guidance/guidance-control-queue.js";
 import {
   GuidanceSourceRegistry,
   buildRuntimeGuidanceEvent,
   type GuidanceBehaviorTier,
   type RuntimeGuidanceEvent,
-} from "../../../packages/core/src/guidance/runtime-guidance.js";
+} from "../../../packages/core/src/runtime-guidance/runtime-guidance.js";
 import { runToolLoop } from "../../../packages/core/src/runtime/tool-loop.js";
 import type { AgentEvent } from "../../../packages/core/src/core/events.js";
 import type {

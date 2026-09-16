@@ -10,7 +10,7 @@ import {
   type GuidanceBehaviorTier,
   type GuidanceSourceRegistration,
   type RuntimeGuidanceEvent,
-} from "../../../packages/core/src/guidance/runtime-guidance.js";
+} from "../../../packages/core/src/runtime-guidance/runtime-guidance.js";
 
 const NOW = "2026-09-16T00:00:00.000Z";
 

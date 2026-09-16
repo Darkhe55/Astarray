@@ -1,6 +1,6 @@
 # ADR-0038：运行中指导的事件契约（来源、作用域、sequence 与取消能力）
 
-- 状态：Proposed（GUIDE-01-01 冻结；实现见 `packages/core/src/guidance/runtime-guidance.ts`）
+- 状态：Proposed（GUIDE-01-01 冻结；实现见 `packages/core/src/runtime-guidance/runtime-guidance.ts`）
 - 日期：2026-09-16
 - 来源：GUIDE-01 任务卡（docs/tasks/SESSION_SUMMARY_AND_STEERING_TASK_CARDS.md）
 
@@ -52,7 +52,7 @@
 
 - ADR-0007（反馈消息来源必填）、ADR-0013（待办偏序集与优先级层级）、ADR-0022（默认控制流与三级生命周期）、
   ADR-0028（人类/Agent 并发修改）、ADR-0036（事实核验）
-- 实现与测试：`packages/core/src/guidance/runtime-guidance.ts`、`tests/core/integration/runtime-guidance.test.ts`
+- 实现与测试：`packages/core/src/runtime-guidance/runtime-guidance.ts`、`tests/core/integration/runtime-guidance.test.ts`
 ## 补充（GUIDE-01-02 冻结：控制队列与安全点应用）
 
 10. **两条独立通道**：**控制队列**（运行中指导）与**普通报告**互不混用；两者都**不唤醒主 Agent**

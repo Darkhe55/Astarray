@@ -8,7 +8,7 @@
 
 | 文件 | 内容 |
 | --- | --- |
-| `packages/core/src/guidance/runtime-guidance.ts`（新） | 来源注册表（三态 + 最高档位）、事件 schema（来源/revision/sequence/有效期/作用域/层级/依赖传播/取消能力）、`RuntimeGuidanceController.acceptGuidance`（校验顺序、去重、取代、拒绝不产生副作用）、`buildRuntimeGuidanceEvent` |
+| `packages/core/src/runtime-guidance/runtime-guidance.ts`（新） | 来源注册表（三态 + 最高档位）、事件 schema（来源/revision/sequence/有效期/作用域/层级/依赖传播/取消能力）、`RuntimeGuidanceController.acceptGuidance`（校验顺序、去重、取代、拒绝不产生副作用）、`buildRuntimeGuidanceEvent` |
 | `tests/core/integration/runtime-guidance.test.ts`（新，8 用例） | 伪造、超额档位、过期、乱序、重放、陈旧 revision、跨作用域、隐式依赖传播、层级篡改、仅记录档 |
 
 ## 2. 行为反例（红→绿）

@@ -12,8 +12,8 @@ import { randomUUID } from "node:crypto";
 import { FEEDBACK_PROTOCOL_VERSION } from "../core/types.js";
 import type { FeedbackMessage, FeedbackMessageSource } from "../core/types.js";
 import {
-  GuidanceSourceRegistry,
   RuntimeGuidanceController,
+  type GuidanceSourceRegistry,
   type GuidanceAcceptanceResult,
   type GuidanceScopeTarget,
   type RuntimeGuidanceEvent,

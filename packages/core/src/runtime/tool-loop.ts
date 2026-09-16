@@ -13,7 +13,7 @@ import type { AgentRuntime } from "../core/types.js";
 import type {
   AppliedGuidance,
   GuidanceSafePointKind,
-} from "../guidance/guidance-control-queue.js";
+} from "../runtime-guidance/guidance-control-queue.js";
 
 /**
  * GUIDE-01-02：安全点端口。运行中的任务在模型调用前与每次工具执行前消费控制队列；
