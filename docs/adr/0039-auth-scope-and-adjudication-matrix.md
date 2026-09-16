@@ -82,3 +82,32 @@
 - 不实现通用 shell 的静态副作用预测；不可解析即 S4。
 - 不改动既有安装门禁存储格式（只消费其开关状态）。
 - 不修改治理文档与既有测试预期（AUTH-SCOPE-03 及之后的统一修订）。
+## 补充（AUTH-SCOPE-03 冻结：执行前门禁与公共入口）
+
+17. **执行前门禁**（`packages/core/src/tools/scope-authorization-gate.ts`）：
+    Worker 工具端口统一被 `ScopeGatedToolPort` 包裹，在真实工具之前做范围判定与裁决；
+    未获授权**不触达内层工具**（零副作用），返回稳定错误码：
+    `auth-scope-denied`、`auth-scope-awaiting-user-authorization`、
+    `auth-scope-awaiting-superior-approval`、`auth-scope-replay-rejected`、
+    `auth-scope-authorization-expired`。
+18. **工具 → 操作映射**：`createProjectFile`/`replaceFileContent`/`writeFileTemporary` → 项目内写入；
+    `readFile`/`listDirectory`/`searchProjectText`/`gitReadonlyView` → 只读；
+    `backupVault`/`deleteBackup` → S7 专用流程；其余工具不受本门禁约束；
+    参数不可解析或目标含 shell 展开 → 未知范围（S4）。
+19. **单次授权与重放保护**：认证用户授权的范围授权**单次使用**（消费时间落记录）；
+    同一操作指纹再次执行返回 `auth-scope-replay-rejected`，内层工具不被调用；过期授权返回
+    `auth-scope-authorization-expired`。
+20. **默认上级批准端口**：运行时缺省把"本地控制面"当作有权上级，**只自动批准 S1（项目内）**，
+    其余范围不自动批准（未知/跨根/项目外/安装必须人工）。
+21. **登记工程根**：`createApplicationRuntime({ workspaceRootPath, projectIdentifier })` 显式登记工程根；
+    `WorkspaceBoundary` 与范围判定都使用该根，**不再隐式读取 `process.cwd()`**（缺省值仍为创建时 cwd，但已是显式登记）。
+22. **公共入口**：`listRegisteredProjectRoots`、`evaluateOperationScope`（只读预演，不消费授权）、
+    `grantScopeAuthorization`（单次授权）、`queryScopeAuthorizations`（含消费时间的审计视图）。
+23. **未完成（诚实声明）**：治理文档与既有测试预期的统一修订、CLI/TUI 设置界面、跨进程（CLI/独立反馈进程）
+    的实时授权交互、外部软件控制工具仍属后续增量；本检查点只完成运行时门禁与公共 SDK 入口。
+
+## 非目标（AUTH-SCOPE-03 范围外）
+
+- 不新增通用 shell 或外部软件能力；不实现完美副作用预测。
+- 不改写既有安装门禁存储格式与专用授权流程。
+- 不修改 AGENTS.md/实施计划等治理文档（由集成者在安全检查点统一修订）。

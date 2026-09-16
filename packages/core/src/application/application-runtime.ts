@@ -40,6 +40,12 @@ import {
   ExistingResourceInquiryController,
 } from "../tools/assist-installation-gate.js";
 import { InstallationGateGuard } from "../tools/installation-gate-guard.js";
+import {
+  ScopeAuthorizationGate,
+  ScopeGatedToolPort,
+  type ScopeGateSuperiorApprovalPort,
+} from "../tools/scope-authorization-gate.js";
+import type { RegisteredProjectRoot } from "../tools/scope-resolution.js";
 import { PermissionCapabilityCatalog } from "../tools/permission-capability-catalog.js";
 import { PermissionProfileStore } from "../tools/permission-profile-store.js";
 import type { PermissionProfileReference } from "../tools/permission-profile-store.js";
@@ -131,6 +137,10 @@ export interface ApplicationRuntime {
   contextGraphStore: LocalContextGraphStore;
   /** 本进程主 Agent 实例标识（延迟核验/追认归属用，不进入前端 DTO）。 */
   mainAgentInstanceId: string;
+  /** AUTH-SCOPE-03：显式登记的工程根（范围判定唯一依据）。 */
+  registeredProjectRoots: RegisteredProjectRoot[];
+  /** AUTH-SCOPE-03：工具执行前的范围授权门禁。 */
+  scopeAuthorizationGate: ScopeAuthorizationGate;
   shutdown: () => Promise<void>;
 }
 
@@ -170,6 +180,12 @@ export interface ApplicationRuntimeOptions {
   contextPromptProvider?: ContextPromptProvider;
   /** T09A-R1-02：Provider 可用输入空间（token）；缺省不缩减。 */
   modelInputSpaceTokens?: number | null;
+  /** AUTH-SCOPE-03：显式登记的工程根（缺省为创建时 cwd；范围判定不再隐式读 cwd）。 */
+  workspaceRootPath?: string;
+  /** AUTH-SCOPE-03：登记工程根标识。 */
+  projectIdentifier?: string;
+  /** AUTH-SCOPE-03：上级批准端口（缺省由本地控制面批准项目内操作）。 */
+  scopeSuperiorApprovalPort?: ScopeGateSuperiorApprovalPort;
 }
 
 export async function createApplicationRuntime(
@@ -187,8 +203,16 @@ export async function createApplicationRuntime(
   const permissionDecider = new PermissionDecider(modeMachine, sessionManager);
   const registry = new ToolRegistry();
   registry.registerMany(BUILTIN_TOOL_DESCRIPTORS);
-  const workspaceRoot = process.cwd();
-  const workspaceBoundary = new WorkspaceBoundary(workspaceRoot);
+  // AUTH-SCOPE-03：范围判定只使用显式登记的工程根，不再隐式读取 cwd。
+  const registeredProjectRoots: RegisteredProjectRoot[] = [
+    {
+      projectIdentifier: options.projectIdentifier ?? "workspace",
+      rootPath: options.workspaceRootPath ?? process.cwd(),
+    },
+  ];
+  const workspaceBoundary = new WorkspaceBoundary(
+    registeredProjectRoots[0]?.rootPath ?? process.cwd(),
+  );
   const temporaryDirectoryPath = path.join(stateDirectory, "temp");
 
   let supervisor: FeedbackProcessSupervisor | null = null;
@@ -257,6 +281,28 @@ export async function createApplicationRuntime(
     userPort: installationUserPort,
     authenticatedUserId: options.authenticatedUserId ?? "local-user",
     getCurrentMode: () => modeMachine.getCurrentMode(),
+  });
+
+  // AUTH-SCOPE-03：工具执行前的范围授权门禁（显式登记根 + 裁决矩阵 + 单次授权/重放保护）。
+  const scopeSuperiorApprovalPort: ScopeGateSuperiorApprovalPort =
+    options.scopeSuperiorApprovalPort ?? {
+      approve: async ({ scopeClass }) => ({
+        // 本地控制面作为"有权上级"：只自动批准项目内（S1）操作，其余必须人工。
+        isApproved: scopeClass === "S1-project-internal",
+        approvedByAgentInstanceId:
+          scopeClass === "S1-project-internal" ? "local-superior" : null,
+      }),
+    };
+  const scopeAuthorizationGate = new ScopeAuthorizationGate({
+    getMode: () => modeMachine.getCurrentMode(),
+    getRegisteredProjectRoots: () =>
+      registeredProjectRoots.map((root) => ({ ...root })),
+    getConfiguredDecision: () =>
+      modeMachine.getCurrentMode() === "devolve" ? "allow" : "ask",
+    isInstallationEnabled: () =>
+      installationAuthorizationController.isInstallationEnabled(),
+    getAuthorizationRevision: () => 1,
+    superiorApprovalPort: scopeSuperiorApprovalPort,
   });
 
   // B6R-03：可配置权限引擎（执行前按当前 profile 快照裁决）
@@ -583,7 +629,8 @@ export async function createApplicationRuntime(
           { type: "finish", reason: "success", detail: "任务完成" },
         ])),
     buildWorkerToolPort: (task: TaskDependencyNode, allowedToolNames: Set<string>) =>
-      new PolicyWrapper({
+      new ScopeGatedToolPort(
+        new PolicyWrapper({
         permissionDecider,
         registry,
         workspaceBoundary,
@@ -601,7 +648,9 @@ export async function createApplicationRuntime(
         taskExecutionId: `task-exec:${task.id}`,
         configurablePermissionPolicyEngine,
         currentPermissionProfileReference,
-      }),
+        }),
+        scopeAuthorizationGate,
+      ),
     buildPermissionExplanation: (toolName: string) =>
       `执行任务需要调用工具 ${toolName}`,
     resolveToolDescriptors: (task: TaskDependencyNode): ToolDescriptor[] =>
@@ -670,6 +719,8 @@ export async function createApplicationRuntime(
     longToolCheckpointController,
     guidanceSubmissionJournal,
     authenticatedUserId,
+    registeredProjectRoots,
+    scopeAuthorizationGate,
     humanVerificationController,
     contextClosureCapsuleStore,
     contextGraphStore,

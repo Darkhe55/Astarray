@@ -295,6 +295,31 @@ export interface PublicSummaryBuildResult {
   generatorVersion: string;
 }
 
+/** AUTH-SCOPE-03：操作范围预演结果（只读，不消费授权）。 */
+export interface PublicOperationScopeEvaluation {
+  scopeClass:
+    | "S1-project-internal"
+    | "S2-cross-project-root"
+    | "S3-project-external"
+    | "S4-unknown"
+    | "S5-installation"
+    | "S6-external-software"
+    | "S7-special-flow";
+  projectIdentifier: string | null;
+  resolvedTargetPath: string | null;
+  decision: "allow" | "deny" | "ask-superior" | "ask-user";
+  adjudicator: string;
+  reasons: string[];
+  operationFingerprint: string;
+}
+
+/** AUTH-SCOPE-03：单次授权（重放不产生副作用）。 */
+export interface PublicScopeAuthorizationGrant {
+  receiptIdentifier: string;
+  operationFingerprint: string;
+  approvedByUserId: string;
+}
+
 /** GUIDE-01-04：运行中指导提交结果（受理 ≠ 已应用）。 */
 export interface PublicGuidanceSubmissionResult {
   status: "accepted" | "recorded" | "rejected";
@@ -1120,6 +1145,96 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       })),
       resourceMetrics: { ...metrics },
     };
+  }
+
+  // ─── AUTH-SCOPE-03：范围授权公共入口（预演/单次授权/登记工程根） ───
+
+  /** 列出显式登记的工程根（范围判定唯一依据，不使用 cwd）。 */
+  listRegisteredProjectRoots(): Array<{
+    projectIdentifier: string;
+    rootPath: string;
+  }> {
+    this.assertOpen();
+    return this.runtime.registeredProjectRoots.map((root) => ({ ...root }));
+  }
+
+  /** 只读预演：某操作会落到哪个范围、由谁裁决（不消费授权）。 */
+  async evaluateOperationScope(input: {
+    operationKind:
+      | "project-file-write"
+      | "project-file-read"
+      | "project-build-tool"
+      | "dependency-install"
+      | "external-software-control"
+      | "process-execution"
+      | "remote-publish"
+      | "backup-deletion"
+      | "unknown";
+    targetPath?: string | null;
+    touchesAdditionalProjectRoots?: boolean;
+    hasExternalSideEffects?: boolean;
+  }): Promise<PublicOperationScopeEvaluation> {
+    this.assertOpen();
+    return this.runtime.scopeAuthorizationGate.previewDecision({
+      operationKind: input.operationKind,
+      targetPath: input.targetPath ?? null,
+      ...(input.touchesAdditionalProjectRoots !== undefined
+        ? { touchesAdditionalProjectRoots: input.touchesAdditionalProjectRoots }
+        : {}),
+      ...(input.hasExternalSideEffects !== undefined
+        ? { hasExternalSideEffects: input.hasExternalSideEffects }
+        : {}),
+    });
+  }
+
+  /** 认证用户对精确操作授予**单次**范围授权（重放会被拒绝且无副作用）。 */
+  async grantScopeAuthorization(input: {
+    operationKind:
+      | "project-file-write"
+      | "project-file-read"
+      | "project-build-tool"
+      | "dependency-install"
+      | "external-software-control"
+      | "process-execution"
+      | "remote-publish"
+      | "backup-deletion"
+      | "unknown";
+    targetPath?: string | null;
+    approvedByUserId: string;
+    expiresAtIso?: string | null;
+  }): Promise<PublicScopeAuthorizationGrant> {
+    this.assertOpen();
+    const grant = await this.runtime.scopeAuthorizationGate.grantUserAuthorization({
+      operation: {
+        operationKind: input.operationKind,
+        targetPath: input.targetPath ?? null,
+      },
+      approvedByUserId: input.approvedByUserId,
+      expiresAtIso: input.expiresAtIso ?? null,
+    });
+    return {
+      receiptIdentifier: grant.receiptIdentifier,
+      operationFingerprint: grant.operationFingerprint,
+      approvedByUserId: input.approvedByUserId,
+    };
+  }
+
+  /** 查看已产生的范围授权/裁决记录（含消费时间，便于审计重放）。 */
+  queryScopeAuthorizations(): Array<{
+    receiptIdentifier: string;
+    operationFingerprint: string;
+    scopeClass: string;
+    decision: string;
+    adjudicator: string;
+    decidedAtIso: string;
+    consumedAtIso: string | null;
+    approvedByUserId: string | null;
+    approvedByAgentInstanceId: string | null;
+  }> {
+    this.assertOpen();
+    return this.runtime.scopeAuthorizationGate
+      .listDecisionRecords()
+      .map((record) => ({ ...record }));
   }
 
   // ─── GUIDE-01-04：运行中指导的公共入口（受理 ≠ 已应用；安全点应用） ───
