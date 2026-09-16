@@ -10,8 +10,9 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// 构建产物 CLI 的 spawn 运行在插桩/并行环境下会超过 5s 默认超时：仅调超时，断言不变。
-vi.setConfig({ testTimeout: 60_000 });
+// 构建产物 CLI 的 spawn 运行在并行门禁下会明显变慢（单测内可能多次 spawn）：
+// 仅提高整文件超时上限，断言与 spawn 内部 60s 限制不变。
+vi.setConfig({ testTimeout: 180_000 });
 
 const distCliPath = path.join(process.cwd(), "dist", "cli.js");
 const hasBuiltCli = existsSync(distCliPath);
