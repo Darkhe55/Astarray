@@ -128,7 +128,10 @@
   - 审计结论：完成事件只有 `taskExecutionId/completionAttemptId/completedTaskIdentifiers/claimedStatus/taskSequenceRevision`（**无验收条目 ID/产物回执/证据来源**）；**档位/预算/跳过状态完全缺失**；证据包只在 factVerification 与交付脚本中使用，未接入完成门禁；worker 门禁只覆盖"未解决的可变工具失败"。
   - 冻结：fast/standard/strict（standard 默认、认证用户可配、Agent 不得自行降级）、检查预算有界、`quality-check-skipped` 为独立状态（不得写成通过）、完成声明绑定 条目 ID+真实回执+版本+必需条目覆盖+证据来源。
   - 未执行三项：未来 revision 显式反例、必需条目覆盖、空证据/部分完成结案 —— 均已登记为 ACCURACY-02 必测。
-- 下一轮：**ACCURACY-02**（幂等签收、可选理解确认、条目→证据覆盖、复用原完成验收器；必测反例：错收件人、重复派发、旧/未来版本、伪造证据、陈旧产物、崩溃重启、空证据、必需条目漏报、部分完成结案尝试）。
+- **ACCURACY-02**（幂等签收、理解确认与条目→证据覆盖）：`packages/core/src/orchestration/task-accuracy-verifier.ts` + ADR-0040 §9–16 + `docs/reports/ACCURACY_02_IDEMPOTENT_ACCEPTANCE.md`，提交 `180d688`（已推送）。
+  - 规则：同一 attemptId 幂等（跨重启可识别）、收件人/旧与未来版本拒绝、证据缺指纹或严格档模型自述视为伪造、陈旧产物、空证据、必需条目覆盖（部分完成只报进度）、快速档独立 `quality-check-skipped`、严格/歧义档要求理解确认。
+  - 门禁：build 0；`test --maxWorkers=6` **207 文件/1679 用例全通过**；coverage exit 0（93.29/85.60/92.24/93.35；orchestration 94.08/87.32/93.81/94.14）；`git push` 第 1 次成功。
+- 下一轮：**ACCURACY-03**（设置与产品入口：档位/预算/跳过状态可见；把 `TaskAccuracyVerifier` 与既有完成门禁组合接线；跨进程持久化幂等日志；增量 E2E：关闭后无新增模型审查或人工阻塞、状态诚实、标准/严格工作量有上限、不影响权限路由）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。

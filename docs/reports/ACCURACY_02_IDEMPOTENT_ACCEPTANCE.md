@@ -45,7 +45,13 @@
 
 ## 5. 门禁与推送
 
-（本轮复跑后回填。）
+| 命令 | 结果 |
+| --- | --- |
+| `npm run build` | **exit 0** |
+| `npx vitest run --maxWorkers=6` | **exit 0：207 文件 / 1679 用例全通过** |
+| `npx vitest run --coverage --maxWorkers=6` | **exit 0**：全局 statements **93.29%** / branch **85.60%** / functions **92.24%** / lines **93.35%**；`packages/core/src/orchestration` 目录 **94.08% / 87.32% / 93.81% / 94.14%** |
+| `npx tsc --noEmit` / `npx eslint .` | 0 / 0 |
+| `git push` | **exit 0**（第 1 次尝试成功）：本检查点实现提交已推送至远端 |
 
 ## 6. 未满足项与后续
 
