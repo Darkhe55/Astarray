@@ -134,6 +134,7 @@
 - **ACCURACY-03**（设置、预算与产品入口）：`packages/core/src/orchestration/accuracy-policy-store.ts`（策略存储/CAS/跨进程幂等日志/审计日志/预算/组合门）+ 运行时装配 + `public-sdk` 四个入口 + `astarray accuracy status|configure` + ADR-0040 §17–25 + `docs/reports/ACCURACY_03_PRODUCT_ENTRY.md`。
   - 规则：默认标准档 + 有限预算；仅认证用户可配置，**Agent 降级或关闭被拒绝**；`expectedRevision` CAS；任务级档位覆盖只影响点名任务；**关闭 ⇒ 不调用验收端口、不发起校验层、不新增人工阻塞**，返回独立 `quality-check-skipped(accuracy-disabled)`；预算耗尽记 `quality-check-budget-exhausted`（不是通过），额度**从审计日志跨进程恢复**；幂等优先于预算（重放不耗额度）；每次校验写审计 `isVerificationLayerInvoked`；**不改变权限路由**。
   - 门禁：typecheck/lint/build 0；`npx vitest run --maxWorkers=6` **210 文件/1695 用例全通过**；coverage exit 0（93.34/85.62/92.45/93.39；orchestration 94.17/87.32/94.08/94.22；新模块 96.80/85.89/100/96.80）；`verify:security-coverage` 22/22。
+  - 提交 `b4f2f26`（已推送，`8e99b76..b4f2f26`）；前两次推送因审批通道停滞超时，第 3 次成功。
   - 未完成/外部依赖：真实 Provider 成本与时延 E2E、GUI/TUI 交互式档位设置、治理文档统一修订。
 - 下一轮（按新用户文档推荐顺序）：**GIT-PRESERVE-01**（之后 GIT-PRESERVE-02/03、READ-FORMAT-01..05、GUIDE 增量）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。

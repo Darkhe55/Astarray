@@ -60,7 +60,9 @@
 | `npx vitest run --maxWorkers=6` | **exit 0：210 文件 / 1695 用例全通过**（新增 3 文件 / 16 用例） |
 | `npx vitest run --coverage --maxWorkers=6` | **exit 0**：全局 statements **93.34%** / branch **85.62%** / functions **92.45%** / lines **93.39%**；`core/src/orchestration` **94.17 / 87.32 / 94.08 / 94.22**；新增模块 `accuracy-policy-store.ts` **96.80 / 85.89 / 100 / 96.80** |
 | `npm run verify:security-coverage` | **exit 0：关键安全模块 22/22 达标（阈值 95%）** |
-| `git push` | 见提交记录（本检查点实现提交已推送） |
+| `git push` | **exit 0**（第 3 次尝试成功，前两次审批通道停滞）：`8e99b76..b4f2f26` 已推送 |
+
+本检查点实现提交：`b4f2f26`（`feat(accuracy): ACCURACY-03 档位/预算设置、组合门与产品入口`）。
 
 ## 6. 未满足项与后续
 
