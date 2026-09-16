@@ -41,7 +41,15 @@
 
 ## 5. 门禁与推送
 
-（本轮复跑后回填。）
+| 命令 | 结果 |
+| --- | --- |
+| `npm run build` | **exit 0** |
+| `npx vitest run --maxWorkers=6` | **exit 0：205 文件 / 1659 用例全通过** |
+| `npx vitest run --coverage --maxWorkers=6` | **exit 0**：全局 statements **93.24%** / branch **85.46%** / functions **92.15%** / lines **93.30%**；`packages/core/src/tools` 目录 **95.40% / 90.39% / 97.06% / 95.40%** |
+| `npx tsc --noEmit` / `npx eslint .` | 0 / 0 |
+| `git push` | **失败（网络）**：本阶段累计 5 次尝试全部 `Connection reset by 20.205.243.166 port 22`（含 2 次审批通道 600s 超时未执行）→ 按常设规则跳过上传，累积待推送 `cd37aa7`、`9868b4e`、`85456a8`（+ 本记录提交） |
+
+门禁并行度沿用前几轮结论：`--maxWorkers=6` 下稳定全绿（默认并行度会因资源竞争命中不同既有用例超时）。
 
 ## 6. 未满足项与后续
 

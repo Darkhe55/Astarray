@@ -115,7 +115,11 @@
   其推荐顺序为"当前检查点收口 → AUTH-SCOPE-01 → ACCURACY-01 → 完成 AUTH-SCOPE → 完成 ACCURACY → GIT-PRESERVE → READ-FORMAT"。
   该文件同时要求：正式启用前统一修订治理文档/ADR/测试预期；新节点不抢占在途公共契约；待接入清单 6 项未勾选。
 - **AUTH-SCOPE-01**（范围分类与裁决者矩阵冻结）：`docs/adr/0039-auth-scope-and-adjudication-matrix.md`（S1–S7 + 三模式矩阵 + 判定规则 + 迁移清单）+ `docs/reports/AUTH_SCOPE_01_SCOPE_FREEZE.md`（现有实现审计：仅 `WorkspaceBoundary` 根内检查与安装开关；范围判定/上级批准回执/逐级升级/执行前复检/外部软件能力均缺）。设计检查点，无产品代码变更。
-- 下一轮：按新用户文档顺序进入 **AUTH-SCOPE-02**（本地范围判定、上级批准回执、逐级升级与执行前复检；首要反例：cwd 污染 S1 判定、链接逃逸、路径前缀碰撞、跨根写入、全局安装、子进程外写、失效上级与 revision 变化）。
+- **AUTH-SCOPE-02**（范围判定、裁决矩阵与批准回执）：`packages/core/src/tools/scope-resolution.ts` + ADR-0039 §9–16 + `docs/reports/AUTH_SCOPE_02_SCOPE_RESOLUTION.md`，提交 `85456a8`（**本地未推送**）。
+  - 规则：已登记项目根 + realpath 判定 S1–S7（未知即 S4；**不用 cwd/前缀/自述**）；三模式矩阵（deny 优先、安装开关、S7 专用流程、放权 S4 必须上级裁决）；回执绑定范围+操作指纹+authorizationRevision+有效期；执行前复检发现链接/根变化；升级路径有界不回派。
+  - 门禁：build 0；`test --maxWorkers=6` **205 文件/1659 用例全通过**；coverage exit 0（93.24/85.46/92.15/93.30；core/src/tools 95.40/90.39/97.06/95.40）；`typecheck`/`lint` 0。
+  - **推送失败（网络）**：本阶段 5 次尝试全部 `Connection reset by 20.205.243.166 port 22`；累积待推送 `cd37aa7`、`9868b4e`、`85456a8`。
+- 下一轮：① 重试推送（累计提交一并上传；若远端仍不可达则记录并继续）；② 进入 **AUTH-SCOPE-03**（设置与公共入口接线：把 `WorkspaceBoundary` 的 `process.cwd()` 根替换为已登记项目根、工具执行前门禁接入、放权默认无人工等待、deny 生效、协同项目内批准/项目外等待人工、拒绝与重放零副作用、恢复与打包回归）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。
