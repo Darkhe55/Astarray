@@ -46,3 +46,26 @@ worker 完成门禁（未解决的可变工具失败 → 不得 done）、`Human
 - 快速档被误读为"通过" → 以独立状态与强制文案约束。
 - 严格档增加延迟 → 预算上界 + 可关闭 + 只检查当前目标。
 - 证据复用可能掩盖变化 → 以任务版本/产物指纹作为复用条件。
+## 补充（ACCURACY-02 冻结：幂等签收、理解确认与条目→证据覆盖）
+
+9. **幂等签收**：同一 `completionAttemptId` 的重复声明返回**既有结论**并标记 `isIdempotentReplay = true`，
+   不重复产生副作用；幂等日志可由持久化实现提供，**崩溃重启后仍能识别重复派发**。
+10. **版本一致性**：声明的 `taskSequenceRevision` 低于当前 → `stale-revision`；
+    **高于当前 → `future-revision`**（未来版本不可信），两者都拒绝。
+11. **收件人校验**：`deliveredToRecipientIdentifier` 必须与任务期望收件人一致（错收件人拒绝）；
+    该检查与版本检查在**快速档下同样执行**（不新增模型审查或人工等待）。
+12. **证据真实性**：产物/测试回执类证据必须有内容指纹（缺失 → `forged-evidence`）；
+    `model-claim` 仅允许在快速/标准档使用，**严格档视为伪造证据**。
+13. **陈旧产物**：证据记录 `producedAtRevision`；若产物当前 revision 更高 → `stale-artifact` 拒绝。
+14. **条目 → 证据覆盖**：必需验收条目必须全部出现在完成声明中，否则 `required-entry-missing`；
+    存在必需条目却没有任何证据引用 → `empty-evidence`；**部分完成只报告已覆盖条目，不得结案**。
+15. **理解确认**：严格档必须提供 `understandingConfirmation`；标准档仅在**存在歧义**时要求；快速档跳过。
+16. **快速档独立状态**：`verdict = "quality-check-skipped"`，理由明确写"跳过质量门禁（不等于测试/验收通过）"；
+    与 `accepted`/`rejected` 互斥。
+
+## 非目标（ACCURACY-02 范围外）
+
+- 不新建调度系统或消息总线；本模块是既有完成门禁之上的**校验层**，
+  与既有 `CompletionControlParser`/worker 完成门禁的**组合接线**属 ACCURACY-03。
+- 不做语义蕴含判断；只校验覆盖、来源、版本与指纹。
+- 理解确认的具体交互界面与档位设置入口属 ACCURACY-03。
