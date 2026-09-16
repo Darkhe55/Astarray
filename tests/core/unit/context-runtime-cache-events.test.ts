@@ -15,7 +15,8 @@ import { LocalContextGraphStore } from "../../../packages/core/src/orchestration
 import { AstarrayApplicationFacade } from "../../../packages/core/src/public-sdk.js";
 import { executeContextMetricsCommand } from "../../../packages/tui/src/cli/commands.js";
 
-vi.setConfig({ testTimeout: 40_000 });
+// 覆盖率插桩 + 并行门禁下真实 mission 链路明显变慢：仅提高等待上限，断言不变。
+vi.setConfig({ testTimeout: 120_000 });
 
 let stateDirectory: string;
 
@@ -105,7 +106,7 @@ describe("T09A-R1-04：装配事件与缓存指标", () => {
       prompt: "指标事件探针",
     });
     let status = "accepted";
-    const deadline = Date.now() + 20_000;
+    const deadline = Date.now() + 60_000;
     while (Date.now() < deadline && !["done", "failed", "blocked", "cancelled"].includes(status)) {
       await new Promise((resolve) => setTimeout(resolve, 15));
       status = (await application.queryTask({ sessionId: "session-1", taskIdentifier: "task-1" })).status;
