@@ -1,0 +1,45 @@
+# GUIDE-01-02 控制队列与安全点应用 — 证据
+
+> 检查点：GUIDE-01-02（docs/tasks/SESSION_SUMMARY_AND_STEERING_TASK_CARDS.md，未跟踪用户文件）
+> 前驱：GUIDE-01-01（提交 `6414329`）。日期：2026-09-16
+> 契约补充：docs/adr/0038-runtime-guidance-contract.md §10–16
+
+## 1. 交付物
+
+| 文件 | 内容 |
+| --- | --- |
+| `packages/core/src/guidance/guidance-control-queue.ts`（新） | 控制队列（校验复用 GUIDE-01-01 控制器）、普通报告通道（永不唤醒主 Agent）、安全点消费（幂等、过期/跨作用域丢弃）、唤醒策略查询、独立反馈进程投递桥（`instruction`/`success` 信封） |
+| `packages/core/src/runtime/tool-loop.ts`（扩展） | 可选 `guidanceSafePointPort`：`before-model-call` 注入下一次模型输入；`before-tool-execution` 应用指导并在门禁档**阻止该次工具执行**（返回 `guidance-gate-requested-pause`）；`onGuidanceApplied` 观察点 |
+| `tests/core/integration/guidance-safe-point.test.ts`（新，6 用例） | busy 期间即时应用、幂等、跨作用域/过期丢弃、门禁阻止工具、报告不唤醒、跨进程信封 |
+
+## 2. 行为反例（红→绿）
+
+| 反例 | 期望 | 实测 |
+| --- | --- | --- |
+| 指导要等整链结束才生效 | 第二次模型调用前即注入 | ✅ 工具执行期间入队的指导在 `before-model-call`（iteration 2）注入，`runtimeInputs[1]` 含 `[运行中指导 guide-1@1]`，随后循环才 success |
+| 同一指导重复应用 | 只应用一次 | ✅ 二次入队返回 `recorded`；首次消费 applied=1，再次消费 applied=0，`listAppliedGuidance()` 仍 1 条 |
+| 过期指导套用到任务 | 消费点丢弃 | ✅ 入队有效、消费时已过期 → `expired-at-safe-point` |
+| 别的任务的指导被套用 | 丢弃 | ✅ `cross-scope-at-safe-point`，applied=0 |
+| 门禁档只记录不拦工具 | 阻止该次工具调用 | ✅ `toolExecuteCount=0`，事件流出现 `toolCallFinished` + `errorCode="guidance-gate-requested-pause"` |
+| 普通报告唤醒主 Agent | 仅排队 | ✅ `shouldWakeMainAgent=false`；`evaluateWakePolicy("report")` → `wakesMainAgent=false, isQueuedOnly=true`；控制通道 `isAppliedToRunningMissionAtSafePoint=true` |
+| 跨进程投递混用通道/丢来源 | 通道与来源正确 | ✅ 指导 → `instruction`（幂等键 `guidance:guide-1@2`）、报告 → `success`（`report:report-1`），来源保留 `{sourceType:"user", sourceIdentifier:"user-1"}` |
+
+**调试记录（诚实）**：门禁用例首版用 `toolExecuteCount===0` 作运行时分支条件，导致被门禁阻止后运行时又发一次工具调用；改用运行时迭代计数后通过——这是**测试脚手架**缺陷，不是实现缺陷（诊断脚本已删除）。
+
+## 3. 命令与退出码
+
+| 命令 | 结果 |
+| --- | --- |
+| `npx vitest run tests/core/integration/guidance-safe-point.test.ts tests/core/integration/runtime-guidance.test.ts` | 0；**14 passed** |
+| `npx tsc --noEmit` / `npx eslint .` | 0 / 0 |
+| `npm run check` / `test:coverage` / `git push` | 见 §4 |
+
+## 4. 门禁与推送
+
+（本轮复跑后回填。）
+
+## 5. 未满足项与后续
+
+- GUIDE-01-03：长工具检查点与协作取消、回执收敛、旧完成声明失效、watchdog 不误续跑（本轮只做"工具执行前应用 + 门禁阻止"）。
+- GUIDE-01-04：把控制队列接入真实 fork 反馈进程生命周期、公共应用/CLI/TUI 提交指导并查看接收/应用状态、安装包长任务中途改目标的实测与延迟记录。
+- 未接入真实 Provider 在途插入（契约明确 `providerSupportsInFlightInsertion=false`）。

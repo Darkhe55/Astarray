@@ -53,3 +53,25 @@
 - ADR-0007（反馈消息来源必填）、ADR-0013（待办偏序集与优先级层级）、ADR-0022（默认控制流与三级生命周期）、
   ADR-0028（人类/Agent 并发修改）、ADR-0036（事实核验）
 - 实现与测试：`packages/core/src/guidance/runtime-guidance.ts`、`tests/core/integration/runtime-guidance.test.ts`
+## 补充（GUIDE-01-02 冻结：控制队列与安全点应用）
+
+10. **两条独立通道**：**控制队列**（运行中指导）与**普通报告**互不混用；两者都**不唤醒主 Agent**
+    （`evaluateWakePolicy` 可查询）。控制队列由正在运行的任务在安全点即时消费，普通报告仅排队待读。
+11. **安全点**：`before-model-call`（每次模型调用前）与 `before-tool-execution`（每次工具执行前）；
+    消费发生在循环内，**不等整链结束**。
+12. **应用语义**：安全点指导注入下一次模型输入（`role: system`、`name: runtime-guidance`、
+    内容含 `[运行中指导 <id>@<revision>]`）；`gate-and-request-pause` 档在工具执行前
+    **阻止该次工具调用**并返回稳定错误码 `guidance-gate-requested-pause`（不执行、不猜测用户意图）。
+13. **幂等**：同一 `guidanceIdentifier + guidanceRevision` 只应用一次；重复入队返回 `recorded`（去重），
+    安全点不会二次应用；更高 revision 取代旧 revision。
+14. **消费点丢弃**：入队后过期 → `expired-at-safe-point`；作用域与目标不符 → `cross-scope-at-safe-point`
+    （绝不套用到其他任务）。
+15. **跨进程投递**：桥接把已应用指导封装为 `instruction` 信封、普通报告封装为 `success` 信封，
+    幂等键分别为 `guidance:<id>@<revision>` 与 `report:<identifier>`；桥接**不做**权限/作用域判断，也不唤醒主 Agent。
+16. **观察点**：安全点应用通过 `onGuidanceApplied` 回调暴露（写工作存档/审计属 GUIDE-01-04 接线）。
+
+## 非目标（GUIDE-01-02 范围外）
+
+- 长工具检查点、协作取消与回执收敛（GUIDE-01-03）。
+- 把控制队列接入真实 fork 反馈进程的 IPC 生命周期与 TUI/CLI 呈现（GUIDE-01-04）。
+- 紧急仲裁（EVENT-01）。
