@@ -33,7 +33,14 @@
 
 ## 4. 门禁与推送
 
-（本轮复跑后回填。）
+| 命令 | 结果 |
+| --- | --- |
+| `npm run typecheck` / `npm run lint` / `npm run build` | 0 / 0 / 0 |
+| `npx vitest run --maxWorkers=6`（等价 test 步骤） | **exit 0：202 文件 / 1646 用例全通过** |
+| `npx vitest run --coverage --maxWorkers=6` | **exit 0**：202 文件 / 1646 用例；全局 statements **93.43%** / branch **85.92%** / functions **92.34%** / lines **93.49%** |
+| `git push` | **失败（网络）**：`Connection reset by 20.205.243.166 port 22`（TCP 可达但 SSH 握手被重置）；按规则记录原因并在下一阶段重试 |
+
+门禁沿用上一轮结论：**`--maxWorkers=6` 下稳定全绿**（默认并行度会因资源竞争命中不同既有用例超时）。
 
 ## 5. 未满足项与后续
 

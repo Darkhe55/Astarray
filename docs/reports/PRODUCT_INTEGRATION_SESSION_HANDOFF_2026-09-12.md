@@ -101,7 +101,11 @@
   - 规则：控制队列/普通报告双通道（均不唤醒主 Agent）、`before-model-call` 注入下一次模型输入、`before-tool-execution` 应用并在门禁档阻止该次工具执行（`guidance-gate-requested-pause`）、幂等与消费点丢弃（过期/跨作用域）。
   - **架构守卫真阳性**：新目录 `core/src/guidance` 的导入路径含 `../gui` 子串被守卫命中 → 目录更名为 `core/src/runtime-guidance`（未改守卫）。
   - **门禁与并行度**：默认并行度多次命中不同既有用例超时；`--maxWorkers=6` 下 typecheck/lint/build、全量 test（201 文件/1639 用例）与 coverage（93.45/86.05/92.34/93.50）**全部 exit 0**，`git push` `56f0df6..04d6ff2`。**后续门禁建议使用 `--maxWorkers=6` 并注明**。
-- 下一轮：**GUIDE-01-03**（长工具检查点与协作取消；保存回执、收敛旧请求、新请求承接指导；未知停止结果 blocked、旧完成声明失效、watchdog 不误续跑旧指令）。
+- **GUIDE-01-03**（长工具检查点与协作取消）：`packages/core/src/runtime-guidance/long-tool-checkpoint.ts` + ADR-0038 §17–23 + `docs/reports/GUIDE01_03_LONG_TOOL_CANCELLATION.md`，提交 `946ee90`（**本地未推送**）。
+  - 规则：检查点回执、取消仅检查点交付（不假定在途插入）、回执驱动终态、未知停止结果 `unknown-stop-outcome` 按 blocked、旧执行世声明 `stale-epoch-invalidated`、旧请求收敛 + 后继承接最新 revision、watchdog 在取消未收敛时一律不续跑。
+  - 门禁：typecheck/lint/build 0；`npx vitest run --maxWorkers=6` **202 文件/1646 用例全通过**；`--coverage --maxWorkers=6` exit 0（93.43/85.92/92.34/93.49）。
+  - **推送失败（网络）**：`Connection reset by 20.205.243.166 port 22`（TCP 可达、SSH 握手被重置）；已重试 2 次，累积待推送 `946ee90`（+ 本记录提交）。
+- 下一轮：① 先重试推送（≤5 次）并确认 `origin/main` 追上；② 进入 **GUIDE-01-04**（公共应用/CLI/TUI 提交指导并查看接收/应用状态；安装包长任务中途改目标的实测与延迟记录）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。
