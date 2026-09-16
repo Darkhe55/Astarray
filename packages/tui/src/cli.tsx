@@ -35,6 +35,8 @@ import {
   executeSessionRevokeElevationCommand,
   executeSessionShutdownCommand,
   executeGuiServeCommand,
+  executeAccuracyConfigureCommand,
+  executeAccuracyStatusCommand,
   executeGuideStatusCommand,
   executeGuideSubmitCommand,
   executeMcpServeCommand,
@@ -608,6 +610,73 @@ guideCommand
       isJsonOutput: options.json === true,
     });
   });
+
+const accuracyCommand = program
+  .command("accuracy")
+  .description("准确性检查档位/预算（ACCURACY：默认标准档，仅认证用户可配置）");
+accuracyCommand
+  .command("status")
+  .description("读取当前档位、预算上界与开关状态")
+  .option("--json", "JSON 输出")
+  .action(async (options: { json?: boolean }) => {
+    process.exitCode = await executeAccuracyStatusCommand({
+      stateDirectory: defaultStateDirectory(),
+      isJsonOutput: options.json === true,
+    });
+  });
+accuracyCommand
+  .command("configure")
+  .description("配置档位/预算/开关（Agent 不得自行降级或关闭）")
+  .option("--tier <tier>", "档位：fast|standard|strict")
+  .option("--enable", "启用准确性检查")
+  .option("--disable", "关闭准确性检查（不新增模型审查或人工阻塞）")
+  .option(
+    "--max-model-calls <count>",
+    "模型审查次数上界",
+    (value: string) => Number.parseInt(value, 10),
+  )
+  .option(
+    "--max-wall-clock-ms <milliseconds>",
+    "墙钟时间上界（毫秒）",
+    (value: string) => Number.parseInt(value, 10),
+  )
+  .option(
+    "--expected-revision <revision>",
+    "期望 revision（并发配置校验；缺省用当前 revision）",
+    (value: string) => Number.parseInt(value, 10),
+  )
+  .option("--json", "JSON 输出")
+  .action(
+    async (options: {
+      tier?: string;
+      enable?: boolean;
+      disable?: boolean;
+      maxModelCalls?: number;
+      maxWallClockMs?: number;
+      expectedRevision?: number;
+      json?: boolean;
+    }) => {
+      if (options.enable === true && options.disable === true) {
+        process.stderr.write("不能同时使用 --enable 与 --disable\n");
+        process.exitCode = 2;
+        return;
+      }
+      process.exitCode = await executeAccuracyConfigureCommand({
+        stateDirectory: defaultStateDirectory(),
+        tier: options.tier,
+        isEnabled:
+          options.enable === true
+            ? true
+            : options.disable === true
+              ? false
+              : undefined,
+        maximumModelCallCount: options.maxModelCalls,
+        maximumWallClockMilliseconds: options.maxWallClockMs,
+        expectedRevision: options.expectedRevision,
+        isJsonOutput: options.json === true,
+      });
+    },
+  );
 
 const summaryCommand = program
   .command("summary")

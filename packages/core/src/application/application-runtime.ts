@@ -88,6 +88,11 @@ import { GuidanceControlQueue } from "../runtime-guidance/guidance-control-queue
 import { GuidanceSourceRegistry } from "../runtime-guidance/runtime-guidance.js";
 import { LongToolCheckpointController } from "../runtime-guidance/long-tool-checkpoint.js";
 import { GuidanceSubmissionJournal } from "../runtime-guidance/guidance-submission-journal.js";
+import {
+  AccuracyPolicyStore,
+  FileAccuracyAttemptJournal,
+  FileAccuracyVerificationAuditLog,
+} from "../orchestration/accuracy-policy-store.js";
 import { LocalContextGraphStore } from "../orchestration/local-context-graph-store.js";
 import {
   createContextPromptProvider,
@@ -141,6 +146,12 @@ export interface ApplicationRuntime {
   registeredProjectRoots: RegisteredProjectRoot[];
   /** AUTH-SCOPE-03：工具执行前的范围授权门禁。 */
   scopeAuthorizationGate: ScopeAuthorizationGate;
+  /** ACCURACY-03：档位/预算/开关策略存储（仅认证用户可配置）。 */
+  accuracyPolicyStore: AccuracyPolicyStore;
+  /** ACCURACY-03：完成签收幂等日志（跨进程，重复派发不重复副作用）。 */
+  accuracyAttemptJournal: FileAccuracyAttemptJournal;
+  /** ACCURACY-03：逐次校验审计日志（证明关闭时不新增模型审查）。 */
+  accuracyVerificationAuditLog: FileAccuracyVerificationAuditLog;
   shutdown: () => Promise<void>;
 }
 
@@ -577,6 +588,15 @@ export async function createApplicationRuntime(
   });
   const longToolCheckpointController = new LongToolCheckpointController();
 
+  // ACCURACY-03：准确性档位/预算/开关策略、幂等日志与校验审计（产品入口与 CLI 共用）。
+  const accuracyPolicyStore = new AccuracyPolicyStore({ baseDirectory: stateDirectory });
+  const accuracyAttemptJournal = new FileAccuracyAttemptJournal({
+    baseDirectory: stateDirectory,
+  });
+  const accuracyVerificationAuditLog = new FileAccuracyVerificationAuditLog({
+    baseDirectory: stateDirectory,
+  });
+
   const controller = new MainController({
     modeMachine,
     sessionManager,
@@ -721,6 +741,9 @@ export async function createApplicationRuntime(
     authenticatedUserId,
     registeredProjectRoots,
     scopeAuthorizationGate,
+    accuracyPolicyStore,
+    accuracyAttemptJournal,
+    accuracyVerificationAuditLog,
     humanVerificationController,
     contextClosureCapsuleStore,
     contextGraphStore,

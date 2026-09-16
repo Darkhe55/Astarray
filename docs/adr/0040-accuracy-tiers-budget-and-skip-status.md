@@ -69,3 +69,39 @@ worker 完成门禁（未解决的可变工具失败 → 不得 done）、`Human
   与既有 `CompletionControlParser`/worker 完成门禁的**组合接线**属 ACCURACY-03。
 - 不做语义蕴含判断；只校验覆盖、来源、版本与指纹。
 - 理解确认的具体交互界面与档位设置入口属 ACCURACY-03。
+
+## 补充（ACCURACY-03 冻结：设置、预算、跳过状态与产品入口）
+
+17. **策略存储**：准确性策略（开关、默认档、预算上界、任务级档位覆盖）持久化在
+    `<state>/settings/accuracy.json`，带单调 `revision`；缺失或损坏时读取**默认策略**
+    （开启、标准档、模型审查次数上界与墙钟上界均为有限值），不静默覆盖已有设置。
+18. **配置权限**：配置只允许认证用户；请求携带 `requestingAgentInstanceId` 时，
+    **Agent 不得降级档位或关闭检查**，否则 `accuracy-tier-downgrade-rejected`；
+    并发配置以 `expectedRevision` 做 CAS，不匹配 → `accuracy-policy-stale-revision`。
+    预算必须为非负整数，否则 `accuracy-policy-invalid`。
+19. **任务级覆盖**：`taskTierOverrides` 只影响被点名的任务，其余任务沿用默认档。
+20. **预算记账**：标准/严格档每次真实校验消耗一次模型审查额度；额度耗尽或墙钟窗口超限 →
+    `quality-check-budget-exhausted`，以**独立跳过状态**记录"检查不足"而**不是通过**。
+    额度消耗从审计日志恢复，**跨进程重启不重置上界**（墙钟窗口按进程窗口计算）。
+21. **关闭语义**：`isEnabled = false` 时完成校验返回
+    `quality-check-skipped(accuracy-disabled)`，**不调用任何验收端口、不发起校验层、
+    不新增人工阻塞**；该状态绝不等同于测试/验收通过。
+22. **幂等优先于预算**：命中既有 `completionAttemptId` 结论时直接返回
+    （`isIdempotentReplay = true`），不消耗预算、不再次发起校验层、不重复副作用。
+23. **审计**：每次校验在 `<state>/accuracy/verification-audit.jsonl` 追加一条记录，
+    含 `isVerificationLayerInvoked`；关闭与预算耗尽路径必须为 `false`，
+    供本地/人工核验"关闭后没有新增模型审查"。
+24. **产品入口**：公共门面提供 `queryAccuracyPolicy` / `configureAccuracyPolicy` /
+    `verifyTaskCompletion` / `queryAccuracyVerificationAudit`，CLI 提供 `accuracy status` /
+    `accuracy configure`；入口复用与门禁同一份策略与幂等日志，不实现第二套判定。
+    本机制**不改变权限路由**（权限组、工具权限、范围授权保持不变）。
+25. **增量 E2E（当前阶段）**：以"关闭 ⇒ 无新增模型审查/人工阻塞且状态诚实"、
+    "标准/严格档工作量有上界"、"重复派发跨进程幂等"、"权限路由不变"作为验收断言；
+    真实 Provider 下的端到端成本/时延验证仍待外部凭据（见 E2E-01）。
+
+## 非目标（ACCURACY-03 范围外）
+
+- 不在本阶段接入真实 Provider 的模型审查调用（模型审查端口由后续接线注入）；
+- 不改变既有完成门禁、调度或权限判定；
+- 不做语义蕴含判断，不把跳过状态写成通过。
+

@@ -2778,6 +2778,114 @@ export async function executeGuideStatusCommand(
   }
 }
 
+/** ACCURACY-03：准确性档位/预算/开关的 CLI（经公共门面，不接触内部路径）。 */
+export interface AccuracyStatusCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+}
+
+async function createAccuracyApplication(stateDirectory: string) {
+  const { AstarrayApplicationFacade } = await import(
+    "../../../core/src/public-sdk.js"
+  );
+  const application = await AstarrayApplicationFacade.create({
+    stateDirectory,
+    mode: "assist",
+    runtime: "mock",
+    statusPollIntervalMilliseconds: 25,
+  });
+  application.createSession({ sessionId: "accuracy-cli", mode: "assist" });
+  return application;
+}
+
+/** accuracy status：读取当前档位/预算/开关（默认标准档；关闭状态如实输出）。 */
+export async function executeAccuracyStatusCommand(
+  options: AccuracyStatusCommandOptions,
+): Promise<number> {
+  const application = await createAccuracyApplication(options.stateDirectory);
+  try {
+    const policy = await application.queryAccuracyPolicy();
+    if (options.isJsonOutput) {
+      printJson({ status: "ok", policy });
+    } else {
+      process.stdout.write(
+        "enabled=" +
+          String(policy.isEnabled) +
+          " tier=" +
+          policy.tier +
+          " modelCalls<=" +
+          String(policy.budget.maximumModelCallCount) +
+          " wallClockMs<=" +
+          String(policy.budget.maximumWallClockMilliseconds) +
+          " revision=" +
+          String(policy.revision) +
+          "\n",
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr((error as Error).message);
+    return EXIT_CODES.FAILURE;
+  } finally {
+    await application.shutdown();
+  }
+}
+
+export interface AccuracyConfigureCommandOptions {
+  stateDirectory: string;
+  tier: string | undefined;
+  isEnabled: boolean | undefined;
+  maximumModelCallCount: number | undefined;
+  maximumWallClockMilliseconds: number | undefined;
+  expectedRevision: number | undefined;
+  isJsonOutput: boolean;
+}
+
+/** accuracy configure：认证用户配置档位/预算/开关（Agent 降级会被门面拒绝）。 */
+export async function executeAccuracyConfigureCommand(
+  options: AccuracyConfigureCommandOptions,
+): Promise<number> {
+  const allowedTiers = ["fast", "standard", "strict"];
+  if (options.tier !== undefined && !allowedTiers.includes(options.tier)) {
+    logToStderr("非法准确性档位：" + options.tier);
+    return EXIT_CODES.USAGE_ERROR;
+  }
+  const application = await createAccuracyApplication(options.stateDirectory);
+  try {
+    const currentPolicy = await application.queryAccuracyPolicy();
+    const policy = await application.configureAccuracyPolicy({
+      tier:
+        options.tier === undefined
+          ? undefined
+          : (options.tier as "fast" | "standard" | "strict"),
+      isEnabled: options.isEnabled,
+      maximumModelCallCount: options.maximumModelCallCount,
+      maximumWallClockMilliseconds: options.maximumWallClockMilliseconds,
+      expectedRevision: options.expectedRevision ?? currentPolicy.revision,
+      updatedByUserId: "authenticated-user",
+    });
+    if (options.isJsonOutput) {
+      printJson({ status: "ok", policy });
+    } else {
+      process.stdout.write(
+        "enabled=" +
+          String(policy.isEnabled) +
+          " tier=" +
+          policy.tier +
+          " revision=" +
+          String(policy.revision) +
+          "\n",
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr((error as Error).message);
+    return EXIT_CODES.FAILURE;
+  } finally {
+    await application.shutdown();
+  }
+}
+
 /** SUM-01-04b：摘要 CLI（经公共门面读取已发布索引，不接触内部路径）。 */
 export interface SummaryListCommandOptions {
   stateDirectory: string;

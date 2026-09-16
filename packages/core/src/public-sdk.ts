@@ -34,6 +34,17 @@ import { measureSummaryOperation } from "./summarization/summary-resource-metric
 import { advanceSummaryGeneration } from "./summarization/summary-generation-service.js";
 import { SummaryIndexStore } from "./summarization/summary-index-store.js";
 import { buildRuntimeGuidanceEvent } from "./runtime-guidance/runtime-guidance.js";
+import {
+  AccuracyCompletionGate,
+  AccuracyPolicyError,
+  type AccuracyPolicy,
+} from "./orchestration/accuracy-policy-store.js";
+import type {
+  AcceptanceEntry,
+  AccuracyTier,
+  CompletionDeclaration,
+  EvidenceReference,
+} from "./orchestration/task-accuracy-verifier.js";
 
 // ─── SUM-02：计量、请求预算、事实核验、缓存分离与质量评估的公开入口 ───
 export {
@@ -88,6 +99,40 @@ export {
   type CapturedProviderUsage,
   type ProviderUsageCapturePort,
 } from "./measurement/provider-usage-capture.js";
+
+// ─── ACCURACY：档位/预算/跳过状态、完成签收校验与幂等日志的公开入口 ───
+export {
+  ACCURACY_POLICY_SCHEMA_VERSION,
+  DEFAULT_ACCURACY_BUDGET,
+  AccuracyBudgetTracker,
+  AccuracyCompletionGate,
+  AccuracyPolicyError,
+  AccuracyPolicyStore,
+  FileAccuracyAttemptJournal,
+  FileAccuracyVerificationAuditLog,
+  resolveAccuracyTier,
+  type AccuracyBudget,
+  type AccuracyBudgetState,
+  type AccuracyCompletionGatePorts,
+  type AccuracyCompletionVerification,
+  type AccuracyPolicy,
+  type AccuracyPolicyErrorCode,
+  type AccuracyVerificationAuditPort,
+  type AccuracyVerificationAuditRecord,
+} from "./orchestration/accuracy-policy-store.js";
+export {
+  ACCURACY_TIERS,
+  InMemoryAccuracyAttemptJournal,
+  TaskAccuracyVerifier,
+  type AcceptanceEntry,
+  type AcceptanceEvidenceRequirement,
+  type AccuracyTier,
+  type AccuracyVerificationResult,
+  type AccuracyVerifierPorts,
+  type CompletionDeclaration,
+  type EvidenceKind,
+  type EvidenceReference,
+} from "./orchestration/task-accuracy-verifier.js";
 
 /** SDK 版本（与 package.json 同步语义版本）。 */
 export const ASTARRAY_SDK_VERSION = "0.1.0";
@@ -345,6 +390,71 @@ export interface PublicGuidanceStatusEntry {
   dropReason: string | null;
   /** false 表示只有提交记录、尚无进程回写应用结果（不虚报已应用）。 */
   isApplicationStatusKnown: boolean;
+}
+
+/** ACCURACY-03：公开准确性策略（revision 用于并发配置校验）。 */
+export interface PublicAccuracyPolicy {
+  isEnabled: boolean;
+  tier: AccuracyTier;
+  budget: {
+    maximumModelCallCount: number;
+    maximumWallClockMilliseconds: number;
+  };
+  taskTierOverrides: Record<string, AccuracyTier>;
+  revision: number;
+  updatedByUserId: string;
+  updatedAtIso: string;
+}
+
+/** ACCURACY-03：公开验收条目（完成声明必须覆盖全部必需条目）。 */
+export interface PublicAcceptanceEntry {
+  entryIdentifier: string;
+  description: string;
+  isRequired: boolean;
+  evidenceRequirement: AcceptanceEntry["evidenceRequirement"];
+}
+
+/** ACCURACY-03：公开证据引用（真实指纹 + 产生时 revision）。 */
+export interface PublicEvidenceReference {
+  evidenceIdentifier: string;
+  entryIdentifier: string;
+  evidenceKind: EvidenceReference["evidenceKind"];
+  contentHash: string | null;
+  producedAtRevision: number;
+  producedByAgentInstanceId: string | null;
+  observedAtIso: string;
+}
+
+/** ACCURACY-03：完成校验结果；跳过状态独立于通过/拒绝。 */
+export interface PublicAccuracyVerificationResult {
+  verdict: "accepted" | "rejected" | "quality-check-skipped";
+  tier: AccuracyTier;
+  isSkipped: boolean;
+  skipReason: "accuracy-disabled" | "tier-fast" | null;
+  budgetStatus: "within-budget" | "quality-check-budget-exhausted";
+  reasons: string[];
+  isIdempotentReplay: boolean;
+}
+
+/** ACCURACY-03：逐次校验审计；`isVerificationLayerInvoked=false` 证明未发起校验层。 */
+export interface PublicAccuracyVerificationAuditRecord {
+  taskIdentifier: string;
+  completionAttemptId: string;
+  tier: AccuracyTier;
+  verdict: "accepted" | "rejected" | "quality-check-skipped";
+  skipReason: "accuracy-disabled" | "tier-fast" | null;
+  budgetStatus: "within-budget" | "quality-check-budget-exhausted";
+  isVerificationLayerInvoked: boolean;
+  observedAtIso: string;
+}
+
+/** 单次完成校验的调用上下文（由公共入口输入装配，不驻留于运行时）。 */
+interface AccuracyInvocationContext {
+  acceptanceEntries: AcceptanceEntry[];
+  currentTaskSequenceRevision: number;
+  expectedRecipientIdentifier: string;
+  currentArtifactRevisions: Record<string, number>;
+  isClarificationRequired: boolean;
 }
 
 /** 公开人工裁决结果（签收写入归属 Agent 存档；否决只重开节点不破坏性回滚）。 */
@@ -1362,6 +1472,178 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     return entries
       .filter((entry) => entry.guidanceIdentifier === input.guidanceIdentifier)
       .map((entry) => ({ ...entry }));
+  }
+
+  // ─── ACCURACY-03：档位/预算/跳过状态的产品入口（默认标准档；仅认证用户可配置） ───
+
+  private accuracyCompletionGate: AccuracyCompletionGate | null = null;
+  private accuracyInvocationContext: AccuracyInvocationContext | null = null;
+
+  private toPublicAccuracyPolicy(policy: AccuracyPolicy): PublicAccuracyPolicy {
+    return {
+      isEnabled: policy.isEnabled,
+      tier: policy.tier,
+      budget: { ...policy.budget },
+      taskTierOverrides: { ...policy.taskTierOverrides },
+      revision: policy.revision,
+      updatedByUserId: policy.updatedByUserId,
+      updatedAtIso: policy.updatedAtIso,
+    };
+  }
+
+  private requireAccuracyInvocationContext(): AccuracyInvocationContext {
+    if (this.accuracyInvocationContext === null) {
+      throw new PublicApplicationError(
+        "accuracy-invocation-missing",
+        "完成校验缺少本次调用的验收上下文",
+      );
+    }
+    return this.accuracyInvocationContext;
+  }
+
+  /** 复用同一门实例：预算与幂等在同一进程内累计，不因多次调用重置。 */
+  private createAccuracyCompletionGate(): AccuracyCompletionGate {
+    if (this.accuracyCompletionGate === null) {
+      this.accuracyCompletionGate = new AccuracyCompletionGate({
+        policyStore: this.runtime.accuracyPolicyStore,
+        journal: this.runtime.accuracyAttemptJournal,
+        auditLog: this.runtime.accuracyVerificationAuditLog,
+        ports: {
+          getAcceptanceEntries: async () =>
+            this.requireAccuracyInvocationContext().acceptanceEntries,
+          getCurrentTaskSequenceRevision: async () =>
+            this.requireAccuracyInvocationContext().currentTaskSequenceRevision,
+          getExpectedRecipientIdentifier: async () =>
+            this.requireAccuracyInvocationContext().expectedRecipientIdentifier,
+          getArtifactRevision: async (evidence) =>
+            this.requireAccuracyInvocationContext().currentArtifactRevisions[
+              evidence.evidenceIdentifier
+            ] ?? null,
+          isClarificationRequired: async () =>
+            this.requireAccuracyInvocationContext().isClarificationRequired,
+        },
+      });
+    }
+    return this.accuracyCompletionGate;
+  }
+
+  /** 读取当前准确性策略（默认标准档 + 预算上界；关闭状态如实返回）。 */
+  async queryAccuracyPolicy(): Promise<PublicAccuracyPolicy> {
+    this.assertOpen();
+    return this.toPublicAccuracyPolicy(
+      await this.runtime.accuracyPolicyStore.readPolicy(),
+    );
+  }
+
+  /**
+   * 配置准确性策略：仅认证用户可调用；`requestingAgentInstanceId` 非空表示 Agent 请求，
+   * 降级或关闭会被拒绝（`accuracy-tier-downgrade-rejected`）。
+   */
+  async configureAccuracyPolicy(input: {
+    tier?: AccuracyTier;
+    isEnabled?: boolean;
+    maximumModelCallCount?: number;
+    maximumWallClockMilliseconds?: number;
+    taskTierOverrides?: Record<string, AccuracyTier>;
+    expectedRevision: number;
+    updatedByUserId?: string;
+    requestingAgentInstanceId?: string | null;
+  }): Promise<PublicAccuracyPolicy> {
+    this.assertOpen();
+    try {
+      const policy = await this.runtime.accuracyPolicyStore.configurePolicy({
+        tier: input.tier,
+        isEnabled: input.isEnabled,
+        budget: {
+          ...(input.maximumModelCallCount === undefined
+            ? {}
+            : { maximumModelCallCount: input.maximumModelCallCount }),
+          ...(input.maximumWallClockMilliseconds === undefined
+            ? {}
+            : { maximumWallClockMilliseconds: input.maximumWallClockMilliseconds }),
+        },
+        taskTierOverrides: input.taskTierOverrides,
+        expectedRevision: input.expectedRevision,
+        updatedByUserId: input.updatedByUserId ?? this.runtime.authenticatedUserId,
+        requestingAgentInstanceId: input.requestingAgentInstanceId ?? null,
+      });
+      return this.toPublicAccuracyPolicy(policy);
+    } catch (error) {
+      if (error instanceof AccuracyPolicyError) {
+        throw new PublicApplicationError(error.errorCode, error.message);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * 校验完成声明：关闭时返回 `quality-check-skipped(accuracy-disabled)` 且不发起校验层；
+   * 标准/严格档受预算约束；同一 `completionAttemptId` 重放返回既有结论。
+   */
+  async verifyTaskCompletion(input: {
+    taskIdentifier: string;
+    completionAttemptId: string;
+    taskSequenceRevision: number;
+    completedEntryIdentifiers: string[];
+    evidenceReferences: PublicEvidenceReference[];
+    deliveredToRecipientIdentifier: string;
+    understandingConfirmation?: { restatedGoal: string; confirmedAtIso: string } | null;
+    acceptanceEntries: PublicAcceptanceEntry[];
+    currentArtifactRevisions?: Record<string, number>;
+    currentTaskSequenceRevision?: number;
+    expectedRecipientIdentifier?: string;
+    isClarificationRequired?: boolean;
+  }): Promise<PublicAccuracyVerificationResult> {
+    this.assertOpen();
+    const declaration: CompletionDeclaration = {
+      taskIdentifier: input.taskIdentifier,
+      completionAttemptId: input.completionAttemptId,
+      taskSequenceRevision: input.taskSequenceRevision,
+      completedEntryIdentifiers: [...input.completedEntryIdentifiers],
+      evidenceReferences: input.evidenceReferences.map((evidence) => ({ ...evidence })),
+      understandingConfirmation: input.understandingConfirmation ?? null,
+      deliveredToRecipientIdentifier: input.deliveredToRecipientIdentifier,
+    };
+    this.accuracyInvocationContext = {
+      acceptanceEntries: input.acceptanceEntries.map((entry) => ({ ...entry })),
+      currentTaskSequenceRevision:
+        input.currentTaskSequenceRevision ?? input.taskSequenceRevision,
+      expectedRecipientIdentifier:
+        input.expectedRecipientIdentifier ?? this.runtime.authenticatedUserId,
+      currentArtifactRevisions: { ...(input.currentArtifactRevisions ?? {}) },
+      isClarificationRequired: input.isClarificationRequired ?? false,
+    };
+    try {
+      const result = await this.createAccuracyCompletionGate().verifyCompletion({
+        declaration,
+      });
+      return {
+        verdict: result.verdict,
+        tier: result.tier,
+        isSkipped: result.isSkipped,
+        skipReason: result.skipReason,
+        budgetStatus: result.budgetStatus,
+        reasons: [...result.reasons],
+        isIdempotentReplay: result.verification?.isIdempotentReplay ?? false,
+      };
+    } finally {
+      this.accuracyInvocationContext = null;
+    }
+  }
+
+  /** 读取逐次校验审计（跨进程）；用于证明关闭/跳过时未发起校验层。 */
+  async queryAccuracyVerificationAudit(input?: {
+    taskIdentifier?: string;
+  }): Promise<PublicAccuracyVerificationAuditRecord[]> {
+    this.assertOpen();
+    const records = await this.createAccuracyCompletionGate().readVerificationAudit();
+    const selected =
+      input?.taskIdentifier === undefined
+        ? records
+        : records.filter(
+            (record) => record.taskIdentifier === input.taskIdentifier,
+          );
+    return selected.map((record) => ({ ...record }));
   }
 
   private async createRecoveryCenterController(): Promise<RecoveryCenterController> {

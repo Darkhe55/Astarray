@@ -131,7 +131,11 @@
 - **ACCURACY-02**（幂等签收、理解确认与条目→证据覆盖）：`packages/core/src/orchestration/task-accuracy-verifier.ts` + ADR-0040 §9–16 + `docs/reports/ACCURACY_02_IDEMPOTENT_ACCEPTANCE.md`，提交 `180d688`（已推送）。
   - 规则：同一 attemptId 幂等（跨重启可识别）、收件人/旧与未来版本拒绝、证据缺指纹或严格档模型自述视为伪造、陈旧产物、空证据、必需条目覆盖（部分完成只报进度）、快速档独立 `quality-check-skipped`、严格/歧义档要求理解确认。
   - 门禁：build 0；`test --maxWorkers=6` **207 文件/1679 用例全通过**；coverage exit 0（93.29/85.60/92.24/93.35；orchestration 94.08/87.32/93.81/94.14）；`git push` 第 1 次成功。
-- 下一轮：**ACCURACY-03**（设置与产品入口：档位/预算/跳过状态可见；把 `TaskAccuracyVerifier` 与既有完成门禁组合接线；跨进程持久化幂等日志；增量 E2E：关闭后无新增模型审查或人工阻塞、状态诚实、标准/严格工作量有上限、不影响权限路由）。
+- **ACCURACY-03**（设置、预算与产品入口）：`packages/core/src/orchestration/accuracy-policy-store.ts`（策略存储/CAS/跨进程幂等日志/审计日志/预算/组合门）+ 运行时装配 + `public-sdk` 四个入口 + `astarray accuracy status|configure` + ADR-0040 §17–25 + `docs/reports/ACCURACY_03_PRODUCT_ENTRY.md`。
+  - 规则：默认标准档 + 有限预算；仅认证用户可配置，**Agent 降级或关闭被拒绝**；`expectedRevision` CAS；任务级档位覆盖只影响点名任务；**关闭 ⇒ 不调用验收端口、不发起校验层、不新增人工阻塞**，返回独立 `quality-check-skipped(accuracy-disabled)`；预算耗尽记 `quality-check-budget-exhausted`（不是通过），额度**从审计日志跨进程恢复**；幂等优先于预算（重放不耗额度）；每次校验写审计 `isVerificationLayerInvoked`；**不改变权限路由**。
+  - 门禁：typecheck/lint/build 0；`npx vitest run --maxWorkers=6` **210 文件/1695 用例全通过**；coverage exit 0（93.34/85.62/92.45/93.39；orchestration 94.17/87.32/94.08/94.22；新模块 96.80/85.89/100/96.80）；`verify:security-coverage` 22/22。
+  - 未完成/外部依赖：真实 Provider 成本与时延 E2E、GUI/TUI 交互式档位设置、治理文档统一修订。
+- 下一轮（按新用户文档推荐顺序）：**GIT-PRESERVE-01**（之后 GIT-PRESERVE-02/03、READ-FORMAT-01..05、GUIDE 增量）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。
