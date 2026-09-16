@@ -44,7 +44,16 @@
 
 ## 5. 门禁与推送
 
-（本轮复跑后回填。）
+| 命令 | 结果 |
+| --- | --- |
+| `npm run build` | **exit 0** |
+| `npx vitest run --maxWorkers=6` | **exit 0：206 文件 / 1669 用例全通过** |
+| `npx vitest run --coverage --maxWorkers=6` | **exit 0**：全局 statements **93.25%** / branch **85.48%** / functions **92.21%** / lines **93.31%**；`packages/core/src/tools` 目录 **95.32% / 90.42% / 96.90% / 95.32%** |
+| `npx tsc --noEmit` / `npx eslint .` | 0 / 0 |
+| `git push` | **exit 0**（网络自上一阶段重置后恢复）：`864b300..40df2ed` 已推送上游（含 AUTH-SCOPE-01/02 与记录提交）；本检查点实现提交 `c435442` 随后推送 |
+
+说明：Worker 工具端口现在统一经过范围门禁，全量 206 文件/1669 用例仍全通过，说明既有 devolve 写入、
+assist 项目内写入与只读路径未受影响；思索模式写入与跨根/未知/安装的人工裁决按 ADR-0039 生效。
 
 ## 6. 未满足项与后续
 

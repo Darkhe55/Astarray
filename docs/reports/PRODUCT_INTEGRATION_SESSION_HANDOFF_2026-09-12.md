@@ -119,7 +119,11 @@
   - 规则：已登记项目根 + realpath 判定 S1–S7（未知即 S4；**不用 cwd/前缀/自述**）；三模式矩阵（deny 优先、安装开关、S7 专用流程、放权 S4 必须上级裁决）；回执绑定范围+操作指纹+authorizationRevision+有效期；执行前复检发现链接/根变化；升级路径有界不回派。
   - 门禁：build 0；`test --maxWorkers=6` **205 文件/1659 用例全通过**；coverage exit 0（93.24/85.46/92.15/93.30；core/src/tools 95.40/90.39/97.06/95.40）；`typecheck`/`lint` 0。
   - **推送失败（网络）**：本阶段 5 次尝试全部 `Connection reset by 20.205.243.166 port 22`；累积待推送 `cd37aa7`、`9868b4e`、`85456a8`。
-- 下一轮：① 重试推送（累计提交一并上传；若远端仍不可达则记录并继续）；② 进入 **AUTH-SCOPE-03**（设置与公共入口接线：把 `WorkspaceBoundary` 的 `process.cwd()` 根替换为已登记项目根、工具执行前门禁接入、放权默认无人工等待、deny 生效、协同项目内批准/项目外等待人工、拒绝与重放零副作用、恢复与打包回归）。
+- **AUTH-SCOPE-03**（执行前门禁与公共入口）：`packages/core/src/tools/scope-authorization-gate.ts` + 运行时包裹 Worker 工具端口 + `public-sdk` 四个入口 + ADR-0039 §17–23 + `docs/reports/AUTH_SCOPE_03_PRODUCT_ENTRY.md`，提交 `c435442`。
+  - 规则：未授权不触达内层工具（`auth-scope-denied`/`awaiting-user-authorization`/`awaiting-superior-approval`/`replay-rejected`/`authorization-expired`）；单次授权 + 重放保护；显式登记工程根取代隐式 cwd；默认上级端口只自动批准 S1。
+  - 门禁：build 0；`test --maxWorkers=6` **206 文件/1669 用例全通过**；coverage exit 0（93.25/85.48/92.21/93.31；core/src/tools 95.32/90.42/96.90/95.32）。
+  - 推送：网络恢复后 `864b300..40df2ed` 已推送；本提交 `c435442` 随后推送。
+- **AUTH-SCOPE 三检查点（01/02/03）完成**。下一轮按用户文档推荐顺序进入 **ACCURACY-01**（审计签收/完成链路，冻结档位、预算与跳过状态；先证明缺口，不重复实现已有能力）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。
