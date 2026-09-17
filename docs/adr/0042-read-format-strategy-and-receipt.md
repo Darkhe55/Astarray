@@ -145,3 +145,16 @@ readFile 返回结构化回执（正文 + 元数据），至少含：
 - 语言感知扫描复杂度高 → 按族拆分检查点、先支持 full，其余如实 partial/unsupported。
 - 视图参数进入时间锁键可能被滥用刷新窗口 → 以**源内容指纹**为准，视图切换不算内容变化。
 
+## 12. 实现记录（READ-FORMAT-02）
+
+- 模块：`packages/core/src/tools/read-format/read-format-scanner.ts`（扫描器）+
+  `read-format-strategies.ts`（策略/注册表/回执）。
+- 行号对齐：省略 span 时补回其内部换行，视图行数与源文件一致 → `lineMap` 恒等
+  `[{1,1,总行数}]`；`omittedLineRanges` 给出被省略的行区间与类型（含跨行块注释/多行导入）。
+- 注释过滤豁免：C 系预处理指令整行保留（`isCommentFilterExemptLine`），行内含注释标记时记
+  `retainedConstructs=["preprocessor-directive"]`，必要时降级 `partially-filtered`。
+- 诚实降级：未闭合字符串/块注释 → `parse-error` 且返回原文；未匹配格式 → `unsupported`；
+  同行的 import+代码 → 保留并记 `import-with-inline-code`（`partially-filtered`）。
+- `readFile` 参数与 receipt 透出、敏感检查接线、时间锁键扩展属 **READ-FORMAT-05**；本轮不改 `readFile`。
+- 真实夹具：`tests/fixtures/read-format/**`（C/C++/C#/Python/Rust 的注释、字符串、导入、不完整源码）。
+

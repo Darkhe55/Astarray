@@ -159,7 +159,11 @@
   - 依赖核对：**无任何语言解析依赖**（仅 commander/ink/react/zod）；如新增必须走当时有效的两阶段安装门禁（ADR-0019）并离线可用，禁止运行时自动安装/隐式下载。
   - 回归基线（02 起必须复用、不得放宽）：`builtins.test.ts`、`read-suppression-and-guard.test.ts`、`sensitive-content-access.test.ts`、`local-tool-policy.test.ts`。本轮为审计/冻结，**未运行测试**（静态阅读取证，标"未运行"）。
   - 提交 `948edef`（已推送，`333eb16..948edef`，第 1 次尝试成功）。
-- 下一轮（按新用户文档推荐顺序）：**READ-FORMAT-02**（其后 READ-FORMAT-03..05、GUIDE 增量）。
+- **READ-FORMAT-02**（C 系、Python、Rust 读取策略）：`packages/core/src/tools/read-format/{read-format-scanner,read-format-strategies}.ts` + `tests/fixtures/read-format/**`（8 真实夹具）+ `tests/core/unit/read-format-strategies.test.ts`（12 用例）+ ADR-0042 §12 + `docs/reports/READ_FORMAT_02_C_FAMILY_PYTHON_RUST.md`。
+  - 规则：语言感知状态机（字符串/注释/嵌套块注释/原始与逐字字符串）；C 宏与预处理指令**整行保留**；C++ `R"(…)"`、C# `@"…"`/`"""…"""`、Python 文档字符串、Rust `r#"…"#` 与生命周期不被误删；Python 多行 `from … import (…)` 整段省略；同行 `import os; x = 1` 保留并记 `import-with-inline-code`（partially-filtered）；未闭合字符串/注释 → `parse-error` 原样返回；未支持后缀 → `unsupported` 原样返回；省略 span 补回换行保证行号恒等。
+  - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **215 文件/1731 用例全通过**；coverage exit 0（93.05/85.08/92.71/93.09；tools/read-format 89.68/81.67/97.78/89.60；orchestration 93.91/86.64/94.31/93.95）；`verify:security-coverage` 22/22。
+  - 边界：**未接线 `readFile`**（参数/receipt/敏感检查接线/时间锁键属 READ-FORMAT-05）；`readFile` 现行为不变。
+- 下一轮（按新用户文档推荐顺序）：**READ-FORMAT-03**（其后 READ-FORMAT-04..05、GUIDE 增量）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。
