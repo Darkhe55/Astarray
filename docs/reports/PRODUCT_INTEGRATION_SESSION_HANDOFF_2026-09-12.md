@@ -151,6 +151,7 @@
 - **GIT-PRESERVE-03**（崩溃恢复与独立恢复演练、产品状态入口）：`local-preservation-service.ts` 的 `restorePreservationPoint`/`verifyPreservationPointIntegrity`/`listIncompleteSnapshotDirectories`/并发改写检测 + 4 个稳定错误码 + `public-sdk` 五个入口 + `astarray preserve create|status|show|restore` + ADR-0041 §12 + `docs/reports/GIT_PRESERVE_03_INDEPENDENT_RESTORE.md`（14 用例）。
   - 规则：恢复到**新目录**（拒绝非空目标，不覆盖人工工作区）；**原仓库删除后仍可独立恢复**（bundle clone/init + index/未暂存/未跟踪），恢复后 index tree 与记录一致；强制 `autocrlf=false` 保证字节级；缺对象/哈希不一致如实报告并使恢复失败；`.tmp-*` 残留报告为不完整且永不 ready；并发改写检测降级为 `incomplete`；恢复不创建新快照、只回写 `restoredAtIso`。
   - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **214 文件/1719 用例全通过**；coverage exit 0（93.17/85.26/92.60/93.22；orchestration 93.91/86.68/94.31/93.95；新模块 91.02/78.28/98.07/90.95）；`verify:security-coverage` 22/22。
+  - 提交 `01c4fa0`（已推送，`ea15f9f..01c4fa0`，第 1 次尝试成功）。
   - 未验证：真实 ENOSPC/权限耗尽故障注入、真实远端网络故障注入（需外部环境）；旧 `GitRecoveryPointService` 静默复制失败未统一。
 - **GIT-PRESERVE 三检查点（01/02/03）全部完成**。
 - 下一轮（按新用户文档推荐顺序）：**READ-FORMAT-01**（其后 READ-FORMAT-02..05、GUIDE 增量）。

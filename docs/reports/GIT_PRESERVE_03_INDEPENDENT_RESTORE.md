@@ -55,7 +55,9 @@
 | `npx vitest run --maxWorkers=6` | **exit 0：214 文件 / 1719 用例全通过**（+3 文件 / +14 用例） |
 | `npx vitest run --coverage --maxWorkers=6` | **exit 0**：全局 **93.17 / 85.26 / 92.60 / 93.22**；`core/src/orchestration` **93.91 / 86.68 / 94.31 / 93.95**；`local-preservation-service.ts` **91.02 / 78.28 / 98.07 / 90.95** |
 | `npm run verify:security-coverage` | **exit 0：关键安全模块 22/22 达标（阈值 95%）** |
-| `git push` | 见提交记录 |
+| `git push` | **exit 0**（第 1 次尝试成功）：`ea15f9f..01c4fa0` 已推送 |
+
+本检查点实现提交：`01c4fa0`（`feat(git-preserve): GIT-PRESERVE-03 崩溃恢复、独立恢复演练与产品状态入口`）。
 
 ## 6. 未满足项与后续
 
