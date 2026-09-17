@@ -148,7 +148,12 @@
   - 架构守卫：新模块破坏性 API 令牌加入白名单（`writeFile`/`rename`，去掉非必要 `fs.rm`）。
   - 提交 `6eba68b`（已推送，`09462be..6eba68b`，第 1 次尝试成功）。
   - 未完成（登记 03）：恢复（restore）到新目录/隔离 worktree、崩溃后独立恢复演练、产品状态入口（CLI/门面）、旧 `GitRecoveryPointService` 静默复制失败统一。
-- 下一轮（按新用户文档推荐顺序）：**GIT-PRESERVE-03**（崩溃恢复与独立恢复演练、产品状态入口；之后 READ-FORMAT-01..05、GUIDE 增量）。
+- **GIT-PRESERVE-03**（崩溃恢复与独立恢复演练、产品状态入口）：`local-preservation-service.ts` 的 `restorePreservationPoint`/`verifyPreservationPointIntegrity`/`listIncompleteSnapshotDirectories`/并发改写检测 + 4 个稳定错误码 + `public-sdk` 五个入口 + `astarray preserve create|status|show|restore` + ADR-0041 §12 + `docs/reports/GIT_PRESERVE_03_INDEPENDENT_RESTORE.md`（14 用例）。
+  - 规则：恢复到**新目录**（拒绝非空目标，不覆盖人工工作区）；**原仓库删除后仍可独立恢复**（bundle clone/init + index/未暂存/未跟踪），恢复后 index tree 与记录一致；强制 `autocrlf=false` 保证字节级；缺对象/哈希不一致如实报告并使恢复失败；`.tmp-*` 残留报告为不完整且永不 ready；并发改写检测降级为 `incomplete`；恢复不创建新快照、只回写 `restoredAtIso`。
+  - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **214 文件/1719 用例全通过**；coverage exit 0（93.17/85.26/92.60/93.22；orchestration 93.91/86.68/94.31/93.95；新模块 91.02/78.28/98.07/90.95）；`verify:security-coverage` 22/22。
+  - 未验证：真实 ENOSPC/权限耗尽故障注入、真实远端网络故障注入（需外部环境）；旧 `GitRecoveryPointService` 静默复制失败未统一。
+- **GIT-PRESERVE 三检查点（01/02/03）全部完成**。
+- 下一轮（按新用户文档推荐顺序）：**READ-FORMAT-01**（其后 READ-FORMAT-02..05、GUIDE 增量）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。

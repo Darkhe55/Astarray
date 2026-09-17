@@ -45,6 +45,11 @@ import type {
   CompletionDeclaration,
   EvidenceReference,
 } from "./orchestration/task-accuracy-verifier.js";
+import type {
+  LocalPreservationManifest,
+  RemoteSyncFailureClass,
+  RemoteSyncStatus,
+} from "./orchestration/local-preservation-service.js";
 
 // ─── SUM-02：计量、请求预算、事实核验、缓存分离与质量评估的公开入口 ───
 export {
@@ -120,6 +125,25 @@ export {
   type AccuracyVerificationAuditPort,
   type AccuracyVerificationAuditRecord,
 } from "./orchestration/accuracy-policy-store.js";
+// ─── GIT-PRESERVE：远端同步失败后的本地保全（状态/完整性/独立恢复） ───
+export {
+  LOCAL_PRESERVATION_DEFAULT_EXCLUDED_PATTERNS,
+  LOCAL_PRESERVATION_SCHEMA_VERSION,
+  LocalPreservationService,
+  evaluateRemoteSyncPreservationTrigger,
+  type CreateLocalPreservationInput,
+  type IncompleteSnapshotDirectory,
+  type LocalPreservationCreationResult,
+  type LocalPreservationIntegrityReport,
+  type LocalPreservationManifest,
+  type LocalPreservationRestoreResult,
+  type PreserveAfterRemoteSyncOutcomeResult,
+  type PreservationTriggerDecision,
+  type RemoteSyncFailureClass,
+  type RemoteSyncOutcome,
+  type RemoteSyncStatus,
+  type RestoreLocalPreservationInput,
+} from "./orchestration/local-preservation-service.js";
 export {
   ACCURACY_TIERS,
   InMemoryAccuracyAttemptJournal,
@@ -455,6 +479,48 @@ interface AccuracyInvocationContext {
   expectedRecipientIdentifier: string;
   currentArtifactRevisions: Record<string, number>;
   isClarificationRequired: boolean;
+}
+
+/** GIT-PRESERVE-03：公开保全点状态（不含物理路径与文件内容）。 */
+export interface PublicLocalPreservationPoint {
+  preservationPointId: string;
+  missionId: string;
+  status: "ready" | "incomplete" | "failed";
+  remoteSyncStatus: RemoteSyncStatus;
+  createdAtIso: string;
+  restoredAtIso: string | null;
+  referenceNames: string[];
+  untrackedFileCount: number;
+  hasStagedChanges: boolean;
+  hasUnstagedChanges: boolean;
+  hasObjectArchive: boolean;
+  integrityFailures: string[];
+}
+
+/** GIT-PRESERVE-03：同步结果接线结果（触发判定 + 是否复用快照）。 */
+export interface PublicLocalPreservationRecordResult {
+  shouldPreserve: boolean;
+  isReused: boolean;
+  point: PublicLocalPreservationPoint | null;
+}
+
+/** GIT-PRESERVE-03：独立恢复结果（恢复到新目录，不依赖原仓库）。 */
+export interface PublicLocalPreservationRestoreResult {
+  preservationPointId: string;
+  restoreDirectoryPath: string;
+  restoredUntrackedFilePaths: string[];
+  restoredIndexTreeOid: string | null;
+  restoredAtIso: string;
+  isOriginalRepositoryRequired: boolean;
+}
+
+/** GIT-PRESERVE-03：快照完整性报告（缺对象/哈希不一致如实报告）。 */
+export interface PublicLocalPreservationIntegrityReport {
+  isIntact: boolean;
+  missingFilePaths: string[];
+  mismatchedFilePaths: string[];
+  failures: string[];
+  checkedItemCount: number;
 }
 
 /** 公开人工裁决结果（签收写入归属 Agent 存档；否决只重开节点不破坏性回滚）。 */
@@ -1644,6 +1710,151 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
             (record) => record.taskIdentifier === input.taskIdentifier,
           );
     return selected.map((record) => ({ ...record }));
+  }
+
+  // ─── GIT-PRESERVE-03：本地保全产品入口（状态/完整性/独立恢复） ───
+
+  private toPublicLocalPreservationPoint(
+    manifest: LocalPreservationManifest,
+  ): PublicLocalPreservationPoint {
+    return {
+      preservationPointId: manifest.preservationPointId,
+      missionId: manifest.missionId,
+      status: manifest.localPreservation.status,
+      remoteSyncStatus: manifest.remoteSync.status,
+      createdAtIso: manifest.createdAtIso,
+      restoredAtIso: manifest.restoredAtIso,
+      referenceNames: manifest.repository.referenceOids.map(
+        (reference) => reference.referenceName,
+      ),
+      untrackedFileCount: manifest.untrackedFiles.length,
+      hasStagedChanges: manifest.index.cachedPatchPath !== null,
+      hasUnstagedChanges: manifest.worktreeChanges.unstagedPatchPath !== null,
+      hasObjectArchive: manifest.objectArchive.filePath !== null,
+      integrityFailures: [...manifest.localPreservation.integrityResult.failures],
+    };
+  }
+
+  /**
+   * 上报远端同步结果：失败（网络/缺远端/认证/拒绝/未知）立即生成或复用本地保全点；
+   * 成功或未失败不保全。触发判定与快照都在本地确定性代码中完成。
+   */
+  async recordRemoteSyncOutcome(input: {
+    missionId: string;
+    repositoryPath: string;
+    worktreePath?: string | null;
+    reason: string;
+    syncStatus: RemoteSyncStatus;
+    remoteName?: string | null;
+    branchName?: string | null;
+    attemptCount?: number;
+    observedFailureMessage?: string | null;
+  }): Promise<PublicLocalPreservationRecordResult> {
+    this.assertOpen();
+    const result =
+      await this.runtime.localPreservationService.preserveAfterRemoteSyncOutcome({
+        missionId: input.missionId,
+        repositoryPath: input.repositoryPath,
+        worktreePath: input.worktreePath ?? null,
+        reason: input.reason,
+        remoteSyncOutcome: {
+          status: input.syncStatus,
+          remoteName: input.remoteName ?? null,
+          branchName: input.branchName ?? null,
+          attemptCount: input.attemptCount ?? 1,
+          lastFailureClass: input.syncStatus.startsWith("failed-")
+            ? (input.syncStatus as RemoteSyncFailureClass)
+            : null,
+          observedAtIso: new Date().toISOString(),
+          observedFailureMessage: input.observedFailureMessage ?? null,
+        },
+      });
+    return {
+      shouldPreserve: result.shouldPreserve,
+      isReused: result.isReused,
+      point:
+        result.manifest === null
+          ? null
+          : this.toPublicLocalPreservationPoint(result.manifest),
+    };
+  }
+
+  async listLocalPreservationPoints(
+    missionId: string,
+  ): Promise<PublicLocalPreservationPoint[]> {
+    this.assertOpen();
+    const manifests =
+      await this.runtime.localPreservationService.listPreservationPoints(missionId);
+    return manifests.map((manifest) =>
+      this.toPublicLocalPreservationPoint(manifest),
+    );
+  }
+
+  async readLocalPreservationPoint(input: {
+    missionId: string;
+    preservationPointId: string;
+  }): Promise<PublicLocalPreservationPoint> {
+    this.assertOpen();
+    return this.toPublicLocalPreservationPoint(
+      await this.callPreservationOperation(() =>
+        this.runtime.localPreservationService.readPreservationPoint(
+          input.missionId,
+          input.preservationPointId,
+        ),
+      ),
+    );
+  }
+
+  async verifyLocalPreservationIntegrity(input: {
+    missionId: string;
+    preservationPointId: string;
+  }): Promise<PublicLocalPreservationIntegrityReport> {
+    this.assertOpen();
+    const report = await this.callPreservationOperation(() =>
+      this.runtime.localPreservationService.verifyPreservationPointIntegrity(
+        input,
+      ),
+    );
+    return {
+      isIntact: report.isIntact,
+      missingFilePaths: [...report.missingFilePaths],
+      mismatchedFilePaths: [...report.mismatchedFilePaths],
+      failures: [...report.failures],
+      checkedItemCount: report.checkedItemCount,
+    };
+  }
+
+  /** 独立恢复到新目录（拒绝覆盖非空目标；不依赖原仓库）。 */
+  async restoreLocalPreservationPoint(input: {
+    missionId: string;
+    preservationPointId: string;
+    restoreDirectoryPath: string;
+  }): Promise<PublicLocalPreservationRestoreResult> {
+    this.assertOpen();
+    const result = await this.callPreservationOperation(() =>
+      this.runtime.localPreservationService.restorePreservationPoint(input),
+    );
+    return {
+      preservationPointId: result.preservationPointId,
+      restoreDirectoryPath: result.restoreDirectoryPath,
+      restoredUntrackedFilePaths: [...result.restoredUntrackedFilePaths],
+      restoredIndexTreeOid: result.restoredIndexTreeOid,
+      restoredAtIso: result.restoredAtIso,
+      isOriginalRepositoryRequired: result.isOriginalRepositoryRequired,
+    };
+  }
+
+  private async callPreservationOperation<T>(
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof DomainError) {
+        throw new PublicApplicationError(error.errorCode, error.message);
+      }
+      throw error;
+    }
   }
 
   private async createRecoveryCenterController(): Promise<RecoveryCenterController> {

@@ -141,3 +141,17 @@ localPreservationStatus: "not-required" | "pending" | "ready" | "incomplete" | "
   cached/unstaged 补丁哈希 + 未跟踪（路径/大小/哈希）)；仅复用 `ready` 且未恢复过的快照。
 - 恢复与产品状态入口属 GIT-PRESERVE-03。
 
+## 12. 实现记录（GIT-PRESERVE-03）
+
+- `restorePreservationPoint`：默认恢复到**新目录**（拒绝非空目标）；有引用走 `git clone <bundle>`，
+  无引用（未出生 HEAD）走 `git init`；`reset --hard <baseCommit>` →
+  `apply --cached`（index）→ `checkout-index -a -f`（物化）→ `apply`（未暂存）→ 写回未跟踪文件；
+  强制 `core.autocrlf=false`/`core.eol=lf` 保证字节级恢复；回写 `restoredAtIso`，不创建新保全点。
+- `verifyPreservationPointIntegrity`：逐文件 sha256（index/worktree 补丁、`objects.bundle`、未跟踪快照），
+  缺对象 → `missingFilePaths`，哈希不一致 → `mismatchedFilePaths`；不依赖原仓库。
+- `listIncompleteSnapshotDirectories`：`.tmp-*` 崩溃残留报告为 `incomplete-temp-snapshot`，
+  永不出现在 `listPreservationPoints`（不标 `ready`）。
+- 并发改写：发布前重读 `status --porcelain=v2` + cached/unstaged 补丁 + index tree 指纹，
+  与快照时刻不一致 → `concurrent-modification-detected` 并降级为 `incomplete`。
+- 产品入口：门面 `recordRemoteSyncOutcome`/`list`/`read`/`verifyIntegrity`/`restore`；CLI `preserve create|status|show|restore`。
+

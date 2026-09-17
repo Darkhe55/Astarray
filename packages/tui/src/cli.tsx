@@ -36,6 +36,10 @@ import {
   executeSessionShutdownCommand,
   executeGuiServeCommand,
   executeAccuracyConfigureCommand,
+  executePreserveCreateCommand,
+  executePreserveRestoreCommand,
+  executePreserveShowCommand,
+  executePreserveStatusCommand,
   executeAccuracyStatusCommand,
   executeGuideStatusCommand,
   executeGuideSubmitCommand,
@@ -673,6 +677,88 @@ accuracyCommand
         maximumModelCallCount: options.maxModelCalls,
         maximumWallClockMilliseconds: options.maxWallClockMs,
         expectedRevision: options.expectedRevision,
+        isJsonOutput: options.json === true,
+      });
+    },
+  );
+
+const preserveCommand = program
+  .command("preserve")
+  .description("本地保全（GIT-PRESERVE：远端同步失败后的独立可恢复快照）");
+preserveCommand
+  .command("create")
+  .description("按远端同步结果生成或复用本地保全点")
+  .requiredOption("--mission <mission-id>", "mission 标识")
+  .requiredOption("--repo <repository-path>", "仓库路径")
+  .requiredOption(
+    "--sync-status <status>",
+    "同步状态：succeeded|not-attempted|attempting|failed-network|failed-authentication|failed-rejected|failed-no-remote|failed-unknown",
+  )
+  .option("--json", "JSON 输出")
+  .action(
+    async (options: {
+      mission: string;
+      repo: string;
+      syncStatus: string;
+      json?: boolean;
+    }) => {
+      process.exitCode = await executePreserveCreateCommand({
+        stateDirectory: defaultStateDirectory(),
+        missionIdentifier: options.mission,
+        repositoryPath: options.repo,
+        syncStatus: options.syncStatus,
+        isJsonOutput: options.json === true,
+      });
+    },
+  );
+preserveCommand
+  .command("status")
+  .description("列出某 mission 的保全点（无保全点诚实为 no-preservation）")
+  .requiredOption("--mission <mission-id>", "mission 标识")
+  .option("--json", "JSON 输出")
+  .action(async (options: { mission: string; json?: boolean }) => {
+    process.exitCode = await executePreserveStatusCommand({
+      stateDirectory: defaultStateDirectory(),
+      missionIdentifier: options.mission,
+      isJsonOutput: options.json === true,
+    });
+  });
+preserveCommand
+  .command("show")
+  .description("查看保全点状态与逐项完整性报告")
+  .argument("<preservation-point-id>", "保全点标识")
+  .requiredOption("--mission <mission-id>", "mission 标识")
+  .option("--json", "JSON 输出")
+  .action(
+    async (
+      preservationPointId: string,
+      options: { mission: string; json?: boolean },
+    ) => {
+      process.exitCode = await executePreserveShowCommand({
+        stateDirectory: defaultStateDirectory(),
+        missionIdentifier: options.mission,
+        preservationPointId,
+        isJsonOutput: options.json === true,
+      });
+    },
+  );
+preserveCommand
+  .command("restore")
+  .description("恢复到新目录（拒绝非空目标，不覆盖当前工作区）")
+  .argument("<preservation-point-id>", "保全点标识")
+  .requiredOption("--mission <mission-id>", "mission 标识")
+  .requiredOption("--into <directory>", "恢复目标目录（必须为空或不存在）")
+  .option("--json", "JSON 输出")
+  .action(
+    async (
+      preservationPointId: string,
+      options: { mission: string; into: string; json?: boolean },
+    ) => {
+      process.exitCode = await executePreserveRestoreCommand({
+        stateDirectory: defaultStateDirectory(),
+        missionIdentifier: options.mission,
+        preservationPointId,
+        restoreDirectoryPath: options.into,
         isJsonOutput: options.json === true,
       });
     },

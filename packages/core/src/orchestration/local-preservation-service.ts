@@ -176,6 +176,39 @@ export interface PreserveAfterRemoteSyncOutcomeResult {
   trigger: PreservationTriggerDecision;
 }
 
+export interface RestoreLocalPreservationInput {
+  missionId: string;
+  preservationPointId: string;
+  /** 恢复目标：必须是新目录或空目录；默认不覆盖当前人工工作区。 */
+  restoreDirectoryPath: string;
+}
+
+export interface LocalPreservationRestoreResult {
+  preservationPointId: string;
+  restoreDirectoryPath: string;
+  restoredReferenceNames: string[];
+  restoredUntrackedFilePaths: string[];
+  restoredIndexTreeOid: string | null;
+  hasUnstagedPatch: boolean;
+  restoredAtIso: string;
+  /** false 表示恢复不依赖原仓库（仅用对象归档 + 快照）。 */
+  isOriginalRepositoryRequired: boolean;
+}
+
+export interface LocalPreservationIntegrityReport {
+  preservationPointId: string;
+  isIntact: boolean;
+  missingFilePaths: string[];
+  mismatchedFilePaths: string[];
+  failures: string[];
+  checkedItemCount: number;
+}
+
+export interface IncompleteSnapshotDirectory {
+  directoryPath: string;
+  reason: "incomplete-temp-snapshot";
+}
+
 interface UntrackedFileCandidate {
   relativePath: string;
   byteCount: number;
@@ -451,31 +484,15 @@ export class LocalPreservationService {
       input.repositoryPath,
     );
 
-    const porcelainState = parsePorcelainV2(
-      (await this.runGitOrNull(input.repositoryPath, [
-        "status",
-        "--porcelain=v2",
-        "-z",
-        "--untracked-files=all",
-      ])) ?? "",
+    const initialState = await this.readChangeState(
+      input.repositoryPath,
+      hasUnbornHead,
     );
-
-    const cachedPatchBaseReference = hasUnbornHead ? EMPTY_TREE_OID : "HEAD";
-    const cachedPatchText =
-      (await this.runGitOrNull(input.repositoryPath, [
-        "diff",
-        "--cached",
-        "--binary",
-        cachedPatchBaseReference,
-      ])) ?? "";
-    const unstagedPatchText =
-      (await this.runGitOrNull(input.repositoryPath, [
-        "diff",
-        "--binary",
-      ])) ?? "";
-    const indexTreeResult = await this.runGitOrNull(input.repositoryPath, [
-      "write-tree",
-    ]);
+    const porcelainState = initialState.porcelainState;
+    const cachedPatchText = initialState.cachedPatchText;
+    const unstagedPatchText = initialState.unstagedPatchText;
+    const indexTreeResult = initialState.indexTreeResult;
+    const initialChangeFingerprint = computeChangeFingerprint(initialState);
 
     const untrackedFileCandidates: UntrackedFileCandidate[] = [];
     const excludedUntrackedFilePaths: string[] = [];
@@ -685,6 +702,17 @@ export class LocalPreservationService {
       failures.push("submodule-content-not-included: 仅记录 gitlink oid");
     }
 
+    // 5) 并发改写检测：发布前重读变更状态；指纹变化即标注不完整（不虚报一致的快照）
+    const finalState = await this.readChangeState(
+      input.repositoryPath,
+      hasUnbornHead,
+    );
+    if (computeChangeFingerprint(finalState) !== initialChangeFingerprint) {
+      failures.push(
+        "concurrent-modification-detected: 快照期间工作树/index 被改写，快照不代表单一时刻",
+      );
+    }
+
     const manifest = await this.publishManifest({
       temporaryDirectoryPath,
       finalDirectoryPath,
@@ -808,6 +836,295 @@ export class LocalPreservationService {
     return manifests;
   }
 
+  /**
+   * 独立恢复：默认恢复到新目录；原仓库不可用时以对象归档重建，恢复后校验 index tree 与文件哈希。
+   * 不覆盖已有工作区、不改动原仓库、不创建新的保全点。
+   */
+  async restorePreservationPoint(
+    input: RestoreLocalPreservationInput,
+  ): Promise<LocalPreservationRestoreResult> {
+    const manifest = await this.readPreservationPoint(
+      input.missionId,
+      input.preservationPointId,
+    );
+    if (manifest.localPreservation.status === "failed") {
+      throw new DomainError(
+        "preservation-point-not-restorable",
+        "保全点状态为 failed，不可恢复: " + input.preservationPointId,
+      );
+    }
+    const restoreDirectoryPath = path.resolve(input.restoreDirectoryPath);
+    await this.assertEmptyRestoreTarget(restoreDirectoryPath);
+    const parentDirectoryPath = path.dirname(restoreDirectoryPath);
+    await fs.mkdir(parentDirectoryPath, { recursive: true });
+
+    const useObjectArchive = manifest.repository.referenceOids.length > 0;
+    if (useObjectArchive) {
+      const archivePath = manifest.objectArchive.filePath;
+      if (archivePath === null || !(await pathExists(archivePath))) {
+        throw new DomainError(
+          "preservation-object-missing",
+          "对象归档缺失，无法独立恢复: " + input.preservationPointId,
+        );
+      }
+      const cloneResult = await this.runGitOrNull(parentDirectoryPath, [
+        "clone",
+        "--quiet",
+        archivePath,
+        restoreDirectoryPath,
+      ]);
+      if (cloneResult === null) {
+        throw new DomainError(
+          "tool-execution-failed",
+          "从对象归档恢复失败: " + input.preservationPointId,
+        );
+      }
+    } else {
+      const initResult = await this.runGitOrNull(parentDirectoryPath, [
+        "init",
+        "--quiet",
+        restoreDirectoryPath,
+      ]);
+      if (initResult === null) {
+        throw new DomainError(
+          "tool-execution-failed",
+          "初始化恢复目录失败: " + input.preservationPointId,
+        );
+      }
+    }
+
+    // 恢复必须是字节级：关闭目标仓库的行尾自动转换，避免 LF→CRLF 改写内容。
+    await this.runGitOrNull(restoreDirectoryPath, [
+      "config",
+      "core.autocrlf",
+      "false",
+    ]);
+    await this.runGitOrNull(restoreDirectoryPath, ["config", "core.eol", "lf"]);
+
+    if (manifest.repository.baseCommit !== null) {
+      const resetResult = await this.runGitOrNull(restoreDirectoryPath, [
+        "reset",
+        "--hard",
+        manifest.repository.baseCommit,
+      ]);
+      if (resetResult === null) {
+        throw new DomainError(
+          "preservation-object-missing",
+          "基线提交对象缺失: " + manifest.repository.baseCommit,
+        );
+      }
+    }
+
+    // index（已暂存）状态 → 再物化到工作树 → 应用未暂存差异
+    if (manifest.index.cachedPatchPath !== null) {
+      const cachedApply = await this.runGitOrNull(restoreDirectoryPath, [
+        "apply",
+        "--cached",
+        "--binary",
+        manifest.index.cachedPatchPath,
+      ]);
+      if (cachedApply === null) {
+        throw new DomainError(
+          "tool-execution-failed",
+          "恢复 index 补丁失败: " + input.preservationPointId,
+        );
+      }
+    }
+    await this.runGitOrNull(restoreDirectoryPath, ["checkout-index", "-a", "-f"]);
+    if (manifest.worktreeChanges.unstagedPatchPath !== null) {
+      const unstagedApply = await this.runGitOrNull(restoreDirectoryPath, [
+        "apply",
+        "--binary",
+        manifest.worktreeChanges.unstagedPatchPath,
+      ]);
+      if (unstagedApply === null) {
+        throw new DomainError(
+          "tool-execution-failed",
+          "恢复未暂存补丁失败: " + input.preservationPointId,
+        );
+      }
+    }
+
+    const restoredUntrackedFilePaths: string[] = [];
+    for (const untrackedEntry of manifest.untrackedFiles) {
+      let content: Buffer;
+      try {
+        content = await fs.readFile(untrackedEntry.archivedPath);
+      } catch {
+        throw new DomainError(
+          "preservation-object-missing",
+          "未跟踪快照缺失: " + untrackedEntry.relativePath,
+        );
+      }
+      const targetPath = path.join(
+        restoreDirectoryPath,
+        untrackedEntry.relativePath,
+      );
+      await fs.mkdir(path.dirname(targetPath), { recursive: true });
+      await fs.writeFile(targetPath, content);
+      restoredUntrackedFilePaths.push(untrackedEntry.relativePath);
+    }
+
+    const restoredIndexTreeOid =
+      (await this.runGitOrNull(restoreDirectoryPath, ["write-tree"]))?.trim() ??
+      null;
+
+    const restoredAtIso = this.nowIso();
+    await this.writeManifestFiles(manifest.snapshot.directoryPath, {
+      ...manifest,
+      restoredAtIso,
+    });
+    return {
+      preservationPointId: manifest.preservationPointId,
+      restoreDirectoryPath,
+      restoredReferenceNames: manifest.repository.referenceOids.map(
+        (reference) => reference.referenceName,
+      ),
+      restoredUntrackedFilePaths,
+      restoredIndexTreeOid,
+      hasUnstagedPatch: manifest.worktreeChanges.unstagedPatchPath !== null,
+      restoredAtIso,
+      isOriginalRepositoryRequired: false,
+    };
+  }
+
+  /** 逐项重算快照文件哈希；缺对象或哈希不一致如实报告（不虚报可恢复）。 */
+  async verifyPreservationPointIntegrity(input: {
+    missionId: string;
+    preservationPointId: string;
+  }): Promise<LocalPreservationIntegrityReport> {
+    const manifest = await this.readPreservationPoint(
+      input.missionId,
+      input.preservationPointId,
+    );
+    const missingFilePaths: string[] = [];
+    const mismatchedFilePaths: string[] = [];
+    let checkedItemCount = 0;
+    const checkFile = async (
+      filePath: string | null,
+      expectedSha256: string | null,
+    ): Promise<void> => {
+      if (filePath === null) {
+        return;
+      }
+      let content: Buffer;
+      try {
+        content = await fs.readFile(filePath);
+      } catch {
+        missingFilePaths.push(filePath);
+        return;
+      }
+      checkedItemCount += 1;
+      if (expectedSha256 !== null && sha256OfBuffer(content) !== expectedSha256) {
+        mismatchedFilePaths.push(filePath);
+      }
+    };
+    await checkFile(
+      manifest.index.cachedPatchPath,
+      manifest.index.cachedPatchSha256,
+    );
+    await checkFile(
+      manifest.worktreeChanges.unstagedPatchPath,
+      manifest.worktreeChanges.unstagedPatchSha256,
+    );
+    await checkFile(manifest.objectArchive.filePath, manifest.objectArchive.sha256);
+    for (const untrackedEntry of manifest.untrackedFiles) {
+      await checkFile(untrackedEntry.archivedPath, untrackedEntry.sha256);
+    }
+    const failures: string[] = [];
+    if (missingFilePaths.length > 0) {
+      failures.push("preservation-object-missing: " + missingFilePaths.join(", "));
+    }
+    if (mismatchedFilePaths.length > 0) {
+      failures.push(
+        "preservation-object-hash-mismatch: " + mismatchedFilePaths.join(", "),
+      );
+    }
+    return {
+      preservationPointId: manifest.preservationPointId,
+      isIntact: failures.length === 0,
+      missingFilePaths,
+      mismatchedFilePaths,
+      failures,
+      checkedItemCount,
+    };
+  }
+
+  /** 崩溃残留（`.tmp-*`）报告为不完整；它们永不出现在 listPreservationPoints。 */
+  async listIncompleteSnapshotDirectories(
+    missionId: string,
+  ): Promise<IncompleteSnapshotDirectory[]> {
+    const missionDirectory = path.join(
+      this.preservationRootDirectory,
+      sanitizePathSegment(missionId),
+    );
+    let entryNames: string[];
+    try {
+      entryNames = await fs.readdir(missionDirectory);
+    } catch {
+      return [];
+    }
+    return entryNames
+      .filter((entryName) => entryName.startsWith(".tmp-"))
+      .sort()
+      .map((entryName) => ({
+        directoryPath: path.join(missionDirectory, entryName),
+        reason: "incomplete-temp-snapshot" as const,
+      }));
+  }
+
+  private async assertEmptyRestoreTarget(
+    restoreDirectoryPath: string,
+  ): Promise<void> {
+    try {
+      const entryNames = await fs.readdir(restoreDirectoryPath);
+      if (entryNames.length > 0) {
+        throw new DomainError(
+          "restore-target-not-empty",
+          "恢复目标非空，拒绝覆盖: " + restoreDirectoryPath,
+        );
+      }
+    } catch (error) {
+      if (error instanceof DomainError) {
+        throw error;
+      }
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new DomainError(
+          "restore-target-invalid",
+          "恢复目标不可用: " + restoreDirectoryPath,
+        );
+      }
+    }
+  }
+
+  private async writeManifestFiles(
+    directoryPath: string,
+    manifest: LocalPreservationManifest,
+  ): Promise<LocalPreservationManifest> {
+    const manifestWithEmptyHash: LocalPreservationManifest = {
+      ...manifest,
+      snapshot: { ...manifest.snapshot, manifestSha256: "" },
+    };
+    const manifestSha256 = sha256OfBuffer(
+      serializeManifestText(manifestWithEmptyHash),
+    );
+    const finalManifest: LocalPreservationManifest = {
+      ...manifest,
+      snapshot: { ...manifest.snapshot, manifestSha256 },
+    };
+    await fs.writeFile(
+      path.join(directoryPath, "preservation-manifest.json"),
+      serializeManifestText(finalManifest),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(directoryPath, "manifest.sha256"),
+      manifestSha256,
+      "utf8",
+    );
+    return finalManifest;
+  }
+
   private async findReusablePreservationPoint(
     missionId: string,
     reuseKey: string,
@@ -894,32 +1211,19 @@ export class LocalPreservationService {
     finalDirectoryPath: string;
     manifestWithoutSnapshot: Omit<LocalPreservationManifest, "snapshot">;
   }): Promise<LocalPreservationManifest> {
-    const manifestWithEmptyHash: LocalPreservationManifest = {
-      ...input.manifestWithoutSnapshot,
-      snapshot: { directoryPath: input.finalDirectoryPath, manifestSha256: "" },
-    };
-    const manifestSha256 = sha256OfBuffer(
-      serializeManifestText(manifestWithEmptyHash),
-    );
     const manifest: LocalPreservationManifest = {
       ...input.manifestWithoutSnapshot,
       snapshot: {
         directoryPath: input.finalDirectoryPath,
-        manifestSha256,
+        manifestSha256: "",
       },
     };
-    await fs.writeFile(
-      path.join(input.temporaryDirectoryPath, "preservation-manifest.json"),
-      serializeManifestText(manifest),
-      "utf8",
-    );
-    await fs.writeFile(
-      path.join(input.temporaryDirectoryPath, "manifest.sha256"),
-      manifestSha256,
-      "utf8",
+    const manifestWithHash = await this.writeManifestFiles(
+      input.temporaryDirectoryPath,
+      manifest,
     );
     await fs.rename(input.temporaryDirectoryPath, input.finalDirectoryPath);
-    return manifest;
+    return manifestWithHash;
   }
 
   private async verifyWrittenFile(
@@ -1059,6 +1363,39 @@ export class LocalPreservationService {
     }
   }
 
+  private async readChangeState(
+    repositoryPath: string,
+    hasUnbornHead: boolean,
+  ): Promise<{
+    porcelainState: ParsedPorcelainState;
+    cachedPatchText: string;
+    unstagedPatchText: string;
+    indexTreeResult: string | null;
+  }> {
+    const porcelainState = parsePorcelainV2(
+      (await this.runGitOrNull(repositoryPath, [
+        "status",
+        "--porcelain=v2",
+        "-z",
+        "--untracked-files=all",
+      ])) ?? "",
+    );
+    const cachedPatchBaseReference = hasUnbornHead ? EMPTY_TREE_OID : "HEAD";
+    return {
+      porcelainState,
+      cachedPatchText:
+        (await this.runGitOrNull(repositoryPath, [
+          "diff",
+          "--cached",
+          "--binary",
+          cachedPatchBaseReference,
+        ])) ?? "",
+      unstagedPatchText:
+        (await this.runGitOrNull(repositoryPath, ["diff", "--binary"])) ?? "",
+      indexTreeResult: await this.runGitOrNull(repositoryPath, ["write-tree"]),
+    };
+  }
+
   private async runGitOrNull(
     repositoryPath: string,
     arguments_: string[],
@@ -1087,6 +1424,22 @@ export class LocalPreservationService {
   }
 }
 
+function computeChangeFingerprint(state: {
+  porcelainState: ParsedPorcelainState;
+  cachedPatchText: string;
+  unstagedPatchText: string;
+  indexTreeResult: string | null;
+}): string {
+  return sha256OfBuffer(
+    JSON.stringify({
+      changeEntries: state.porcelainState.changeEntries,
+      cachedPatchSha256: sha256OfBuffer(state.cachedPatchText),
+      unstagedPatchSha256: sha256OfBuffer(state.unstagedPatchText),
+      indexTreeOid: state.indexTreeResult?.trim() ?? null,
+    }),
+  );
+}
+
 function emptyRepositoryFacts(): LocalPreservationManifest["repository"] {
   return {
     baseCommit: null,
@@ -1100,6 +1453,15 @@ function emptyRepositoryFacts(): LocalPreservationManifest["repository"] {
     sparseCheckoutPatterns: [],
     worktreeList: [],
   };
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function serializeManifestText(manifest: LocalPreservationManifest): string {

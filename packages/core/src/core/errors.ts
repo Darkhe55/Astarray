@@ -43,6 +43,10 @@ export type DomainErrorCode =
   | "human-verification-policy-invalid"
   | "context-recall-invalid"
   | "context-mandatory-constraint-missing"
+  | "preservation-point-not-restorable"
+  | "preservation-object-missing"
+  | "restore-target-not-empty"
+  | "restore-target-invalid"
   | "unknown";
 
 export class DomainError extends Error {

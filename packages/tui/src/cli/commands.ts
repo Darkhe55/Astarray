@@ -2886,6 +2886,227 @@ export async function executeAccuracyConfigureCommand(
   }
 }
 
+/** GIT-PRESERVE-03：本地保全 CLI（状态/完整性/独立恢复，经公共门面）。 */
+export interface PreserveCreateCommandOptions {
+  stateDirectory: string;
+  missionIdentifier: string;
+  repositoryPath: string;
+  syncStatus: string;
+  isJsonOutput: boolean;
+}
+
+async function createPreservationApplication(stateDirectory: string) {
+  const { AstarrayApplicationFacade } = await import(
+    "../../../core/src/public-sdk.js"
+  );
+  const application = await AstarrayApplicationFacade.create({
+    stateDirectory,
+    mode: "assist",
+    runtime: "mock",
+    statusPollIntervalMilliseconds: 25,
+  });
+  application.createSession({ sessionId: "preserve-cli", mode: "assist" });
+  return application;
+}
+
+/** preserve create：按远端同步结果生成或复用本地保全点。 */
+export async function executePreserveCreateCommand(
+  options: PreserveCreateCommandOptions,
+): Promise<number> {
+  const allowedSyncStatuses = [
+    "succeeded",
+    "not-attempted",
+    "attempting",
+    "failed-network",
+    "failed-authentication",
+    "failed-rejected",
+    "failed-no-remote",
+    "failed-unknown",
+  ];
+  if (!allowedSyncStatuses.includes(options.syncStatus)) {
+    logToStderr("非法同步状态：" + options.syncStatus);
+    return EXIT_CODES.USAGE_ERROR;
+  }
+  const application = await createPreservationApplication(options.stateDirectory);
+  try {
+    const result = await application.recordRemoteSyncOutcome({
+      missionId: options.missionIdentifier,
+      repositoryPath: options.repositoryPath,
+      reason: "CLI preserve create（同步状态 " + options.syncStatus + "）",
+      syncStatus: options.syncStatus as
+        | "succeeded"
+        | "not-attempted"
+        | "attempting"
+        | "failed-network"
+        | "failed-authentication"
+        | "failed-rejected"
+        | "failed-no-remote"
+        | "failed-unknown",
+    });
+    if (options.isJsonOutput) {
+      printJson({
+        status: result.point === null ? "not-preserved" : "ok",
+        shouldPreserve: result.shouldPreserve,
+        isReused: result.isReused,
+        point: result.point,
+      });
+    } else {
+      process.stdout.write(
+        result.point === null
+          ? "not-preserved\n"
+          : "point=" +
+              result.point.preservationPointId +
+              " status=" +
+              result.point.status +
+              " remoteSync=" +
+              result.point.remoteSyncStatus +
+              " reused=" +
+              String(result.isReused) +
+              "\n",
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr((error as Error).message);
+    return EXIT_CODES.FAILURE;
+  } finally {
+    await application.shutdown();
+  }
+}
+
+export interface PreserveStatusCommandOptions {
+  stateDirectory: string;
+  missionIdentifier: string;
+  isJsonOutput: boolean;
+}
+
+/** preserve status：列出某 mission 的保全点（无保全点诚实为 no-preservation）。 */
+export async function executePreserveStatusCommand(
+  options: PreserveStatusCommandOptions,
+): Promise<number> {
+  const application = await createPreservationApplication(options.stateDirectory);
+  try {
+    const points = await application.listLocalPreservationPoints(
+      options.missionIdentifier,
+    );
+    const status = points.length === 0 ? "no-preservation" : "ok";
+    if (options.isJsonOutput) {
+      printJson({ status, points });
+    } else {
+      process.stdout.write(
+        points.length === 0
+          ? "no-preservation\n"
+          : points
+              .map(
+                (point) =>
+                  point.preservationPointId +
+                  " status=" +
+                  point.status +
+                  " remoteSync=" +
+                  point.remoteSyncStatus +
+                  " restored=" +
+                  (point.restoredAtIso ?? "-"),
+              )
+              .join("\n") + "\n",
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr((error as Error).message);
+    return EXIT_CODES.FAILURE;
+  } finally {
+    await application.shutdown();
+  }
+}
+
+export interface PreserveShowCommandOptions {
+  stateDirectory: string;
+  missionIdentifier: string;
+  preservationPointId: string;
+  isJsonOutput: boolean;
+}
+
+/** preserve show：查看保全点状态与逐项完整性报告。 */
+export async function executePreserveShowCommand(
+  options: PreserveShowCommandOptions,
+): Promise<number> {
+  const application = await createPreservationApplication(options.stateDirectory);
+  try {
+    const point = await application.readLocalPreservationPoint({
+      missionId: options.missionIdentifier,
+      preservationPointId: options.preservationPointId,
+    });
+    const integrityReport = await application.verifyLocalPreservationIntegrity({
+      missionId: options.missionIdentifier,
+      preservationPointId: options.preservationPointId,
+    });
+    if (options.isJsonOutput) {
+      printJson({ status: "ok", point, integrityReport });
+    } else {
+      process.stdout.write(
+        "point=" +
+          point.preservationPointId +
+          " status=" +
+          point.status +
+          " intact=" +
+          String(integrityReport.isIntact) +
+          " failures=" +
+          (integrityReport.failures.length === 0
+            ? "-"
+            : integrityReport.failures.join("; ")) +
+          "\n",
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr((error as Error).message);
+    return EXIT_CODES.FAILURE;
+  } finally {
+    await application.shutdown();
+  }
+}
+
+export interface PreserveRestoreCommandOptions {
+  stateDirectory: string;
+  missionIdentifier: string;
+  preservationPointId: string;
+  restoreDirectoryPath: string;
+  isJsonOutput: boolean;
+}
+
+/** preserve restore：恢复到新目录（拒绝非空目标，不覆盖当前工作区）。 */
+export async function executePreserveRestoreCommand(
+  options: PreserveRestoreCommandOptions,
+): Promise<number> {
+  const application = await createPreservationApplication(options.stateDirectory);
+  try {
+    const restoreResult = await application.restoreLocalPreservationPoint({
+      missionId: options.missionIdentifier,
+      preservationPointId: options.preservationPointId,
+      restoreDirectoryPath: options.restoreDirectoryPath,
+    });
+    if (options.isJsonOutput) {
+      printJson({ status: "ok", restoreResult });
+    } else {
+      process.stdout.write(
+        "restored=" +
+          restoreResult.restoreDirectoryPath +
+          " indexTree=" +
+          (restoreResult.restoredIndexTreeOid ?? "-") +
+          " untracked=" +
+          String(restoreResult.restoredUntrackedFilePaths.length) +
+          "\n",
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr((error as Error).message);
+    return EXIT_CODES.FAILURE;
+  } finally {
+    await application.shutdown();
+  }
+}
+
 /** SUM-01-04b：摘要 CLI（经公共门面读取已发布索引，不接触内部路径）。 */
 export interface SummaryListCommandOptions {
   stateDirectory: string;
