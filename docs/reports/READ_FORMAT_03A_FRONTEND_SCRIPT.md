@@ -59,10 +59,12 @@
 | npx vitest run --maxWorkers=6 | exit 0：216 文件 / 1742 用例全通过（+1 文件 / +11 用例） |
 | npx vitest run --coverage --maxWorkers=6 | exit 0：全局 93.04 / 85.14 / 92.74 / 93.08；tools/read-format 91.08 / 84.43 / 97.01 / 91.01；frontend-script 92.60 / 88.07 / 94.73 / 92.53 |
 | npm run verify:security-coverage | exit 0：关键安全模块 22/22 达标（阈值 95%） |
-| git push | 见提交记录 |
+| git push | exit 0（第 1 次尝试成功）：46b0054..2787be4 已推送 |
 
 > 门禁波动取证：coverage 两次 exit 1 均由 local-preservation-restore 的 Windows 目录 rename EPERM 引起；
 > 已按有界重试 + 失败即抛错（不伪造成功）修复（独立提交），修复后 coverage 稳定 exit 0。未放宽任何断言。
+
+本检查点提交：`3b5a9dd`（rename 重试支撑修复）、`2787be4`（前端脚本策略实现）。
 
 ## 6. 未满足项与后续
 

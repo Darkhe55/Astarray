@@ -169,7 +169,7 @@
   - 支撑修复：Windows 目录 rename 瞬时 EPERM/EBUSY/EACCES 有界重试（仍失败即抛错），修复 coverage 门禁波动（独立提交）。
   - tsconfig：`exclude` 增加 `tests/fixtures`（夹具是数据，`incomplete.tsx` 故意未闭合）。
   - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **216 文件/1742 用例全通过**；coverage exit 0（93.04/85.14/92.74/93.08；tools/read-format 91.08/84.43/97.01/91.01；frontend-script 92.60/88.07/94.73/92.53）；`verify:security-coverage` 22/22。
-  - 提交与推送：见提交记录。
+  - 提交 3b5a9dd（rename 重试修复）、2787be4（实现）（已推送，46b0054..2787be4，第 1 次尝试成功）。
 - 下一轮（按新用户文档推荐顺序）：**READ-FORMAT-03b**（CSS/SCSS/Less、HTML 与 Vue/Svelte 区段分派；之后 READ-FORMAT-04..05、GUIDE 增量）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
