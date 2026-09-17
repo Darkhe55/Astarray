@@ -154,7 +154,11 @@
   - 提交 `01c4fa0`（已推送，`ea15f9f..01c4fa0`，第 1 次尝试成功）。
   - 未验证：真实 ENOSPC/权限耗尽故障注入、真实远端网络故障注入（需外部环境）；旧 `GitRecoveryPointService` 静默复制失败未统一。
 - **GIT-PRESERVE 三检查点（01/02/03）全部完成**。
-- 下一轮（按新用户文档推荐顺序）：**READ-FORMAT-01**（其后 READ-FORMAT-02..05、GUIDE 增量）。
+- **READ-FORMAT-01**（解析依赖核对、策略接口、能力矩阵与公共回执冻结）：`docs/adr/0042-read-format-strategy-and-receipt.md` + `docs/reports/READ_FORMAT_01_STRATEGY_FREEZE.md`。设计/审计检查点，**无生产代码变更**。
+  - 冻结：`readFile` 新增可选 `shouldIncludeComments`/`shouldIncludeImports`（默认 true）与**四种参数组合**；轻量策略注册表（显式覆盖 > 文件名 > 后缀 > 内容采样 > unsupported）与每族能力矩阵；**结构化读取回执**（源 revision/hash、policyVersion/strategyId、filterStatus、省略行区间、lineMap、isViewComplete/isFilterable、limitations、sensitiveCheckAppliedBeforeView、measuredUnits、budgetImpact=same-file）；`unsupported`/`parse-error`/`partially-filtered` 都返回**原文**并显式标注，不报错、不虚报；视图不修改源文件/不执行代码/不解析导入；敏感检查必须对**完整原文**先执行；反自指参数哈希扩展为 (路径, 范围, 两参数, policyVersion)；工作集预算沿用规范身份（不同视图同一文件一个槽，切换参数不重置总调用预算）。
+  - 依赖核对：**无任何语言解析依赖**（仅 commander/ink/react/zod）；如新增必须走当时有效的两阶段安装门禁（ADR-0019）并离线可用，禁止运行时自动安装/隐式下载。
+  - 回归基线（02 起必须复用、不得放宽）：`builtins.test.ts`、`read-suppression-and-guard.test.ts`、`sensitive-content-access.test.ts`、`local-tool-policy.test.ts`。本轮为审计/冻结，**未运行测试**（静态阅读取证，标"未运行"）。
+- 下一轮（按新用户文档推荐顺序）：**READ-FORMAT-02**（其后 READ-FORMAT-03..05、GUIDE 增量）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。
