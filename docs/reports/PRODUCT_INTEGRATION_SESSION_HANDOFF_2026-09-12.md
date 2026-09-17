@@ -136,7 +136,12 @@
   - 门禁：typecheck/lint/build 0；`npx vitest run --maxWorkers=6` **210 文件/1695 用例全通过**；coverage exit 0（93.34/85.62/92.45/93.39；orchestration 94.17/87.32/94.08/94.22；新模块 96.80/85.89/100/96.80）；`verify:security-coverage` 22/22。
   - 提交 `b4f2f26`（已推送，`8e99b76..b4f2f26`）；前两次推送因审批通道停滞超时，第 3 次成功。
   - 未完成/外部依赖：真实 Provider 成本与时延 E2E、GUI/TUI 交互式档位设置、治理文档统一修订。
-- 下一轮（按新用户文档推荐顺序）：**GIT-PRESERVE-01**（之后 GIT-PRESERVE-02/03、READ-FORMAT-01..05、GUIDE 增量）。
+- **GIT-PRESERVE-01**（恢复点服务审计与本地保全冻结）：`docs/adr/0041-local-preservation-after-remote-sync-failure.md` + `docs/reports/GIT_PRESERVE_01_AUDIT.md`。设计/审计检查点，**无生产代码变更**。
+  - 冻结：远端同步成功 / 本地保全点 / 破坏性操作恢复点 / BackupVault 四者互不等同；`remoteSyncStatus`（含 `failed-network`/`failed-authentication`/`failed-rejected`/`failed-no-remote`，恒不强推）与 `localPreservationStatus`（`not-required|pending|ready|incomplete|failed`）分离；网络失败**立即**保全不等 5 次重试；版本化清单含 index tree/未暂存/未跟踪（路径+大小+sha256）/删除重命名/显式排除清单/独立对象归档+sha256/完整性结果/代次；工作树之外受保护存储并自排除；原子发布且不完整不标 `ready`；默认恢复到新目录/隔离 worktree；不自动淘汰；跨设备灾备非目标。
+  - 支持矩阵：普通仓库完整支持；无提交仓库支持（受限，须空树比较不静默为空）；浅克隆/LFS/子模块/附加工作树/稀疏检出受限并以显式标志标注缺失对象。
+  - 关键缺口（已登记 02/03）：无远端同步状态机；无对象归档与清单哈希；**声称原子写实际直写**；staged/index 状态不还原；未跟踪复制失败静默跳过（`git-defensive-branches.test.ts` 固化该预期，需修订）；无提交仓库 `diff HEAD` 失败被静默当空；无指纹复用/代次；就地恢复覆盖工作树。
+  - 本轮 5 次升级调用（基线测试）均在 600s 内未获审批 → 基线未运行，已按"未验证"标注（无生产代码变更，静态审计取证）。
+- 下一轮（按新用户文档推荐顺序）：**GIT-PRESERVE-02**（之后 GIT-PRESERVE-03、READ-FORMAT-01..05、GUIDE 增量）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。
