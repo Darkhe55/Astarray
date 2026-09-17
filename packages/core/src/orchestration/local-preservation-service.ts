@@ -1222,8 +1222,45 @@ export class LocalPreservationService {
       input.temporaryDirectoryPath,
       manifest,
     );
-    await fs.rename(input.temporaryDirectoryPath, input.finalDirectoryPath);
+    await this.renameDirectoryWithRetry(
+      input.temporaryDirectoryPath,
+      input.finalDirectoryPath,
+    );
     return manifestWithHash;
+  }
+
+  /**
+   * Windows 下目录 rename 可能被索引/杀毒短暂占用（EPERM/EBUSY/EACCES）；
+   * 有界重试后仍失败则抛错，不伪造成功、不留在临时目录充当 ready。
+   */
+  private async renameDirectoryWithRetry(
+    fromDirectoryPath: string,
+    toDirectoryPath: string,
+    maximumAttemptCount = 5,
+  ): Promise<void> {
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < maximumAttemptCount; attempt += 1) {
+      try {
+        await fs.rename(fromDirectoryPath, toDirectoryPath);
+        return;
+      } catch (error) {
+        lastError = error;
+        const errorCode = (error as NodeJS.ErrnoException).code;
+        if (
+          errorCode !== "EPERM" &&
+          errorCode !== "EBUSY" &&
+          errorCode !== "EACCES"
+        ) {
+          throw error;
+        }
+        await new Promise((resolve) => {
+          setTimeout(resolve, 25 * (attempt + 1));
+        });
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error("保全点目录原子发布失败");
   }
 
   private async verifyWrittenFile(
