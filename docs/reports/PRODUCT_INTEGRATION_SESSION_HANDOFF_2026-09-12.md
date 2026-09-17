@@ -164,7 +164,13 @@
   - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **215 文件/1731 用例全通过**；coverage exit 0（93.05/85.08/92.71/93.09；tools/read-format 89.68/81.67/97.78/89.60；orchestration 93.91/86.64/94.31/93.95）；`verify:security-coverage` 22/22。
   - 边界：**未接线 `readFile`**（参数/receipt/敏感检查接线/时间锁键属 READ-FORMAT-05）；`readFile` 现行为不变。
   - 提交 `3eaf596`（已推送，`b814d15..3eaf596`，第 1 次尝试成功）。
-- 下一轮（按新用户文档推荐顺序）：**READ-FORMAT-03**（其后 READ-FORMAT-04..05、GUIDE 增量）。
+- **READ-FORMAT-03a**（前端脚本 JS/TS/JSX/TSX 读取策略）：`packages/core/src/tools/read-format/read-format-frontend-script.ts` + 策略注册（`frontend-script`）+ `tests/fixtures/read-format/frontend/**`（4 夹具）+ `tests/core/unit/read-format-frontend.test.ts`（11 用例）+ ADR-0042 §13 + `docs/reports/READ_FORMAT_03A_FRONTEND_SCRIPT.md`。
+  - 规则：字符串/模板 `${}`/正则/JSX 文本与属性里的注释标记不误删；JSX 表达式容器内注释按需省略；静态 import/export-from/require 可省略；**动态 `import()` 保留并标注**；未闭合模板/块注释 → `parse-error` 原样返回；仅保留而无省略时状态诚实为 `not-filtered` + limitation。
+  - 支撑修复：Windows 目录 rename 瞬时 EPERM/EBUSY/EACCES 有界重试（仍失败即抛错），修复 coverage 门禁波动（独立提交）。
+  - tsconfig：`exclude` 增加 `tests/fixtures`（夹具是数据，`incomplete.tsx` 故意未闭合）。
+  - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **216 文件/1742 用例全通过**；coverage exit 0（93.04/85.14/92.74/93.08；tools/read-format 91.08/84.43/97.01/91.01；frontend-script 92.60/88.07/94.73/92.53）；`verify:security-coverage` 22/22。
+  - 提交与推送：见提交记录。
+- 下一轮（按新用户文档推荐顺序）：**READ-FORMAT-03b**（CSS/SCSS/Less、HTML 与 Vue/Svelte 区段分派；之后 READ-FORMAT-04..05、GUIDE 增量）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。

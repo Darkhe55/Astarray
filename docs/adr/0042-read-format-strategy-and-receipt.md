@@ -158,3 +158,16 @@ readFile 返回结构化回执（正文 + 元数据），至少含：
 - `readFile` 参数与 receipt 透出、敏感检查接线、时间锁键扩展属 **READ-FORMAT-05**；本轮不改 `readFile`。
 - 真实夹具：`tests/fixtures/read-format/**`（C/C++/C#/Python/Rust 的注释、字符串、导入、不完整源码）。
 
+## 13. 实现记录（READ-FORMAT-03a）
+
+- 模块：`packages/core/src/tools/read-format/read-format-frontend-script.ts`；策略 ID `frontend-script`，
+  覆盖 `.js/.jsx/.ts/.tsx/.mjs/.cjs`（`.jsx/.tsx` 启用 JSX 模式）。
+- JSX 模式：文本区中的 `//` 与 `/*` 视为文本；`{…}` 进入表达式容器后才按代码处理注释；
+  标签属性中的字符串与表达式、自闭合与闭合标签均回落正确状态。
+- 正则/除法：依据前一个有效记号与关键字（return/typeof/…）判定；无法判定时按除法保留。
+- 动态 `import()`：保留并记 `dynamic-import`；静态 import/export-from/require 按需省略；
+  同行代码时保留并记 `import-with-inline-code`。
+- 状态规则：仅在确有省略时为 `filtered`/`partially-filtered`；仅保留构造而无省略时状态为
+  `not-filtered`，并通过 `retainedConstructs`/`limitations` 如实说明（不虚报已过滤）。
+- CSS/HTML/Vue/Svelte 区段分派属 **READ-FORMAT-03b**。
+

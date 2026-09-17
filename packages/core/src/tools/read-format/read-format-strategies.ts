@@ -20,6 +20,7 @@ import {
   type ReadViewLineRange,
   type StringScanResult,
 } from "./read-format-scanner.js";
+import { scanFrontendScriptView } from "./read-format-frontend-script.js";
 
 export type {
   ReadFilterStatus,
@@ -675,10 +676,45 @@ function createRustStrategy(): ReadFormatStrategy {
   };
 }
 
+const FRONTEND_SCRIPT_EXTENSIONS = [
+  ".js",
+  ".jsx",
+  ".ts",
+  ".tsx",
+  ".mjs",
+  ".cjs",
+];
+
+function createFrontendScriptStrategy(): ReadFormatStrategy {
+  return {
+    strategyId: "frontend-script",
+    policyVersion: 1,
+    capabilities: {
+      comments: "full",
+      imports: "full",
+      commentSyntaxFamily: "c-family",
+    },
+    match: (input) => {
+      if (FRONTEND_SCRIPT_EXTENSIONS.includes(input.extension)) {
+        return { isMatch: true, specificity: 10 };
+      }
+      return { isMatch: false, specificity: 0 };
+    },
+    buildView: (input) =>
+      scanFrontendScriptView({
+        sourceText: input.sourceText,
+        shouldIncludeComments: input.shouldIncludeComments,
+        shouldIncludeImports: input.shouldIncludeImports,
+        supportsJsx: input.extension === ".jsx" || input.extension === ".tsx",
+      }),
+  };
+}
+
 export const DEFAULT_READ_FORMAT_STRATEGIES: ReadFormatStrategy[] = [
   createCFamilyStrategy(),
   createPythonStrategy(),
   createRustStrategy(),
+  createFrontendScriptStrategy(),
 ];
 
 export class ReadFormatStrategyRegistry {
