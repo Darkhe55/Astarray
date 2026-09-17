@@ -181,6 +181,16 @@ readFile 返回结构化回执（正文 + 元数据），至少含：
 - Markdown 围栏代码块按行整体保留，注释仅过滤 `<!-- -->`；未闭合注释 → parse-error。
 - Go/Shell/SQL 属 **READ-FORMAT-04b**。
 
+## 16. 实现记录（READ-FORMAT-04b）
+
+- 模块：`read-format-other-languages.ts`；策略 ID `go`、`shell`、`sql`。
+- Go：解释字符串/原始反引号字符串/符文；`import "x"` 与 `import (…)` 可按需省略，块后同行代码保留标注。
+- Shell：`#` 需行首或 `;|&(`/空白之后；单/双引号与反引号整体保留；`<<`/`<<-`/带引号定界符 heredoc 整体保留；
+  `source`/`.` 仅纯路径可省略，动态（`$`、反引号、括号、通配）保留并记 `dynamic-import`。
+- SQL：`--` 与块注释、`''` 转义字符串、`""` 标识符；imports 能力 unsupported；方言特有注释在
+  `shouldIncludeComments=false` 时记 `dialect-comment-variants` 局限。
+- READ-FORMAT-04 全卡（LaTeX、配置/文档、其他语言）至此收口。
+
 ## 14. 实现记录（READ-FORMAT-03b）
 
 - 模块：`read-format-frontend-styles.ts`（CSS/SCSS/Less，含 `url(...)` 片段保护）与

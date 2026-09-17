@@ -179,7 +179,13 @@
   - 规则：LaTeX 转义 `\%` 不算注释、逐字环境（verbatim/lstlisting/minted）整体保留、未闭合逐字环境 parse-error；YAML `#` 仅行首/空白后成立（URL 片段不误删）；JSONC 行/块注释；TOML `#`；Markdown 仅过滤 `<!-- -->` 且围栏代码块整体保留；JSON/纯文本标注 `comments-unsupported`，无导入概念格式标注 `imports-unsupported`（不适用，不是失败）。
   - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **218 文件/1765 用例全通过**；coverage exit 0（92.98/85.09/92.92/93.01；read-format 91.73/84.67/98.55/91.65；latex 92.90/78.02/100/92.75；config-documents 98.19/92.50/100/98.16）；`verify:security-coverage` 22/22。
   - 提交 `7114f39`（已推送，`1aad551..7114f39`，第 1 次尝试成功）。
-- 下一轮（按新用户文档推荐顺序）：**READ-FORMAT-04b**（Go、Shell、SQL：heredoc、方言不支持等边界；随后 READ-FORMAT-05、GUIDE 增量）。
+- **READ-FORMAT-04b**（Go、Shell、SQL）：`read-format-other-languages.ts` + 策略注册（`go`/`shell`/`sql`）+ 3 夹具 + `tests/core/unit/read-format-other-languages.test.ts`（11 用例）+ ADR-0042 §16 + `docs/reports/READ_FORMAT_04B_OTHER_LANGUAGES.md`。
+  - 规则：Go 原始/符文/转义字符串不误删，import 单条与块可省略；Shell `#` 需行首/空白后、heredoc 整体保留、`source`/`.` 仅纯路径可省略（动态加载保留并记 `dynamic-import`）；SQL `--`/块注释与 `''`/`""` 转义、方言局限显式标注 `dialect-comment-variants`。
+  - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **219 文件/1776 用例全通过**；coverage exit 0（93.01/85.11/93.01/93.04；read-format 92.23/84.75/98.80/92.15；other-languages 93.67/84.06/100/93.58）；`verify:security-coverage` 22/22。
+  - 过程：首轮覆盖率 branch 84.95% < 85% 阈值失败；补边界用例后回到 85.11%，未放宽阈值。
+  - 提交与推送：见提交记录。
+- **READ-FORMAT-04 全卡（LaTeX、配置/文档、其他语言）收口**。
+- 下一轮（按新用户文档推荐顺序）：**READ-FORMAT-05**（读取缓存、防重复读取、产品入口与 tarball；之后 GUIDE 增量、WB-00 等）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。

@@ -30,6 +30,11 @@ import {
   scanMarkdownView,
   scanPlainTextView,
 } from "./read-format-config-documents.js";
+import {
+  scanGoView,
+  scanShellView,
+  scanSqlView,
+} from "./read-format-other-languages.js";
 
 export type {
   ReadFilterStatus,
@@ -920,6 +925,60 @@ function createPlainTextStrategy(): ReadFormatStrategy {
   };
 }
 
+function createGoStrategy(): ReadFormatStrategy {
+  return {
+    strategyId: "go",
+    policyVersion: 1,
+    capabilities: { comments: "full", imports: "full", commentSyntaxFamily: "c-family" },
+    match: (input) =>
+      input.extension === ".go"
+        ? { isMatch: true, specificity: 10 }
+        : { isMatch: false, specificity: 0 },
+    buildView: (input) =>
+      scanGoView({
+        sourceText: input.sourceText,
+        shouldIncludeComments: input.shouldIncludeComments,
+        shouldIncludeImports: input.shouldIncludeImports,
+      }),
+  };
+}
+
+function createShellStrategy(): ReadFormatStrategy {
+  return {
+    strategyId: "shell",
+    policyVersion: 1,
+    capabilities: { comments: "full", imports: "full", commentSyntaxFamily: "hash" },
+    match: (input) =>
+      [".sh", ".bash", ".zsh"].includes(input.extension)
+        ? { isMatch: true, specificity: 10 }
+        : { isMatch: false, specificity: 0 },
+    buildView: (input) =>
+      scanShellView({
+        sourceText: input.sourceText,
+        shouldIncludeComments: input.shouldIncludeComments,
+        shouldIncludeImports: input.shouldIncludeImports,
+      }),
+  };
+}
+
+function createSqlStrategy(): ReadFormatStrategy {
+  return {
+    strategyId: "sql",
+    policyVersion: 1,
+    capabilities: { comments: "full", imports: "unsupported", commentSyntaxFamily: "sql" },
+    match: (input) =>
+      input.extension === ".sql"
+        ? { isMatch: true, specificity: 10 }
+        : { isMatch: false, specificity: 0 },
+    buildView: (input) =>
+      scanSqlView({
+        sourceText: input.sourceText,
+        shouldIncludeComments: input.shouldIncludeComments,
+        shouldIncludeImports: input.shouldIncludeImports,
+      }),
+  };
+}
+
 export const DEFAULT_READ_FORMAT_STRATEGIES: ReadFormatStrategy[] = [
   createCFamilyStrategy(),
   createPythonStrategy(),
@@ -936,6 +995,9 @@ export const DEFAULT_READ_FORMAT_STRATEGIES: ReadFormatStrategy[] = [
   createTomlStrategy(),
   createMarkdownStrategy(),
   createPlainTextStrategy(),
+  createGoStrategy(),
+  createShellStrategy(),
+  createSqlStrategy(),
 ];
 
 export class ReadFormatStrategyRegistry {
