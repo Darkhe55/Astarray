@@ -55,7 +55,9 @@
 | npx vitest run --maxWorkers=6 | exit 0：219 文件 / 1776 用例全通过（+1 文件 / +11 用例） |
 | npx vitest run --coverage --maxWorkers=6 | exit 0：全局 93.01 / 85.11 / 93.01 / 93.04；tools/read-format 92.23 / 84.75 / 98.80 / 92.15；other-languages 93.67 / 84.06 / 100 / 93.58 |
 | npm run verify:security-coverage | exit 0：关键安全模块 22/22 达标（阈值 95%） |
-| git push | 见提交记录 |
+| git push | **exit 0**（第 1 次尝试成功）：a0b612c..38a78a2 已推送 |
+
+本检查点实现提交：`38a78a2`（feat(read-format): READ-FORMAT-04b Go/Shell/SQL 读取策略）。
 
 > 过程记录：首轮全量覆盖率因新模块分支覆盖不足报 branch 84.95% < 85%（阈值失败，exit 1）；
 > 补充 heredoc/引号/动态 source/SQL 未闭合等边界用例后 branch 回到 85.11%，门禁恢复 exit 0。未放宽阈值。

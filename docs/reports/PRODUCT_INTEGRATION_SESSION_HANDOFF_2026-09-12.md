@@ -183,7 +183,7 @@
   - 规则：Go 原始/符文/转义字符串不误删，import 单条与块可省略；Shell `#` 需行首/空白后、heredoc 整体保留、`source`/`.` 仅纯路径可省略（动态加载保留并记 `dynamic-import`）；SQL `--`/块注释与 `''`/`""` 转义、方言局限显式标注 `dialect-comment-variants`。
   - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **219 文件/1776 用例全通过**；coverage exit 0（93.01/85.11/93.01/93.04；read-format 92.23/84.75/98.80/92.15；other-languages 93.67/84.06/100/93.58）；`verify:security-coverage` 22/22。
   - 过程：首轮覆盖率 branch 84.95% < 85% 阈值失败；补边界用例后回到 85.11%，未放宽阈值。
-  - 提交与推送：见提交记录。
+  - 提交 `38a78a2`（已推送，`a0b612c..38a78a2`，第 1 次尝试成功）。
 - **READ-FORMAT-04 全卡（LaTeX、配置/文档、其他语言）收口**。
 - 下一轮（按新用户文档推荐顺序）：**READ-FORMAT-05**（读取缓存、防重复读取、产品入口与 tarball；之后 GUIDE 增量、WB-00 等）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
