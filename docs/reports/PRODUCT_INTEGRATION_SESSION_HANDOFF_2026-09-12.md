@@ -141,6 +141,7 @@
   - 支持矩阵：普通仓库完整支持；无提交仓库支持（受限，须空树比较不静默为空）；浅克隆/LFS/子模块/附加工作树/稀疏检出受限并以显式标志标注缺失对象。
   - 关键缺口（已登记 02/03）：无远端同步状态机；无对象归档与清单哈希；**声称原子写实际直写**；staged/index 状态不还原；未跟踪复制失败静默跳过（`git-defensive-branches.test.ts` 固化该预期，需修订）；无提交仓库 `diff HEAD` 失败被静默当空；无指纹复用/代次；就地恢复覆盖工作树。
   - 本轮 5 次升级调用（基线测试）均在 600s 内未获审批 → 基线未运行，已按"未验证"标注（无生产代码变更，静态审计取证）。
+  - 提交 `d780565`（已推送，`525781e..d780565`）；推送前两次升级调用因审批通道停滞超时，第 3 次成功。
 - 下一轮（按新用户文档推荐顺序）：**GIT-PRESERVE-02**（之后 GIT-PRESERVE-03、READ-FORMAT-01..05、GUIDE 增量）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
