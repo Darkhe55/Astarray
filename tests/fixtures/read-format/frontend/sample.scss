@@ -1,0 +1,9 @@
+// 行注释
+@use "sass:math";
+@import "partials/base";
+
+/* 块注释 */
+$asset: url(https://example.com/x//y.png);
+
+.a { color: red; // 尾随注释
+}

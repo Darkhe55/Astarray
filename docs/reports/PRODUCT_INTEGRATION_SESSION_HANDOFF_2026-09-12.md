@@ -170,7 +170,11 @@
   - tsconfig：`exclude` 增加 `tests/fixtures`（夹具是数据，`incomplete.tsx` 故意未闭合）。
   - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **216 文件/1742 用例全通过**；coverage exit 0（93.04/85.14/92.74/93.08；tools/read-format 91.08/84.43/97.01/91.01；frontend-script 92.60/88.07/94.73/92.53）；`verify:security-coverage` 22/22。
   - 提交 3b5a9dd（rename 重试修复）、2787be4（实现）（已推送，46b0054..2787be4，第 1 次尝试成功）。
-- 下一轮（按新用户文档推荐顺序）：**READ-FORMAT-03b**（CSS/SCSS/Less、HTML 与 Vue/Svelte 区段分派；之后 READ-FORMAT-04..05、GUIDE 增量）。
+- **READ-FORMAT-03b**（CSS/SCSS/Less、HTML 与 Vue/Svelte 区段分派）：`read-format-frontend-styles.ts` + `read-format-frontend-markup.ts` + 策略注册（`style-sheet`/`html`/`vue`/`svelte`）+ `tests/fixtures/read-format/frontend/**`（新增 5 夹具）+ `tests/core/unit/read-format-frontend-mixed.test.ts`（9 用例）+ ADR-0042 §14 + `docs/reports/READ_FORMAT_03B_STYLES_MARKUP.md`。
+  - 规则：CSS 块注释/SCSS 行注释按需省略、`url(...)` 与字符串里的注释标记不误删；`@import`/`@use`/`@forward` 可省略；HTML `<!-- -->` 与 `<script src>`/`<link href>` 可省略；`<template>/<script>/<style>` 顶层区段分别按 markup/脚本/样式策略处理并做行号偏移；带 `src` 的 script/style 视为资源标签而非区段；任一子视图 parse-error → 整视图 parse-error 返回原文。
+  - 实测：tsc/lint 0；定向 9 用例通过。
+  - **门禁未完成（诚实记录）**：本轮升级审批通道连续 5 次停滞，`build`/`全量 test`/`coverage`/`security-coverage` **未运行**，下一轮必须补跑后再收口。
+- 下一轮：**补跑 READ-FORMAT-03b 全量门禁**，其后 **READ-FORMAT-04**（GUIDE 增量在相关契约确定后接入）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。

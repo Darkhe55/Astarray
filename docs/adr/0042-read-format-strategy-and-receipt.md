@@ -171,3 +171,13 @@ readFile 返回结构化回执（正文 + 元数据），至少含：
   `not-filtered`，并通过 `retainedConstructs`/`limitations` 如实说明（不虚报已过滤）。
 - CSS/HTML/Vue/Svelte 区段分派属 **READ-FORMAT-03b**。
 
+## 14. 实现记录（READ-FORMAT-03b）
+
+- 模块：`read-format-frontend-styles.ts`（CSS/SCSS/Less，含 `url(...)` 片段保护）与
+  `read-format-frontend-markup.ts`（HTML 注释/静态资源标签 + 顶层区段分派）。
+- 策略 ID：`style-sheet`（.css/.scss/.less/.sass）、`html`、`vue`、`svelte`。
+- 区段分派：`<template>` → markup；`<script>` → 脚本策略；`<style>` → 样式策略（按 lang 选择行注释）；
+  子视图省略区间按区段起始行偏移，视图总行数不变（lineMap 恒等）。
+- 带 `src` 的 `script`/`style` 视为资源引用标签（由静态资源标签规则处理），不作为承载代码的区段。
+- 任一子视图 parse-error → 整个视图 parse-error 并返回原文。
+

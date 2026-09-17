@@ -21,6 +21,8 @@ import {
   type StringScanResult,
 } from "./read-format-scanner.js";
 import { scanFrontendScriptView } from "./read-format-frontend-script.js";
+import { scanStyleSheetView } from "./read-format-frontend-styles.js";
+import { scanSectionedView } from "./read-format-frontend-markup.js";
 
 export type {
   ReadFilterStatus,
@@ -710,11 +712,82 @@ function createFrontendScriptStrategy(): ReadFormatStrategy {
   };
 }
 
+const STYLE_SHEET_EXTENSIONS = [".css", ".scss", ".less", ".sass"];
+
+function createStyleSheetStrategy(): ReadFormatStrategy {
+  return {
+    strategyId: "style-sheet",
+    policyVersion: 1,
+    capabilities: {
+      comments: "full",
+      imports: "full",
+      commentSyntaxFamily: "c-family",
+    },
+    match: (input) => {
+      if (STYLE_SHEET_EXTENSIONS.includes(input.extension)) {
+        return { isMatch: true, specificity: 10 };
+      }
+      return { isMatch: false, specificity: 0 };
+    },
+    buildView: (input) =>
+      scanStyleSheetView({
+        sourceText: input.sourceText,
+        shouldIncludeComments: input.shouldIncludeComments,
+        shouldIncludeImports: input.shouldIncludeImports,
+        hasLineComments: input.extension !== ".css",
+      }),
+  };
+}
+
+interface MarkupStrategyDefinition {
+  strategyId: string;
+  extensions: string[];
+  isScriptJsx: boolean;
+}
+
+const MARKUP_STRATEGY_DEFINITIONS: MarkupStrategyDefinition[] = [
+  { strategyId: "html", extensions: [".html", ".htm"], isScriptJsx: false },
+  { strategyId: "vue", extensions: [".vue"], isScriptJsx: false },
+  { strategyId: "svelte", extensions: [".svelte"], isScriptJsx: false },
+];
+
+function createMarkupStrategy(
+  definition: MarkupStrategyDefinition,
+): ReadFormatStrategy {
+  return {
+    strategyId: definition.strategyId,
+    policyVersion: 1,
+    capabilities: {
+      comments: "full",
+      imports: "full",
+      commentSyntaxFamily: "html",
+    },
+    match: (input) => {
+      if (definition.extensions.includes(input.extension)) {
+        return { isMatch: true, specificity: 10 };
+      }
+      return { isMatch: false, specificity: 0 };
+    },
+    buildView: (input) =>
+      scanSectionedView({
+        sourceText: input.sourceText,
+        shouldIncludeComments: input.shouldIncludeComments,
+        shouldIncludeImports: input.shouldIncludeImports,
+        isScriptJsx: definition.isScriptJsx,
+        styleLanguageHint: null,
+      }),
+  };
+}
+
 export const DEFAULT_READ_FORMAT_STRATEGIES: ReadFormatStrategy[] = [
   createCFamilyStrategy(),
   createPythonStrategy(),
   createRustStrategy(),
   createFrontendScriptStrategy(),
+  createStyleSheetStrategy(),
+  ...MARKUP_STRATEGY_DEFINITIONS.map((definition) =>
+    createMarkupStrategy(definition),
+  ),
 ];
 
 export class ReadFormatStrategyRegistry {

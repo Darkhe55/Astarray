@@ -1,0 +1,8 @@
+@import url("https://example.com/base.css");
+
+/* 块注释 */
+.card {
+  background: url(https://example.com/a//b.png);
+  content: "/* 字符串里的块注释标记 */";
+  color: red; /* 尾随注释 */
+}
