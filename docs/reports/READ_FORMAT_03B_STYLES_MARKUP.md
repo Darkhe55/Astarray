@@ -49,17 +49,18 @@
 
 | 命令 | 结果 |
 | --- | --- |
-| npx tsc --noEmit / npx eslint . | 0 / 0（本轮实测） |
-| npx vitest run tests/core/unit/read-format-frontend-mixed.test.ts --maxWorkers=4 | 0；9 passed（本轮实测） |
-| npm run build | **未执行**：升级审批通道本轮连续停滞（见下） |
-| npx vitest run --maxWorkers=6 | **未执行**：同上 |
-| npx vitest run --coverage --maxWorkers=6 | **未执行**：同上 |
-| npm run verify:security-coverage | **未执行**：依赖覆盖率摘要 |
+| npx tsc --noEmit / npx eslint . | **0 / 0** |
+| npx vitest run tests/core/unit/read-format-frontend-mixed.test.ts --maxWorkers=4 | **0；13 passed** |
+| npm run build | **0** |
+| npx vitest run --maxWorkers=6 | **exit 0：217 文件 / 1755 用例全通过**（+1 文件 / +13 用例） |
+| npx vitest run --coverage --maxWorkers=6 | **exit 0**：全局 **92.92 / 85.07 / 92.77 / 92.95**；`tools/read-format` **90.63 / 84.26 / 97.80 / 90.56**；`frontend-styles` **85.00 / 84.12 / 100 / 85.00**；`frontend-markup` **89.79 / 79.06 / 100 / 89.72** |
+| npm run verify:security-coverage | **exit 0：关键安全模块 22/22 达标（阈值 95%）** |
 | git push | 见提交记录 |
 
-> 门禁未完成说明：受限沙箱下 vitest forks 池与 tsup 构建需要升级（danger-full-access），本轮该审批通道连续
-> 多次在 600s 墙钟内未获批准而终止（共 5 次：2 次定向测试、3 次全量门禁）。定向测试与 tsc/eslint 已在批准通道
-> 可用时实测通过；**全量门禁与覆盖率标记为未运行**，下一轮必须补跑并记录，不得以未运行冒充通过。
+> 过程记录（诚实）：受限沙箱下 vitest forks 池与 tsup 需要升级审批；本轮该通道曾连续 5 次在 600s 内未获批准而
+> 终止（2 次定向测试、3 次全量门禁）。通道恢复后已**全部补跑并通过**，上表为补跑结果；未以未运行冒充通过。
+
+本检查点实现提交：`d57ec34`（已推送 `2e2ca12..d57ec34`）；门禁补跑结果见本表，记录提交见后续 docs 提交。
 
 ## 6. 未满足项与后续
 

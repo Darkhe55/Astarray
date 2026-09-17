@@ -160,3 +160,33 @@ describe("READ-FORMAT-03b Vue/Svelte 混合区段", () => {
     }
   }, 30_000);
 });
+
+describe("READ-FORMAT-03b 边界", () => {
+  it("@forward 省略；导入后同行代码保留并标注", () => {
+    const source = '@forward "src/list"; @debug 1;\n';
+    const receipt = buildView("inline.scss", source, true, false);
+    expect(receipt.viewText).toContain('@forward "src/list"; @debug 1;');
+    expect(receipt.retainedConstructs).toContain("import-with-inline-code");
+  }, 30_000);
+
+  it("未闭合块注释原样返回并报 parse-error", () => {
+    const source = "/* 未闭合\n.a { color: red; }\n";
+    const receipt = buildView("inline.css", source, false, true);
+    expect(receipt.filterStatus).toBe("parse-error");
+    expect(receipt.viewText).toBe(source);
+  }, 30_000);
+
+  it("style lang=scss 区段按 SCSS 行注释过滤", () => {
+    const source = "<template>\n<div>ok</div>\n</template>\n<style lang=\"scss\">\n// 行注释\n.a { color: red; }\n</style>\n";
+    const receipt = buildView("inline.vue", source, false, true);
+    expect(receipt.viewText).not.toContain("行注释");
+    expect(receipt.viewText).toContain(".a { color: red; }");
+  }, 30_000);
+
+  it("资源标签后同行代码保留并标注", () => {
+    const source = "<link rel=\"stylesheet\" href=\"a.css\"> <img src=\"x.png\">\n";
+    const receipt = buildView("inline.html", source, true, false);
+    expect(receipt.viewText).toContain("a.css");
+    expect(receipt.retainedConstructs).toContain("import-with-inline-code");
+  }, 30_000);
+});
