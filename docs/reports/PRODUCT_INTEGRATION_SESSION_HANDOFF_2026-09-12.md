@@ -178,7 +178,7 @@
 - **READ-FORMAT-04a**（LaTeX 与配置/文档）：`read-format-latex.ts` + `read-format-config-documents.ts` + 扫描器 `shouldTreatAsLineComment` 钩子 + 策略注册（`latex`/`jsonc`/`json`/`yaml`/`toml`/`markdown`/`plain-text`）+ 6 夹具 + `tests/core/unit/read-format-config-documents.test.ts`（10 用例）+ ADR-0042 §15 + `docs/reports/READ_FORMAT_04A_LATEX_CONFIG.md`。
   - 规则：LaTeX 转义 `\%` 不算注释、逐字环境（verbatim/lstlisting/minted）整体保留、未闭合逐字环境 parse-error；YAML `#` 仅行首/空白后成立（URL 片段不误删）；JSONC 行/块注释；TOML `#`；Markdown 仅过滤 `<!-- -->` 且围栏代码块整体保留；JSON/纯文本标注 `comments-unsupported`，无导入概念格式标注 `imports-unsupported`（不适用，不是失败）。
   - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **218 文件/1765 用例全通过**；coverage exit 0（92.98/85.09/92.92/93.01；read-format 91.73/84.67/98.55/91.65；latex 92.90/78.02/100/92.75；config-documents 98.19/92.50/100/98.16）；`verify:security-coverage` 22/22。
-  - 提交与推送：见提交记录。
+  - 提交 `7114f39`（已推送，`1aad551..7114f39`，第 1 次尝试成功）。
 - 下一轮（按新用户文档推荐顺序）：**READ-FORMAT-04b**（Go、Shell、SQL：heredoc、方言不支持等边界；随后 READ-FORMAT-05、GUIDE 增量）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。

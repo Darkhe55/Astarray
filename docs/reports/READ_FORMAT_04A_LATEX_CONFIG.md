@@ -57,7 +57,9 @@
 | npx vitest run --maxWorkers=6 | exit 0：218 文件 / 1765 用例全通过（+1 文件 / +10 用例） |
 | npx vitest run --coverage --maxWorkers=6 | exit 0：全局 92.98 / 85.09 / 92.92 / 93.01；tools/read-format 91.73 / 84.67 / 98.55 / 91.65；read-format-latex 92.90 / 78.02 / 100 / 92.75；config-documents 98.19 / 92.50 / 100 / 98.16 |
 | npm run verify:security-coverage | exit 0：关键安全模块 22/22 达标（阈值 95%） |
-| git push | 见提交记录 |
+| git push | **exit 0**（第 1 次尝试成功）：1aad551..7114f39 已推送 |
+
+本检查点实现提交：`7114f39`（feat(read-format): READ-FORMAT-04a LaTeX 与配置/文档格式策略）。
 
 ## 6. 未满足项与后续
 
