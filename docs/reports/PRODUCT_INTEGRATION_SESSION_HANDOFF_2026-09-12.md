@@ -146,6 +146,7 @@
   - 规则：五类同步失败立即触发保全（成功/未尝试/进行中不触发且不留目录）；版本化清单含引用、index tree + `diff --cached`、未暂存补丁、未跟踪（路径/大小/sha256）、删除/重命名；独立 `git bundle` 归档 + sha256 + `bundle verify`；工作树之外受保护目录、临时目录原子改名发布、独立 `manifest.sha256` 读取时重算校验（篡改报 `journal-corrupted`）；默认排除依赖缓存但显式记录被排除的未跟踪文件；无提交仓库走空树比较不静默为空；LFS/子模块/浅克隆/稀疏标注 `incomplete` 不宣称完整可恢复；读取/复制/仓库不可用记录失败不伪造成功；指纹复用已验证快照，重试不重复全量复制。
   - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **211 文件/1705 用例全通过**；coverage exit 0（93.27/85.43/92.50/93.34；orchestration 93.97/86.78/94.12/94.03；新模块 90.97/77.63/95.00/91.22）；`verify:security-coverage` 22/22。
   - 架构守卫：新模块破坏性 API 令牌加入白名单（`writeFile`/`rename`，去掉非必要 `fs.rm`）。
+  - 提交 `6eba68b`（已推送，`09462be..6eba68b`，第 1 次尝试成功）。
   - 未完成（登记 03）：恢复（restore）到新目录/隔离 worktree、崩溃后独立恢复演练、产品状态入口（CLI/门面）、旧 `GitRecoveryPointService` 静默复制失败统一。
 - 下一轮（按新用户文档推荐顺序）：**GIT-PRESERVE-03**（崩溃恢复与独立恢复演练、产品状态入口；之后 READ-FORMAT-01..05、GUIDE 增量）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。

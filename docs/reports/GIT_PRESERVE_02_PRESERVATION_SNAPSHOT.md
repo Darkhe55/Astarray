@@ -59,7 +59,9 @@
 | `npx vitest run --maxWorkers=6` | **exit 0：211 文件 / 1705 用例全通过**（+1 文件 / +10 用例） |
 | `npx vitest run --coverage --maxWorkers=6` | **exit 0**：全局 statements **93.27%** / branch **85.43%** / functions **92.50%** / lines **93.34%**；`core/src/orchestration` **93.97 / 86.78 / 94.12 / 94.03**；新模块 `local-preservation-service.ts` **90.97 / 77.63 / 95.00 / 91.22** |
 | `npm run verify:security-coverage` | **exit 0：关键安全模块 22/22 达标（阈值 95%）** |
-| `git push` | 见提交记录 |
+| `git push` | **exit 0**（第 1 次尝试成功）：`09462be..6eba68b` 已推送 |
+
+本检查点实现提交：`6eba68b`（`feat(git-preserve): GIT-PRESERVE-02 本地保全快照与同步失败触发`）。
 
 > 架构守卫真阳性：新模块的 `fs.rm`/`writeFile`/`rename` 触发 `destructive-file-api-guard`；
 > 处理为**去掉无必要的 `fs.rm`**（`.tmp-*` 残留由 list 过滤且不标 `ready`），并把模块加入
