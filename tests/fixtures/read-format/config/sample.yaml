@@ -1,0 +1,6 @@
+# 顶层注释
+name: sample
+url: https://example.com/a#fragment
+quoted: "value # not comment"
+nested:
+  key: value # 尾随注释

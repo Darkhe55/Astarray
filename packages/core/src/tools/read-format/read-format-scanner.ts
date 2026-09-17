@@ -63,6 +63,8 @@ export interface ReadFormatScanProfile {
     sourceText: string,
     lineStartIndex: number,
   ): { isExempt: boolean; retainedConstruct: string | null };
+  /** 行注释标记在此位置是否成立（如 YAML 的 '#' 需位于行首或空白之后）。 */
+  shouldTreatAsLineComment?(sourceText: string, index: number): boolean;
   scanString(sourceText: string, index: number): StringScanResult | null;
   matchImportStatement(
     sourceText: string,
@@ -186,8 +188,10 @@ export function scanReadView(input: {
     }
 
     if (input.shouldIncludeComments === false) {
-      const lineToken = profile.lineCommentTokens.find((token) =>
-        sourceText.startsWith(token, index),
+      const lineToken = profile.lineCommentTokens.find(
+        (token) =>
+          sourceText.startsWith(token, index) &&
+          (profile.shouldTreatAsLineComment?.(sourceText, index) ?? true),
       );
       if (lineToken !== undefined) {
         const newlineIndex = sourceText.indexOf("\n", index);

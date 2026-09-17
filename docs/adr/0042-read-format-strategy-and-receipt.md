@@ -171,6 +171,16 @@ readFile 返回结构化回执（正文 + 元数据），至少含：
   `not-filtered`，并通过 `retainedConstructs`/`limitations` 如实说明（不虚报已过滤）。
 - CSS/HTML/Vue/Svelte 区段分派属 **READ-FORMAT-03b**。
 
+## 15. 实现记录（READ-FORMAT-04a）
+
+- 模块：`read-format-latex.ts`（转义 \%、逐字环境、usepackage/input/include）与
+  `read-format-config-documents.ts`（JSON/JSONC、YAML、TOML、Markdown、纯文本）。
+- 扫描器新增 `shouldTreatAsLineComment` 钩子（YAML 的 `#` 仅在行首或空白后成立）。
+- 无导入概念的格式（JSON/JSONC/YAML/TOML/Markdown/纯文本）在 `shouldIncludeImports=false` 时追加
+  `imports-unsupported` 说明；JSON/纯文本在 `shouldIncludeComments=false` 时追加 `comments-unsupported`。
+- Markdown 围栏代码块按行整体保留，注释仅过滤 `<!-- -->`；未闭合注释 → parse-error。
+- Go/Shell/SQL 属 **READ-FORMAT-04b**。
+
 ## 14. 实现记录（READ-FORMAT-03b）
 
 - 模块：`read-format-frontend-styles.ts`（CSS/SCSS/Less，含 `url(...)` 片段保护）与

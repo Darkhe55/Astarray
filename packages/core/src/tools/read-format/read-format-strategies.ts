@@ -23,6 +23,13 @@ import {
 import { scanFrontendScriptView } from "./read-format-frontend-script.js";
 import { scanStyleSheetView } from "./read-format-frontend-styles.js";
 import { scanSectionedView } from "./read-format-frontend-markup.js";
+import { scanLatexView } from "./read-format-latex.js";
+import {
+  scanHashCommentDocumentView,
+  scanJsonLikeView,
+  scanMarkdownView,
+  scanPlainTextView,
+} from "./read-format-config-documents.js";
 
 export type {
   ReadFilterStatus,
@@ -779,6 +786,140 @@ function createMarkupStrategy(
   };
 }
 
+function createLatexStrategy(): ReadFormatStrategy {
+  return {
+    strategyId: "latex",
+    policyVersion: 1,
+    capabilities: { comments: "full", imports: "full", commentSyntaxFamily: "latex" },
+    match: (input) => {
+      if ([".tex", ".sty", ".cls"].includes(input.extension)) {
+        return { isMatch: true, specificity: 10 };
+      }
+      return { isMatch: false, specificity: 0 };
+    },
+    buildView: (input) =>
+      scanLatexView({
+        sourceText: input.sourceText,
+        shouldIncludeComments: input.shouldIncludeComments,
+        shouldIncludeImports: input.shouldIncludeImports,
+      }),
+  };
+}
+
+function createJsoncStrategy(): ReadFormatStrategy {
+  return {
+    strategyId: "jsonc",
+    policyVersion: 1,
+    capabilities: { comments: "full", imports: "unsupported", commentSyntaxFamily: "c-family" },
+    match: (input) =>
+      input.extension === ".jsonc"
+        ? { isMatch: true, specificity: 10 }
+        : { isMatch: false, specificity: 0 },
+    buildView: (input) =>
+      scanJsonLikeView({
+        sourceText: input.sourceText,
+        shouldIncludeComments: input.shouldIncludeComments,
+        shouldIncludeImports: input.shouldIncludeImports,
+        hasComments: true,
+        hasLineComments: true,
+      }),
+  };
+}
+
+function createJsonStrategy(): ReadFormatStrategy {
+  return {
+    strategyId: "json",
+    policyVersion: 1,
+    capabilities: { comments: "unsupported", imports: "unsupported", commentSyntaxFamily: null },
+    match: (input) =>
+      input.extension === ".json"
+        ? { isMatch: true, specificity: 10 }
+        : { isMatch: false, specificity: 0 },
+    buildView: (input) =>
+      scanJsonLikeView({
+        sourceText: input.sourceText,
+        shouldIncludeComments: input.shouldIncludeComments,
+        shouldIncludeImports: input.shouldIncludeImports,
+        hasComments: false,
+        hasLineComments: false,
+      }),
+  };
+}
+
+function createYamlStrategy(): ReadFormatStrategy {
+  return {
+    strategyId: "yaml",
+    policyVersion: 1,
+    capabilities: { comments: "full", imports: "unsupported", commentSyntaxFamily: "hash" },
+    match: (input) =>
+      [".yaml", ".yml"].includes(input.extension)
+        ? { isMatch: true, specificity: 10 }
+        : { isMatch: false, specificity: 0 },
+    buildView: (input) =>
+      scanHashCommentDocumentView({
+        sourceText: input.sourceText,
+        shouldIncludeComments: input.shouldIncludeComments,
+        shouldIncludeImports: input.shouldIncludeImports,
+        isYaml: true,
+      }),
+  };
+}
+
+function createTomlStrategy(): ReadFormatStrategy {
+  return {
+    strategyId: "toml",
+    policyVersion: 1,
+    capabilities: { comments: "full", imports: "unsupported", commentSyntaxFamily: "hash" },
+    match: (input) =>
+      input.extension === ".toml"
+        ? { isMatch: true, specificity: 10 }
+        : { isMatch: false, specificity: 0 },
+    buildView: (input) =>
+      scanHashCommentDocumentView({
+        sourceText: input.sourceText,
+        shouldIncludeComments: input.shouldIncludeComments,
+        shouldIncludeImports: input.shouldIncludeImports,
+        isYaml: false,
+      }),
+  };
+}
+
+function createMarkdownStrategy(): ReadFormatStrategy {
+  return {
+    strategyId: "markdown",
+    policyVersion: 1,
+    capabilities: { comments: "partial", imports: "unsupported", commentSyntaxFamily: "html" },
+    match: (input) =>
+      [".md", ".markdown"].includes(input.extension)
+        ? { isMatch: true, specificity: 10 }
+        : { isMatch: false, specificity: 0 },
+    buildView: (input) =>
+      scanMarkdownView({
+        sourceText: input.sourceText,
+        shouldIncludeComments: input.shouldIncludeComments,
+        shouldIncludeImports: input.shouldIncludeImports,
+      }),
+  };
+}
+
+function createPlainTextStrategy(): ReadFormatStrategy {
+  return {
+    strategyId: "plain-text",
+    policyVersion: 1,
+    capabilities: { comments: "unsupported", imports: "unsupported", commentSyntaxFamily: null },
+    match: (input) =>
+      input.extension === ".txt"
+        ? { isMatch: true, specificity: 10 }
+        : { isMatch: false, specificity: 0 },
+    buildView: (input) =>
+      scanPlainTextView({
+        sourceText: input.sourceText,
+        shouldIncludeComments: input.shouldIncludeComments,
+        shouldIncludeImports: input.shouldIncludeImports,
+      }),
+  };
+}
+
 export const DEFAULT_READ_FORMAT_STRATEGIES: ReadFormatStrategy[] = [
   createCFamilyStrategy(),
   createPythonStrategy(),
@@ -788,6 +929,13 @@ export const DEFAULT_READ_FORMAT_STRATEGIES: ReadFormatStrategy[] = [
   ...MARKUP_STRATEGY_DEFINITIONS.map((definition) =>
     createMarkupStrategy(definition),
   ),
+  createLatexStrategy(),
+  createJsoncStrategy(),
+  createJsonStrategy(),
+  createYamlStrategy(),
+  createTomlStrategy(),
+  createMarkdownStrategy(),
+  createPlainTextStrategy(),
 ];
 
 export class ReadFormatStrategyRegistry {

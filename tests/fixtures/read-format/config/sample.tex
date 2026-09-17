@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\input{sections/intro}
+
+% 普通注释
+\newcommand{\percent}{100\%}
+\begin{verbatim}
+  % 逐字环境里的百分号不是注释
+  \usepackage{not-an-import}
+\end{verbatim}
+\begin{lstlisting}
+  % also verbatim
+\end{lstlisting}

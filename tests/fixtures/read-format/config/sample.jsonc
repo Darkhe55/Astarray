@@ -1,0 +1,5 @@
+{
+  // 行注释
+  "name": "sample", /* 块注释 */
+  "url": "https://example.com/a//b"
+}
