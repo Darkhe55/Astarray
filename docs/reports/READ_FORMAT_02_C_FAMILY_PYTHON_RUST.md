@@ -62,7 +62,9 @@
 | `npx vitest run --maxWorkers=6` | **exit 0：215 文件 / 1731 用例全通过**（+1 文件 / +12 用例） |
 | `npx vitest run --coverage --maxWorkers=6` | **exit 0**：全局 **93.05 / 85.08 / 92.71 / 93.09**；`core/src/tools/read-format` **89.68 / 81.67 / 97.78 / 89.60**；`core/src/orchestration` 93.91 / 86.64 / 94.31 / 93.95 |
 | `npm run verify:security-coverage` | **exit 0：关键安全模块 22/22 达标（阈值 95%）** |
-| `git push` | 见提交记录 |
+| `git push` | **exit 0**（第 1 次尝试成功）：`b814d15..3eaf596` 已推送 |
+
+本检查点实现提交：`3eaf596`（`feat(read-format): READ-FORMAT-02 C 系/Python/Rust 读取策略与真实夹具`）。
 
 > 首次 coverage 运行 exit 1（未产出摘要），重跑即 exit 0；属并行门禁波动，未放宽任何断言或阈值。
 

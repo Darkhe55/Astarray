@@ -163,6 +163,7 @@
   - 规则：语言感知状态机（字符串/注释/嵌套块注释/原始与逐字字符串）；C 宏与预处理指令**整行保留**；C++ `R"(…)"`、C# `@"…"`/`"""…"""`、Python 文档字符串、Rust `r#"…"#` 与生命周期不被误删；Python 多行 `from … import (…)` 整段省略；同行 `import os; x = 1` 保留并记 `import-with-inline-code`（partially-filtered）；未闭合字符串/注释 → `parse-error` 原样返回；未支持后缀 → `unsupported` 原样返回；省略 span 补回换行保证行号恒等。
   - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **215 文件/1731 用例全通过**；coverage exit 0（93.05/85.08/92.71/93.09；tools/read-format 89.68/81.67/97.78/89.60；orchestration 93.91/86.64/94.31/93.95）；`verify:security-coverage` 22/22。
   - 边界：**未接线 `readFile`**（参数/receipt/敏感检查接线/时间锁键属 READ-FORMAT-05）；`readFile` 现行为不变。
+  - 提交 `3eaf596`（已推送，`b814d15..3eaf596`，第 1 次尝试成功）。
 - 下一轮（按新用户文档推荐顺序）：**READ-FORMAT-03**（其后 READ-FORMAT-04..05、GUIDE 增量）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
