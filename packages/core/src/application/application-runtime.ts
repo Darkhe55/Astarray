@@ -93,6 +93,7 @@ import {
   FileAccuracyAttemptJournal,
   FileAccuracyVerificationAuditLog,
 } from "../orchestration/accuracy-policy-store.js";
+import { LocalPreservationService } from "../orchestration/local-preservation-service.js";
 import { LocalContextGraphStore } from "../orchestration/local-context-graph-store.js";
 import {
   createContextPromptProvider,
@@ -152,6 +153,8 @@ export interface ApplicationRuntime {
   accuracyAttemptJournal: FileAccuracyAttemptJournal;
   /** ACCURACY-03：逐次校验审计日志（证明关闭时不新增模型审查）。 */
   accuracyVerificationAuditLog: FileAccuracyVerificationAuditLog;
+  /** GIT-PRESERVE-02：远端同步失败后的本地保全（工作树之外的受保护快照）。 */
+  localPreservationService: LocalPreservationService;
   shutdown: () => Promise<void>;
 }
 
@@ -597,6 +600,11 @@ export async function createApplicationRuntime(
     baseDirectory: stateDirectory,
   });
 
+  // GIT-PRESERVE-02：远端同步失败后的本地保全服务（网络失败立即保全，不等待重试耗尽）。
+  const localPreservationService = new LocalPreservationService({
+    baseDirectory: stateDirectory,
+  });
+
   const controller = new MainController({
     modeMachine,
     sessionManager,
@@ -744,6 +752,7 @@ export async function createApplicationRuntime(
     accuracyPolicyStore,
     accuracyAttemptJournal,
     accuracyVerificationAuditLog,
+    localPreservationService,
     humanVerificationController,
     contextClosureCapsuleStore,
     contextGraphStore,

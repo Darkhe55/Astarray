@@ -93,6 +93,11 @@ const ALLOWED_MODULES: Record<string, { tokens: AllowedTokens; reason: string }>
     tokens: ["copyFile", "writeFile"],
     reason: "Git 恢复点 pre-image 保存（copyFile→writeFile）",
   },
+  "core/src/orchestration/local-preservation-service.ts": {
+    tokens: ["writeFile", "rename"],
+    reason:
+      "GIT-PRESERVE-02 本地保全：临时目录内写入快照/清单→rename 原子发布；不删除（.tmp- 残留被 list 过滤，不标 ready）",
+  },
   "tui/src/cli/commands.ts": {
     tokens: ["writeFile", "rm", "copyFile"],
     reason: "CLI：doctor 探针 wx 创建/唯一名清理、config init 写入、导出前 .bak 复制",

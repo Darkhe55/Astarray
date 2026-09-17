@@ -70,7 +70,7 @@
 
 | 测试 | 当前固化行为 | 与新卡冲突 | 处理 |
 | --- | --- | --- | --- |
-| `tests/core/integration/git-defensive-branches.test.ts`："恢复点服务：untracked 文件快照复制失败静默跳过" | 复制失败 → 静默跳过 | 卡要求"不能把缺失文件和读取失败静默当成空数据""磁盘不足不能虚报" | 02 改为断言失败被记录且快照非 `ready`；同步修订测试预期 |
+| `tests/core/integration/git-defensive-branches.test.ts`："恢复点服务：untracked 文件快照复制失败静默跳过" | 复制失败 → 静默跳过 | 卡要求"不能把缺失文件和读取失败静默当成空数据""磁盘不足不能虚报" | **02 已按新路径解决**：新增 `LocalPreservationService` 对读取/复制/校验失败记录为 `incomplete`；**旧破坏性操作路径未改**（改其文档 schema 超出 02 范围），统一旧路径登记为 03 收口项 |
 | `tests/core/integration/git-recovery-point.test.ts`（3 用例） | 引用/工作树恢复、重复恢复拒绝、受保护前缀 | 与卡不冲突，作为 02 回归基线 | 保留；02 追加 index/清单/对象归档用例 |
 
 ## 6. 命令与退出码

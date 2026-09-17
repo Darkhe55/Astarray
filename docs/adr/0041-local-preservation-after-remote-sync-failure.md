@@ -127,3 +127,17 @@ localPreservationStatus: "not-required" | "pending" | "ready" | "incomplete" | "
 - 不替代 ADR-0009 的变更前自动备份，也不替代 ADR-0010 的删除流程。
 - 不纳入跨设备灾备、云存储或压缩去重算法选型（可在 02/03 评估，但不得改变上述状态与清单语义）。
 - 不在本 ADR 授权任何安装、网络下载或外部软件控制。
+
+## 11. 实现记录（GIT-PRESERVE-02）
+
+- 模块：`packages/core/src/orchestration/local-preservation-service.ts`；运行时暴露 `localPreservationService`。
+- 触发：`evaluateRemoteSyncPreservationTrigger` 对 `failed-network`/`failed-authentication`/`failed-rejected`/
+  `failed-no-remote`/`failed-unknown` 返回保全；`succeeded`/`not-attempted`/`attempting` 不保全且不创建目录。
+- 清单：`preservation-manifest.json` + 独立 `manifest.sha256`（哈希字段不含自身，读取时重算校验，
+  不匹配报 `journal-corrupted`）；路径全部记录**最终**目录（临时目录仅用于原子改名发布）。
+- 状态派生：仓库不可用 → `failed`；浅克隆/稀疏/LFS/子模块等限制 → `incomplete` + 明确失败项；
+  无失败项 → `ready`；`no-refs-to-archive`（未出生 HEAD）不算失败。
+- 复用：`reuseKey` = sha256(策略版本 + 仓库/工作树路径 + 基线提交 + 引用 + 排除清单 + 变更条目 +
+  cached/unstaged 补丁哈希 + 未跟踪（路径/大小/哈希）)；仅复用 `ready` 且未恢复过的快照。
+- 恢复与产品状态入口属 GIT-PRESERVE-03。
+
