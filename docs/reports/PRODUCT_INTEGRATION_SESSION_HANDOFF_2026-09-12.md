@@ -197,7 +197,7 @@
 - **GUIDE 增量 02a**（追加/修订/新建任务变更意图）：`guidance-change-intent.ts` + `guidance-change-intent-journal.ts` + 运行时/公共入口/CLI + ADR-0038 §31–38 + `docs/reports/GUIDE_02A_CHANGE_INTENT.md`（12+5+3 用例）。
   - 规则：必须显式选择 append/revise/new-task（未明确 → 澄清，不静默替换旧目标）；append/revise revision 单调 +1 且历史全部保留；revise 必须指明受影响产物/验收条目，仅这些失效；旧完成声明（revision 落后）失效；new-task 不提升 Agent 派生优先级（用户层级 0、Agent ≥1 且 ≤上限）；并发 revision 不一致拒绝；同标识同 revision 幂等去重；状态落盘 `guidance/change-intent.json` 跨进程可读；接受后复用 GUIDE-01 控制队列（受理 ≠ 已应用）。
   - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **224 文件/1804 用例全通过**；coverage exit 0（93.00/85.08/93.05/93.03；guidance-change 98.88/85.88/100/98.85）；`verify:security-coverage` 22/22。
-  - 提交与推送：见提交记录。
+  - 提交 `2324916`（已推送，`7c118b1..2324916`，第 1 次尝试成功）。
   - 未接入（诚实声明）：**新任务插入任务偏序集**属 GUIDE 增量 02b。
 - 下一轮：**GUIDE 增量 02b**（插入任务偏序集与长任务中途追加/撤销端到端反例）；其后 WB-00 剩余检查点与治理文档统一修订。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
