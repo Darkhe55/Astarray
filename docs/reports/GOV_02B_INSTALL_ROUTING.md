@@ -58,3 +58,8 @@
 - 旧安装门禁（`assist-installation-gate`）测试期望的统一修订与安装计划证据生成接线仍属后续。
 - 外部依赖：E2E-01 真实 Provider、GUI-01-R-04b 人工体验、BRIDGE-01-04 真实 MCP 客户端、WB-00-02。
 
+## 7. 提交与推送
+
+- 本检查点提交：`1bac888`（feat(auth-scope): GOV-02b 安装类范围细分与门禁分流）。
+- `git push`：**exit 0**（第 1 次尝试成功，`9165bda..1bac888`）。
+

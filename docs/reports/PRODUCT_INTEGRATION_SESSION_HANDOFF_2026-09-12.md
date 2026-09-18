@@ -217,7 +217,7 @@
 - **GOV-02b**（安装类范围细分与门禁分流）：`scope-resolution.ts`（`installScopeEvidence` + S1 子类 + 开关约束）+ `scope-authorization-gate.ts`（operationKind 透传）+ ADR-0039 补充 §24–29 + `tests/core/integration/auth-scope-install-routing.test.ts`（9 用例）+ `docs/reports/GOV_02B_INSTALL_ROUTING.md`。
   - 规则：`dependency-install` 默认 S5（fail-closed）；仅当**本地生成**证据（受控、受控根经 realpath 落在已登记项目根内、无全局/外部副作用、无未知安装脚本）才判 S1 子类；协同模式受控安装按设置由上级批准（allow/ask-superior），未受控仍 `ask-user`；**任何安装开关关闭一律 deny** 且 `requiresInstallationSwitch=true` 贯穿决策/记录/复检；不采信模型自述。
   - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **226 文件/1817 用例全通过**；coverage exit 0（93.02/85.13/93.05/93.04；scope-resolution 89.58/82.06/91.66/89.51；scope-authorization-gate 90.66/83.33/92.85/90.54）；`verify:security-coverage` 22/22。
-  - 提交与推送：见提交记录。
+  - 提交 `1bac888`（已推送，`9165bda..1bac888`，第 1 次尝试成功）。
 - 下一轮候选：**GOV-02a 剩余**（用户并行脏文件落定后同步旧表述）或旧安装门禁测试期望统一修订；外部依赖项（E2E-01 真实 Provider、GUI-01-R-04b 人工体验、BRIDGE-01-04 真实 MCP 客户端、WB-00-02）仍按前驱规则 pending/blocked。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
