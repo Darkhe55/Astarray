@@ -36,6 +36,8 @@ import {
   executeSessionShutdownCommand,
   executeGuiServeCommand,
   executeAccuracyConfigureCommand,
+  executeGuideChangeCommand,
+  executeGuideHistoryCommand,
   executePreserveCreateCommand,
   executePreserveRestoreCommand,
   executePreserveShowCommand,
@@ -763,6 +765,92 @@ preserveCommand
       });
     },
   );
+
+guideCommand
+  .command("change")
+  .description("追加/修订/新建任务（必须显式选择；不明确时请求澄清）")
+  .argument("<instruction>", "指导文本")
+  .requiredOption("--mission <mission-id>", "mission 标识")
+  .option("--task <task-id>", "目标任务标识（new-task 可省略）")
+  .option("--intent <intent>", "变更类型：append|revise|new-task")
+  .option(
+    "--task-revision <revision>",
+    "观察到的任务 revision",
+    (value: string) => Number.parseInt(value, 10),
+    1,
+  )
+  .option("--new-task <task-id>", "new-task 的独立任务标识")
+  .option(
+    "--invalidate-artifact <identifiers...>",
+    "修订使其失效的产物标识（可多个）",
+    [],
+  )
+  .option(
+    "--invalidate-entry <identifiers...>",
+    "修订使其失效的验收条目标识（可多个）",
+    [],
+  )
+  .option(
+    "--tier <tier>",
+    "行为档：record-only|safe-point-guidance|gate-and-request-pause",
+    "safe-point-guidance",
+  )
+  .option("--json", "JSON 输出")
+  .action(
+    async (
+      instruction: string,
+      options: {
+        mission: string;
+        task?: string;
+        intent?: string;
+        taskRevision: number;
+        newTask?: string;
+        invalidateArtifact: string[];
+        invalidateEntry: string[];
+        tier: string;
+        json?: boolean;
+      },
+    ) => {
+      const allowedTiers = [
+        "record-only",
+        "safe-point-guidance",
+        "gate-and-request-pause",
+      ];
+      if (!allowedTiers.includes(options.tier)) {
+        process.stderr.write("非法行为档：" + options.tier + "\n");
+        process.exitCode = 2;
+        return;
+      }
+      process.exitCode = await executeGuideChangeCommand({
+        stateDirectory: defaultStateDirectory(),
+        missionIdentifier: options.mission,
+        taskIdentifier: options.task ?? null,
+        instructionText: instruction,
+        changeIntent: options.intent ?? null,
+        requestedTaskSequenceRevision: options.taskRevision,
+        newTaskIdentifier: options.newTask ?? null,
+        invalidatedArtifactIdentifiers: options.invalidateArtifact,
+        invalidatedAcceptanceEntryIdentifiers: options.invalidateEntry,
+        behaviorTier: options.tier as
+          | "record-only"
+          | "safe-point-guidance"
+          | "gate-and-request-pause",
+        isJsonOutput: options.json === true,
+      });
+    },
+  );
+guideCommand
+  .command("history")
+  .description("查看任务的指导变更历史（追加/修订保留历史）")
+  .requiredOption("--task <task-id>", "任务标识")
+  .option("--json", "JSON 输出")
+  .action(async (options: { task: string; json?: boolean }) => {
+    process.exitCode = await executeGuideHistoryCommand({
+      stateDirectory: defaultStateDirectory(),
+      taskIdentifier: options.task,
+      isJsonOutput: options.json === true,
+    });
+  });
 
 const summaryCommand = program
   .command("summary")

@@ -409,6 +409,33 @@ export interface PublicGuidanceSubmissionResult {
   submittedAtIso: string;
 }
 
+/** GUIDE 增量（用户文档 §6）：指导变更意图裁决结果（复用 GUIDE 接收/应用回执）。 */
+export interface PublicGuidanceChangeResult {
+  status: "accepted" | "needs-clarification" | "rejected";
+  guidanceIdentifier: string;
+  changeIntent: "append" | "revise" | "new-task" | null;
+  newTaskSequenceRevision: number | null;
+  invalidatedArtifactIdentifiers: string[];
+  invalidatedAcceptanceEntryIdentifiers: string[];
+  isDuplicateDelivery: boolean;
+  reasons: string[];
+  clarificationQuestion: string | null;
+  historyEntryCount: number;
+}
+
+/** GUIDE 增量：任务变更历史条目（历史指导保留）。 */
+export interface PublicGuidanceChangeHistoryEntry {
+  taskIdentifier: string;
+  taskSequenceRevision: number;
+  guidanceIdentifier: string;
+  guidanceRevision: number;
+  changeIntent: "append" | "revise" | "new-task";
+  instructionText: string;
+  appliedAtIso: string;
+  invalidatedArtifactIdentifiers: string[];
+  invalidatedAcceptanceEntryIdentifiers: string[];
+}
+
 /** GUIDE-01-04：指导接收/应用状态（含安全点应用延迟）。 */
 export interface PublicGuidanceStatusEntry {
   guidanceIdentifier: string;
@@ -1864,6 +1891,118 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       }
       throw error;
     }
+  }
+
+  // ─── GUIDE 增量：追加/修订/新建任务的变更意图（复用 GUIDE-01 接收/应用回执） ───
+
+  /**
+   * 提交指导变更：必须显式 changeIntent；未明确且可能改变目标/范围 → 澄清，
+   * 不静默替换旧目标。接受时复用 GUIDE-01 控制队列（受理 ≠ 已应用）。
+   */
+  async submitGuidanceChange(input: {
+    missionIdentifier: string;
+    taskIdentifier: string | null;
+    instructionText: string;
+    changeIntent: "append" | "revise" | "new-task" | null;
+    requestedTaskSequenceRevision: number;
+    newTaskIdentifier?: string | null;
+    derivedTaskPriorityTier?: number;
+    invalidatedArtifactIdentifiers?: string[];
+    invalidatedAcceptanceEntryIdentifiers?: string[];
+    behaviorTier?: PublicGuidanceSubmissionResult["behaviorTier"];
+  }): Promise<PublicGuidanceChangeResult> {
+    this.assertOpen();
+    const guidanceIdentifier =
+      "guide-change-" +
+      createHash("sha256")
+        .update(
+          [
+            input.missionIdentifier,
+            input.taskIdentifier ?? "",
+            input.changeIntent ?? "unclear",
+            input.instructionText,
+            String(input.requestedTaskSequenceRevision),
+            input.newTaskIdentifier ?? "",
+          ].join("|"),
+          "utf8",
+        )
+        .digest("hex")
+        .slice(0, 12);
+    const decision = this.runtime.guidanceChangeIntentController.applyChange({
+      guidanceIdentifier,
+      guidanceRevision: 1,
+      changeIntent: input.changeIntent,
+      targetTaskIdentifier: input.taskIdentifier,
+      newTaskIdentifier: input.newTaskIdentifier ?? null,
+      instructionText: input.instructionText,
+      requestedTaskSequenceRevision: input.requestedTaskSequenceRevision,
+      derivedTaskPriorityTier: input.derivedTaskPriorityTier ?? 1,
+      invalidatedArtifactIdentifiers: input.invalidatedArtifactIdentifiers,
+      invalidatedAcceptanceEntryIdentifiers:
+        input.invalidatedAcceptanceEntryIdentifiers,
+      sourceKind: "authenticated-user",
+      sourceIdentifier: this.runtime.authenticatedUserId,
+    });
+    await this.runtime.guidanceChangeIntentJournal.write(
+      this.runtime.guidanceChangeIntentController.snapshot(),
+    );
+    if (decision.status === "accepted" && input.taskIdentifier !== null) {
+      await this.submitRuntimeGuidance({
+        missionIdentifier: input.missionIdentifier,
+        taskIdentifier: input.taskIdentifier,
+        instructionText: input.instructionText,
+        behaviorTier: input.behaviorTier ?? "safe-point-guidance",
+      });
+    }
+    return {
+      status: decision.status,
+      guidanceIdentifier: decision.guidanceIdentifier,
+      changeIntent: decision.changeIntent,
+      newTaskSequenceRevision: decision.newTaskSequenceRevision,
+      invalidatedArtifactIdentifiers: [...decision.invalidatedArtifactIdentifiers],
+      invalidatedAcceptanceEntryIdentifiers: [
+        ...decision.invalidatedAcceptanceEntryIdentifiers,
+      ],
+      isDuplicateDelivery: decision.isDuplicateDelivery,
+      reasons: [...decision.reasons],
+      clarificationQuestion: decision.clarificationQuestion,
+      historyEntryCount: decision.historyEntryCount,
+    };
+  }
+
+  /** 任务变更历史（追加/修订保留历史，供审计与旧声明核对）。 */
+  async queryGuidanceChangeHistory(
+    taskIdentifier: string,
+  ): Promise<PublicGuidanceChangeHistoryEntry[]> {
+    this.assertOpen();
+    return this.runtime.guidanceChangeIntentController
+      .readHistory(taskIdentifier)
+      .map((entry) => ({
+        taskIdentifier: entry.taskIdentifier,
+        taskSequenceRevision: entry.taskSequenceRevision,
+        guidanceIdentifier: entry.guidanceIdentifier,
+        guidanceRevision: entry.guidanceRevision,
+        changeIntent: entry.changeIntent,
+        instructionText: entry.instructionText,
+        appliedAtIso: entry.appliedAtIso,
+        invalidatedArtifactIdentifiers: [
+          ...entry.invalidatedArtifactIdentifiers,
+        ],
+        invalidatedAcceptanceEntryIdentifiers: [
+          ...entry.invalidatedAcceptanceEntryIdentifiers,
+        ],
+      }));
+  }
+
+  /** 旧完成声明（revision 落后于当前）在指导变更使 revision 变化后失效。 */
+  async isTaskCompletionDeclarationStillValid(input: {
+    taskIdentifier: string;
+    declaredTaskSequenceRevision: number;
+  }): Promise<boolean> {
+    this.assertOpen();
+    return this.runtime.guidanceChangeIntentController.isCompletionDeclarationStillValid(
+      input,
+    );
   }
 
   private async createRecoveryCenterController(): Promise<RecoveryCenterController> {

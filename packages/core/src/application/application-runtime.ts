@@ -88,6 +88,8 @@ import { GuidanceControlQueue } from "../runtime-guidance/guidance-control-queue
 import { GuidanceSourceRegistry } from "../runtime-guidance/runtime-guidance.js";
 import { LongToolCheckpointController } from "../runtime-guidance/long-tool-checkpoint.js";
 import { GuidanceSubmissionJournal } from "../runtime-guidance/guidance-submission-journal.js";
+import { GuidanceChangeIntentController } from "../runtime-guidance/guidance-change-intent.js";
+import { FileGuidanceChangeIntentJournal } from "../runtime-guidance/guidance-change-intent-journal.js";
 import {
   AccuracyPolicyStore,
   FileAccuracyAttemptJournal,
@@ -131,6 +133,10 @@ export interface ApplicationRuntime {
   guidanceControlQueue: GuidanceControlQueue;
   /** GUIDE-01-04：指导提交/应用状态日志（跨进程可读）。 */
   guidanceSubmissionJournal: GuidanceSubmissionJournal;
+  /** GUIDE 增量：追加/修订/新建任务的变更意图控制器。 */
+  guidanceChangeIntentController: GuidanceChangeIntentController;
+  /** GUIDE 增量：变更意图状态日志（跨进程 history/revision 共用）。 */
+  guidanceChangeIntentJournal: FileGuidanceChangeIntentJournal;
   /** 认证用户标识（指导来源必须绑定到具体人类个体）。 */
   authenticatedUserId: string;
   /** GUIDE-01-03：长工具检查点与协作取消控制器。 */
@@ -590,6 +596,15 @@ export async function createApplicationRuntime(
     },
   });
   const longToolCheckpointController = new LongToolCheckpointController();
+  // GUIDE 增量（用户文档 §6）：追加/修订/新建任务的变更意图与任务 revision。
+  const guidanceChangeIntentJournal = new FileGuidanceChangeIntentJournal({
+    baseDirectory: stateDirectory,
+  });
+  const guidanceChangeIntentController = new GuidanceChangeIntentController();
+  const persistedChangeIntentState = await guidanceChangeIntentJournal.read();
+  if (persistedChangeIntentState !== null) {
+    guidanceChangeIntentController.hydrate(persistedChangeIntentState);
+  }
 
   // ACCURACY-03：准确性档位/预算/开关策略、幂等日志与校验审计（产品入口与 CLI 共用）。
   const accuracyPolicyStore = new AccuracyPolicyStore({ baseDirectory: stateDirectory });
@@ -746,6 +761,8 @@ export async function createApplicationRuntime(
     guidanceControlQueue,
     longToolCheckpointController,
     guidanceSubmissionJournal,
+    guidanceChangeIntentController,
+    guidanceChangeIntentJournal,
     authenticatedUserId,
     registeredProjectRoots,
     scopeAuthorizationGate,

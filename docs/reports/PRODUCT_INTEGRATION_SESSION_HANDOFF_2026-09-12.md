@@ -194,7 +194,12 @@
   - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **221 文件/1784 用例全通过**；coverage exit 0（93.01/85.14/92.97/93.04；read-format 92.29/85.03/98.80/92.21）；`verify:security-coverage` 22/22。
   - 提交 `9cf7689`（已推送，`41704b4..9cf7689`，第 1 次尝试成功）。
 - **READ-FORMAT-01..05 全卡完成**（01 冻结、02 C/Python/Rust、03a/03b 前端与混合、04a/04b LaTeX/配置/其他语言、05a/05b 产品入口与打包测量）。
-- 下一轮候选：**GUIDE 增量**（用户文档 §6，追加/修订/新任务，需先确认相关权限/版本契约）或 **WB-00 剩余检查点**；外部依赖项（E2E-01 真实 Provider、GUI-01-R 人工体验、BRIDGE-01 真实 MCP 客户端）与**治理文档统一修订**仍待推进。
+- **GUIDE 增量 02a**（追加/修订/新建任务变更意图）：`guidance-change-intent.ts` + `guidance-change-intent-journal.ts` + 运行时/公共入口/CLI + ADR-0038 §31–38 + `docs/reports/GUIDE_02A_CHANGE_INTENT.md`（12+5+3 用例）。
+  - 规则：必须显式选择 append/revise/new-task（未明确 → 澄清，不静默替换旧目标）；append/revise revision 单调 +1 且历史全部保留；revise 必须指明受影响产物/验收条目，仅这些失效；旧完成声明（revision 落后）失效；new-task 不提升 Agent 派生优先级（用户层级 0、Agent ≥1 且 ≤上限）；并发 revision 不一致拒绝；同标识同 revision 幂等去重；状态落盘 `guidance/change-intent.json` 跨进程可读；接受后复用 GUIDE-01 控制队列（受理 ≠ 已应用）。
+  - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **224 文件/1804 用例全通过**；coverage exit 0（93.00/85.08/93.05/93.03；guidance-change 98.88/85.88/100/98.85）；`verify:security-coverage` 22/22。
+  - 提交与推送：见提交记录。
+  - 未接入（诚实声明）：**新任务插入任务偏序集**属 GUIDE 增量 02b。
+- 下一轮：**GUIDE 增量 02b**（插入任务偏序集与长任务中途追加/撤销端到端反例）；其后 WB-00 剩余检查点与治理文档统一修订。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。

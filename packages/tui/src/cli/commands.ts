@@ -2886,6 +2886,127 @@ export async function executeAccuracyConfigureCommand(
   }
 }
 
+/** GUIDE 增量：追加/修订/新建任务的指导变更 CLI（复用公共门面）。 */
+export interface GuideChangeCommandOptions {
+  stateDirectory: string;
+  missionIdentifier: string;
+  taskIdentifier: string | null;
+  instructionText: string;
+  changeIntent: string | null;
+  requestedTaskSequenceRevision: number;
+  newTaskIdentifier: string | null;
+  invalidatedArtifactIdentifiers: string[];
+  invalidatedAcceptanceEntryIdentifiers: string[];
+  behaviorTier: "record-only" | "safe-point-guidance" | "gate-and-request-pause";
+  isJsonOutput: boolean;
+}
+
+export async function executeGuideChangeCommand(
+  options: GuideChangeCommandOptions,
+): Promise<number> {
+  if (options.instructionText.trim() === "") {
+    logToStderr("指导文本为空");
+    return EXIT_CODES.USAGE_ERROR;
+  }
+  const allowedIntents = ["append", "revise", "new-task"];
+  if (options.changeIntent !== null && !allowedIntents.includes(options.changeIntent)) {
+    logToStderr("非法变更类型：" + options.changeIntent);
+    return EXIT_CODES.USAGE_ERROR;
+  }
+  const application = await createGuidanceApplication(options.stateDirectory);
+  try {
+    const result = await application.submitGuidanceChange({
+      missionIdentifier: options.missionIdentifier,
+      taskIdentifier: options.taskIdentifier,
+      instructionText: options.instructionText,
+      changeIntent:
+        options.changeIntent === null
+          ? null
+          : (options.changeIntent as "append" | "revise" | "new-task"),
+      requestedTaskSequenceRevision: options.requestedTaskSequenceRevision,
+      newTaskIdentifier: options.newTaskIdentifier,
+      invalidatedArtifactIdentifiers: options.invalidatedArtifactIdentifiers,
+      invalidatedAcceptanceEntryIdentifiers:
+        options.invalidatedAcceptanceEntryIdentifiers,
+      behaviorTier: options.behaviorTier,
+    });
+    if (options.isJsonOutput) {
+      printJson({ status: result.status, result });
+    } else {
+      process.stdout.write(
+        "change=" +
+          (result.changeIntent ?? "unclear") +
+          " status=" +
+          result.status +
+          " revision=" +
+          (result.newTaskSequenceRevision === null
+            ? "-"
+            : "r" + String(result.newTaskSequenceRevision)) +
+          " question=" +
+          (result.clarificationQuestion ?? "-") +
+          "\n",
+      );
+    }
+    return result.status === "rejected" ? EXIT_CODES.FAILURE : EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr((error as Error).message);
+    return EXIT_CODES.FAILURE;
+  } finally {
+    await application.shutdown();
+  }
+}
+
+export interface GuideHistoryCommandOptions {
+  stateDirectory: string;
+  taskIdentifier: string;
+  isJsonOutput: boolean;
+}
+
+/** guide history：查看任务的指导变更历史（追加/修订保留历史）。 */
+export async function executeGuideHistoryCommand(
+  options: GuideHistoryCommandOptions,
+): Promise<number> {
+  const application = await createGuidanceApplication(options.stateDirectory);
+  try {
+    const entries = await application.queryGuidanceChangeHistory(
+      options.taskIdentifier,
+    );
+    if (options.isJsonOutput) {
+      printJson({
+        status: entries.length === 0 ? "no-history" : "ok",
+        entries,
+      });
+    } else if (entries.length === 0) {
+      process.stdout.write("no-history\n");
+    } else {
+      process.stdout.write(
+        entries
+          .map(
+            (entry) =>
+              "r" +
+              String(entry.taskSequenceRevision) +
+              " " +
+              entry.changeIntent +
+              " " +
+              entry.guidanceIdentifier +
+              " invalidated=" +
+              String(
+                entry.invalidatedArtifactIdentifiers.length +
+                  entry.invalidatedAcceptanceEntryIdentifiers.length,
+              ),
+          )
+          .join("\n") + "\n",
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr((error as Error).message);
+    return EXIT_CODES.FAILURE;
+  } finally {
+    await application.shutdown();
+  }
+}
+
 /** GIT-PRESERVE-03：本地保全 CLI（状态/完整性/独立恢复，经公共门面）。 */
 export interface PreserveCreateCommandOptions {
   stateDirectory: string;

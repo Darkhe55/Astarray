@@ -120,3 +120,23 @@
 
 - 独立反馈进程控制车道的 IPC 生命周期接线（需要改动 feedback-process 协议，属后续增量）。
 - 长任务的延迟 p50/p95 统计与安装包端到端实测（后续增量卡）。
+
+## 补充（GUIDE 增量 02a：追加/修订/新建任务的变更意图）
+
+31. **必须显式选择变更类型**：`append`（追加要求）/ `revise`（修订并要求受影响证据失效）/
+    `new-task`（新建独立任务）。未明确且可能改变目标/范围 → **澄清**（`needs-clarification` +
+    澄清问题），**禁止静默替换旧目标**，且不改 revision、不入队。
+32. **revision 单调**：append/revise 生成新的任务 revision（当前 +1），在安全点应用；
+    **历史指导全部保留**（`GuidanceChangeHistoryEntry` 追加式）。
+33. **受影响证据失效**：revise 必须指明受影响的产物标识与/或验收条目标识，**只有这些证据失效**；
+    revise 未指明 → 澄清。append 不使既有证据失效。
+34. **旧完成声明失效**：完成声明观察的 revision 落后于当前 revision → 不再有效
+    （`isCompletionDeclarationStillValid=false`）。
+35. **新建任务不提升优先级**：用户来源可层级 0；Agent/工具来源必须层级 1..上限（默认 1），
+    越权 → `priority-tier-elevation-rejected`；新任务标识不得与既有任务重复。
+36. **并发变更**：请求携带观察到的任务 revision，与当前不一致 → `stale-task-sequence-revision` 拒绝，
+    不修改任何状态。同一（guidanceIdentifier, guidanceRevision）重复投递幂等去重。
+37. **跨进程与复用回执**：状态落盘 `<状态目录>/guidance/change-intent.json`（原子写），
+    CLI 进程间可读；接受时复用 GUIDE-01 控制队列进入安全点应用（受理 ≠ 已应用）。
+38. **未接入（诚实声明）**：把新任务**插入任务偏序集**（复用 `insertTask` 与偏序规则）属
+    GUIDE 增量 02b；本轮只登记变更意图、revision 与失效范围。
