@@ -40,3 +40,8 @@
 - **GOV-02b**：测试期望修订（`assist-installation-gate.test.ts`、`installation-gate-execution.test.ts` 等）与安装门禁按范围分流实现。
 - 外部依赖：E2E-01 真实 Provider、GUI-01-R-04b 人工体验、BRIDGE-01-04 真实 MCP 客户端、WB-00-02（前驱未满足）。
 
+## 5. 提交与推送
+
+- 本检查点提交：`f549fdf`（docs(governance): GOV-02a 安装/外部软件规则改写与替代标注）。
+- `git push`：**exit 0**（第 1 次尝试成功，`dad98a6..f549fdf`）。
+
