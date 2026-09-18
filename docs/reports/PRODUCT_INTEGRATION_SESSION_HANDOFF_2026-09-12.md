@@ -210,7 +210,11 @@
   - 冲突清单：AGENTS.md 第 29 行、ADR-0019/0020、architecture.md、历史任务卡/验收记录、以及 `assist-installation-gate.test.ts`（24 处）与 `installation-gate-execution.test.ts`（15 处）旧语义断言；用户并行脏文件（IMPLEMENTATION_PLAN.md/PLAN_STATUS.md/agent-main-architecture.md/docs/tasks/README.md/application-sdk-task-events.test.ts）明确列入不可触碰范围。
   - 后续：**GOV-02a** 文档改写（并行文件落定后）→ **GOV-02b** 测试期望修订 + 安装门禁按范围分流（先行为反例，不得放宽）。
   - 提交 `d530c86`（已推送，`055d2ac..d530c86`，第 1 次尝试成功）。
-- 下一轮候选：**GOV-02a**（治理文件/ADR 改写）或 **WB-00-02**（前驱 GUI-01-R-04b 未满足，暂不可领）；外部依赖项与真实服务验证仍待补齐。
+- **GOV-02a**（治理文件与 ADR 改写）：`AGENTS.md` 安装条款 + `docs/adr/0019`（替代标注）+ `docs/adr/0020` 第 69 行 + ADR-0043 §6 + `docs/reports/GOV_02A_DOCUMENT_REWRITE.md`。文档检查点，无生产代码变更。
+  - 规则：安装/外部软件**范围优先**（S1–S7 → ADR-0039 矩阵）；项目内受控安装（开关开启 + 参数绑定）可由有权上级按设置批准；跨项目根/项目外/全局/外部软件/未知范围必须逐次用户授权；保留已有资源询问、独立开关、精确参数绑定与执行前复检；`deny` 优先。ADR-0019 标注「范围判定部分已被 ADR-0039/0043 替代」，历史正文保留；architecture.md 经核对无需改动。
+  - 未改（用户并行脏文件）：`PLAN_STATUS.md`（第 46 行旧表述）、`IMPLEMENTATION_PLAN.md`、`agent-main-architecture.md`、`docs/tasks/README.md`。
+  - 提交与推送：见提交记录。
+- 下一轮候选：**GOV-02b**（安装门禁按范围分流实现 + 测试期望修订，先行为反例、不得放宽）；GOV-02a 剩余（用户脏文件落定后）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。
