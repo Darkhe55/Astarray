@@ -202,7 +202,7 @@
 - **GUIDE 增量 02b**（新任务插入任务偏序集）：`public-sdk.ts` 的 `insertionTarget`/`insertedSequenceRevision` + `tests/core/integration/guidance-change-poset-insertion.test.ts`（4 用例）+ ADR-0038 §39–43 + `docs/reports/GUIDE_02B_POSET_INSERTION.md`。
   - 规则：new-task 必须携带插入目标（次级 agentInstanceId + 序列 + 观察 revision + 锚点），缺失 → 澄清；插入复用 `TaskSequenceManageController.insertTask`（偏序/优先级/审计），用户来源层级 0；**插入先于登记**，插入失败（并发 revision/重复标识/未知锚点）→ `task-insertion-failed` 且不登记变更意图、不改历史；序列 revision 单调前进。
   - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **225 文件/1808 用例全通过**；coverage exit 0（93.02/85.09/93.05/93.04；public-sdk 90.00/80.06/90.32/90.21）；`verify:security-coverage` 22/22。
-  - 提交与推送：见提交记录。
+  - 提交 `744a08f`（已推送，`ec4c3be..744a08f`，第 1 次尝试成功）。
   - 未验证（诚实声明）：真实长任务中途追加/撤销的运行端到端演练（需真实 Provider/长任务）。
 - **GUIDE 增量（用户文档 §6）至此收口**（02a 变更意图与产品入口 + 02b 偏序集插入）。
 - 下一轮候选：**WB-00 剩余检查点**；外部依赖项（E2E-01 真实 Provider、GUI-01-R 人工体验、BRIDGE-01 真实 MCP 客户端）与**治理文档统一修订**（正式启用前必须完成）仍待推进。

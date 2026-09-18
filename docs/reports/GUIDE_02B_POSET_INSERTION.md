@@ -43,7 +43,9 @@
 | npx vitest run --maxWorkers=6 | exit 0：225 文件 / 1808 用例全通过（+1 文件 / +4 用例） |
 | npx vitest run --coverage --maxWorkers=6 | exit 0：全局 93.02 / 85.09 / 93.05 / 93.04；public-sdk 90.00 / 80.06 / 90.32 / 90.21 |
 | npm run verify:security-coverage | exit 0：关键安全模块 22/22 达标（阈值 95%） |
-| git push | 见提交记录 |
+| git push | **exit 0**（第 1 次尝试成功）：ec4c3be..744a08f 已推送 |
+
+本检查点实现提交：`744a08f`（feat(guide): GUIDE 增量 02b 新任务插入任务偏序集）。
 
 ## 6. 未满足项与后续
 
