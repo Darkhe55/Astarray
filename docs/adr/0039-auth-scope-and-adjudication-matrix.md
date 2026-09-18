@@ -111,3 +111,20 @@
 - 不新增通用 shell 或外部软件能力；不实现完美副作用预测。
 - 不改写既有安装门禁存储格式与专用授权流程。
 - 不修改 AGENTS.md/实施计划等治理文档（由集成者在安全检查点统一修订）。
+
+## 补充（GOV-02b：安装类范围细分与门禁分流）
+
+24. **安装类范围细分**：`dependency-install` 默认仍为 S5；仅当携带**本地生成**的安装范围证据
+    （`isProjectInternalControlled=true`、`controlledRootPath` 经 realpath 落在已登记项目根内、且
+    `hasGlobalOrExternalEffects` 与 `hasUnknownInstallScripts` 均非 true）时才判为 **S1 子类（项目内受控安装）**。
+    **不采信模型自述**；证据缺失或不完整一律 S5（fail-closed）。
+25. **分流裁决**：S1 受控安装在协同模式按已配置决策 → `allow`（adjudicator=superior-agent）或 `ask-superior`；
+    S5 未受控安装在协同模式仍 `ask-user`；放权模式按已配置 `ask`/`allow` 路由，未知范围仍上级裁决。
+26. **开关始终优先**：任何安装类操作（含 S1 受控）在独立安装开关关闭时一律 `deny`，
+    且 `requiresInstallationSwitch=true` 由决策、授权记录与执行前复检共同保持；开关不得被自动批准替代。
+27. **保留要素不变**：已有资源询问、精确内容与参数绑定、一次性 nonce、revision 与执行前复检、
+    `deny` 优先；S4 不得按"用户离线=同意"。
+28. **公共入口验证**：`ScopeAuthorizationGate` 把操作类型传入矩阵；端到端覆盖受控安装按上级批准并留回执、
+    开关关闭拒绝且不发放授权、未受控安装仍等待认证用户。
+29. **未完成（诚实声明）**：`PLAN_STATUS.md` 等用户并行脏文件中的旧表述、旧安装门禁测试期望的统一修订仍属后续；
+    安装脚本的完整静态分析/完美副作用预测不在本模块承诺范围内（无法证明受控即归 S4/S5）。

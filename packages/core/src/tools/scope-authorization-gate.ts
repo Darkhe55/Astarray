@@ -150,6 +150,7 @@ export class ScopeAuthorizationGate {
       isReadOnlyOperation:
         READ_ONLY_OPERATION_KINDS.has(operation.operationKind) ||
         !MUTATING_OPERATION_KINDS.has(operation.operationKind),
+      operationKind: operation.operationKind,
     });
     return {
       scopeClass: resolution.scopeClass,
@@ -228,6 +229,7 @@ export class ScopeAuthorizationGate {
       isReadOnlyOperation:
         READ_ONLY_OPERATION_KINDS.has(operation.operationKind) ||
         !MUTATING_OPERATION_KINDS.has(operation.operationKind),
+      operationKind: operation.operationKind,
     });
 
     if (decision.decision === "deny") {

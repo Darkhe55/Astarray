@@ -44,6 +44,16 @@ export interface OperationDescriptor {
   touchesAdditionalProjectRoots?: boolean;
   /** 可能产生项目外副作用（全局缓存/环境/系统目录等）。 */
   hasExternalSideEffects?: boolean;
+  /**
+   * GOV-02b：安装类操作的范围证据（由本地安装门禁/安装计划生成，不采信模型自述）。
+   * 缺省、不完整或任一声明不满足时一律按 S5（安装类）fail-closed。
+   */
+  installScopeEvidence?: {
+    isProjectInternalControlled: boolean;
+    controlledRootPath?: string | null;
+    hasGlobalOrExternalEffects?: boolean;
+    hasUnknownInstallScripts?: boolean;
+  } | null;
 }
 
 export interface RegisteredProjectRoot {
@@ -165,6 +175,39 @@ export async function resolveOperationScope(input: {
   }
 
   if (operation.operationKind === "dependency-install") {
+    const installScopeEvidence = operation.installScopeEvidence ?? null;
+    if (
+      installScopeEvidence !== null &&
+      installScopeEvidence.isProjectInternalControlled === true &&
+      installScopeEvidence.hasGlobalOrExternalEffects !== true &&
+      installScopeEvidence.hasUnknownInstallScripts !== true &&
+      typeof installScopeEvidence.controlledRootPath === "string" &&
+      installScopeEvidence.controlledRootPath !== "" &&
+      isStructurallyResolvablePath(installScopeEvidence.controlledRootPath)
+    ) {
+      const resolvedControlledRoot = await resolveRealPath(
+        installScopeEvidence.controlledRootPath,
+      );
+      if (resolvedControlledRoot !== null) {
+        for (const root of input.registeredProjectRoots) {
+          const resolvedRootPath = await resolveRealPath(root.rootPath);
+          if (
+            resolvedRootPath !== null &&
+            isPathWithinRoot(resolvedRootPath, resolvedControlledRoot)
+          ) {
+            return {
+              scopeClass: "S1-project-internal",
+              resolvedTargetPath: resolvedControlledRoot,
+              projectIdentifier: root.projectIdentifier,
+              reasons: [
+                ...reasons,
+                "项目内受控安装（S1 子类）：仍需安装开关、已有资源询问与精确参数绑定，可由有权上级按设置批准",
+              ],
+            };
+          }
+        }
+      }
+    }
     return {
       scopeClass: "S5-installation",
       resolvedTargetPath: null,
@@ -280,14 +323,19 @@ export function decideScopeAuthorization(input: {
   configuredDecision: "deny" | "ask" | "allow";
   isInstallationEnabled: boolean;
   isReadOnlyOperation: boolean;
+  /** GOV-02b：安装类操作（含路由到 S1 的项目内受控安装）始终受独立开关约束。 */
+  operationKind?: OperationKind | null;
 }): ScopeAuthorizationDecision {
   const reasons: string[] = [];
+  const isInstallationOperation =
+    input.operationKind === "dependency-install" ||
+    input.scopeClass === "S5-installation";
   // deny 一律优先（含放权模式与只读操作）。
   if (input.configuredDecision === "deny") {
     return {
       decision: "deny",
       adjudicator: "local-readonly-policy",
-      requiresInstallationSwitch: input.scopeClass === "S5-installation",
+      requiresInstallationSwitch: isInstallationOperation,
       reasons: ["权限目录显式 deny：优先于任何模式与范围"],
     };
   }
@@ -342,6 +390,56 @@ export function decideScopeAuthorization(input: {
       requiresInstallationSwitch: true,
       reasons: ["放权模式安装：开关开启后按已配置决策，参数必须精确绑定"],
     };
+  }
+
+  // GOV-02b：项目内受控安装（路由到 S1）仍受独立安装开关约束。
+  if (input.scopeClass === "S1-project-internal" && isInstallationOperation) {
+    if (!input.isInstallationEnabled) {
+      return {
+        decision: "deny",
+        adjudicator: "local-readonly-policy",
+        requiresInstallationSwitch: true,
+        reasons: [
+          "项目内受控安装但安装功能开关关闭：拒绝（开关不得被自动批准替代）",
+        ],
+      };
+    }
+    if (input.mode === "assist") {
+      return input.configuredDecision === "allow"
+        ? {
+            decision: "allow",
+            adjudicator: "superior-agent",
+            requiresInstallationSwitch: true,
+            reasons: [
+              "项目内受控安装：开关开启且参数绑定，按设置由有权上级批准；执行前复检",
+            ],
+          }
+        : {
+            decision: "ask-superior",
+            adjudicator: "superior-agent",
+            requiresInstallationSwitch: true,
+            reasons: [
+              "项目内受控安装：默认由有权上级批准后执行（开关与参数绑定仍需满足）",
+            ],
+          };
+    }
+    return input.configuredDecision === "ask"
+      ? {
+          decision: "ask-superior",
+          adjudicator: "superior-agent",
+          requiresInstallationSwitch: true,
+          reasons: [
+            "放权模式项目内受控安装：开关开启 + 参数绑定，按配置 ask 路由上级裁决",
+          ],
+        }
+      : {
+          decision: "allow",
+          adjudicator: "local-readonly-policy",
+          requiresInstallationSwitch: true,
+          reasons: [
+            "放权模式项目内受控安装：开关开启 + 参数绑定，按已配置权限执行",
+          ],
+        };
   }
 
   if (input.mode === "assist") {
