@@ -200,6 +200,16 @@ readFile 返回结构化回执（正文 + 元数据），至少含：
   资源身份仍由规范身份负责，默认参数哈希改为路径无关；内容指纹始终基于完整原文。
 - tarball 离线可用与资源测量属 **READ-FORMAT-05b**。
 
+## 18. 实现记录（READ-FORMAT-05b）
+
+- 公共 SDK 导出 `ReadFormatStrategyRegistry`/`defaultReadFormatStrategyRegistry`/`DEFAULT_READ_FORMAT_STRATEGIES`
+  与 `ReadFormatStrategy`/`ReadFormatStrategyCapabilities`/`ReadViewReceipt` 类型，供安装包消费者与包级校验使用。
+- `scripts/verify-read-format-package.mjs`：从隔离安装目录导入 `dist/public-sdk.js`，校验过滤/回执/unsupported/parse-error，
+  并测量耗时、峰值堆增量与返回量；`package.json` 提供 `verify:read-format-package`。
+- `tests/core/unit/read-format-resource-metrics.test.ts`：全部夹具 × 四组合 × 多轮，断言回执不变量与
+  视图不长于原文，并打印测量 JSON。
+- **READ-FORMAT 全卡（01..05）至此收口**。
+
 ## 14. 实现记录（READ-FORMAT-03b）
 
 - 模块：`read-format-frontend-styles.ts`（CSS/SCSS/Less，含 `url(...)` 片段保护）与

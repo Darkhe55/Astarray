@@ -125,6 +125,15 @@ export {
   type AccuracyVerificationAuditPort,
   type AccuracyVerificationAuditRecord,
 } from "./orchestration/accuracy-policy-store.js";
+// ─── READ-FORMAT：读取格式策略、视图回执与注册表（打包离线可用） ───
+export {
+  DEFAULT_READ_FORMAT_STRATEGIES,
+  ReadFormatStrategyRegistry,
+  defaultReadFormatStrategyRegistry,
+  type ReadFormatStrategy,
+  type ReadFormatStrategyCapabilities,
+  type ReadViewReceipt,
+} from "./tools/read-format/read-format-strategies.js";
 // ─── GIT-PRESERVE：远端同步失败后的本地保全（状态/完整性/独立恢复） ───
 export {
   LOCAL_PRESERVATION_DEFAULT_EXCLUDED_PATTERNS,
