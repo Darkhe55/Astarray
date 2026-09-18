@@ -222,7 +222,7 @@
   - 结论：内置工具面无安装/进程执行/外部软件工具 → 对应范围类与旧 `InstallationGateGuard` 当前无实际可达执行路径；未注册工具由注册表层 fail-closed（`tool-not-found`）；本地只读无路径工具显式白名单；**未来此类工具必须显式映射并提供本地范围证据**，旧安装门禁届时消费受信范围授权而非一律用户 allow-once。
   - 过程：初版将默认分支改为 `unknown` 会破坏"未注册工具无法旁路"的错误语义，已回退并如实记录。
   - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **227 文件/1821 用例全通过**；coverage exit 0（93.05/85.17/93.05/93.07；scope-authorization-gate 93.42/86.76/92.85/93.33）；`verify:security-coverage` 22/22。
-  - 提交与推送：见提交记录。
+  - 提交 `b9a1f91`（已推送，`de11f67..b9a1f91`，第 1 次尝试成功）。
 - 下一轮候选：**GOV-02a 剩余**（用户并行脏文件落定后）或等待外部依赖项（E2E-01/GUI-01-R-04b/BRIDGE-01-04/WB-00-02）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。

@@ -46,7 +46,9 @@
 | npx vitest run --maxWorkers=6 | exit 0：227 文件 / 1821 用例全通过（+1 文件 / +4 用例） |
 | npx vitest run --coverage --maxWorkers=6 | exit 0：全局 93.05 / 85.17 / 93.05 / 93.07；scope-authorization-gate 93.42 / 86.76 / 92.85 / 93.33 |
 | npm run verify:security-coverage | exit 0：关键安全模块 22/22 达标（阈值 95%） |
-| git push | 见提交记录 |
+| git push | **exit 0**（第 1 次尝试成功）：de11f67..b9a1f91 已推送 |
+
+本检查点实现提交：`b9a1f91`（feat(auth-scope): GOV-02c 工具映射显式化与安装路径可达性收口）。
 
 ## 6. 未满足项与后续
 
