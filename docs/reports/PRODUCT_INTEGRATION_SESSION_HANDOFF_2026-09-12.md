@@ -192,7 +192,7 @@
 - **READ-FORMAT-05b**（安装包离线可用与资源测量）：`scripts/verify-read-format-package.mjs` + `public-sdk` 读取策略导出 + `tests/core/unit/read-format-resource-metrics.test.ts` + `package.json` `verify:read-format-package` + ADR-0042 §18 + `docs/reports/READ_FORMAT_05B_PACKAGE_AND_METRICS.md`。
   - 验证：`npm pack` → **`npm install --offline`** 隔离安装（41 包，无网络）→ 从安装包公共 SDK 校验过滤/回执/unsupported/parse-error，并测量（源级 26 夹具×4 组合×20 轮：2080 视图 354ms、0.17ms/视图、峰值堆 +22.6MB；安装包 5 夹具×200 轮：1000 视图 15ms、+6.3MB）；`scripts/verify-package.mjs` 213 文件通过。
   - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **221 文件/1784 用例全通过**；coverage exit 0（93.01/85.14/92.97/93.04；read-format 92.29/85.03/98.80/92.21）；`verify:security-coverage` 22/22。
-  - 提交与推送：见提交记录。
+  - 提交 `9cf7689`（已推送，`41704b4..9cf7689`，第 1 次尝试成功）。
 - **READ-FORMAT-01..05 全卡完成**（01 冻结、02 C/Python/Rust、03a/03b 前端与混合、04a/04b LaTeX/配置/其他语言、05a/05b 产品入口与打包测量）。
 - 下一轮候选：**GUIDE 增量**（用户文档 §6，追加/修订/新任务，需先确认相关权限/版本契约）或 **WB-00 剩余检查点**；外部依赖项（E2E-01 真实 Provider、GUI-01-R 人工体验、BRIDGE-01 真实 MCP 客户端）与**治理文档统一修订**仍待推进。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。

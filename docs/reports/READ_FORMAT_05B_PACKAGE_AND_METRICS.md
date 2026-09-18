@@ -56,7 +56,9 @@
 | npx vitest run --maxWorkers=6 | exit 0：221 文件 / 1784 用例全通过（+1 文件 / +1 用例） |
 | npx vitest run --coverage --maxWorkers=6 | exit 0：全局 93.01 / 85.14 / 92.97 / 93.04；tools/read-format 92.29 / 85.03 / 98.80 / 92.21 |
 | npm run verify:security-coverage | exit 0：关键安全模块 22/22 达标（阈值 95%） |
-| git push | 见提交记录 |
+| git push | **exit 0**（第 1 次尝试成功）：41704b4..9cf7689 已推送 |
+
+本检查点实现提交：`9cf7689`（feat(read-format): READ-FORMAT-05b 安装包离线可用与资源测量）。
 
 ## 6. 未满足项与后续
 
