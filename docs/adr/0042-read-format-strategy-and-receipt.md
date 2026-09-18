@@ -191,6 +191,15 @@ readFile 返回结构化回执（正文 + 元数据），至少含：
   `shouldIncludeComments=false` 时记 `dialect-comment-variants` 局限。
 - READ-FORMAT-04 全卡（LaTeX、配置/文档、其他语言）至此收口。
 
+## 17. 实现记录（READ-FORMAT-05a）
+
+- `readFile` 接受 `shouldIncludeComments`/`shouldIncludeImports`（缺省 true）；完整原文的敏感检查通过后才生成视图。
+- 过滤/不支持/解析失败时输出前置一行公共回执 `[astarray-read-view v=1 strategy=… status=… policyVersion=…
+  omittedKinds=… omittedLines=… isViewComplete=… limitations=…]`；未过滤时逐字节返回原文。
+- 反自指键：`buildReadViewParameterHash`（范围 + 视图参数 + 策略版本，不含路径）进入账本键；
+  资源身份仍由规范身份负责，默认参数哈希改为路径无关；内容指纹始终基于完整原文。
+- tarball 离线可用与资源测量属 **READ-FORMAT-05b**。
+
 ## 14. 实现记录（READ-FORMAT-03b）
 
 - 模块：`read-format-frontend-styles.ts`（CSS/SCSS/Less，含 `url(...)` 片段保护）与

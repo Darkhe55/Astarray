@@ -5,6 +5,8 @@
  * 破坏性工具（replaceFileContent）在变更前由工具自身调用备份端口自动保存完整 pre-image。
  */
 import { readFile } from "node:fs/promises";
+
+import type { ReadViewReceipt } from "./read-format/read-format-strategies.js";
 import path from "node:path";
 
 import type { ToolDescriptor } from "../core/types.js";
@@ -80,7 +82,14 @@ export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
     backupPolicy: "not-required",
     authorizationPolicy: "standard",
     supportedTaskTypes: ["data", "doc", "code"],
-    inputSchema: { type: "object", properties: { filePath: { type: "string" } } },
+    inputSchema: {
+      type: "object",
+      properties: {
+        filePath: { type: "string" },
+        shouldIncludeComments: { type: "boolean" },
+        shouldIncludeImports: { type: "boolean" },
+      },
+    },
   },
   {
     name: "listDirectory",
@@ -250,23 +259,63 @@ export async function executeBuiltinTool(
       if (typeof filePath !== "string") {
         throw new Error("readFile 参数 filePath 缺失或非法");
       }
+      const shouldIncludeComments = readOptionalBooleanArgument(
+        args,
+        "shouldIncludeComments",
+      );
+      const shouldIncludeImports = readOptionalBooleanArgument(
+        args,
+        "shouldIncludeImports",
+      );
       // 双层校验（AR-01）：预检 + 紧邻 IO 的复检，拦截"预检后目标被替换为链接"的 TOCTOU
       await resolveAndAssertAccess(executionContext, filePath, "read");
       const resolvedPath = await resolveAndAssertAccess(executionContext, filePath, "read");
-      // T06C：全模式敏感内容禁读（读取前 + 内容 DLP 双检）——优先于时间锁
+      // T06C：全模式敏感内容禁读（读取前 + 内容 DLP 双检）——优先于时间锁与视图
       await assertSensitiveContentAllowed(executionContext, resolvedPath, null);
-      // T07B：反自指读取时间锁（同源窗口内未变化 → resource-already-read）
-      await assertNotAlreadyRead(executionContext, resolvedPath, "read");
+      // READ-FORMAT-05：视图感知参数哈希（路径+范围+视图参数+策略版本，ADR-0042 §7.2）
+      const { defaultReadFormatStrategyRegistry } = await import(
+        "./read-format/read-format-strategies.js"
+      );
+      const { buildReadViewParameterHash } = await import(
+        "./read-suppression-ledger.js"
+      );
+      const resolvedStrategy = defaultReadFormatStrategyRegistry.resolve({
+        fileName: resolvedPath,
+      });
+      const readViewParameterHash = buildReadViewParameterHash({
+        shouldIncludeComments,
+        shouldIncludeImports,
+        policyVersion: resolvedStrategy?.policyVersion ?? 0,
+      });
+      // T07B：反自指读取时间锁（同视图窗口内未变化 → resource-already-read）
+      await assertNotAlreadyRead(
+        executionContext,
+        resolvedPath,
+        "read",
+        readViewParameterHash,
+      );
       const content = await readFile(resolvedPath, "utf8");
       await assertSensitiveContentAllowed(executionContext, resolvedPath, content);
-      // 登记读取（内容指纹供未变化判定）
+      // READ-FORMAT：敏感检查（完整原文）之后才生成视图；视图不修改源文件
+      const readView = defaultReadFormatStrategyRegistry.buildReadView({
+        filePath: resolvedPath,
+        sourceText: content,
+        shouldIncludeComments,
+        shouldIncludeImports,
+        isSensitiveCheckApplied: true,
+      });
+      // 登记读取：参数哈希含视图参数；内容指纹始终基于完整原文（切换视图不刷新窗口）
       await registerReadForSuppression(
         executionContext,
         resolvedPath,
         "read",
         content,
+        readViewParameterHash,
       );
-      return { outputText: content, isSideEffectFree: true };
+      return {
+        outputText: formatReadFileViewOutput(readView),
+        isSideEffectFree: true,
+      };
     }
     case "listDirectory": {
       const directoryPath = args["directoryPath"] ?? ".";
@@ -773,6 +822,7 @@ async function assertNotAlreadyRead(
   executionContext: BuiltinToolExecutionContext,
   canonicalPath: string,
   operationKind: "read" | "list" | "search",
+  parameterHash?: string,
 ): Promise<void> {
   const ledger = executionContext.readSuppressionLedger;
   if (ledger === null || ledger === undefined) {
@@ -786,7 +836,7 @@ async function assertNotAlreadyRead(
     canonicalPath,
     operationKind,
     normalizedRange: "full",
-    parameterHash: buildReadParameterHash(canonicalPath),
+    parameterHash: parameterHash ?? buildReadParameterHash(canonicalPath),
   });
   if (decision.isSuppressed) {
     throw buildReadSuppressionDenial({
@@ -803,6 +853,7 @@ async function registerReadForSuppression(
   canonicalPath: string,
   operationKind: "read" | "list" | "search",
   content: string,
+  parameterHash?: string,
 ): Promise<void> {
   const ledger = executionContext.readSuppressionLedger;
   if (ledger === null || ledger === undefined) {
@@ -816,9 +867,67 @@ async function registerReadForSuppression(
     canonicalPath,
     operationKind,
     normalizedRange: "full",
-    parameterHash: buildReadParameterHash(canonicalPath),
+    parameterHash: parameterHash ?? buildReadParameterHash(canonicalPath),
     contentFingerprint: `sha256:${createHash("sha256").update(content).digest("hex")}`,
   });
+}
+
+/** READ-FORMAT-05：读取两个可选布尔视图参数；缺省 true（默认行为与既有读取一致）。 */
+function readOptionalBooleanArgument(
+  args: Record<string, unknown>,
+  argumentName: string,
+): boolean {
+  const value = args[argumentName];
+  if (value === undefined || value === null) {
+    return true;
+  }
+  if (typeof value !== "boolean") {
+    throw new Error("readFile 参数 " + argumentName + " 必须为布尔值");
+  }
+  return value;
+}
+
+/**
+ * READ-FORMAT-05：过滤视图输出。
+ * 未过滤时逐字节返回原文（兼容既有行为）；发生过滤/不支持/解析失败时前置一行回执，
+ * 不静默声称成功（模型可见 filterStatus、省略范围与局限）。
+ */
+function formatReadFileViewOutput(receipt: ReadViewReceipt): string {
+  if (receipt.filterStatus === "not-filtered") {
+    return receipt.viewText;
+  }
+  const omittedLines =
+    receipt.omittedLineRanges.length === 0
+      ? "-"
+      : receipt.omittedLineRanges
+          .map(
+            (lineRange) =>
+              lineRange.kind +
+              ":" +
+              String(lineRange.startLine) +
+              "-" +
+              String(lineRange.endLine),
+          )
+          .join(",");
+  const header =
+    "[astarray-read-view" +
+    " v=1" +
+    " strategy=" +
+    receipt.strategyId +
+    " status=" +
+    receipt.filterStatus +
+    " policyVersion=" +
+    String(receipt.policyVersion) +
+    " omittedKinds=" +
+    (receipt.omittedKinds.length === 0 ? "-" : receipt.omittedKinds.join(",")) +
+    " omittedLines=" +
+    omittedLines +
+    " isViewComplete=" +
+    String(receipt.isViewComplete) +
+    " limitations=" +
+    (receipt.limitations.length === 0 ? "-" : receipt.limitations.join("; ")) +
+    "]";
+  return header + "\n" + receipt.viewText;
 }
 
 /**

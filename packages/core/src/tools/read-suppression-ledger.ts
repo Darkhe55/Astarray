@@ -140,8 +140,11 @@ export class ReadSuppressionLedger {
       identity.normalizedCasePath,
       input.operationKind,
       input.normalizedRange,
-      // 参数哈希基于规范身份派生：路径别名/大小写/无关参数不能改变键
+      // 规范身份哈希：路径别名/大小写不能改变键
       sha256(identity.normalizedCasePath),
+      // READ-FORMAT-05：参数哈希（含视图参数与策略版本）区分不同读取视图；
+      // 同一视图仍共用同一键，切换参数不会重置该视图的抑制窗口。
+      input.parameterHash,
     ].join("|");
   }
 
@@ -237,9 +240,34 @@ function sha256(content: string): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
-/** 构建 readFile 的规范化参数哈希（只含影响读取范围的参数）。 */
+/**
+ * 默认参数哈希：不携带路径，资源身份由账本键的规范身份（realpath + 大小写折叠）负责，
+ * 因此相对/绝对路径别名与大小写变体不能借参数哈希绕过时间锁。
+ */
 export function buildReadParameterHash(canonicalPath: string): string {
-  return sha256(canonicalPath);
+  void canonicalPath;
+  return sha256("default-read-parameters");
+}
+
+/**
+ * READ-FORMAT-05：视图感知的 readFile 参数哈希（ADR-0042 §7.2）。
+ * 路径 + 范围 + 视图参数 + 策略版本；源内容指纹不变时不同视图是不同键，
+ * 但不会因切换视图而刷新同一视图的抑制窗口。
+ */
+export function buildReadViewParameterHash(input: {
+  shouldIncludeComments: boolean;
+  shouldIncludeImports: boolean;
+  policyVersion: number;
+  normalizedRange?: string;
+}): string {
+  return sha256(
+    JSON.stringify({
+      normalizedRange: input.normalizedRange ?? "full",
+      shouldIncludeComments: input.shouldIncludeComments,
+      shouldIncludeImports: input.shouldIncludeImports,
+      policyVersion: input.policyVersion,
+    }),
+  );
 }
 
 /** 构造时间锁拒绝（resource-already-read）。 */

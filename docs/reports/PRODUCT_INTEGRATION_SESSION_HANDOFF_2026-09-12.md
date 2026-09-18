@@ -185,7 +185,11 @@
   - 过程：首轮覆盖率 branch 84.95% < 85% 阈值失败；补边界用例后回到 85.11%，未放宽阈值。
   - 提交 `38a78a2`（已推送，`a0b612c..38a78a2`，第 1 次尝试成功）。
 - **READ-FORMAT-04 全卡（LaTeX、配置/文档、其他语言）收口**。
-- 下一轮（按新用户文档推荐顺序）：**READ-FORMAT-05**（读取缓存、防重复读取、产品入口与 tarball；之后 GUIDE 增量、WB-00 等）。
+- **READ-FORMAT-05a**（readFile 视图产品入口与视图感知时间锁）：`builtins.ts`（视图参数、公共回执、完整原文敏感检查优先）+ `read-suppression-ledger.ts`（`buildReadViewParameterHash`、账本键纳入参数哈希、默认哈希路径无关）+ `tests/core/integration/read-file-view.test.ts`（7 用例）+ ADR-0042 §17 + `docs/reports/READ_FORMAT_05A_READ_FILE_ENTRY.md`。
+  - 规则：默认参数逐字节原文（兼容既有行为）；过滤/不支持/解析失败前置公共回执（status/strategy/省略范围/局限，不静默声称成功）；敏感检查始终先于视图；视图参数哈希不含路径（资源身份由账本规范身份负责，别名/大小写不能绕过）；内容指纹基于完整原文；不同视图不同键可补读，同视图窗口内仍抑制；跨 Agent 隔离。
+  - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **220 文件/1783 用例全通过**；coverage exit 0（93.01/85.12/92.97/93.04；builtins 87.67/80.37/100/87.58；read-suppression-ledger 95.45/100/92.30/95.34）；`verify:security-coverage` 22/22。
+  - 提交与推送：见提交记录。
+- 下一轮（按新用户文档推荐顺序）：**READ-FORMAT-05b**（tarball 隔离安装离线可用与资源测量；完成 READ-FORMAT 全卡后接 GUIDE 增量、WB-00 等）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。
