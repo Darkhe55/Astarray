@@ -218,7 +218,12 @@
   - 规则：`dependency-install` 默认 S5（fail-closed）；仅当**本地生成**证据（受控、受控根经 realpath 落在已登记项目根内、无全局/外部副作用、无未知安装脚本）才判 S1 子类；协同模式受控安装按设置由上级批准（allow/ask-superior），未受控仍 `ask-user`；**任何安装开关关闭一律 deny** 且 `requiresInstallationSwitch=true` 贯穿决策/记录/复检；不采信模型自述。
   - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **226 文件/1817 用例全通过**；coverage exit 0（93.02/85.13/93.05/93.04；scope-resolution 89.58/82.06/91.66/89.51；scope-authorization-gate 90.66/83.33/92.85/90.54）；`verify:security-coverage` 22/22。
   - 提交 `1bac888`（已推送，`9165bda..1bac888`，第 1 次尝试成功）。
-- 下一轮候选：**GOV-02a 剩余**（用户并行脏文件落定后同步旧表述）或旧安装门禁测试期望统一修订；外部依赖项（E2E-01 真实 Provider、GUI-01-R-04b 人工体验、BRIDGE-01-04 真实 MCP 客户端、WB-00-02）仍按前驱规则 pending/blocked。
+- **GOV-02c**（工具 → 操作映射显式化与安装路径可达性审计）：`scope-authorization-gate.ts` 显式白名单 + 注释 + `tests/core/integration/scope-tool-mapping.test.ts`（4 用例）+ ADR-0039 补充 §30–32 + `docs/reports/GOV_02C_TOOL_MAPPING_AUDIT.md`。
+  - 结论：内置工具面无安装/进程执行/外部软件工具 → 对应范围类与旧 `InstallationGateGuard` 当前无实际可达执行路径；未注册工具由注册表层 fail-closed（`tool-not-found`）；本地只读无路径工具显式白名单；**未来此类工具必须显式映射并提供本地范围证据**，旧安装门禁届时消费受信范围授权而非一律用户 allow-once。
+  - 过程：初版将默认分支改为 `unknown` 会破坏"未注册工具无法旁路"的错误语义，已回退并如实记录。
+  - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **227 文件/1821 用例全通过**；coverage exit 0（93.05/85.17/93.05/93.07；scope-authorization-gate 93.42/86.76/92.85/93.33）；`verify:security-coverage` 22/22。
+  - 提交与推送：见提交记录。
+- 下一轮候选：**GOV-02a 剩余**（用户并行脏文件落定后）或等待外部依赖项（E2E-01/GUI-01-R-04b/BRIDGE-01-04/WB-00-02）。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。

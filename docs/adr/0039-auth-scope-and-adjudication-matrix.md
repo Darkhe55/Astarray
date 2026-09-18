@@ -128,3 +128,15 @@
     开关关闭拒绝且不发放授权、未受控安装仍等待认证用户。
 29. **未完成（诚实声明）**：`PLAN_STATUS.md` 等用户并行脏文件中的旧表述、旧安装门禁测试期望的统一修订仍属后续；
     安装脚本的完整静态分析/完美副作用预测不在本模块承诺范围内（无法证明受控即归 S4/S5）。
+
+## 补充（GOV-02c：工具 → 操作映射显式化）
+
+30. **无隐式未受门禁的内置工具**：全部内置工具必须显式映射到操作类型，或进入显式的"本地只读、无路径"白名单
+    （当前为 `factVerification`、`taskSequenceStatus`）。未映射工具不进入范围门禁，但**未注册/禁用工具由注册表层
+    fail-closed 拒绝**（`tool-not-found`，见 `tests/core/integration/provider-tool-loop.test.ts`），不会因此放行。
+31. **未来安装/外部软件/进程执行工具**：必须显式映射到 `dependency-install`/`external-software-control`/
+    `process-execution`，并提供**本地生成**的范围证据；不得沿用"未映射即放行"。安装类仍受独立开关与参数绑定约束
+    （GOV-02b 补充 §24–29）。
+32. **当前可达性（审计结论）**：内置工具面不含安装/进程执行工具，因此 `dependency-install`/
+    `process-execution`/`external-software-control` 与旧 `InstallationGateGuard` 在当前产品面**无实际可达执行路径**；
+    安装规则在门禁层（GOV-02b）与单元层（ADR-0019 安全要素）保持可测，待引入对应工具或桥接工具时按 §31 接线。

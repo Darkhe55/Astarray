@@ -398,7 +398,14 @@ export function describeToolOperation(
     case "backupVault":
     case "deleteBackup":
       return { operationKind: "backup-deletion" };
+    // 本地只读、无目标路径且不触达项目文件范围：显式白名单（不受范围门禁约束）。
+    case "factVerification":
+    case "taskSequenceStatus":
+      return null;
     default:
+      // GOV-02c：未显式映射的工具不进入范围门禁；未注册/禁用工具会由注册表层
+      // fail-closed 拒绝（tool-not-found），不会因此放行。
+      // 新增安装/外部软件/进程执行类工具必须显式映射，并提供本地范围证据。
       return null;
   }
 }
