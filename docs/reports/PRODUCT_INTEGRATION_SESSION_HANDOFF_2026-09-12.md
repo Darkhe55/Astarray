@@ -205,7 +205,11 @@
   - 提交 `744a08f`（已推送，`ec4c3be..744a08f`，第 1 次尝试成功）。
   - 未验证（诚实声明）：真实长任务中途追加/撤销的运行端到端演练（需真实 Provider/长任务）。
 - **GUIDE 增量（用户文档 §6）至此收口**（02a 变更意图与产品入口 + 02b 偏序集插入）。
-- 下一轮候选：**WB-00 剩余检查点**；外部依赖项（E2E-01 真实 Provider、GUI-01-R 人工体验、BRIDGE-01 真实 MCP 客户端）与**治理文档统一修订**（正式启用前必须完成）仍待推进。
+- **GOV-01**（治理规则迁移范围冻结与冲突清单）：`docs/adr/0043-governance-rule-migration-and-unification.md` + `docs/reports/GOV_01_MIGRATION_AUDIT.md`。设计/审计检查点，无生产代码变更。
+  - 冻结：安装/外部软件**范围优先**（S1–S7 → ADR-0039 矩阵），保留独立安装开关（默认关闭、关闭即拒绝）、已有资源询问/选择回执、精确参数绑定、一次性 nonce、revision 与执行前复检；`deny` 优先；S4 不得把用户离线当同意；旧表述必须改写为引用或标注「已被 ADR-0039/0043 替代」，不得保留同时生效的矛盾描述，历史记录保留。
+  - 冲突清单：AGENTS.md 第 29 行、ADR-0019/0020、architecture.md、历史任务卡/验收记录、以及 `assist-installation-gate.test.ts`（24 处）与 `installation-gate-execution.test.ts`（15 处）旧语义断言；用户并行脏文件（IMPLEMENTATION_PLAN.md/PLAN_STATUS.md/agent-main-architecture.md/docs/tasks/README.md/application-sdk-task-events.test.ts）明确列入不可触碰范围。
+  - 后续：**GOV-02a** 文档改写（并行文件落定后）→ **GOV-02b** 测试期望修订 + 安装门禁按范围分流（先行为反例，不得放宽）。
+- 下一轮候选：**GOV-02a**（治理文件/ADR 改写）或 **WB-00-02**（前驱 GUI-01-R-04b 未满足，暂不可领）；外部依赖项与真实服务验证仍待补齐。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。
