@@ -48,7 +48,9 @@
 | npx vitest run --maxWorkers=6 | exit 0：220 文件 / 1783 用例全通过（+1 文件 / +7 用例） |
 | npx vitest run --coverage --maxWorkers=6 | exit 0：全局 93.01 / 85.12 / 92.97 / 93.04；builtins 87.67 / 80.37 / 100 / 87.58；read-suppression-ledger 95.45 / 100 / 92.30 / 95.34 |
 | npm run verify:security-coverage | exit 0：关键安全模块 22/22 达标（阈值 95%） |
-| git push | 见提交记录 |
+| git push | **exit 0**（第 1 次尝试成功）：a84c075..b0b3d38 已推送 |
+
+本检查点实现提交：`b0b3d38`（feat(read-format): READ-FORMAT-05a readFile 视图产品入口与视图感知时间锁）。
 
 ## 6. 未满足项与后续
 
