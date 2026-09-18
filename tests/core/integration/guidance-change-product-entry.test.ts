@@ -145,7 +145,7 @@ describe("GUIDE 增量 产品入口", () => {
     }
   }, 90_000);
 
-  it("新建无关任务：不改变既有任务 revision，独立登记", async () => {
+  it("新建任务缺少插入目标 → 要求澄清，且不影响既有任务 revision", async () => {
     const facade = await createFacade();
     try {
       await facade.submitGuidanceChange(changeInput());
@@ -157,8 +157,11 @@ describe("GUIDE 增量 产品入口", () => {
           derivedTaskPriorityTier: 0,
         }),
       );
-      expect(newTask.status).toBe("accepted");
+      // GUIDE 增量 02b：new-task 必须指定插入目标（所属次级 + 序列），否则澄清
+      expect(newTask.status).toBe("needs-clarification");
       expect(newTask.newTaskSequenceRevision).toBeNull();
+      expect(newTask.insertedSequenceRevision).toBeNull();
+      expect(newTask.clarificationQuestion).toContain("agentInstanceId");
       expect(await facade.queryGuidanceChangeHistory("task-1")).toHaveLength(1);
       expect(await facade.queryGuidanceChangeHistory("task-unrelated")).toEqual([]);
     } finally {

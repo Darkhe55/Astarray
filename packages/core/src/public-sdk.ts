@@ -415,6 +415,8 @@ export interface PublicGuidanceChangeResult {
   guidanceIdentifier: string;
   changeIntent: "append" | "revise" | "new-task" | null;
   newTaskSequenceRevision: number | null;
+  /** new-task 插入任务偏序集后的序列 revision；未插入为 null。 */
+  insertedSequenceRevision: number | null;
   invalidatedArtifactIdentifiers: string[];
   invalidatedAcceptanceEntryIdentifiers: string[];
   isDuplicateDelivery: boolean;
@@ -1910,6 +1912,15 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     invalidatedArtifactIdentifiers?: string[];
     invalidatedAcceptanceEntryIdentifiers?: string[];
     behaviorTier?: PublicGuidanceSubmissionResult["behaviorTier"];
+    /** new-task 必填：插入目标（次级 agentInstanceId + 序列 + 观察 revision + 锚点）。 */
+    insertionTarget?: {
+      ownerAgentInstanceId: string;
+      sequenceId: string;
+      expectedSequenceRevision: number;
+      predecessorTaskIds?: string[];
+      successorTaskIds?: string[];
+    } | null;
+    insertionTaskTitle?: string | null;
   }): Promise<PublicGuidanceChangeResult> {
     this.assertOpen();
     const guidanceIdentifier =
@@ -1928,6 +1939,75 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
         )
         .digest("hex")
         .slice(0, 12);
+    let insertedSequenceRevision: number | null = null;
+    if (input.changeIntent === "new-task") {
+      if (input.insertionTarget === null || input.insertionTarget === undefined) {
+        return {
+          status: "needs-clarification",
+          guidanceIdentifier,
+          changeIntent: "new-task",
+          newTaskSequenceRevision: null,
+          invalidatedArtifactIdentifiers: [],
+          invalidatedAcceptanceEntryIdentifiers: [],
+          isDuplicateDelivery: false,
+          reasons: [
+            "needs-clarification: 新建任务必须指定所属次级与任务序列（插入偏序集）",
+          ],
+          clarificationQuestion:
+            "新任务应插入哪个次级 agentInstanceId 的哪个任务序列？观察到的序列 revision 是多少？",
+          historyEntryCount: 0,
+          insertedSequenceRevision: null,
+        };
+      }
+      if (
+        input.newTaskIdentifier !== null &&
+        input.newTaskIdentifier !== undefined &&
+        input.newTaskIdentifier.trim() !== ""
+      ) {
+        try {
+          const insertedDocument =
+            await this.runtime.taskSequenceManageController.insertTask({
+              ownerAgentInstanceId: input.insertionTarget.ownerAgentInstanceId,
+              actor: {
+                sourceKind: "user",
+                actorId: this.runtime.authenticatedUserId,
+              },
+              sequenceId: input.insertionTarget.sequenceId,
+              expectedRevision: input.insertionTarget.expectedSequenceRevision,
+              task: {
+                taskId: input.newTaskIdentifier,
+                title:
+                  input.insertionTaskTitle ??
+                  input.instructionText.slice(0, 120),
+                priorityTier: input.derivedTaskPriorityTier ?? 0,
+                externalReference: guidanceIdentifier,
+              },
+              anchor: {
+                predecessorTaskIds:
+                  input.insertionTarget.predecessorTaskIds ?? [],
+                successorTaskIds:
+                  input.insertionTarget.successorTaskIds ?? [],
+              },
+            });
+          insertedSequenceRevision = insertedDocument.revision;
+        } catch (error) {
+          return {
+            status: "rejected",
+            guidanceIdentifier,
+            changeIntent: "new-task",
+            newTaskSequenceRevision: null,
+            invalidatedArtifactIdentifiers: [],
+            invalidatedAcceptanceEntryIdentifiers: [],
+            isDuplicateDelivery: false,
+            reasons: ["task-insertion-failed: " + (error as Error).message],
+            clarificationQuestion: null,
+            historyEntryCount: 0,
+            insertedSequenceRevision: null,
+          };
+        }
+      }
+    }
+
     const decision = this.runtime.guidanceChangeIntentController.applyChange({
       guidanceIdentifier,
       guidanceRevision: 1,
@@ -1959,6 +2039,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       guidanceIdentifier: decision.guidanceIdentifier,
       changeIntent: decision.changeIntent,
       newTaskSequenceRevision: decision.newTaskSequenceRevision,
+      insertedSequenceRevision,
       invalidatedArtifactIdentifiers: [...decision.invalidatedArtifactIdentifiers],
       invalidatedAcceptanceEntryIdentifiers: [
         ...decision.invalidatedAcceptanceEntryIdentifiers,
