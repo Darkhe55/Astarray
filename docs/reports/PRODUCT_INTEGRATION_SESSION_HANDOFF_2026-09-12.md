@@ -223,7 +223,11 @@
   - 过程：初版将默认分支改为 `unknown` 会破坏"未注册工具无法旁路"的错误语义，已回退并如实记录。
   - 门禁：typecheck/lint/build 0；`test --maxWorkers=6` **227 文件/1821 用例全通过**；coverage exit 0（93.05/85.17/93.05/93.07；scope-authorization-gate 93.42/86.76/92.85/93.33）；`verify:security-coverage` 22/22。
   - 提交 `b9a1f91`（已推送，`de11f67..b9a1f91`，第 1 次尝试成功）。
-- 下一轮候选：**GOV-02a 剩余**（用户并行脏文件落定后）或等待外部依赖项（E2E-01/GUI-01-R-04b/BRIDGE-01-04/WB-00-02）。
+- **GOV-02d**（旧安装门禁测试预期与规则一致性审计）：`docs/reports/GOV_02D_TEST_EXPECTATION_AUDIT.md` + ADR-0043 §8。审计/冻结检查点，无代码变更。
+  - 结论：`assist-installation-gate.test.ts`（24 用例）与 `installation-gate-execution.test.ts`（15 用例）断言的是 ADR-0019 **保留安全要素**（询问/开关/参数绑定/复检/隔离/fail-closed），与 GOV-02b 范围细分不冲突，**无需修订测试预期**（GOV-01 冲突清单该行关闭）。
+  - 待接线项（冻结，随安装类工具引入）：旧守卫对非 Assist 模式一律拒绝与 ADR-0039 S5 放权行存在表述差异；引入安装工具时必须合并受信范围授权后再执行，放权不得被旧守卫无条件拒绝，开关与参数绑定在任何模式保持；不得简单删除分支来放宽。
+- **治理迁移状态**：GOV-01/02a/02b/02c/02d 完成；仅剩 **GOV-02a 用户并行脏文件**（`PLAN_STATUS.md` 第 46 行等）待其编辑落定后同步，以及 §待接线项（需先有安装类工具）。
+- **目标剩余节点全部依赖外部/用户输入（blocked）**：E2E-01 真实 Provider 凭据与费用授权；GUI-01-R-04b 人工体验与 Linux/macOS；BRIDGE-01-04 真实 MCP 客户端（安装需先询问用户）；WB-00-02 前驱 GUI-01-R 未完成。
 - **GUIDE-01-01**（运行中指导事件契约）：`packages/core/src/runtime-guidance/runtime-guidance.ts` + ADR-0038 + `docs/reports/GUIDE01_01_GUIDANCE_CONTRACT.md`，提交 `6414329`（含 `ca188eb` 测试超时加固）。
   - 规则：来源注册表（伪造/超额档位拒绝）、sequence/revision 单调、重放去重、作用域精确匹配与显式依赖传播、有效期、取消能力契约（`canCancelInFlight=false`、不支持在途插入）；**紧急等级不得篡改 priorityTier**（层级 0 写入即 `priority-tier-tampering`）。
   - 门禁：`npm run check` exit 0（200 文件/1633 用例）；`test:coverage` exit 0（93.45/86.00/92.42/93.48）；`git push` `553cff6..6414329`。

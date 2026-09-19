@@ -67,3 +67,12 @@
 - `docs/architecture.md` 经核对无需改动（自动提示不得批准安装与删除备份专用流程均与新规则不冲突）。
 - **未改（用户并行脏文件，待其落定）**：`PLAN_STATUS.md`（第 46 行旧表述）、`IMPLEMENTATION_PLAN.md`、`agent-main-architecture.md`、`docs/tasks/README.md`。
 
+## 8. 实施记录（GOV-02c / GOV-02d）
+
+- GOV-02c：`describeToolOperation` 为本地只读无路径工具（`factVerification`/`taskSequenceStatus`）增加显式白名单；
+  未映射工具不进入范围门禁，未注册工具由注册表层 fail-closed（`tool-not-found`）；
+  **新增安装/外部软件/进程执行工具必须显式映射并提供本地范围证据**（ADR-0039 补充 §30–32）。
+- GOV-02d：审计 `assist-installation-gate.test.ts`（24 用例）与 `installation-gate-execution.test.ts`（15 用例）——
+  断言均为 ADR-0019 **保留安全要素**，与 GOV-02b 范围细分不冲突，**无需修订测试预期**（关闭 GOV-01 冲突清单的该行）。
+- 待接线项（随安装类工具引入）：执行链必须合并受信范围授权后再执行；放权模式不得被旧守卫无条件拒绝；
+  独立开关与参数绑定在任何模式保持。
