@@ -58,7 +58,7 @@ describe("CLI 命令（直接调用）", () => {
     const parsed = JSON.parse(stdoutCapture.getOutput()) as { missionId: string; status: string };
     expect(parsed.status).toBe("done");
     expect(parsed.missionId).toMatch(/^mission-/);
-  }, 20_000);
+  }, 60_000);
 
   it("run：非法 runtime 退出码 2", async () => {
     const stderrChunks: string[] = [];
@@ -272,7 +272,7 @@ describe("CLI 命令（直接调用）", () => {
     expect(textOutput).toContain(`mission: ${missionId}`);
     expect(textOutput).toContain("mode: assist");
     expect(textOutput).toContain("status: done");
-  }, 20_000);
+  }, 60_000);
 
   it("doctor：文本模式输出", async () => {
     const stdoutCapture = captureStdout();
@@ -314,7 +314,7 @@ describe("CLI 命令（直接调用）", () => {
     });
     expect(textExitCode).toBe(0);
     expect(textCapture.getOutput()).toContain("already-complete");
-  }, 20_000);
+  }, 60_000);
 
   it("cancel：已存在 mission 返回 cancelled（文本与 JSON）", async () => {
     const runStdout = captureStdout();
@@ -346,7 +346,7 @@ describe("CLI 命令（直接调用）", () => {
       stateDirectory,
     });
     expect(textCapture.getOutput()).toContain(`cancelled: ${missionId}`);
-  }, 20_000);
+  }, 60_000);
 
   it("bootstrap：启用独立反馈进程后可正常关闭", async () => {
     const { bootstrapCli } = await import("../../../packages/tui/src/cli/bootstrap.js");
@@ -462,7 +462,7 @@ describe("CLI 命令（直接调用）", () => {
     expect(view?.lease.isActive).toBe(true);
     expect(view?.lease.isOwnedByCurrentProcess).toBe(false);
     expect(view?.lease.ownerProcessInstanceId).toBe("process-x");
-  }, 20_000);
+  }, 60_000);
 
   it("doctor --json：状态目录含损坏文件时 health=failed 且 missionState 计数损坏（T12-04）", async () => {
     const corruptedMissionDirectory = path.join(stateDirectory, "missions", "mission-corrupt");

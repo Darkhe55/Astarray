@@ -81,6 +81,9 @@
 - GUI-01-R-04a 门禁缺口（已补齐，2026-09-13）：`npm run check`/`npm run test:coverage`/`verify:security-coverage` 与打包验收（`npm pack`、`verify-package` 207 文件、`smoke-install`）全部 exit 0；另从隔离安装包启动 GUI 冒烟通过（`GET /` 200、`/state` 脱敏、终止后端口释放）。04b 的人类体验与平台证据仍未做。
 - GUI-01-R-04a 人工/外部依赖及剩余风险：真实用户人工体验结论、从安装包打开 GUI、Linux/macOS 平台证据属 04b，当前为 pending/blocked，不以自动断言替代。
 - GUI-01-R-04a 本地提交、推送尝试与结果：实现提交 `b35cc9f`（4 文件）；已随 `0946530..28705b2` 推送。
+- GUI-01-R-04b 打包自动部分重跑（2026-09-19）：在 LINUX-PORT-01 提交 `04ddce7` 上 `npm pack`（prepack 全量门禁 228 文件/1854 用例）/`verify-package.mjs`（215 文件）/`smoke-install.mjs` 全部 exit 0；新 tarball sha256 `a45ae4dab9f3e99fa45ed75b16e98e262d112acb449a0c048fe5936b5fd96d1f`、mtime `2026-09-19T23:18:48Z`。此前 Linux 侧校验沿用的 2026-09-15 旧产物（207/209 文件）已过期，不得再作证据。证据 docs/reports/GUI01_R_04B_WINDOWS_PACKAGING_EVIDENCE_2026-09-19.md。
+- T11 CLI 计时脆弱修复（2026-09-19）：`tests/tui/unit/cli-commands.test.ts` 内 5 处单测级 `20_000` 超时与其文件级 `testTimeout: 60_000` 声明自相矛盾，重负载下 `run：mock 运行时…` 用例 20s 超时导致 `npm pack` prepack 失败；统一为 `60_000`（断言不变），隔离复跑 22/22 通过（8.86s）。
+- GUI-01-R-04b 人工/外部依赖及剩余风险：真实用户人工体验结论、从 tarball 隔离安装打开 GUI 的自动冒烟复跑、Linux/macOS 平台证据仍未做；本卡保持 in_progress，平台表待 Linux 同提交实测后再更新。
 
 ## 首轮执行指令
 
