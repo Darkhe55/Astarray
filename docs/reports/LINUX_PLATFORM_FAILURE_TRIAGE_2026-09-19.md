@@ -25,7 +25,7 @@
 
 - 回传 sha256 `c0c383ac…de206` 与**本机 Windows 工作区**的 `astarray-0.1.0.tgz` 逐字节一致（该文件 mtime `2026-09-15T21:26:35Z`）。
 - `scripts/smoke-install.mjs:52` 内部执行 `npm pack`，其 `prepack` 会先跑 `npm run check`；本次 `pack.log` 显示 prepack 阶段测试失败即退出，因此**失败状态下不会产出新包**；取包命令 `TGZ=$(ls -t astarray-*.tgz | head -1)` 很可能选中了从 Windows 树拷来的旧包。
-- 待确认：`ls -l --time-style=full-iso astarray-0.1.0.tgz`。若 mtime 为 9/15，则本次 sha256 与 `verify-package.mjs` exit 0 **不构成 Linux 打包证据**，须在 check 变绿后重做。
+- **已确认（2026-09-19 回传）**：`ls -l --time-style=full-iso` 显示 mtime `2026-09-15 21:26:35 +0800`，非本次运行产生。故本次 sha256 与 `verify-package.mjs` exit 0 **不构成 Linux 打包证据**，须在 check 变绿后重做。
 
 ### 2.2 `smoke-install` exit 1 是 prepack 连带失败
 
@@ -36,6 +36,17 @@
 ### 2.3 coverage 无覆盖率表
 
 Vitest 默认测试失败时不输出覆盖率报告（`coverage.reportOnFailure` 默认 false），因此 exit 1 时拿不到 global 四数。需在测试通过后重跑。
+
+### 2.4 脏树性质（已确认，排除污染）
+
+| 命令 | 结果 |
+| --- | --- |
+| `git diff --stat` | 99 files changed, 27590 insertions(+), 27534 deletions(-) |
+| `git diff --ignore-cr-at-eol --stat` | **5 files changed, 58 insertions(+), 2 deletions(-)** |
+
+结论：99 个"已修改"里 **94 个是纯 CRLF 行尾噪声**（Windows 树拷贝所致），真实内容改动只有 5 个文件，与本仓 Windows 工作区保留的用户并行改动一致；untracked 为用户文档 5 项与证据目录 `.linux-evidence/`。
+
+因此 **A 类失败不是本地改动污染**：`tests/core/unit/security-hardening.test.ts`、`tests/core/unit/read-suppression-and-guard.test.ts` 等失败文件的真实差异为 0，断言即提交版本，失败属 POSIX 平台语义差异。
 
 ## 3. 失败分类（11 个失败用例 / 6 个文件）
 
@@ -70,6 +81,6 @@ Vitest 默认测试失败时不输出覆盖率报告（`coverage.reportOnFailure
 
 ## 5. 待补数据
 
-1. `astarray-0.1.0.tgz` 的 mtime（判定打包证据有效性）；
-2. `DIRTY=105` 的性质（`git diff --ignore-cr-at-eol --stat` 与 `git diff --stat` 对比、`file` 判 CRLF；是否触及失败模块）；
-3. check 变绿后：coverage global 四数、重新 pack 的 sha256、`verify-package.mjs` 与 `smoke-install.mjs` 退出码。
+1. （已确认）tarball mtime 为 2026-09-15，属旧产物；
+2. （已确认）脏树为 94/99 CRLF 噪声，真实改动 5 个文件，未触及 A 类失败模块；
+3. **仍待补**：check 变绿后 coverage global 四数、重新 pack 的 sha256、`verify-package.mjs` 与 `smoke-install.mjs` 退出码。
