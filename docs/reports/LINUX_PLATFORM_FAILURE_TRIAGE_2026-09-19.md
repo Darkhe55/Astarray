@@ -68,7 +68,10 @@ Vitest 默认测试失败时不输出覆盖率报告（`coverage.reportOnFailure
 | --- | --- | --- |
 | `tests/core/integration/git-coordinator-branches.test.ts` | `gitCommandTimeoutSeconds: 0.000_001` 期望 `/超时/` | Linux 上 `git --version` 3ms 内成功返回（收到 `exitCode: 0`）；coverage 轮次在更高负载下该文件通过 → 计时脆弱，非平台功能差异 |
 
-## 4. 返修方向（待授权，未改代码）
+> 返修结果：A/B 两类均已由检查点 **LINUX-PORT-01** 修复并推送（提交 `04ddce7`），证据见
+> `docs/reports/LINUX_PORT_01_CROSS_PLATFORM_PATH_AND_TIMEOUT_FIXTURE.md`；Linux 侧仍需在同一提交上独立重跑。
+
+## 4. 返修方向（已授权并实现，见 LINUX-PORT-01）
 
 统一"跨平台路径规范化"到安全判定层：
 

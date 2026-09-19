@@ -102,7 +102,8 @@ Linux 机器在同一代码版本上出现 6 个测试文件失败，其中 10 �
 ## 7. 提交与推送
 
 - 仅暂存本检查点文件（生产 7 个、测试 5 个、夹具 1 个、本证据文档 1 个）；用户并行改动（`IMPLEMENTATION_PLAN.md`、`PLAN_STATUS.md`、`agent-main-architecture.md`、`docs/tasks/README.md`、`tests/core/unit/application-sdk-task-events.test.ts` 及 5 个未跟踪用户文档）保持未暂存。
-- 提交哈希与 push 结果见本会话记录（本轮按 AGENTS.md 尝试 push，单阶段 ≤5 次）。
+- 提交：`04ddce7`（`fix(path): 跨平台路径判定统一与超时夹具，修复 Linux 安全语义缺口`），14 文件、+899/−83。
+- 推送：`git push` 第 1 次即在完整访问下成功，`2a383b9..04ddce7 main -> main`；推送后 HEAD == `origin/main` == `04ddce7`。
 
 ## 8. Linux 同提交独立重跑清单
 
