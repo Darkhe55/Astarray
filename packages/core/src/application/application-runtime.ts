@@ -14,6 +14,7 @@ import { ToolRegistry } from "../tools/registry.js";
 import { BUILTIN_TOOL_DESCRIPTORS } from "../tools/builtins.js";
 import { PolicyWrapper } from "../tools/policy-wrapper.js";
 import { WorkspaceBoundary } from "../tools/workspace-boundary.js";
+import { detectFileSystemCaseSensitivity } from "../tools/cross-platform-path-canonicalization.js";
 import { ScriptedRuntime } from "../runtime/scripted-runtime.js";
 import { MainController } from "../orchestration/main-controller.js";
 import { MissionManager } from "../orchestration/mission-manager.js";
@@ -252,6 +253,8 @@ export async function createApplicationRuntime(
   // AR-01：受保护存储策略（普通工具不得访问保管库与审计存储）
   const protectedStoragePolicy = new ProtectedStoragePolicy({
     stateDirectoryPath: stateDirectory,
+    // LINUX-PORT-01：按实际文件系统能力决定大小写比较语义，不按平台猜测
+    fileSystemCaseSensitivity: await detectFileSystemCaseSensitivity(stateDirectory),
   });
   // S5：交互式授权通道（警告→暂停→等待用户决定）；非 TTY 环境 fail-closed
   const backupDeletionControlPort = options.backupDeletionControlPort ?? null;

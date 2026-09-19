@@ -8,6 +8,7 @@ import { readFile } from "node:fs/promises";
 
 import type { ReadViewReceipt } from "./read-format/read-format-strategies.js";
 import path from "node:path";
+import { isAbsoluteOnAllPlatforms } from "./cross-platform-path-canonicalization.js";
 
 import type { ToolDescriptor } from "../core/types.js";
 import type { ToolBackupServicePort } from "../core/types.js";
@@ -356,7 +357,7 @@ export async function executeBuiltinTool(
       if (typeof fileName !== "string" || typeof content !== "string") {
         throw new Error("writeFileTemporary 参数 fileName/content 缺失或非法");
       }
-      if (path.isAbsolute(fileName)) {
+      if (isAbsoluteOnAllPlatforms(fileName)) {
         throw new Error("writeFileTemporary 仅接受相对文件名");
       }
       const resolvedTargetPath = path.resolve(

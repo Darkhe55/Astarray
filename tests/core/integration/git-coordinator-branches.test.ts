@@ -5,6 +5,7 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -26,6 +27,54 @@ async function runGit(
 ): Promise<string> {
   const result = await gitProcess.run(workingDirectoryPath, gitArguments, "测试 git 命令");
   return result.stdoutText.trim();
+}
+
+/**
+ * LINUX-PORT-01：等待可握手夹具把自身 pid 写入握手文件。
+ * 握手成功证明子进程确实存活，之后才能断言超时中止与回收。
+ */
+async function waitForFixtureHandshake(
+  handshakeFilePath: string,
+  timeoutMilliseconds: number,
+): Promise<number> {
+  const deadlineMilliseconds = Date.now() + timeoutMilliseconds;
+  while (Date.now() < deadlineMilliseconds) {
+    try {
+      const handshakeContent = await fs.readFile(handshakeFilePath, "utf8");
+      const childProcessIdentifier = Number.parseInt(handshakeContent.trim(), 10);
+      if (Number.isInteger(childProcessIdentifier) && childProcessIdentifier > 0) {
+        return childProcessIdentifier;
+      }
+    } catch {
+      // 尚未写入：继续等待
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("超时夹具未完成握手");
+}
+
+function isProcessAlive(childProcessIdentifier: number): boolean {
+  try {
+    process.kill(childProcessIdentifier, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 确认子进程被真正回收（超时中止后不得残留孤儿进程）。 */
+async function waitForProcessExit(
+  childProcessIdentifier: number,
+  timeoutMilliseconds: number,
+): Promise<boolean> {
+  const deadlineMilliseconds = Date.now() + timeoutMilliseconds;
+  while (Date.now() < deadlineMilliseconds) {
+    if (!isProcessAlive(childProcessIdentifier)) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return !isProcessAlive(childProcessIdentifier);
 }
 
 function makeAllocator(): GitWorktreeAllocator {
@@ -507,13 +556,30 @@ describe(
         "测试不存在的 cwd",
       ),
     ).rejects.toThrow();
-    // 超时分支：超时阈值极小时 git 启动未完成即被中止
+    // 超时分支：用可握手、可回收的 Node 夹具替代"git 启动计时"假设，
+    // 避免 Linux 上 git --version 过快导致计时脆弱。
+    const handshakeFilePath = path.join(
+      temporaryRootDirectory,
+      "git-timeout-handshake.txt",
+    );
+    const timeoutFixturePath = fileURLToPath(
+      new URL("../../fixtures/git-process-timeout-handshake-fixture.mjs", import.meta.url),
+    );
     const slowProcess = new GitProcess({
-      gitCommandTimeoutSeconds: 0.000_001,
+      gitCommandTimeoutSeconds: 2,
+      executablePath: process.execPath,
+      executableArgumentsPrefix: [timeoutFixturePath, handshakeFilePath],
     });
+    const slowProcessRun = slowProcess.run(repositoryPath, ["--version"], "测试超时");
+    const childProcessIdentifier = await waitForFixtureHandshake(
+      handshakeFilePath,
+      15_000,
+    );
+    expect(childProcessIdentifier).toBeGreaterThan(0);
+    await expect(slowProcessRun).rejects.toThrowError(/超时/);
     await expect(
-      slowProcess.run(repositoryPath, ["--version"], "测试超时"),
-    ).rejects.toThrowError(/超时/);
+      waitForProcessExit(childProcessIdentifier, 5_000),
+    ).resolves.toBe(true);
   });
 
   it("分配器：worktree 目标路径被占用时失败并清理 worker 分支", async () => {

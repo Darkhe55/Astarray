@@ -15,6 +15,7 @@ import path from "node:path";
 import { lstat, realpath, stat } from "node:fs/promises";
 
 import { DomainError } from "../core/errors.js";
+import { unifyPathSeparators } from "./cross-platform-path-canonicalization.js";
 
 /** 稳定拒绝码（ADR-0018）。 */
 export const SENSITIVE_CONTENT_READ_DENIED_ERROR_CODE =
@@ -74,10 +75,7 @@ export class SensitiveResourceIdentityResolver {
       canonicalPath,
       realPath,
       deviceInode,
-      normalizedCasePath:
-        process.platform === "win32"
-          ? canonicalPath.toLowerCase()
-          : canonicalPath,
+      normalizedCasePath: foldCase(canonicalPath),
       isLinkLike,
     };
   }
@@ -151,9 +149,14 @@ const DEFAULT_SENSITIVE_FILE_NAME_PATTERNS: Array<{
   { category: "capability-token", pattern: /astarray[\\/_-]?(capability|token|credential)/i },
 ];
 
-/** 平台大小写折叠（Windows 大小写不敏感）。 */
+/**
+ * 路径身份折叠：先跨平台统一分隔符（盘符/反斜杠形态与正斜杠形态指向同一资源），
+ * 再仅在 Windows 大小写不敏感文件系统上折叠大小写；POSIX 保持大小写敏感，
+ * 不做全局折叠（POSIX 上不同大小写是不同文件）。
+ */
 function foldCase(filePath: string): string {
-  return process.platform === "win32" ? filePath.toLowerCase() : filePath;
+  const unifiedPath = unifyPathSeparators(filePath);
+  return process.platform === "win32" ? unifiedPath.toLowerCase() : unifiedPath;
 }
 
 export class SensitiveContentAccessPolicy {

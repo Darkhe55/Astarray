@@ -10,6 +10,13 @@ import { spawn } from "node:child_process";
 export interface GitProcessOptions {
   /** 单条命令超时（秒），默认 60。 */
   gitCommandTimeoutSeconds?: number;
+  /**
+   * 受控可执行文件路径；默认 "git"。仅供装配与测试注入可控夹具
+   * （如可握手、可回收的常驻子进程），不接受模型输入或任意用户参数。
+   */
+  executablePath?: string;
+  /** 追加在可执行文件之前的固定参数（例如夹具脚本路径）。 */
+  executableArgumentsPrefix?: readonly string[];
 }
 
 export interface GitCommandResult {
@@ -32,9 +39,13 @@ export class GitProcessError extends Error {
 
 export class GitProcess {
   private readonly timeoutSeconds: number;
+  private readonly executablePath: string;
+  private readonly executableArgumentsPrefix: readonly string[];
 
   constructor(options: GitProcessOptions = {}) {
     this.timeoutSeconds = options.gitCommandTimeoutSeconds ?? 60;
+    this.executablePath = options.executablePath ?? "git";
+    this.executableArgumentsPrefix = options.executableArgumentsPrefix ?? [];
   }
 
   /**
@@ -48,16 +59,20 @@ export class GitProcess {
   ): Promise<GitCommandResult> {
     const startedAtMs = Date.now();
     const result = await new Promise<GitCommandResult>((resolve, reject) => {
-      const childProcess = spawn("git", gitArguments, {
-        cwd: workingDirectoryPath,
-        windowsHide: true,
-        env: {
-          ...process.env,
-          GIT_TERMINAL_PROMPT: "0",
-          GIT_ASKPASS: "echo",
-          GIT_CONFIG_NOSYSTEM: "1",
+      const childProcess = spawn(
+        this.executablePath,
+        [...this.executableArgumentsPrefix, ...gitArguments],
+        {
+          cwd: workingDirectoryPath,
+          windowsHide: true,
+          env: {
+            ...process.env,
+            GIT_TERMINAL_PROMPT: "0",
+            GIT_ASKPASS: "echo",
+            GIT_CONFIG_NOSYSTEM: "1",
+          },
         },
-      });
+      );
       let stdoutText = "";
       let stderrText = "";
       childProcess.stdout.setEncoding("utf8");

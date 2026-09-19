@@ -15,6 +15,7 @@ import { ToolRegistry } from "../../../packages/core/src/tools/registry.js";
 import { BUILTIN_TOOL_DESCRIPTORS, executeBuiltinTool } from "../../../packages/core/src/tools/builtins.js";
 import { WorkspaceBoundary } from "../../../packages/core/src/tools/workspace-boundary.js";
 import { ProtectedStoragePolicy } from "../../../packages/core/src/tools/protected-storage-policy.js";
+import { detectFileSystemCaseSensitivity } from "../../../packages/core/src/tools/cross-platform-path-canonicalization.js";
 import { PolicyWrapper } from "../../../packages/core/src/tools/policy-wrapper.js";
 import { BackupVault } from "../../../packages/core/src/tools/backup-vault.js";
 
@@ -276,9 +277,11 @@ describe("ProtectedStoragePolicy 路径判定", () => {
     ).rejects.toMatchObject({ errorCode: "path-escape-attempt" });
   });
 
-  it("AR-01a：Windows 大小写变化不能绕过审计文件保护", async () => {
+  it("AR-01a：大小写变体按实际文件系统能力处理", async () => {
+    const caseSensitivity = await detectFileSystemCaseSensitivity(temporaryDirectory);
     const policy = new ProtectedStoragePolicy({
       stateDirectoryPath: "C:\\data\\app",
+      fileSystemCaseSensitivity: caseSensitivity,
     });
     const caseVariants = [
       "C:\\data\\app\\BACKUP-DELETION-AUDIT.JSONL",
@@ -286,10 +289,14 @@ describe("ProtectedStoragePolicy 路径判定", () => {
       "C:\\data\\app\\BACKUP-VAULT",
       "C:\\data\\app\\Backup-Vault\\Data\\x",
     ];
+    // 大小写不敏感文件系统上这些变体指向同一受保护对象；大小写敏感文件系统上是不同对象。
+    const isCaseInsensitive = caseSensitivity === "case-insensitive";
     for (const variant of caseVariants) {
-      expect(policy.isProtectedPath(variant)).toBe(true);
+      expect(policy.isProtectedPath(variant)).toBe(isCaseInsensitive);
     }
-    if (process.platform === "win32") {
+    // 精确大小写在任何文件系统上都受保护
+    expect(policy.isProtectedPath("C:\\data\\app\\backup-vault\\data\\x")).toBe(true);
+    if (isCaseInsensitive) {
       await expect(
         policy.assertGenericToolAccessAllowed({
           canonicalTargetPath: "C:\\data\\app\\Backup-Deletion-Audit.JSONL",

@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ProtectedStoragePolicy } from "../../../packages/core/src/tools/protected-storage-policy.js";
 import { WorkspaceBoundary } from "../../../packages/core/src/tools/workspace-boundary.js";
 import { executeBuiltinTool } from "../../../packages/core/src/tools/builtins.js";
+import { detectFileSystemCaseSensitivity } from "../../../packages/core/src/tools/cross-platform-path-canonicalization.js";
 import { SensitiveContentAccessPolicy } from "../../../packages/core/src/tools/sensitive-content-access-policy.js";
 import {
   ReadSuppressionLedger,
@@ -131,7 +132,7 @@ describe("ReadSuppressionLedger（重复读取时间锁）", () => {
     expect(afterChange.outputText).toBe("v2");
   });
 
-  it("相对/绝对路径别名、大小写变体不能绕过时间锁", async () => {
+  it("相对/绝对路径别名不能绕过时间锁", async () => {
     const filePath = path.join(workspaceDirectory, "DATA.TXT");
     await fs.writeFile(filePath, "内容", "utf8");
     const context = buildReadContext();
@@ -140,11 +141,10 @@ describe("ReadSuppressionLedger（重复读取时间锁）", () => {
       JSON.stringify({ filePath: "DATA.TXT" }),
       context,
     );
-    // 相对路径 + 大小写变体
     await expect(
       executeBuiltinTool(
         "readFile",
-        JSON.stringify({ filePath: "./data.txt" }),
+        JSON.stringify({ filePath: "./DATA.TXT" }),
         context,
       ),
     ).rejects.toMatchObject({ errorCode: "resource-already-read" });
@@ -155,6 +155,33 @@ describe("ReadSuppressionLedger（重复读取时间锁）", () => {
         context,
       ),
     ).rejects.toMatchObject({ errorCode: "resource-already-read" });
+  });
+
+  it("大小写变体按实际文件系统能力处理（禁止 POSIX 全局折叠）", async () => {
+    const filePath = path.join(workspaceDirectory, "DATA.TXT");
+    await fs.writeFile(filePath, "内容", "utf8");
+    const context = buildReadContext();
+    await executeBuiltinTool(
+      "readFile",
+      JSON.stringify({ filePath: "DATA.TXT" }),
+      context,
+    );
+    const caseSensitivity = await detectFileSystemCaseSensitivity(workspaceDirectory);
+    const caseVariantRead = executeBuiltinTool(
+      "readFile",
+      JSON.stringify({ filePath: "./data.txt" }),
+      context,
+    );
+    if (caseSensitivity === "case-insensitive") {
+      await expect(caseVariantRead).rejects.toMatchObject({
+        errorCode: "resource-already-read",
+      });
+    } else {
+      // 大小写敏感文件系统上 data.txt 是另一个（不存在的）资源，不得被误判为已读
+      await expect(caseVariantRead).rejects.not.toMatchObject({
+        errorCode: "resource-already-read",
+      });
+    }
   });
 
   it("不同 Agent/任务读取同一文件互不误伤", async () => {

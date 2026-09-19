@@ -9,7 +9,8 @@
  * 目标路径须已由 WorkspaceBoundary 完成 realpath 逃逸校验（规范化后的绝对路径）。
  *
  * AR-01a 加固：
- * - 审计文件路径比较在 Windows（大小写不敏感文件系统）上不区分大小写。
+ * - 路径比较使用跨平台规范形式（盘符/UNC/两种分隔符/. 与 .. 段），
+ *   大小写是否折叠由注入的文件系统能力决定（缺省按平台），不在 POSIX 上全局折叠。
  * - 词法判定之外增加真实路径（realpath/最近已存在祖先）比对，
  *   拦截"工作区内链接/联接指向备份保管库"的别名绕过。
  * - 目录条目过滤只作用于受保护根所在的状态目录，不在任意目录隐藏同名普通文件。
@@ -18,6 +19,12 @@ import path from "node:path";
 import { realpath } from "node:fs/promises";
 
 import { DomainError } from "../core/errors.js";
+import {
+  canonicalizePathForPolicyComparison,
+  isCanonicalPathWithin,
+  platformDefaultCaseSensitivity,
+} from "./cross-platform-path-canonicalization.js";
+import type { FileSystemCaseSensitivity } from "./cross-platform-path-canonicalization.js";
 
 export type GenericToolFileOperation =
   | "read"
@@ -28,19 +35,12 @@ export type GenericToolFileOperation =
 
 export interface ProtectedStoragePolicyOptions {
   stateDirectoryPath: string;
-}
-
-/** Windows 文件系统大小写不敏感；POSIX 大小写敏感（不同大小写即不同文件）。 */
-function isCaseInsensitiveFileSystem(): boolean {
-  return process.platform === "win32";
-}
-
-function normalizeForComparison(targetPath: string): string {
-  const normalizedPath = path.normalize(targetPath);
-  if (isCaseInsensitiveFileSystem()) {
-    return normalizedPath.toLowerCase();
-  }
-  return normalizedPath;
+  /**
+   * 文件系统大小写能力；缺省按平台默认（Windows 不敏感，POSIX 敏感）。
+   * 装配层应使用 detectFileSystemCaseSensitivity 探测实际能力后注入；
+   * 禁止在 POSIX 上全局折叠大小写。
+   */
+  fileSystemCaseSensitivity?: FileSystemCaseSensitivity;
 }
 
 /**
@@ -56,6 +56,10 @@ export class ProtectedStoragePolicy {
   private readonly backupVaultRootPath: string;
   private readonly backupDeletionAuditFilePath: string;
   private readonly protectedStorageEntries = new Set<string>();
+  private readonly caseSensitivity: FileSystemCaseSensitivity;
+  private readonly canonicalStateDirectoryPath: string;
+  private readonly canonicalBackupVaultRootPath: string;
+  private readonly canonicalBackupDeletionAuditFilePath: string;
 
   constructor(options: ProtectedStoragePolicyOptions) {
     this.stateDirectoryPath = path.resolve(options.stateDirectoryPath);
@@ -66,6 +70,24 @@ export class ProtectedStoragePolicy {
     );
     this.protectedStorageEntries.add("backup-vault");
     this.protectedStorageEntries.add("backup-deletion-audit.jsonl");
+    this.caseSensitivity =
+      options.fileSystemCaseSensitivity ?? platformDefaultCaseSensitivity();
+    // 规范根直接从原始输入推导，不经过宿主 path.resolve：
+    // 否则 Windows 风格路径在 POSIX 上会被误解析为相对当前目录。
+    this.canonicalStateDirectoryPath = this.canonicalize(
+      options.stateDirectoryPath,
+    );
+    this.canonicalBackupVaultRootPath = this.canonicalize(
+      `${this.canonicalStateDirectoryPath}/backup-vault`,
+    );
+    this.canonicalBackupDeletionAuditFilePath = this.canonicalize(
+      `${this.canonicalStateDirectoryPath}/backup-deletion-audit.jsonl`,
+    );
+  }
+
+  /** 策略比较用规范路径（跨平台、不访问文件系统）。 */
+  private canonicalize(targetPath: string): string {
+    return canonicalizePathForPolicyComparison(targetPath, this.caseSensitivity);
   }
 
   getBackupVaultRootPath(): string {
@@ -84,7 +106,8 @@ export class ProtectedStoragePolicy {
     canonicalTargetPath: string;
     operation: GenericToolFileOperation;
   }): Promise<void> {
-    const canonicalPath = path.resolve(input.canonicalTargetPath);
+    // 判定与实际访问使用同一路径：调用方传入的规范路径不再被宿主 path.resolve 改写。
+    const canonicalPath = input.canonicalTargetPath;
     if (this.isProtectedPath(canonicalPath)) {
       throw new DomainError(
         "tool-permission-denied",
@@ -121,22 +144,20 @@ export class ProtectedStoragePolicy {
 
   /** 受保护路径词法判定（同步；供快速拒绝与单元测试）。 */
   isProtectedPath(canonicalPath: string): boolean {
-    const normalizedPath = path.normalize(canonicalPath);
-    if (isPathWithin(this.backupVaultRootPath, normalizedPath)) {
+    const canonicalTargetPath = this.canonicalize(canonicalPath);
+    if (
+      isCanonicalPathWithin(
+        this.canonicalBackupVaultRootPath,
+        canonicalTargetPath,
+      )
+    ) {
       return true;
     }
-    return (
-      normalizeForComparison(normalizedPath) ===
-      normalizeForComparison(this.backupDeletionAuditFilePath)
-    );
+    return canonicalTargetPath === this.canonicalBackupDeletionAuditFilePath;
   }
 
   private isStateDirectory(canonicalPath: string): boolean {
-    const normalizedPath = path.normalize(canonicalPath);
-    return (
-      normalizeForComparison(normalizedPath) ===
-      normalizeForComparison(this.stateDirectoryPath)
-    );
+    return this.canonicalize(canonicalPath) === this.canonicalStateDirectoryPath;
   }
 
   /**
@@ -151,7 +172,11 @@ export class ProtectedStoragePolicy {
    */
   private async resolveRealPath(canonicalPath: string): Promise<string> {
     try {
-      return await realpath(canonicalPath);
+      const resolvedRealPath = await realpath(canonicalPath);
+      // fail-safe：realpath 未返回非空字符串时退回词法路径，避免类型错误中断判定
+      return typeof resolvedRealPath === "string" && resolvedRealPath !== ""
+        ? resolvedRealPath
+        : canonicalPath;
     } catch {
       const anchorPath = await findNearestExistingAncestor(canonicalPath);
       if (anchorPath === null) {
@@ -226,19 +251,4 @@ async function collectLinkSegments(canonicalPath: string): Promise<string[]> {
     currentPath = parentPath;
   }
   return linkSegments;
-}
-
-function isPathWithin(rootPath: string, candidatePath: string): boolean {
-  // AR-01a：realpath 返回的路径大小写可能与保护区根不同（Windows 大小写不敏感），
-  // 比较前统一规范化（normalize + 平台大小写折叠），避免 path.relative 字符比较误判。
-  const normalizedRootPath = normalizeForComparison(rootPath);
-  const normalizedCandidatePath = normalizeForComparison(candidatePath);
-  const relativePath = path.relative(
-    normalizedRootPath,
-    normalizedCandidatePath,
-  );
-  return (
-    relativePath === "" ||
-    (!relativePath.startsWith("..") && !path.isAbsolute(relativePath))
-  );
 }
