@@ -57,7 +57,7 @@
 | 2 | 中文 | 无 | **必须人工**：输入法组词、提交、结果无乱码/截断 |
 | 3 | 缩放 | 静态契约：viewport/lang/配色方案（`tests/gui`） | 200% 缩放与 ≤400px 实际布局 |
 | 4 | 可访问性 | 静态契约：aria-live 状态区、按钮类型 | 屏幕阅读器播报、深色模式对比度实感 |
-| 5 | 提交→授权 | **提交路径已脚本化**（CSRF cookie/无 token 403/202 受理回执/状态反映真实提交，见 `docs/reports/GUI01_R_04B_TARBALL_GUI_SSE_EVIDENCE_2026-09-19.md`）；服务端裁决/状态接口断言；MCP 桥接主体隔离与禁止工具拒绝（`docs/reports/BRIDGE01_04_STDIO_CLOSED_LOOP_EVIDENCE_2026-09-19.md`） | 界面是否如实反映裁决、不自动放行 |
+| 5 | 提交→授权 | **提交/取消路径已脚本化**（CSRF cookie/无 token 403/202 受理回执/状态反映真实提交，见 `docs/reports/GUI01_R_04B_TARBALL_GUI_SSE_EVIDENCE_2026-09-19.md`）；服务端裁决/状态接口断言；MCP 桥接主体隔离与禁止工具拒绝（`docs/reports/BRIDGE01_04_STDIO_CLOSED_LOOP_EVIDENCE_2026-09-19.md`） | 界面是否如实反映裁决、不自动放行 |
 | 6 | 查看差异 | 恢复/对账视图断言（`tests/gui`） | 与 CLI `recover list/show` 逐项人工对照 |
 | 7 | 验收 | 追认/否决状态流转断言（含跨 Agent 404、陈旧签字 409） | 人工点击确认签收落盘、否决重开节点 |
 | 8 | 恢复 | 中断恢复无重复副作用断言 | 真实进程中断后的续接体验 |

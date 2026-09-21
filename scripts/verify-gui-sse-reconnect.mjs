@@ -304,6 +304,60 @@ try {
       missions: reconnectEvent.snapshot.missions.length,
     }),
   );
+
+  // 场景补充：取消命令后快照收敛（公共入口真实调用控制器 → 任务状态变化）
+  const cancelResponse = await httpRequest({
+    port,
+    requestPath: "/commands/cancel",
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-csrf-token": csrfToken,
+    },
+    body: JSON.stringify({ taskIdentifier: firstSubmitResult.taskIdentifier }),
+  });
+  recordCheck(
+    "取消命令返回 200 且报 cancelled",
+    cancelResponse.statusCode === 200 &&
+      JSON.parse(cancelResponse.body).status === "cancelled",
+    `status=${cancelResponse.statusCode} body=${cancelResponse.body.slice(0, 120)}`,
+  );
+
+  let observedStatusAfterCancel = null;
+  const statusDeadlineMilliseconds = Date.now() + 8_000;
+  while (Date.now() < statusDeadlineMilliseconds) {
+    const latestState = JSON.parse((await httpRequest({ port, requestPath: "/state" })).body);
+    const trackedTask = latestState.tasks.find(
+      (task) => task.taskIdentifier === firstSubmitResult.taskIdentifier,
+    );
+    observedStatusAfterCancel = trackedTask === undefined ? null : trackedTask.status;
+    if (observedStatusAfterCancel === "cancelled") {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  recordCheck(
+    "取消后 /state 收敛为 cancelled",
+    observedStatusAfterCancel === "cancelled",
+    `observed=${observedStatusAfterCancel}`,
+  );
+
+  const cancelReconnectFrame = await readFirstSseFrame(port, {
+    "last-event-id": "snapshot-after-cancel",
+  });
+  const cancelReconnectEvent = parseSseFrame(cancelReconnectFrame.rawFrame);
+  const cancelledTaskInSnapshot = cancelReconnectEvent.snapshot.tasks.find(
+    (task) => task.taskIdentifier === firstSubmitResult.taskIdentifier,
+  );
+  recordCheck(
+    "取消后重连快照同样反映 cancelled",
+    cancelledTaskInSnapshot !== undefined &&
+      cancelledTaskInSnapshot.status === "cancelled",
+    JSON.stringify({
+      frameStatus: cancelledTaskInSnapshot === undefined ? null : cancelledTaskInSnapshot.status,
+      isReconnect: cancelReconnectEvent.isReconnect,
+    }),
+  );
 } catch (error) {
   recordCheck(
     "GUI 提交与 SSE 契约校验执行未抛异常",
