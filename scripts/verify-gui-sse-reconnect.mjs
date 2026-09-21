@@ -358,6 +358,127 @@ try {
       isReconnect: cancelReconnectEvent.isReconnect,
     }),
   );
+
+  // 场景补充：设置写入（上下文预算）——真实控制器 + 持久化读取收敛 + 陈旧 revision 拒绝
+  const settingsBefore = JSON.parse(
+    (await httpRequest({ port, requestPath: "/settings" })).body,
+  );
+  const baselineBudgetRevision = settingsBefore.context.budgetPolicyRevision;
+  const baselineMaximumTokens =
+    settingsBefore.context.configuredMaximumGlobalContextTokenCount;
+  recordCheck(
+    "GET /settings 返回上下文预算与 revision",
+    typeof baselineBudgetRevision === "number" &&
+      typeof baselineMaximumTokens === "number",
+    JSON.stringify({ baselineBudgetRevision, baselineMaximumTokens }),
+  );
+
+  const updatedMaximumTokens = baselineMaximumTokens + 1234;
+  const budgetUpdateResponse = await httpRequest({
+    port,
+    requestPath: "/commands/set-context-budget",
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-csrf-token": csrfToken,
+    },
+    body: JSON.stringify({
+      expectedRevision: baselineBudgetRevision,
+      configuredMaximumGlobalContextTokenCount: updatedMaximumTokens,
+    }),
+  });
+  const budgetUpdateResult = JSON.parse(budgetUpdateResponse.body);
+  recordCheck(
+    "预算写入成功且 revision 递增",
+    budgetUpdateResponse.statusCode === 200 &&
+      budgetUpdateResult.context.configuredMaximumGlobalContextTokenCount ===
+        updatedMaximumTokens &&
+      budgetUpdateResult.context.budgetPolicyRevision === baselineBudgetRevision + 1,
+    `status=${budgetUpdateResponse.statusCode} body=${budgetUpdateResponse.body.slice(0, 160)}`,
+  );
+
+  const settingsAfter = JSON.parse(
+    (await httpRequest({ port, requestPath: "/settings" })).body,
+  );
+  recordCheck(
+    "重新读取 /settings 反映持久化结果（非内存回显）",
+    settingsAfter.context.configuredMaximumGlobalContextTokenCount ===
+      updatedMaximumTokens &&
+      settingsAfter.context.budgetPolicyRevision === baselineBudgetRevision + 1,
+    JSON.stringify({
+      revision: settingsAfter.context.budgetPolicyRevision,
+      tokens: settingsAfter.context.configuredMaximumGlobalContextTokenCount,
+    }),
+  );
+
+  const staleBudgetResponse = await httpRequest({
+    port,
+    requestPath: "/commands/set-context-budget",
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-csrf-token": csrfToken,
+    },
+    body: JSON.stringify({
+      expectedRevision: baselineBudgetRevision,
+      configuredMaximumGlobalContextTokenCount: updatedMaximumTokens + 999,
+    }),
+  });
+  recordCheck(
+    "陈旧 revision 写入被拒绝（409 stale-revision，不静默覆盖）",
+    staleBudgetResponse.statusCode === 409 &&
+      JSON.parse(staleBudgetResponse.body).error === "stale-revision",
+    `status=${staleBudgetResponse.statusCode} body=${staleBudgetResponse.body.slice(0, 100)}`,
+  );
+
+  const invalidBudgetResponse = await httpRequest({
+    port,
+    requestPath: "/commands/set-context-budget",
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-csrf-token": csrfToken,
+    },
+    body: JSON.stringify({
+      expectedRevision: baselineBudgetRevision + 1,
+      configuredMaximumGlobalContextTokenCount: -1,
+    }),
+  });
+  recordCheck(
+    "非法预算参数被拒绝（400 invalid-arguments）",
+    invalidBudgetResponse.statusCode === 400 &&
+      JSON.parse(invalidBudgetResponse.body).error === "invalid-arguments",
+    `status=${invalidBudgetResponse.statusCode} body=${invalidBudgetResponse.body.slice(0, 100)}`,
+  );
+
+  const budgetWithoutCsrfResponse = await httpRequest({
+    port,
+    requestPath: "/commands/set-context-budget",
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      expectedRevision: baselineBudgetRevision + 1,
+      configuredMaximumGlobalContextTokenCount: updatedMaximumTokens,
+    }),
+  });
+  recordCheck(
+    "无 CSRF 的预算写入被拒绝（403 csrf-required）",
+    budgetWithoutCsrfResponse.statusCode === 403 &&
+      JSON.parse(budgetWithoutCsrfResponse.body).error === "csrf-required",
+    `status=${budgetWithoutCsrfResponse.statusCode}`,
+  );
+
+  const settingsAfterRejections = JSON.parse(
+    (await httpRequest({ port, requestPath: "/settings" })).body,
+  );
+  recordCheck(
+    "被拒绝的写入未改变已持久化的预算",
+    settingsAfterRejections.context.configuredMaximumGlobalContextTokenCount ===
+      updatedMaximumTokens,
+    JSON.stringify({
+      tokens: settingsAfterRejections.context.configuredMaximumGlobalContextTokenCount,
+    }),
+  );
 } catch (error) {
   recordCheck(
     "GUI 提交与 SSE 契约校验执行未抛异常",

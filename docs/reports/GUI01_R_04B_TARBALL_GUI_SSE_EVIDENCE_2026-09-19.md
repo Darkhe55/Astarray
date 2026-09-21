@@ -3,7 +3,7 @@
 > 检查点：GUI-01-R-04b 的"从 tarball 隔离安装打开 GUI"在**提交路径与 SSE 契约**上的脚本化部分
 > 脚本：`scripts/verify-gui-sse-reconnect.mjs`（Node 标准库；真实 HTTP，无浏览器、无模型）
 > 产物：隔离安装的 `astarray-0.1.0.tgz`（sha256 `a45ae4dab9f3e99fa45ed75b16e98e262d112acb449a0c048fe5936b5fd96d1f`，215 文件）→ `.tmp/package-smoke/2026-09-19T15-18-50.235Z-903399c9-5a93-4213-b8d9-f2d9f76e85a7/node_modules/astarray/dist/cli.js`
-> 执行：`node scripts/verify-gui-sse-reconnect.mjs "<上述 cli.js 路径>"` → **13/13 通过，exit 0**
+> 执行：`node scripts/verify-gui-sse-reconnect.mjs "<上述 cli.js 路径>"` → **20/20 通过，exit 0**
 > 结论：提交路径与 SSE 首帧/重连的**服务端契约**已由安装产物级证据覆盖；浏览器自动重连与视觉/键盘/中文/缩放仍属人工项。
 
 ## 1. 实测结果
@@ -30,6 +30,20 @@
 | 13 | 取消后带 `last-event-id` 重连快照 | 通过：该任务 `status=cancelled`、`isReconnect=true` |
 
 要点：取消是经**公共入口**真实触发控制器并改变状态的路径（不是只改界面），且快照随事件收敛——说明 GUI 跟踪器由事件驱动而非启动时缓存。
+
+## 1c. 设置写入与陈旧 revision（追加 7 项，2026-09-19）
+
+| # | 检查 | 结果 |
+| --- | --- | --- |
+| 14 | `GET /settings` 返回上下文预算与 revision | 通过：`budgetPolicyRevision=1`、`configuredMaximumGlobalContextTokenCount=4096` |
+| 15 | 带 CSRF 写入预算 | 通过：`200`，`budgetPolicyRevision=2`、tokens=`5330`（基线 +1234） |
+| 16 | 重新读取 `/settings` | 通过：`revision=2`、`tokens=5330`（持久化生效，非内存回显） |
+| 17 | 陈旧 revision 写入 | 通过：`409 {"error":"stale-revision"}`（不静默覆盖） |
+| 18 | 非法参数（负数预算） | 通过：`400 {"error":"invalid-arguments"}` |
+| 19 | 无 CSRF 的预算写入 | 通过：`403 {"error":"csrf-required"}` |
+| 20 | 三次被拒写入后再读取 | 通过：已持久化值未被改变（仍为 `5330`） |
+
+要点：预算写入经**公共入口 + 真实控制器**（revision 递增并由重新读取确认持久化），并具备三重保护——陈旧 revision `409`、参数校验 `400`、CSRF `403`；被拒写入不产生副作用。
 
 ## 2. 关键观察（写进断言依据）
 
