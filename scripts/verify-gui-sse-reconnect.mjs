@@ -544,10 +544,10 @@ try {
     body: JSON.stringify({ kind: "custom", profileId: "custom-does-not-exist" }),
   });
   recordCheck(
-    "缺陷观察：未知自定义权限组当前被接受（非期望行为，见 FINDING 文档）",
-    unknownCustomProfileSwitch.statusCode === 200 &&
-      JSON.parse(unknownCustomProfileSwitch.body).reference?.profileId ===
-        "custom-does-not-exist",
+    "未知自定义权限组被拒绝（404 permission-profile-not-found）",
+    unknownCustomProfileSwitch.statusCode === 404 &&
+      JSON.parse(unknownCustomProfileSwitch.body).error ===
+        "permission-profile-not-found",
     `status=${unknownCustomProfileSwitch.statusCode} body=${unknownCustomProfileSwitch.body.slice(0, 140)}`,
   );
 

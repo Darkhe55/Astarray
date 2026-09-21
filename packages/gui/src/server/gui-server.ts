@@ -857,10 +857,21 @@ export async function startGuiServer(
         writeJsonResponse(response, 400, { error: "invalid-arguments" });
         return;
       }
-      await applicationService.switchPermissionProfile({
-        kind,
-        profileId,
-      });
+      try {
+        await applicationService.switchPermissionProfile({
+          kind,
+          profileId,
+        });
+      } catch (error) {
+        const errorCode = readApplicationErrorCode(error);
+        if (errorCode === "permission-profile-not-found") {
+          writeJsonResponse(response, 404, {
+            error: "permission-profile-not-found",
+          });
+          return;
+        }
+        throw error;
+      }
       writeJsonResponse(response, 200, {
         status: "switched",
         reference: { kind, profileId },

@@ -4,6 +4,8 @@
 > 基线提交：`04ddce7`（LINUX-PORT-01 返修；`f0fb9a0` 仅多一个文档提交）
 > 环境：Windows（本机工作区），Node `v24.18.0`，npm `11.x`
 > 结论：打包链路在本提交上**全部 exit 0**，并产出与当前代码一致的新 tarball；04b 的人工体验与 Linux/macOS 证据仍未做，卡片保持 in_progress。
+>
+> **2026-09-21 追加打包**：修复悬空权限组缺陷后重新打包——`astarray-0.1.0.tgz`，215 文件，sha256 `c9e331cf6d049347893a05b5ab5ac4e08bebb1ba471f0241df849b1e86384e77`，mtime `2026-09-21T21:08:34Z`；`verify-package.mjs` 与 `smoke-install.mjs` 均 exit 0。本文 §2 的 `a45ae4da…` 保留为 2026-09-19 当次产物记录。
 
 ## 1. 为什么要重跑
 

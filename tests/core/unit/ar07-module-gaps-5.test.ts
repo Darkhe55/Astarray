@@ -201,7 +201,7 @@ describe("AR-07 批次5：权限组存储", () => {
 
     await expect(
       store.readProfile({ kind: "custom", profileId: "profile-missing" }),
-    ).rejects.toMatchObject({ errorCode: "task-sequence-not-found" });
+    ).rejects.toMatchObject({ errorCode: "permission-profile-not-found" });
 
     const profilesDirectory = path.join(temporaryDirectory, "permission-profiles");
     await fs.mkdir(profilesDirectory, { recursive: true });

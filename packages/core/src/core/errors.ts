@@ -13,6 +13,7 @@ export type DomainErrorCode =
   | "tool-not-found"
   | "tool-permission-denied"
   | "permission-ask-pending"
+  | "permission-profile-not-found"
   | "backup-deletion-authorization-pending"
   | "backup-deletion-authorization-invalid"
   | "feedback-protocol-mismatch"

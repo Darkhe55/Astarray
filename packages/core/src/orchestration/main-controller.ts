@@ -335,6 +335,14 @@ export class MainController {
     if (selectionStore === null || selectionStore === undefined) {
       throw new Error("当前权限组选择存储未装配");
     }
+    // 自定义组必须先证明存在，避免持久化悬空引用（内置组恒存在，不依赖该存储）。
+    if (reference.kind === "custom") {
+      const profileStore = this.options.permissionProfileStore;
+      if (profileStore === null || profileStore === undefined) {
+        throw new Error("权限组存储未装配");
+      }
+      await profileStore.readProfile(reference);
+    }
     const current = await selectionStore.readSelection();
     await selectionStore.switchSelection({
       selectedReference: reference,

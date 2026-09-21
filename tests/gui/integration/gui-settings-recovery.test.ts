@@ -269,6 +269,30 @@ describe("GUI-01-R-03 设置：预算修改后下一模型请求按新 revision 
       body: JSON.stringify({ kind: "builtin", profileId: "not-a-builtin" }),
     });
     expect(invalid.statusCode).toBe(400);
+
+    const unknownCustomProfile = await request({
+      port,
+      method: "POST",
+      path: "/commands/switch-permission-profile",
+      headers: {
+        host: `127.0.0.1:${port}`,
+        "content-type": "application/json",
+        "x-csrf-token": CSRF_TOKEN,
+      },
+      body: JSON.stringify({
+        kind: "custom",
+        profileId: "custom-does-not-exist",
+      }),
+    });
+    expect(unknownCustomProfile.statusCode).toBe(404);
+    expect(JSON.parse(unknownCustomProfile.body).error).toBe(
+      "permission-profile-not-found",
+    );
+    // 拒绝后保持原权威选择，不产生悬空引用
+    expect(await application.getCurrentPermissionProfileReference()).toEqual({
+      kind: "builtin",
+      profileId: "ponder",
+    });
   });
 });
 

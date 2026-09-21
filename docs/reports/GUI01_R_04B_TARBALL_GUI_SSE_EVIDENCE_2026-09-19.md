@@ -5,6 +5,7 @@
 > 产物：隔离安装的 `astarray-0.1.0.tgz`（sha256 `a45ae4dab9f3e99fa45ed75b16e98e262d112acb449a0c048fe5936b5fd96d1f`，215 文件）→ `.tmp/package-smoke/2026-09-19T15-18-50.235Z-903399c9-5a93-4213-b8d9-f2d9f76e85a7/node_modules/astarray/dist/cli.js`
 > 执行：`node scripts/verify-gui-sse-reconnect.mjs "<上述 cli.js 路径>"` → **27/27 通过，exit 0**（其中 1 项为明确标注的缺陷观察）
 > 结论：提交路径与 SSE 首帧/重连的**服务端契约**已由安装产物级证据覆盖；浏览器自动重连与视觉/键盘/中文/缩放仍属人工项。
+> **2026-09-21 更新**：悬空自定义权限组缺陷已修复（见 `docs/reports/GUI01_R_04B_DANGLING_PROFILE_SELECTION_FINDING_2026-09-19.md` §6），第 25 项已改为"应被拒绝"；并在新打包并隔离安装的产物（sha256 `c9e331cf…4e77`，mtime `2026-09-21T21:08:34Z`）上重跑 **27/27 通过**。
 
 ## 1. 实测结果
 

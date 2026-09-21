@@ -178,7 +178,7 @@ export class PermissionProfileStore {
     const document = await this.readCustomProfile(reference.profileId);
     if (document === null) {
       throw new DomainError(
-        "task-sequence-not-found",
+        "permission-profile-not-found",
         `权限组不存在: ${reference.profileId}`,
       );
     }

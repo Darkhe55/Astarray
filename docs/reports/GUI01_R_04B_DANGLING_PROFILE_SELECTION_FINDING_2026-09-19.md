@@ -2,7 +2,7 @@
 
 > 发现方式：GUI-01-R-04b 安装产物级校验中的行为反例（`scripts/verify-gui-sse-reconnect.mjs`）
 > 已复现提交：`f1f52ec` 之上；被测产物：tarball sha256 `a45ae4da…d1f`（隔离安装）
-> 状态：**已复现、未修复**。修复需授权（见 §4）。
+> 状态：**已复现、已修复**（见 §6）。
 
 ## 1. 反例（实测）
 
@@ -41,6 +41,29 @@ POST /commands/switch-permission-profile
 3. 行为反例（先红后绿）：控制器级单测（不存在 → 拒绝且不写盘；存在 → 成功且 revision 递增）+ GUI 路由级测试（不存在 → 404）+ 保留 `stale-revision` 409 与 CSRF 403；随后在 `verify-gui-sse-reconnect.mjs` 把当前"缺陷观察"断言改为"应被拒绝"。
 4. 覆盖率：`permission-profile-store`、`current-permission-selection`、`configurable-permission-policy-engine` 属 22 个安全关键模块（分支 ≥95%），改动后须跑 `npm run check`、`vitest run --coverage` 与 `verify:security-coverage`。
 
-## 5. 当前脚本中的记录方式
+## 6. 修复记录（2026-09-21）
+
+**已修复**，改动 4 个生产文件 + 3 个测试文件 + 校验脚本：
+
+| 文件 | 改动 |
+| --- | --- |
+| `packages/core/src/core/errors.ts` | 新增稳定错误码 `permission-profile-not-found` |
+| `packages/core/src/tools/permission-profile-store.ts` | `readProfile` 自定义组缺失时改抛 `permission-profile-not-found`（不再误用 `task-sequence-not-found`） |
+| `packages/core/src/orchestration/main-controller.ts` | `switchPermissionProfile` 在持久化前校验自定义组存在（内置组不依赖该存储；未装配存储时抛"权限组存储未装配"） |
+| `packages/gui/src/server/gui-server.ts` | 切换路由把该错误映射为 `404 {"error":"permission-profile-not-found"}`，不再落入 500 |
+| `tests/core/unit/main-controller-facades.test.ts` | 新增 3 条：自定义组不存在→拒绝且不写入选择；存在→按当前 revision 持久化；内置组不依赖自定义存储 |
+| `tests/core/unit/ar07-module-gaps-5.test.ts` | `readProfile` 缺失组断言改为新错误码 |
+| `tests/gui/integration/gui-settings-recovery.test.ts` | 未知自定义组 → `404 permission-profile-not-found`，且权威选择保持不变 |
+| `scripts/verify-gui-sse-reconnect.mjs` | 原"缺陷观察"断言改为"应被拒绝（404）" |
+
+验证（先红后绿）：
+
+- **红**：目标 3 文件 `4 failed | 23 passed`——`readProfile` 仍报旧码、控制器不校验（`promise resolved`）、GUI 返回 `200` 而非 `404`。
+- **绿**：目标 3 文件 `27 passed`；全量 **228 文件 / 1857 用例**；覆盖率 **93.07 / 85.24 / 93.09 / 93.10**；安全关键模块 **22/22**；`npm pack`（215 文件）+ `verify-package` + `smoke-install` 全部 exit 0；对**新打包并隔离安装**的产物重跑 GUI 契约脚本 **27/27 通过**，含"未知自定义权限组被拒绝（404）"。
+- 新 tarball：`astarray-0.1.0.tgz`，mtime `2026-09-21T21:08:34Z`，sha256 `c9e331cf6d049347893a05b5ab5ac4e08bebb1ba471f0241df849b1e86384e77`。
+
+**未纳入本次修复**（记录为后续清理项）：`packages/core/src/tools/custom-permission-profile-controller.ts` 仍有 3 处把 `task-sequence-not-found` 用于"权限组缺失"（创建/删除/重置的源组不存在）；它们不影响本次切换路径，改动会牵动既有测试期望，留作独立的小清理。
+
+## 5. 修复前的记录方式
 
 `scripts/verify-gui-sse-reconnect.mjs` 保留一项**明确标注为"缺陷观察"**的断言，锁定当前 200 行为以便修复后改为"应被拒绝"；其余 19 项为期望行为断言。

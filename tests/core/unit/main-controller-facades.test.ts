@@ -17,6 +17,7 @@ import { BUILTIN_TOOL_DESCRIPTORS } from "../../../packages/core/src/tools/built
 import { WorkspaceBoundary } from "../../../packages/core/src/tools/workspace-boundary.js";
 import { MainController } from "../../../packages/core/src/orchestration/main-controller.js";
 import { MissionManager } from "../../../packages/core/src/orchestration/mission-manager.js";
+import { DomainError } from "../../../packages/core/src/core/errors.js";
 
 let temporaryDirectory: string;
 
@@ -204,6 +205,94 @@ describe("MainController 门面装配分支（AR-07）", () => {
     expect(switchSelection).toHaveBeenCalledWith({
       selectedReference: selectionReference,
       expectedRevision: 3,
+    });
+  });
+
+  it("切换权限组：自定义组不存在时拒绝且不写入选择", async () => {
+    const switchSelection = vi.fn(async () => ({
+      schemaVersion: 1,
+      selectedReference: { kind: "custom", profileId: "custom-missing" },
+      revision: 1,
+      updatedAtIso: "2026-09-19T00:00:00.000Z",
+    }));
+    const controller = buildController({
+      permissionProfileStore: {
+        readProfile: async () => {
+          throw new DomainError(
+            "permission-profile-not-found",
+            "权限组不存在: custom-missing",
+          );
+        },
+      },
+      currentPermissionSelectionStore: {
+        readSelection: async () => null,
+        switchSelection,
+      },
+    });
+    await expect(
+      controller.switchPermissionProfile({
+        kind: "custom",
+        profileId: "custom-missing",
+      }),
+    ).rejects.toMatchObject({ errorCode: "permission-profile-not-found" });
+    expect(switchSelection).not.toHaveBeenCalled();
+  });
+
+  it("切换权限组：自定义组存在时按当前 revision 持久化", async () => {
+    const switchSelection = vi.fn(async () => ({
+      schemaVersion: 1,
+      selectedReference: { kind: "custom", profileId: "custom-existing" },
+      revision: 3,
+      updatedAtIso: "2026-09-19T00:00:00.000Z",
+    }));
+    const readProfile = vi.fn(async () => ({
+      permissionProfileId: "custom-existing",
+    }));
+    const controller = buildController({
+      permissionProfileStore: { readProfile },
+      currentPermissionSelectionStore: {
+        readSelection: async () => ({
+          selectedReference: { kind: "builtin", profileId: "assist" },
+          revision: 2,
+        }),
+        switchSelection,
+      },
+    });
+    await controller.switchPermissionProfile({
+      kind: "custom",
+      profileId: "custom-existing",
+    });
+    expect(readProfile).toHaveBeenCalledWith({
+      kind: "custom",
+      profileId: "custom-existing",
+    });
+    expect(switchSelection).toHaveBeenCalledWith({
+      selectedReference: { kind: "custom", profileId: "custom-existing" },
+      expectedRevision: 2,
+    });
+  });
+
+  it("切换权限组：内置组不依赖自定义组存储", async () => {
+    const switchSelection = vi.fn(async () => ({
+      schemaVersion: 1,
+      selectedReference: { kind: "builtin", profileId: "ponder" },
+      revision: 1,
+      updatedAtIso: "2026-09-19T00:00:00.000Z",
+    }));
+    const controller = buildController({
+      permissionProfileStore: null,
+      currentPermissionSelectionStore: {
+        readSelection: async () => null,
+        switchSelection,
+      },
+    });
+    await controller.switchPermissionProfile({
+      kind: "builtin",
+      profileId: "ponder",
+    });
+    expect(switchSelection).toHaveBeenCalledWith({
+      selectedReference: { kind: "builtin", profileId: "ponder" },
+      expectedRevision: 0,
     });
   });
 
