@@ -97,9 +97,18 @@ function runNodeScript(scriptRelativePath, workingDirectory) {
     });
     return { exitCode: 0, output };
   } catch (error) {
+    // 保留子进程无法启动的原因（如受限沙箱下的 EPERM），
+    // 否则环境问题会被静默误报成"fixture 基线/参考实现不符合冻结预期"。
+    const spawnFailureNote =
+      typeof error.status !== "number" && typeof error.code === "string"
+        ? `[spawn ${error.code}] `
+        : "";
     return {
       exitCode: typeof error.status === "number" ? error.status : 1,
-      output: String(error.stdout ?? "") + String(error.stderr ?? ""),
+      output:
+        spawnFailureNote +
+        String(error.stdout ?? "") +
+        String(error.stderr ?? ""),
     };
   }
 }
@@ -359,6 +368,18 @@ function runFixtureCommand(targetDirectory) {
     baselineFailedAsFrozen,
     solutionPassedAsFrozen,
     artifactHashes: solution.artifactHashes,
+    // 失败时必须给出可诊断摘录：否则受限沙箱下的 spawn EPERM 会被静默误报成
+    // "fixture 基线/参考实现不符合冻结预期"。
+    ...(baselineFailedAsFrozen && solutionPassedAsFrozen
+      ? {}
+      : {
+          failureDiagnostics: {
+            baselineExitCode: baseline.exitCode,
+            baselineOutputExcerpt: baseline.output.slice(0, 400),
+            solutionExitCode: solution.exitCode,
+            solutionOutputExcerpt: solution.output.slice(0, 400),
+          },
+        }),
   };
   console.log(JSON.stringify(summary, null, 2));
   return baselineFailedAsFrozen && solutionPassedAsFrozen ? 0 : 1;
