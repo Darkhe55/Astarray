@@ -3,7 +3,7 @@
 > 检查点：BRIDGE-01-04 的"从 tarball 启动桥接 + 完整闭环 + 协议/业务失败可区分 + 版本平台声明"部分
 > 客户端：`scripts/verify-mcp-bridge-loop.mjs`（真实 stdio MCP 客户端，换行分隔 JSON-RPC；非进程内 mock）
 > 桥接来源：**隔离安装产物** `astarray-0.1.0.tgz`（sha256 `a45ae4dab9f3e99fa45ed75b16e98e262d112acb449a0c048fe5936b5fd96d1f`，215 文件）→ `.tmp/package-smoke/2026-09-19T15-18-50.235Z-903399c9-5a93-4213-b8d9-f2d9f76e85a7/node_modules/astarray/dist/cli.js`
-> 执行：`node scripts/verify-mcp-bridge-loop.mjs "<上述 cli.js 路径>"` → **13/13 通过，exit 0**
+> 执行：`node scripts/verify-mcp-bridge-loop.mjs "<上述 cli.js 路径>"` → **2 场景 / 20 项断言全部通过，exit 0**
 > 结论：闭环部分完成；**第三方客户端（opencode / pi）消费**仍待用户授权，BRIDGE-01-04 保持 in_progress。
 
 ## 1. 版本与平台声明（对外支持声明绑定项）
@@ -36,6 +36,22 @@
 | 13 | stdout 无日志混入 | 通过：非法行 0 条 |
 
 另核验：提交回执的 `provenance` 为 `{sourceKind: "agent", actorId: "external-harness:stdio", agentInstanceId: "mcp-client-…"}`——**主体由本地 harness 注入**，未从工具参数推断（工具面亦不含身份/优先级参数）；断连（stdin 结束）后会话收口，子进程正常退出。
+
+## 2b. 场景 2：主体隔离与断连收口（2026-09-19 追加）
+
+同一状态目录下启动两个真实连接（`ASTARRAY_MCP_PRINCIPAL` 分别为 `external-harness:verify-a` 与 `…:verify-b`）：
+
+| # | 检查 | 结果 |
+| --- | --- | --- |
+| 14 | 主体 A 提交成功 | 通过：`provenance.actorId=external-harness:verify-a`、`status=accepted` |
+| 15 | A 断连后进程自行退出 | 通过：`{exitedOnItsOwn: true, exitCode: 0}`（未走脚本 SIGKILL） |
+| 16 | 不同主体读取 A 的任务 | 通过：`isError=true`、`errorCode=task-not-accessible`，无 JSON-RPC error |
+| 17 | 不同主体读取 A 的任务结果 | 通过：同上 `task-not-accessible` |
+| 18 | 不同主体取消 A 的任务 | 通过：同上 `task-not-accessible` |
+| 19 | 隔离不误伤 | 通过：B 可提交并读取**自己**的任务（`status=running`） |
+| 20 | 两个主体连接 stdout 均无日志混入 | 通过：非法行 0 条 |
+
+要点：任务归属按**本地注入的认证主体**判定而非参数内容；任务标识里虽含 A 的 `agentInstanceId`，B 仍无法读取或取消；断连即会话收口且进程自行退出（退出码 0），不遗留孤儿进程。
 
 ## 3. 复现
 
