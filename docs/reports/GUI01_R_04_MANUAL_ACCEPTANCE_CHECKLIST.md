@@ -53,16 +53,16 @@
 | --- | --- | --- |
 | §0 打包 | `npm pack`（215 文件）+ `verify-package.mjs` exit 0 + `smoke-install.mjs` exit 0；tarball sha256 `a45ae4dab9f3e99fa45ed75b16e98e262d112acb449a0c048fe5936b5fd96d1f`（2026-09-19T23:18:48Z）；证据 `docs/reports/GUI01_R_04B_WINDOWS_PACKAGING_EVIDENCE_2026-09-19.md` | 仅需在 Linux 同提交复跑 |
 | §0 从安装包打开 GUI | 隔离安装目录内启动 → `GET /` 200（12415 字节、含 DOCTYPE）、`GET /state` 200 且脱敏、终止后端口释放；证据 `docs/reports/GUI01_R_04B_TARBALL_GUI_SMOKE_EVIDENCE_2026-09-19.md` | 浏览器实际渲染与视觉检查 |
-| 1 键盘 | 静态契约：label 关联/按钮 type/aria-live（`tests/gui`） | 焦点顺序、焦点可见性、纯键盘完成全流程 |
-| 2 中文 | 无 | **必须人工**：输入法组词、提交、结果无乱码/截断 |
-| 3 缩放 | 静态契约：viewport/lang/配色方案（`tests/gui`） | 200% 缩放与 ≤400px 实际布局 |
-| 4 可访问性 | 静态契约：aria-live 状态区、按钮类型 | 屏幕阅读器播报、深色模式对比度实感 |
-| 5 提交→授权 | 服务端裁决/状态接口断言；MCP 桥接主体隔离与禁止工具拒绝（`docs/reports/BRIDGE01_04_STDIO_CLOSED_LOOP_EVIDENCE_2026-09-19.md`） | 界面是否如实反映裁决、不自动放行 |
-| 6 查看差异 | 恢复/对账视图断言（`tests/gui`） | 与 CLI `recover list/show` 逐项人工对照 |
-| 7 验收 | 追认/否决状态流转断言（含跨 Agent 404、陈旧签字 409） | 人工点击确认签收落盘、否决重开节点 |
-| 8 恢复 | 中断恢复无重复副作用断言 | 真实进程中断后的续接体验 |
-| 9 断线恢复 | 服务端首帧快照与重连契约（`docs/reports/GUI01_R_02_LOCAL_SERVER_EVIDENCE.md`） | 浏览器 EventSource 自动重连（含服务重启后保持页面） |
-| 10 资源观察 | 脚本化：终止后端口释放、无孤儿 node（上述 GUI 冒烟证据 §1） | 浏览器页签关闭路径、无残留 SSE |
+| 1 | 键盘 | 静态契约：label 关联/按钮 type/aria-live（`tests/gui`） | 焦点顺序、焦点可见性、纯键盘完成全流程 |
+| 2 | 中文 | 无 | **必须人工**：输入法组词、提交、结果无乱码/截断 |
+| 3 | 缩放 | 静态契约：viewport/lang/配色方案（`tests/gui`） | 200% 缩放与 ≤400px 实际布局 |
+| 4 | 可访问性 | 静态契约：aria-live 状态区、按钮类型 | 屏幕阅读器播报、深色模式对比度实感 |
+| 5 | 提交→授权 | **提交路径已脚本化**（CSRF cookie/无 token 403/202 受理回执/状态反映真实提交，见 `docs/reports/GUI01_R_04B_TARBALL_GUI_SSE_EVIDENCE_2026-09-19.md`）；服务端裁决/状态接口断言；MCP 桥接主体隔离与禁止工具拒绝（`docs/reports/BRIDGE01_04_STDIO_CLOSED_LOOP_EVIDENCE_2026-09-19.md`） | 界面是否如实反映裁决、不自动放行 |
+| 6 | 查看差异 | 恢复/对账视图断言（`tests/gui`） | 与 CLI `recover list/show` 逐项人工对照 |
+| 7 | 验收 | 追认/否决状态流转断言（含跨 Agent 404、陈旧签字 409） | 人工点击确认签收落盘、否决重开节点 |
+| 8 | 恢复 | 中断恢复无重复副作用断言 | 真实进程中断后的续接体验 |
+| 9 | 断线恢复 | **已脚本化到安装产物级**：首帧完整快照、`last-event-id` 重连仍回完整快照、任务/任务链标识不重复、终止后端口释放（`scripts/verify-gui-sse-reconnect.mjs`、`docs/reports/GUI01_R_04B_TARBALL_GUI_SSE_EVIDENCE_2026-09-19.md`）；早前单元层证据：服务端首帧快照与重连契约（`docs/reports/GUI01_R_02_LOCAL_SERVER_EVIDENCE.md`） | 浏览器 EventSource 自动重连（含服务重启后保持页面） |
+| 10 | 资源观察 | 脚本化：终止后端口释放、无孤儿 node（上述 GUI 冒烟证据 §1） | 浏览器页签关闭路径、无残留 SSE |
 
 ## 5. 人工执行提示（Windows/Linux 同构）
 
