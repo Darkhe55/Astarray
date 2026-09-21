@@ -62,7 +62,7 @@ POST /commands/switch-permission-profile
 - **绿**：目标 3 文件 `27 passed`；全量 **228 文件 / 1857 用例**；覆盖率 **93.07 / 85.24 / 93.09 / 93.10**；安全关键模块 **22/22**；`npm pack`（215 文件）+ `verify-package` + `smoke-install` 全部 exit 0；对**新打包并隔离安装**的产物重跑 GUI 契约脚本 **27/27 通过**，含"未知自定义权限组被拒绝（404）"。
 - 新 tarball：`astarray-0.1.0.tgz`，mtime `2026-09-21T21:08:34Z`，sha256 `c9e331cf6d049347893a05b5ab5ac4e08bebb1ba471f0241df849b1e86384e77`。
 
-**未纳入本次修复**（记录为后续清理项）：`packages/core/src/tools/custom-permission-profile-controller.ts` 仍有 3 处把 `task-sequence-not-found` 用于"权限组缺失"（创建/删除/重置的源组不存在）；它们不影响本次切换路径，改动会牵动既有测试期望，留作独立的小清理。
+**已一并清理（2026-09-21，同一缺陷的错误码收口）**：`packages/core/src/tools/custom-permission-profile-controller.ts` 的 3 处（创建源组缺失、重置源组缺失、`requireCustomProfile`）改抛 `permission-profile-not-found`；`tests/core/unit/permission-profiles.test.ts` 期望同步更新。先红（仍报旧码）后绿（目标 3 文件 38 用例）；全量 **228 文件 / 1857 用例**、覆盖率 **93.07 / 85.22 / 93.09 / 93.09**、安全关键模块 **22/22**。至此 `task-sequence-not-found` 只用于任务序列语义，权限组相关路径统一走 `permission-profile-not-found`。
 
 ## 5. 修复前的记录方式
 

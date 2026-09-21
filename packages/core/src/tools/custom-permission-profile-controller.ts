@@ -81,7 +81,7 @@ export class CustomPermissionProfileController {
       );
       if (sourceDocument === null) {
         throw new DomainError(
-          "task-sequence-not-found",
+          "permission-profile-not-found",
           `源权限组不存在: ${input.source.permissionProfileId}`,
         );
       }
@@ -181,7 +181,7 @@ export class CustomPermissionProfileController {
       );
       if (sourceDocument === null) {
         throw new DomainError(
-          "task-sequence-not-found",
+          "permission-profile-not-found",
           `源权限组不存在: ${input.source.permissionProfileId}`,
         );
       }
@@ -293,7 +293,7 @@ export class CustomPermissionProfileController {
     const document = await this.store.readCustomProfile(permissionProfileId);
     if (document === null) {
       throw new DomainError(
-        "task-sequence-not-found",
+        "permission-profile-not-found",
         `权限组不存在: ${permissionProfileId}`,
       );
     }

@@ -418,7 +418,7 @@ describe("CustomPermissionProfileController", () => {
         displayName: "副本",
         source: { kind: "custom", permissionProfileId: "no-such-profile" },
       }),
-    ).rejects.toMatchObject({ errorCode: "task-sequence-not-found" });
+    ).rejects.toMatchObject({ errorCode: "permission-profile-not-found" });
     // 重命名为同名 → 原样返回（不报错不产生新 revision）
     const renamed = await controller.renameProfile({
       permissionProfileId: created.permissionProfileId,
@@ -426,13 +426,13 @@ describe("CustomPermissionProfileController", () => {
       expectedRevision: 1,
     });
     expect(renamed.revision).toBe(1);
-    // 删除不存在的组 → 稳定拒绝（task-sequence-not-found）
+    // 删除不存在的组 → 稳定拒绝（permission-profile-not-found）
     await expect(
       controller.deleteProfile({
         permissionProfileId: "no-such-profile",
         isCurrentlyActive: false,
       }),
-    ).rejects.toMatchObject({ errorCode: "task-sequence-not-found" });
+    ).rejects.toMatchObject({ errorCode: "permission-profile-not-found" });
     // 重置源不存在
     await expect(
       controller.resetProfile({
@@ -440,7 +440,7 @@ describe("CustomPermissionProfileController", () => {
         source: { kind: "custom", permissionProfileId: "no-such-source" },
         expectedRevision: 1,
       }),
-    ).rejects.toMatchObject({ errorCode: "task-sequence-not-found" });
+    ).rejects.toMatchObject({ errorCode: "permission-profile-not-found" });
   });
 
   it("无产品数量上限：连续创建 50 个自定义组（实现无计数分支）", async () => {
