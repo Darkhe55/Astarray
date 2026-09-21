@@ -39,7 +39,7 @@
 
 ### BRIDGE-01-04：真实客户端消费
 
-- 状态：pending。
+- 状态：in_progress（脚本化 stdio 闭环已在 tarball 安装产物上 13/13 通过；第三方客户端消费待用户授权）。
 - 工作：从tarball启动桥接，目标客户端提交任务、查询结果并取消另一任务。
 - 验收：真实客户端完整闭环证据；协议失败与业务失败可区分；对外支持声明绑定版本和平台。
 - 前驱：BRIDGE-01-03。先通过前驱，再执行本节点。
@@ -57,6 +57,8 @@
 - 测试命令、退出码和产物哈希：BRIDGE-01-03：`npm run check` exit 0（180 文件/1531 用例）、`npm run test:coverage` exit 0（全局 branch 86.52%；`core/src/bridge` 98.96% stmts/86.89% branch/100% funcs/98.95% lines）；BRIDGE-01-02：check 180/1528、branch 86.54%、bridge 目录 100% stmts/funcs/lines；BRIDGE-01-01 为决策检查点（无代码变更）。
 - 人工/外部依赖及剩余风险：BRIDGE-01-04 的真实 MCP 客户端属待确认依赖（按协同安装门禁先询问用户，不隐式下载）；Linux/macOS 平台未验证；Streamable HTTP/A2A/通用 HTTP 明确不在本批范围。
 - 本地提交、推送尝试与结果：BRIDGE-01-01 `175d40b`、补记 `ca8acba`；BRIDGE-01-02 `b652109`、补记 `401196f`；BRIDGE-01-03 `8289b00`（`git push` 第 1 次成功，`364c3b4..8289b00`）。
+- BRIDGE-01-04 脚本化 stdio 闭环（2026-09-19，in_progress）：新增 `scripts/verify-mcp-bridge-loop.mjs`（真实 stdio MCP 客户端，换行分隔 JSON-RPC；按路径调用，未加 npm 别名以免改变已记录 tarball 字节）；对**隔离安装产物**的 `dist/cli.js` 启动 `mcp serve` 执行 13 项断言全部通过（协议协商 2026-07-28、四个工具面、受理回执≠完成、幂等重放、`read_result` 不伪造、取消、业务失败 `isError=true` 与协议失败 `-32700/-32601` 可区分、禁止本地写/执行工具被拒、stdout 仅 MCP 消息），exit 0。证据 docs/reports/BRIDGE01_04_STDIO_CLOSED_LOOP_EVIDENCE_2026-09-19.md。
+- BRIDGE-01-04 剩余范围：第三方客户端（`opencode`/`pi`，本机已装）消费与模型驱动闭环需用户授权与 Provider 凭据；Linux/macOS 平台未验证。
 
 ## 首轮执行指令
 
