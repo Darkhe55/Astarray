@@ -42,6 +42,20 @@
 5. 预期连带影响：现有经生产路径读取 `.env`/敏感命名文件的测试与 fixture 需改为期望拒绝；需逐项核对 E2E-01 mock 流程与 TUI/CLI 命令测试；
 6. 门禁：`npm run check`、`vitest run --coverage`、`verify:security-coverage`（`sensitive-content-access-policy`、`read-suppression-ledger`、`policy-wrapper` 均在 22 个 ≥95% 分支清单内）。
 
-## 6. 本轮未做
+## 6. 实施进展（2026-09-21 第 2 轮：已实现，门禁未跑完 → 已回滚保留补丁）
+
+已按 §5 第 1、2 项实现接线（`PolicyWrapper` 新增两个可选装配项并透传进 builtins 上下文；`application-runtime` 构造 `SensitiveContentAccessPolicy` 与 `ReadSuppressionLedger` 并注入生产 `PolicyWrapper`，大小写能力探测复用同一次结果）。行为反例已写入 `tests/core/integration/sensitive-content-production-wiring.test.ts`（经 `AstarrayApplicationFacade` + 本地假 Provider 驱动真实工具循环）：
+
+- **红（接线前）**：两用例均失败——`.env` 内容被回填给 Provider；同一文件二次读取未被时间锁拒绝（日志 `.tmp/linux-port-01/red-sec-wiring.log`）。
+- **接线后**：ADR-0018 用例转绿；相邻 5 个套件（provider-tool-loop、policy-wrapper-gaps、read-suppression-and-guard、sensitive-content-access、e2e01-provider-write-probe）41/42 通过；唯一失败是**反例脚本自身缺陷**（两次迭代复用了同一个 tool call id `tc-1`，导致第二次调用未被真实执行），已改为按迭代生成唯一 id 并补了失败摘录，但**门禁复跑连续 4 次因审批通道 600s 停滞未能执行**。
+
+处置：为保持工作树干净（避免把未完成门禁的行为变更留给用户），已回滚生产代码与新增测试，并把实现保存为：
+
+- `.tmp/sec-wiring/wiring.patch`（`policy-wrapper.ts` + `application-runtime.ts` 的完整 diff，5169 字节）
+- `.tmp/sec-wiring/sensitive-content-production-wiring.test.ts.txt`（行为反例全文，含唯一 call id 修正）
+
+`.tmp/` 为 gitignore，不入库；下一步重放补丁后跑 `npm run check` + `vitest run --coverage` + `verify:security-coverage`，绿后提交并更新本节。
+
+## 7. 本轮未做
 
 未修改任何生产代码或测试期望；仅记录证据与修复方案。修复因涉及用户可见行为（原本可读的敏感文件将变为拒绝读取）与较大测试面，等待明确决定后作为独立检查点执行。
