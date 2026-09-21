@@ -3,7 +3,7 @@
 > 检查点：GUI-01-R-04b 的"从 tarball 隔离安装打开 GUI"在**提交路径与 SSE 契约**上的脚本化部分
 > 脚本：`scripts/verify-gui-sse-reconnect.mjs`（Node 标准库；真实 HTTP，无浏览器、无模型）
 > 产物：隔离安装的 `astarray-0.1.0.tgz`（sha256 `a45ae4dab9f3e99fa45ed75b16e98e262d112acb449a0c048fe5936b5fd96d1f`，215 文件）→ `.tmp/package-smoke/2026-09-19T15-18-50.235Z-903399c9-5a93-4213-b8d9-f2d9f76e85a7/node_modules/astarray/dist/cli.js`
-> 执行：`node scripts/verify-gui-sse-reconnect.mjs "<上述 cli.js 路径>"` → **20/20 通过，exit 0**
+> 执行：`node scripts/verify-gui-sse-reconnect.mjs "<上述 cli.js 路径>"` → **27/27 通过，exit 0**（其中 1 项为明确标注的缺陷观察）
 > 结论：提交路径与 SSE 首帧/重连的**服务端契约**已由安装产物级证据覆盖；浏览器自动重连与视觉/键盘/中文/缩放仍属人工项。
 
 ## 1. 实测结果
@@ -44,6 +44,20 @@
 | 20 | 三次被拒写入后再读取 | 通过：已持久化值未被改变（仍为 `5330`） |
 
 要点：预算写入经**公共入口 + 真实控制器**（revision 递增并由重新读取确认持久化），并具备三重保护——陈旧 revision `409`、参数校验 `400`、CSRF `403`；被拒写入不产生副作用。
+
+## 1d. 权限组切换与非法输入（追加 7 项，2026-09-19）
+
+| # | 检查 | 结果 |
+| --- | --- | --- |
+| 21 | `GET /settings` 返回当前权限组与可用列表 | 通过：`current` 为内置引用，`available` 为数组 |
+| 22 | 切换内置权限组 | 通过：`200 {"status":"switched","reference":{...}}` |
+| 23 | 重新读取 `/settings` | 通过：`permissionProfiles.current` 已变为目标组 |
+| 24 | 非法内置组（`not-a-builtin-profile`） | 通过：`400 {"error":"invalid-arguments"}` |
+| 25 | **缺陷观察**：不存在的自定义组 | **当前返回 `200 switched`**（非期望行为），详见 `docs/reports/GUI01_R_04B_DANGLING_PROFILE_SELECTION_FINDING_2026-09-19.md` |
+| 26 | 无 CSRF 的权限组切换 | 通过：`403 {"error":"csrf-required"}` |
+| 27 | 校验后恢复原权限组 | 通过：`200`（不遗留测试状态） |
+
+要点：内置组切换与三类拒绝（非法参数 400、CSRF 403、陈旧 revision 409 见 §1c）都符合预期；**唯一非期望行为**是第 25 项——公共入口接受并持久化不存在的自定义权限组，未见权限放大（解析侧 fail-closed），但报错码误用 `task-sequence-not-found`，已在 FINDING 文档记录并给出待授权的修复方案。
 
 ## 2. 关键观察（写进断言依据）
 

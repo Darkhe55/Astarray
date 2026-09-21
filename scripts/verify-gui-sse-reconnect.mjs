@@ -479,6 +479,107 @@ try {
       tokens: settingsAfterRejections.context.configuredMaximumGlobalContextTokenCount,
     }),
   );
+
+  // 场景补充：权限组切换（内置目标 + 非法参数 + 未知自定义 + CSRF），并恢复原状
+  const settingsForProfiles = JSON.parse(
+    (await httpRequest({ port, requestPath: "/settings" })).body,
+  );
+  const originalProfileReference = settingsForProfiles.permissionProfiles.current;
+  const builtinProfileIds = ["ponder", "assist", "devolve"];
+  const targetBuiltinProfileId = builtinProfileIds.find(
+    (profileId) => profileId !== originalProfileReference?.profileId,
+  );
+  recordCheck(
+    "GET /settings 返回当前权限组与可用列表",
+    typeof originalProfileReference?.profileId === "string" &&
+      Array.isArray(settingsForProfiles.permissionProfiles.available),
+    JSON.stringify({
+      current: originalProfileReference,
+      availableCount: settingsForProfiles.permissionProfiles.available.length,
+    }),
+  );
+
+  const switchResponse = await httpRequest({
+    port,
+    requestPath: "/commands/switch-permission-profile",
+    method: "POST",
+    headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
+    body: JSON.stringify({ kind: "builtin", profileId: targetBuiltinProfileId }),
+  });
+  recordCheck(
+    "切换内置权限组成功并回显目标引用",
+    switchResponse.statusCode === 200 &&
+      JSON.parse(switchResponse.body).reference?.profileId === targetBuiltinProfileId,
+    `status=${switchResponse.statusCode} body=${switchResponse.body.slice(0, 120)}`,
+  );
+
+  const settingsAfterSwitch = JSON.parse(
+    (await httpRequest({ port, requestPath: "/settings" })).body,
+  );
+  recordCheck(
+    "重新读取 /settings 反映切换后的权限组",
+    settingsAfterSwitch.permissionProfiles.current?.profileId === targetBuiltinProfileId,
+    JSON.stringify({ current: settingsAfterSwitch.permissionProfiles.current }),
+  );
+
+  const invalidProfileSwitch = await httpRequest({
+    port,
+    requestPath: "/commands/switch-permission-profile",
+    method: "POST",
+    headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
+    body: JSON.stringify({ kind: "builtin", profileId: "not-a-builtin-profile" }),
+  });
+  recordCheck(
+    "非法内置权限组被拒绝（400 invalid-arguments）",
+    invalidProfileSwitch.statusCode === 400 &&
+      JSON.parse(invalidProfileSwitch.body).error === "invalid-arguments",
+    `status=${invalidProfileSwitch.statusCode} body=${invalidProfileSwitch.body.slice(0, 100)}`,
+  );
+
+  const unknownCustomProfileSwitch = await httpRequest({
+    port,
+    requestPath: "/commands/switch-permission-profile",
+    method: "POST",
+    headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
+    body: JSON.stringify({ kind: "custom", profileId: "custom-does-not-exist" }),
+  });
+  recordCheck(
+    "缺陷观察：未知自定义权限组当前被接受（非期望行为，见 FINDING 文档）",
+    unknownCustomProfileSwitch.statusCode === 200 &&
+      JSON.parse(unknownCustomProfileSwitch.body).reference?.profileId ===
+        "custom-does-not-exist",
+    `status=${unknownCustomProfileSwitch.statusCode} body=${unknownCustomProfileSwitch.body.slice(0, 140)}`,
+  );
+
+  const profileSwitchWithoutCsrf = await httpRequest({
+    port,
+    requestPath: "/commands/switch-permission-profile",
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ kind: "builtin", profileId: targetBuiltinProfileId }),
+  });
+  recordCheck(
+    "无 CSRF 的权限组切换被拒绝（403 csrf-required）",
+    profileSwitchWithoutCsrf.statusCode === 403 &&
+      JSON.parse(profileSwitchWithoutCsrf.body).error === "csrf-required",
+    `status=${profileSwitchWithoutCsrf.statusCode}`,
+  );
+
+  const restoreProfileResponse = await httpRequest({
+    port,
+    requestPath: "/commands/switch-permission-profile",
+    method: "POST",
+    headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
+    body: JSON.stringify({
+      kind: originalProfileReference.kind,
+      profileId: originalProfileReference.profileId,
+    }),
+  });
+  recordCheck(
+    "校验后恢复原权限组（不遗留测试状态）",
+    restoreProfileResponse.statusCode === 200,
+    `status=${restoreProfileResponse.statusCode}`,
+  );
 } catch (error) {
   recordCheck(
     "GUI 提交与 SSE 契约校验执行未抛异常",
