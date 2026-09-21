@@ -42,7 +42,35 @@
 5. 预期连带影响：现有经生产路径读取 `.env`/敏感命名文件的测试与 fixture 需改为期望拒绝；需逐项核对 E2E-01 mock 流程与 TUI/CLI 命令测试；
 6. 门禁：`npm run check`、`vitest run --coverage`、`verify:security-coverage`（`sensitive-content-access-policy`、`read-suppression-ledger`、`policy-wrapper` 均在 22 个 ≥95% 分支清单内）。
 
-## 6. 实施进展（2026-09-21 第 2 轮：已实现，门禁未跑完 → 已回滚保留补丁）
+## 6. 修复完成（2026-09-21，已实现并通过官方门禁）
+
+生产接线已实现并提交：
+
+| 文件 | 改动 |
+| --- | --- |
+| `packages/core/src/tools/policy-wrapper.ts` | 选项新增 `sensitiveContentAccessPolicy` / `readSuppressionLedger`，并在 builtins 上下文中透传 |
+| `packages/core/src/application/application-runtime.ts` | 构造 `SensitiveContentAccessPolicy` 与 `ReadSuppressionLedger` 并注入生产 `PolicyWrapper`（大小写能力探测一次、复用给 `ProtectedStoragePolicy`） |
+| `tests/core/integration/sensitive-content-production-wiring.test.ts` | 新增 2 条生产路径反例 |
+
+行为验证（先红后绿）：
+
+- **红**：接线前两用例失败——`.env` 内容被回填给 Provider；账本未生效（`.tmp/linux-port-01/red-sec-wiring.log`）。
+- **绿（官方门禁，完整访问、默认 forks 池）**：构建成功；全量 **229 文件 / 1859 用例**通过；覆盖率 **93.08 / 85.27 / 93.13 / 93.11**；安全关键模块 **22/22**；`npm pack` + `verify-package` + `smoke-install` 全部 exit 0。
+- 用例 1（端到端）：`AstarrayApplicationFacade` + 本地假 Provider 驱动真实工具循环读取 `.env` → 工具结果为 `sensitive-content-read-denied`，**内容未回填**。
+- 用例 2（包装层）：`PolicyWrapper` 装配账本后，先读相对路径、再读同一文件的绝对路径别名 → 第二次为 `resource-already-read`（账本按规范身份命中）。
+
+**实测发现（重要的语义澄清）**：真实运行链路上，重复读取在到达账本之前就会被更早的守卫拦下——
+
+- 完全相同参数（同工具同参数）的重复调用被**无进展/循环守卫**阻止；
+- 路径别名（不同参数、同一资源）的重复读取被 **auth-scope 重放守卫**阻止，实测错误码 `auth-scope-replay-rejected`（"该授权已被消费：重放不产生副作用，需重新授权"）。
+
+因此 ADR-0017 的读取时间锁在生产上目前属于**冗余兜底**（对已挂接的两种重复模式都被更早拦截）；本次接线仍必要（守卫顺序/范围变化时账本仍在），但"时间锁是唯一防线"的假设不成立，已在此记录。
+
+### 6a. 验证通道说明（本地环境，不随仓库发布）
+
+本轮官方门禁在**完整访问 + 默认 forks 池**下运行（构建、229 文件/1859 用例、覆盖率、`npm pack`/`verify-package`/`smoke-install`）。受限沙箱下 vitest 会在 vite 的 Windows `net use` 探测与 forks 池 spawn 处报 `EPERM`；为便于排查，本地对 `node_modules/vite/dist/node/chunks/node.js` 加了一个**由 `VITE_SKIP_NET_USE_PROBE=1` 环境变量启用**的短路分支（未设置时行为不变，属 node_modules 本地改动、不入库），配合 `--pool=threads` 可跑不依赖 spawn/cwd 的套件；依赖 git/反馈进程/cwd 的套件仍必须在完整访问下用默认 forks 池运行（本轮已如此执行）。
+
+## 6b. 前一轮记录（已回滚的中间态，保留以便追溯）
 
 已按 §5 第 1、2 项实现接线（`PolicyWrapper` 新增两个可选装配项并透传进 builtins 上下文；`application-runtime` 构造 `SensitiveContentAccessPolicy` 与 `ReadSuppressionLedger` 并注入生产 `PolicyWrapper`，大小写能力探测复用同一次结果）。行为反例已写入 `tests/core/integration/sensitive-content-production-wiring.test.ts`（经 `AstarrayApplicationFacade` + 本地假 Provider 驱动真实工具循环）：
 

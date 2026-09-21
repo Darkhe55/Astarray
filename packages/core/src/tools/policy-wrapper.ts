@@ -17,6 +17,8 @@ import type { ToolRegistry } from "./registry.js";
 import type { WorkspaceBoundary } from "./workspace-boundary.js";
 import type { BackupDeletionAuthorizationController, BackupVault } from "./backup-vault.js";
 import type { ProtectedStoragePolicy } from "./protected-storage-policy.js";
+import type { SensitiveContentAccessPolicy } from "./sensitive-content-access-policy.js";
+import type { ReadSuppressionLedger } from "./read-suppression-ledger.js";
 import type { TaskSequenceStatusController } from "../orchestration/task-sequence-controllers.js";
 import type { LocalToolPolicyEngine } from "./local-tool-policy-engine.js";
 import { InstallationGateGuard } from "./installation-gate-guard.js";
@@ -55,6 +57,16 @@ export interface PolicyWrapperOptions {
   protectedStoragePolicy: ProtectedStoragePolicy;
   /** T05C：任务序列状态控制面（只读工具；未装配时该工具调用报错）。 */
   taskSequenceStatusController?: TaskSequenceStatusController | null;
+  /**
+   * T06C / ADR-0018：敏感内容禁读策略。装配后所有读通道在返回内容前执行
+   * 路径身份 + 内容 DLP 检查；**未装配即放行**，因此生产装配必须注入。
+   */
+  sensitiveContentAccessPolicy?: SensitiveContentAccessPolicy | null;
+  /**
+   * T07B / ADR-0017：重复读取时间锁账本。装配后同源重复读取未变化资源被拒；
+   * **未装配即不登记也不抑制**，因此生产装配必须注入。
+   */
+  readSuppressionLedger?: ReadSuppressionLedger | null;
   /**
    * T06B：Ponder 本地只读边界引擎（装配后 Ponder 可调用白名单只读工具，
    * 其余 fail-closed；未装配时 Ponder 一律 deny，与旧版一致）。
@@ -294,6 +306,9 @@ export class PolicyWrapper implements ToolPort {
           protectedStoragePolicy: this.options.protectedStoragePolicy,
           taskSequenceStatusController:
             this.options.taskSequenceStatusController ?? null,
+          sensitiveContentAccessPolicy:
+            this.options.sensitiveContentAccessPolicy ?? null,
+          readSuppressionLedger: this.options.readSuppressionLedger ?? null,
         });
         return {
           kind: "success",

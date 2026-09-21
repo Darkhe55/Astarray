@@ -33,6 +33,8 @@ import {
   BackupVault,
 } from "../tools/backup-vault.js";
 import { ProtectedStoragePolicy } from "../tools/protected-storage-policy.js";
+import { SensitiveContentAccessPolicy } from "../tools/sensitive-content-access-policy.js";
+import { ReadSuppressionLedger } from "../tools/read-suppression-ledger.js";
 import { AgentWorkArchiveStore } from "../orchestration/work-archive-store.js";
 import { InstallationOperationClassifier } from "../tools/installation-operation-classifier.js";
 import {
@@ -250,12 +252,17 @@ export async function createApplicationRuntime(
   const backupVault = new BackupVault({ baseDirectory: stateDirectory });
   await backupVault.initialize();
   const backupDeletionAuditLog = new BackupDeletionAuditLog(stateDirectory);
+  // LINUX-PORT-01：按实际文件系统能力决定大小写比较语义，不按平台猜测（一次探测，多处复用）
+  const fileSystemCaseSensitivity = await detectFileSystemCaseSensitivity(stateDirectory);
   // AR-01：受保护存储策略（普通工具不得访问保管库与审计存储）
   const protectedStoragePolicy = new ProtectedStoragePolicy({
     stateDirectoryPath: stateDirectory,
-    // LINUX-PORT-01：按实际文件系统能力决定大小写比较语义，不按平台猜测
-    fileSystemCaseSensitivity: await detectFileSystemCaseSensitivity(stateDirectory),
+    fileSystemCaseSensitivity,
   });
+  // T06C / ADR-0018：敏感内容禁读策略（生产装配必须注入，否则读取守卫放行）
+  const sensitiveContentAccessPolicy = new SensitiveContentAccessPolicy();
+  // T07B / ADR-0017：重复读取时间锁账本（生产装配必须注入，否则不登记也不抑制）
+  const readSuppressionLedger = new ReadSuppressionLedger();
   // S5：交互式授权通道（警告→暂停→等待用户决定）；非 TTY 环境 fail-closed
   const backupDeletionControlPort = options.backupDeletionControlPort ?? null;
   const backupDeletionController = new BackupDeletionAuthorizationController({
@@ -690,6 +697,8 @@ export async function createApplicationRuntime(
         deletionController: backupDeletionController,
         requestingAgentInstanceId: `worker:${task.id}`,
         protectedStoragePolicy,
+        sensitiveContentAccessPolicy,
+        readSuppressionLedger,
         installationGateGuard,
         taskExecutionId: `task-exec:${task.id}`,
         configurablePermissionPolicyEngine,
