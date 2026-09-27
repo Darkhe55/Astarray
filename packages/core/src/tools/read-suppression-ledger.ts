@@ -17,6 +17,8 @@ import { stat } from "node:fs/promises";
 
 import { DomainError } from "../core/errors.js";
 import { SensitiveResourceIdentityResolver } from "./sensitive-content-access-policy.js";
+import { platformDefaultCaseSensitivity } from "./cross-platform-path-canonicalization.js";
+import type { FileSystemCaseSensitivity } from "./cross-platform-path-canonicalization.js";
 
 /** 默认未变化读取抑制窗口（毫秒）。 */
 export const UNCHANGED_READ_SUPPRESSION_WINDOW_MILLISECONDS = 30_000;
@@ -28,6 +30,11 @@ export interface ReadSuppressionLedgerOptions {
   nowUnixMilliseconds?: () => number;
   /** 未变化读取抑制窗口（毫秒）。 */
   unchangedReadSuppressionWindowMilliseconds?: number;
+  /**
+   * 文件系统大小写能力；缺省平台默认。装配层应传入探测结果，避免在大小写不敏感的
+   * POSIX 文件系统（如 macOS 默认 APFS）上把大小写变体当成不同资源。
+   */
+  fileSystemCaseSensitivity?: FileSystemCaseSensitivity;
 }
 
 export interface ReadSuppressionEntry {
@@ -68,7 +75,17 @@ export interface RegisterReadInput extends QueryReadSuppressionInput {
  * 硬链接身份，返回同一资源的稳定标识。
  */
 export class CanonicalResourceIdentityResolver {
-  private readonly sensitiveIdentityResolver = new SensitiveResourceIdentityResolver();
+  private readonly sensitiveIdentityResolver: SensitiveResourceIdentityResolver;
+
+  /** 大小写语义由调用方注入（缺省平台默认）。 */
+  constructor(
+    options: { fileSystemCaseSensitivity?: FileSystemCaseSensitivity } = {},
+  ) {
+    this.sensitiveIdentityResolver = new SensitiveResourceIdentityResolver({
+      fileSystemCaseSensitivity:
+        options.fileSystemCaseSensitivity ?? platformDefaultCaseSensitivity(),
+    });
+  }
 
   /**
    * 解析规范身份；解析失败（非 ENOENT）时抛错（fail-closed）。
@@ -118,9 +135,13 @@ export class ReadSuppressionLedger {
   private readonly entries = new Map<string, ReadSuppressionEntry>();
   private readonly nowUnixMilliseconds: () => number;
   private readonly windowMilliseconds: number;
-  private readonly identityResolver = new CanonicalResourceIdentityResolver();
+  private readonly identityResolver: CanonicalResourceIdentityResolver;
 
   constructor(options: ReadSuppressionLedgerOptions = {}) {
+    this.identityResolver = new CanonicalResourceIdentityResolver({
+      fileSystemCaseSensitivity:
+        options.fileSystemCaseSensitivity ?? platformDefaultCaseSensitivity(),
+    });
     this.nowUnixMilliseconds =
       options.nowUnixMilliseconds ?? (() => Date.now());
     this.windowMilliseconds =

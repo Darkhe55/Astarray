@@ -15,7 +15,11 @@ import path from "node:path";
 import { lstat, realpath, stat } from "node:fs/promises";
 
 import { DomainError } from "../core/errors.js";
-import { unifyPathSeparators } from "./cross-platform-path-canonicalization.js";
+import {
+  foldPathCaseForComparison,
+  platformDefaultCaseSensitivity,
+} from "./cross-platform-path-canonicalization.js";
+import type { FileSystemCaseSensitivity } from "./cross-platform-path-canonicalization.js";
 
 /** 稳定拒绝码（ADR-0018）。 */
 export const SENSITIVE_CONTENT_READ_DENIED_ERROR_CODE =
@@ -42,6 +46,16 @@ export interface SensitiveResourceMatch {
  * 敏感资源身份解析器：用多种视图识别同一资源，防止链接/联接/硬链接/大小写伪装。
  */
 export class SensitiveResourceIdentityResolver {
+  private readonly caseSensitivity: FileSystemCaseSensitivity;
+
+  /** 大小写语义由调用方注入（缺省平台默认）；探测结果应来自 detectFileSystemCaseSensitivity。 */
+  constructor(
+    options: { fileSystemCaseSensitivity?: FileSystemCaseSensitivity } = {},
+  ) {
+    this.caseSensitivity =
+      options.fileSystemCaseSensitivity ?? platformDefaultCaseSensitivity();
+  }
+
   /**
    * 解析路径身份。路径不存在时 realPath/deviceInode 为 null（读取本身将失败）；
    * 其他解析错误（权限等）一律抛错（fail-closed，由调用方转为拒绝）。
@@ -75,7 +89,10 @@ export class SensitiveResourceIdentityResolver {
       canonicalPath,
       realPath,
       deviceInode,
-      normalizedCasePath: foldCase(canonicalPath),
+      normalizedCasePath: foldPathCaseForComparison(
+        canonicalPath,
+        this.caseSensitivity,
+      ),
       isLinkLike,
     };
   }
@@ -114,6 +131,11 @@ export interface SensitiveContentAccessPolicyOptions {
   additionalSensitivePatterns?: RegExp[];
   /** 名称正常但内容疑似凭据的本地可信 DLP 扫描器（可注入 mock）。 */
   dlpScanner?: SensitiveContentDlpScanner;
+  /**
+   * 文件系统大小写能力；缺省平台默认。装配层应传入 detectFileSystemCaseSensitivity
+   * 的探测结果，避免在 macOS 等大小写不敏感 POSIX 文件系统上漏判大小写变体。
+   */
+  fileSystemCaseSensitivity?: FileSystemCaseSensitivity;
 }
 
 /** 本地可信 DLP 扫描器契约（扫描器本身不是模型工具，结果不进入模型上下文）。 */
@@ -149,25 +171,20 @@ const DEFAULT_SENSITIVE_FILE_NAME_PATTERNS: Array<{
   { category: "capability-token", pattern: /astarray[\\/_-]?(capability|token|credential)/i },
 ];
 
-/**
- * 路径身份折叠：先跨平台统一分隔符（盘符/反斜杠形态与正斜杠形态指向同一资源），
- * 再仅在 Windows 大小写不敏感文件系统上折叠大小写；POSIX 保持大小写敏感，
- * 不做全局折叠（POSIX 上不同大小写是不同文件）。
- */
-function foldCase(filePath: string): string {
-  const unifiedPath = unifyPathSeparators(filePath);
-  return process.platform === "win32" ? unifiedPath.toLowerCase() : unifiedPath;
-}
-
 export class SensitiveContentAccessPolicy {
   private readonly additionalSensitivePaths: string[];
   private readonly additionalSensitivePatterns: RegExp[];
   private readonly dlpScanner: SensitiveContentDlpScanner;
+  private readonly caseSensitivity: FileSystemCaseSensitivity;
 
   constructor(options: SensitiveContentAccessPolicyOptions = {}) {
+    this.caseSensitivity =
+      options.fileSystemCaseSensitivity ?? platformDefaultCaseSensitivity();
     this.additionalSensitivePaths = (
       options.additionalSensitivePaths ?? []
-    ).map((filePath) => foldCase(path.resolve(filePath)));
+    ).map((filePath) =>
+      foldPathCaseForComparison(path.resolve(filePath), this.caseSensitivity),
+    );
     this.additionalSensitivePatterns = options.additionalSensitivePatterns ?? [];
     this.dlpScanner = options.dlpScanner ?? new DefaultDlpScanner();
   }
@@ -179,9 +196,9 @@ export class SensitiveContentAccessPolicy {
   async identifySensitiveResource(
     canonicalPath: string,
   ): Promise<{ category: string; identity: SensitiveResourceIdentity } | null> {
-    const identity = await new SensitiveResourceIdentityResolver().resolveIdentity(
-      canonicalPath,
-    );
+    const identity = await new SensitiveResourceIdentityResolver({
+      fileSystemCaseSensitivity: this.caseSensitivity,
+    }).resolveIdentity(canonicalPath);
     const match = this.matchSensitivePath(identity);
     if (match !== null) {
       return { category: match, identity };
@@ -191,7 +208,7 @@ export class SensitiveContentAccessPolicy {
 
   /** 只按路径/文件名匹配（不解析文件系统；供目录条目过滤等预检）。 */
   matchSensitivePathName(filePath: string): string | null {
-    const foldedPath = foldCase(filePath);
+    const foldedPath = foldPathCaseForComparison(filePath, this.caseSensitivity);
     const baseName = path.basename(foldedPath);
     if (
       this.additionalSensitivePaths.some(

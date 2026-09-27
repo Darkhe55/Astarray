@@ -126,6 +126,6 @@ node scripts/smoke-install.mjs
 ## 9. 未决与残留
 
 - `workspace-boundary.ts` 的 `findNearestExistingAncestor` 返回 `null` 分支（第 54/85 行）仍未被覆盖；返修前亦如此，不在本检查点范围。
-- `sensitive-content-access-policy.ts` 与 `read-suppression-ledger.ts` 的大小写折叠仍按平台（Windows 折叠 / POSIX 不折叠），未接入能力探测；macOS 默认大小写不敏感的场景可能出现误判，已记录为残留。
+- ~~`sensitive-content-access-policy.ts` 与 `read-suppression-ledger.ts` 的大小写折叠仍按平台（Windows 折叠 / POSIX 不折叠），未接入能力探测；macOS 默认大小写不敏感的场景可能出现误判，已记录为残留。~~ **已于 2026-09-22 收口**：两模块均新增 `fileSystemCaseSensitivity` 选项，装配层注入同一次探测结果；证据见 `docs/reports/SECURITY_WIRING_GAP_SENSITIVE_CONTENT_AND_READ_SUPPRESSION_FINDING_2026-09-21.md` §8。
 - `GitProcess` 的 `executablePath`/`executableArgumentsPrefix` 是受控装配/测试缝隙，只接受显式调用方传参，不接收模型输入。
 - Linux 平台状态仍为「未验证」：本文件不构成 Linux 平台验收证据，须待 §8 在同提交上的实测结果。

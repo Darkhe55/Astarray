@@ -44,6 +44,21 @@ export function unifyPathSeparators(targetPath: string): string {
   return targetPath.replace(/\\/g, "/");
 }
 
+/**
+ * 比较/身份键用的路径折叠：先统一分隔符，再按**实际文件系统能力**决定是否折叠大小写。
+ * 调用方必须显式给出能力（可来自 detectFileSystemCaseSensitivity 的探测结果），
+ * 不得按平台猜测——macOS 默认大小写不敏感，Windows 亦如此，其余 POSIX 通常敏感。
+ */
+export function foldPathCaseForComparison(
+  targetPath: string,
+  caseSensitivity: FileSystemCaseSensitivity,
+): string {
+  const unifiedPath = unifyPathSeparators(targetPath);
+  return caseSensitivity === "case-insensitive"
+    ? unifiedPath.toLowerCase()
+    : unifiedPath;
+}
+
 /** 平台默认大小写能力（探测不可用时的回退值）。 */
 export function platformDefaultCaseSensitivity(): FileSystemCaseSensitivity {
   return process.platform === "win32" ? "case-insensitive" : "case-sensitive";

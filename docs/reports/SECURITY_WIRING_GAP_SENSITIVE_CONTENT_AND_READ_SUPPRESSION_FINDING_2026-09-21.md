@@ -84,6 +84,19 @@
 
 `.tmp/` 为 gitignore，不入库；下一步重放补丁后跑 `npm run check` + `vitest run --coverage` + `verify:security-coverage`，绿后提交并更新本节。
 
-## 7. 本轮未做
+## 8. 后续收口（2026-09-22）：大小写能力与侦察端口
+
+§5 计划里的另外两项已一并完成：
+
+1. **大小写能力接入**：`SensitiveContentAccessPolicy`、`SensitiveResourceIdentityResolver`、`CanonicalResourceIdentityResolver`（进而 `ReadSuppressionLedger`）新增 `fileSystemCaseSensitivity` 选项（缺省平台默认，不改变既有语义）；`application-runtime` 把**同一次** `detectFileSystemCaseSensitivity` 探测结果注入三处，关闭 LINUX-PORT-01 记录的 macOS 残留（大小写不敏感 POSIX 文件系统上漏判大小写变体）。
+2. **侦察端口改用真实策略**：移除 `application-runtime` 里的内联启发式 `filePath.includes(".env") || filePath.includes("credential")`，改为复用 `sensitiveContentAccessPolicy.matchSensitivePathName`，消除"读取通道与侦察通道两套判定"。
+
+证据：
+
+- 新增 `tests/core/unit/security-case-capability-wiring.test.ts`（4 例：策略折叠 2 例 + 规范身份折叠 2 例）。**红**：实现前 3 失败 / 1 通过（其中 1 例在 Windows 上恰好被平台默认掩盖，另一例必然失败，跨平台互为见证）。**绿**：相关 7 个套件 **60 用例**通过。
+- 官方门禁（完整访问、默认 forks 池）：构建成功；全量 **230 文件 / 1863 用例**；覆盖率 **93.12 / 85.34 / 93.14 / 93.15**；安全关键模块 **22/22**。
+- 说明：`*.env` 等内置规则本身就是大小写不敏感正则，因此用例选用不受内置规则影响的文件名，单独验证"管理员扩展路径"的折叠语义。
+
+## 9. 本轮未做
 
 未修改任何生产代码或测试期望；仅记录证据与修复方案。修复因涉及用户可见行为（原本可读的敏感文件将变为拒绝读取）与较大测试面，等待明确决定后作为独立检查点执行。

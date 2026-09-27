@@ -260,9 +260,13 @@ export async function createApplicationRuntime(
     fileSystemCaseSensitivity,
   });
   // T06C / ADR-0018：敏感内容禁读策略（生产装配必须注入，否则读取守卫放行）
-  const sensitiveContentAccessPolicy = new SensitiveContentAccessPolicy();
+  const sensitiveContentAccessPolicy = new SensitiveContentAccessPolicy({
+    fileSystemCaseSensitivity,
+  });
   // T07B / ADR-0017：重复读取时间锁账本（生产装配必须注入，否则不登记也不抑制）
-  const readSuppressionLedger = new ReadSuppressionLedger();
+  const readSuppressionLedger = new ReadSuppressionLedger({
+    fileSystemCaseSensitivity,
+  });
   // S5：交互式授权通道（警告→暂停→等待用户决定）；非 TTY 环境 fail-closed
   const backupDeletionControlPort = options.backupDeletionControlPort ?? null;
   const backupDeletionController = new BackupDeletionAuthorizationController({
@@ -479,11 +483,10 @@ export async function createApplicationRuntime(
   });
   const reconnaissanceController = new ProjectReconnaissanceController({
     digestStore: reconnaissanceDigestStore,
+    // T06C/ADR-0018：复用真实敏感内容策略，避免侦察通道与读取通道出现两套判定
     sensitivePathMatchPort: {
       matchSensitivePathName: (filePath) =>
-        filePath.includes(".env") || filePath.includes("credential")
-          ? "sensitive-path"
-          : null,
+        sensitiveContentAccessPolicy.matchSensitivePathName(filePath),
     },
     sourceAuthenticationPort: {
       // 按侦察摘要的扫描范围（mission）校验来源，不再写死 CLI 会话作用域。
