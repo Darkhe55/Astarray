@@ -19,6 +19,9 @@ import type { BackupDeletionAuthorizationController, BackupVault } from "./backu
 import type { ProtectedStoragePolicy } from "./protected-storage-policy.js";
 import type { SensitiveContentAccessPolicy } from "./sensitive-content-access-policy.js";
 import type { ReadSuppressionLedger } from "./read-suppression-ledger.js";
+import type { EvidenceSearchAgentPort } from "./evidence-search-agent-port.js";
+import type { EvidenceQueryGuard } from "./evidence-search-agent-port.js";
+import type { EvidenceBundleBuilder } from "./evidence-bundle-builder.js";
 import type { TaskSequenceStatusController } from "../orchestration/task-sequence-controllers.js";
 import type { LocalToolPolicyEngine } from "./local-tool-policy-engine.js";
 import { InstallationGateGuard } from "./installation-gate-guard.js";
@@ -67,6 +70,17 @@ export interface PolicyWrapperOptions {
    * **未装配即不登记也不抑制**，因此生产装配必须注入。
    */
   readSuppressionLedger?: ReadSuppressionLedger | null;
+  /**
+   * T06D / ADR-0016：证据包构建器。**未装配时 factVerification 的
+   * build-evidence-bundle 直接失败**，因此生产装配必须注入。
+   */
+  evidenceBundleBuilder?: EvidenceBundleBuilder | null;
+  /** T06D：资料搜索代理（离线环境可缺省；缺省时 search-sources 明确报未装配）。 */
+  evidenceSearchAgent?: EvidenceSearchAgentPort | null;
+  /** T06D：证据查询防护（缺省时构建器用内置默认）。 */
+  evidenceQueryGuard?: EvidenceQueryGuard | null;
+  /** T06D：证据主张标识（缺省 "default-claim"）。 */
+  factVerificationClaimIdentifier?: string | null;
   /**
    * T06B：Ponder 本地只读边界引擎（装配后 Ponder 可调用白名单只读工具，
    * 其余 fail-closed；未装配时 Ponder 一律 deny，与旧版一致）。
@@ -311,6 +325,12 @@ export class PolicyWrapper implements ToolPort {
           readSuppressionLedger: this.options.readSuppressionLedger ?? null,
           localToolPolicyEngine: this.options.localToolPolicyEngine ?? null,
           ponderGitRepositoryPath: this.options.ponderGitRepositoryPath ?? null,
+          taskExecutionId: this.options.taskExecutionId ?? null,
+          evidenceBundleBuilder: this.options.evidenceBundleBuilder ?? null,
+          evidenceSearchAgent: this.options.evidenceSearchAgent ?? null,
+          evidenceQueryGuard: this.options.evidenceQueryGuard ?? null,
+          factVerificationClaimIdentifier:
+            this.options.factVerificationClaimIdentifier ?? null,
         });
         return {
           kind: "success",

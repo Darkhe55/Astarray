@@ -35,6 +35,7 @@ import {
 import { ProtectedStoragePolicy } from "../tools/protected-storage-policy.js";
 import { SensitiveContentAccessPolicy } from "../tools/sensitive-content-access-policy.js";
 import { LocalToolPolicyEngine } from "../tools/local-tool-policy-engine.js";
+import { EvidenceBundleBuilder } from "../tools/evidence-bundle-builder.js";
 import { ReadSuppressionLedger } from "../tools/read-suppression-ledger.js";
 import { AgentWorkArchiveStore } from "../orchestration/work-archive-store.js";
 import { InstallationOperationClassifier } from "../tools/installation-operation-classifier.js";
@@ -265,6 +266,8 @@ export async function createApplicationRuntime(
     workspaceBoundary,
     protectedStoragePolicy,
   });
+  // T06D / ADR-0016：证据包构建器（无外部依赖；未装配会让 build-evidence-bundle 恒失败）
+  const evidenceBundleBuilder = new EvidenceBundleBuilder();
   const permissionDecider = new PermissionDecider(
     modeMachine,
     sessionManager,
@@ -722,6 +725,8 @@ export async function createApplicationRuntime(
         readSuppressionLedger,
         localToolPolicyEngine,
         ponderGitRepositoryPath: workspaceBoundary.getWorkspaceRoot(),
+        evidenceBundleBuilder,
+        factVerificationClaimIdentifier: `task-exec:${task.id}`,
         installationGateGuard,
         taskExecutionId: `task-exec:${task.id}`,
         configurablePermissionPolicyEngine,
