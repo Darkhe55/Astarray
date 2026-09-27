@@ -4,6 +4,7 @@
  * 崩溃重启后重放未确认消息；连续崩溃达到上限后停止并报告不可用。
  */
 import { fork, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -48,7 +49,7 @@ export class FeedbackProcessSupervisor {
 
   constructor(private readonly options: FeedbackProcessSupervisorOptions) {
     this.modulePath =
-      options.modulePath ?? defaultFeedbackProcessModulePath();
+      options.modulePath ?? resolveFeedbackProcessEntryPath();
     this.shutdownGracePeriodMilliseconds =
       options.shutdownGracePeriodMilliseconds ??
       SHUTDOWN_GRACE_PERIOD_MILLISECONDS_DEFAULT;
@@ -276,10 +277,23 @@ async function waitForProcessExit(
   });
 }
 
-function defaultFeedbackProcessModulePath(): string {
-  const currentModulePath = fileURLToPath(import.meta.url);
-  return path.join(
-    path.dirname(currentModulePath),
-    "feedback-process-entry.js",
+/**
+ * T04：解析反馈进程入口路径。
+ * 源码运行（vitest/tsx）时模块目录下没有编译产物，必须回退到包 dist 入口，
+ * 否则会 fork 一个不存在的文件（此前 SDK 路径因此无法启用独立反馈进程）。
+ */
+export function resolveFeedbackProcessEntryPath(): string {
+  const candidatePaths = [
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "feedback-process-entry.js"),
+    path.join(process.cwd(), "dist", "feedback-process-entry.js"),
+  ];
+  for (const candidatePath of candidatePaths) {
+    if (existsSync(candidatePath)) {
+      return candidatePath;
+    }
+  }
+  return (
+    candidatePaths[0] ??
+    path.join(process.cwd(), "dist", "feedback-process-entry.js")
   );
 }

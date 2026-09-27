@@ -609,6 +609,13 @@ export interface PublicApplicationOptions {
   maximumLoopIterations?: number;
   /** 权威状态轮询间隔（毫秒）；测试可注入更小值。 */
   statusPollIntervalMilliseconds?: number;
+  /**
+   * T04：是否启用独立反馈进程。缺省 false（嵌入方自担进程拓扑；mock 测试保持离线）；
+   * 产品入口（CLI run / GUI）应在真实 Provider 运行时显式开启，禁止退化为进程内定时器。
+   */
+  useFeedbackProcess?: boolean;
+  /** T04：反馈进程入口模块路径；缺省按包内 dist 入口自动解析。 */
+  feedbackProcessModulePath?: string | null;
 }
 
 /** 公开 Provider 配置：只含受保护凭据引用与允许列表，不含秘密内容。 */
@@ -704,13 +711,13 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       concurrency: options.concurrency ?? 1,
       failureThreshold: options.failureThreshold ?? 1,
       maxLoopIterations: options.maximumLoopIterations ?? 8,
-      useFeedbackProcess: false,
+      useFeedbackProcess: options.useFeedbackProcess ?? false,
       streamOutput: options.streamOutput ?? (() => {}),
       backupDeletionControlPort: null,
       installationUserPort: null,
       authenticatedUserId: "sdk-user",
       mainAgentInstanceId: "main-agent-sdk",
-      feedbackProcessModulePath: null,
+      feedbackProcessModulePath: options.feedbackProcessModulePath ?? null,
       mainRuntimeFactory,
       workerRuntimeFactory,
       requireCompletionControlEvent: runtimeKind === "provider",
@@ -731,6 +738,20 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     this.statusPollIntervalMilliseconds =
       options.statusPollIntervalMilliseconds ?? 25;
     this.stateDirectory = options.stateDirectory ?? null;
+  }
+
+  /**
+   * T04/T07：公开诊断面（只读、无秘密）。
+   * 供产品入口与测试确认反馈传输是否为独立进程、以及是否强制完成控制事件。
+   */
+  getRuntimeDiagnostics(): {
+    isFeedbackProcessIndependent: boolean;
+    requiresCompletionControlEvent: boolean;
+  } {
+    return {
+      isFeedbackProcessIndependent: this.runtime.isFeedbackProcessIndependent,
+      requiresCompletionControlEvent: this.runtime.requiresCompletionControlEvent,
+    };
   }
 
   private readonly stateDirectory: string | null;

@@ -129,6 +129,10 @@ export interface ApplicationRuntime {
   taskSequenceManageController: TaskSequenceManageController;
   /** T07D-07：独立工作助手纵向闭环（场景 A 只读分析 / 场景 B 小型代码任务）。 */
   standaloneWorkflowRunner: StandaloneWorkflowRunner;
+  /** T04：反馈传输是否为独立进程（false = 进程内 noop），供产品入口/诊断读取。 */
+  isFeedbackProcessIndependent: boolean;
+  /** T07：是否强制要求版本化完成控制事件（Provider 产品运行时为 true）。 */
+  requiresCompletionControlEvent: boolean;
   /** 权威执行结果摘要（来自 Agent 工作存档的 result 条目；T07D-R1-03）。 */
   readMissionResultSummaries: (
     missionId: string,
@@ -837,6 +841,8 @@ export async function createApplicationRuntime(
     taskStore,
     supervisor,
     feedbackClient,
+    isFeedbackProcessIndependent: feedbackClient !== null,
+    requiresCompletionControlEvent: options.requireCompletionControlEvent ?? false,
     missionLeaseStore,
     processInstanceId,
     registeredAgentDirectory,
