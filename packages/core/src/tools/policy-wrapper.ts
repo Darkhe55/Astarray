@@ -309,6 +309,8 @@ export class PolicyWrapper implements ToolPort {
           sensitiveContentAccessPolicy:
             this.options.sensitiveContentAccessPolicy ?? null,
           readSuppressionLedger: this.options.readSuppressionLedger ?? null,
+          localToolPolicyEngine: this.options.localToolPolicyEngine ?? null,
+          ponderGitRepositoryPath: this.options.ponderGitRepositoryPath ?? null,
         });
         return {
           kind: "success",

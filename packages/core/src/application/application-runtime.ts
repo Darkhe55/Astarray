@@ -34,6 +34,7 @@ import {
 } from "../tools/backup-vault.js";
 import { ProtectedStoragePolicy } from "../tools/protected-storage-policy.js";
 import { SensitiveContentAccessPolicy } from "../tools/sensitive-content-access-policy.js";
+import { LocalToolPolicyEngine } from "../tools/local-tool-policy-engine.js";
 import { ReadSuppressionLedger } from "../tools/read-suppression-ledger.js";
 import { AgentWorkArchiveStore } from "../orchestration/work-archive-store.js";
 import { InstallationOperationClassifier } from "../tools/installation-operation-classifier.js";
@@ -223,7 +224,6 @@ export async function createApplicationRuntime(
   const missionManager = new MissionManager(taskStore, stateDirectory);
   const modeMachine = new ModeMachine(options.mode);
   const sessionManager = new SessionAuthorizationManager();
-  const permissionDecider = new PermissionDecider(modeMachine, sessionManager);
   const registry = new ToolRegistry();
   registry.registerMany(BUILTIN_TOOL_DESCRIPTORS);
   // AUTH-SCOPE-03：范围判定只使用显式登记的工程根，不再隐式读取 cwd。
@@ -259,6 +259,24 @@ export async function createApplicationRuntime(
     stateDirectoryPath: stateDirectory,
     fileSystemCaseSensitivity,
   });
+  // T06B / ADR-0014：本地只读工具策略引擎（searchProjectText / gitReadonlyView 执行前校验；
+  // 同时作为 Ponder 只读白名单判定器注入权限裁决，避免"工具已注册却永远失败"）。
+  const localToolPolicyEngine = new LocalToolPolicyEngine({
+    workspaceBoundary,
+    protectedStoragePolicy,
+  });
+  const permissionDecider = new PermissionDecider(
+    modeMachine,
+    sessionManager,
+    async (decisionInput) => {
+      try {
+        await localToolPolicyEngine.assertPonderToolExecutionAllowed(decisionInput);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  );
   // T06C / ADR-0018：敏感内容禁读策略（生产装配必须注入，否则读取守卫放行）
   const sensitiveContentAccessPolicy = new SensitiveContentAccessPolicy({
     fileSystemCaseSensitivity,
@@ -702,6 +720,8 @@ export async function createApplicationRuntime(
         protectedStoragePolicy,
         sensitiveContentAccessPolicy,
         readSuppressionLedger,
+        localToolPolicyEngine,
+        ponderGitRepositoryPath: workspaceBoundary.getWorkspaceRoot(),
         installationGateGuard,
         taskExecutionId: `task-exec:${task.id}`,
         configurablePermissionPolicyEngine,
