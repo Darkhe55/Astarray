@@ -58,6 +58,36 @@ describe("run-command 剩余分支", () => {
     expect(exitCode).toBe(0);
   }, 60_000);
 
+  it("Ponder：run 输出问答 JSON（ponder/done/answer），不虚报受理也不崩溃", async () => {
+    const chunks: string[] = [];
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      chunks.push(String(chunk));
+      return true;
+    });
+    const exitCode = await executeRunCommand({
+      prompt: "只读问题",
+      mode: "ponder",
+      runtime: "mock",
+      isJsonOutput: true,
+      stateDirectory,
+    });
+    stdoutSpy.mockRestore();
+    expect(exitCode).toBe(0);
+    const payload = JSON.parse(chunks.join("")) as {
+      mode?: string;
+      status?: string;
+      answer?: string;
+      missionId?: string;
+    };
+    expect(payload.mode).toBe("ponder");
+    expect(payload.status).toBe("done");
+    expect(typeof payload.answer).toBe("string");
+    // answer 必须是流式正文，而不是 handleUserMessage 的内部哨兵值
+    expect(payload.answer).not.toBe("ponder");
+    expect(payload.answer?.length ?? 0).toBeGreaterThan(0);
+    expect(payload.missionId).toBeUndefined();
+  }, 60_000);
+
   it("bootstrap useFeedbackProcess:true：启动独立反馈进程并干净关闭（102-108）", async () => {
     const bootstrap = await bootstrapCli({
       mode: "assist",

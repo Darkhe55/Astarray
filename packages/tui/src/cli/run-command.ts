@@ -99,6 +99,9 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
     };
   }
 
+  // Ponder 模式下 handleUserMessage 返回的是内部哨兵值（不含正文），正文经 streamOutput 送达；
+  // 这里同时留档，供 JSON 输出返回真实回答。
+  const streamedAnswerChunks: string[] = [];
   const application = await AstarrayApplicationFacade.create({
     stateDirectory: options.stateDirectory,
     mode: runConfig.mode,
@@ -108,11 +111,24 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
     maximumLoopIterations: 8,
     statusPollIntervalMilliseconds: 25,
     streamOutput: (_missionIdentifier, text) => {
+      streamedAnswerChunks.push(text);
       logToStderr(text);
     },
   });
   try {
     application.createSession({ sessionId: "cli-run", mode: runConfig.mode });
+    if (runConfig.mode === "ponder") {
+      // Ponder 为本地只读问答（ADR-0014）：不产生 mission，直接返回回答；
+      // 不虚报"已受理"，也不再进入任务轮询（此前会抛未处理的 mission-not-found）。
+      await application.handleUserMessage(options.prompt);
+      printJson({
+        mode: "ponder",
+        status: "done",
+        answer: streamedAnswerChunks.join(""),
+        prompt: options.prompt,
+      });
+      return EXIT_CODES.SUCCESS;
+    }
     const accepted = await application.submitTask({
       sessionId: "cli-run",
       taskIdentifier: "cli-task",

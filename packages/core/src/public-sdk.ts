@@ -2153,6 +2153,15 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       }
       return this.toTaskResult(input.taskIdentifier, existing);
     }
+    // Ponder 是本地只读问答（ADR-0014）：不产生 mission。此前这里把 handleUserMessage
+    // 返回的字面量 "ponder" 当成 missionIdentifier 并回 accepted，导致调用方随后
+    // queryTask 抛 mission-not-found——属虚报受理，改为明确拒绝并指向直接问答入口。
+    if (this.runtime.controller.getCurrentMode() === "ponder") {
+      throw new PublicApplicationError(
+        "invalid-mode-transition",
+        "Ponder 模式为本地只读问答，不产生 mission；请使用 handleUserMessage 获取直接回答",
+      );
+    }
     let missionIdentifier: string;
     try {
       missionIdentifier = await this.runtime.controller.handleUserMessage(input.prompt);
