@@ -34,7 +34,10 @@ import {
 } from "../tools/backup-vault.js";
 import { ProtectedStoragePolicy } from "../tools/protected-storage-policy.js";
 import { SensitiveContentAccessPolicy } from "../tools/sensitive-content-access-policy.js";
-import { LocalToolPolicyEngine } from "../tools/local-tool-policy-engine.js";
+import {
+  LocalToolPolicyEngine,
+  PONDER_READONLY_TOOL_NAMES,
+} from "../tools/local-tool-policy-engine.js";
 import { EvidenceBundleBuilder } from "../tools/evidence-bundle-builder.js";
 import { ReadSuppressionLedger } from "../tools/read-suppression-ledger.js";
 import { AgentWorkArchiveStore } from "../orchestration/work-archive-store.js";
@@ -654,6 +657,45 @@ export async function createApplicationRuntime(
     baseDirectory: stateDirectory,
   });
 
+  // T06B/ADR-0014：策略包装器（worker 任务端口与思索模式只读端口共用同一套安全端口）。
+  const createPolicyWrapperForAgent = (input: {
+    agentInstanceId: string;
+    allowedToolNames: Set<string>;
+    factVerificationClaimIdentifier: string | null;
+    taskExecutionId: string | null;
+    /** 可配置权限组仅适用于次级 Agent；思索模式白名单由执行层（本地策略引擎）覆盖。 */
+    useConfigurablePermissionProfileEngine: boolean;
+  }): PolicyWrapper =>
+    new PolicyWrapper({
+      permissionDecider,
+      registry,
+      workspaceBoundary,
+      temporaryDirectoryPath,
+      workerAllowedToolNames: input.allowedToolNames,
+      nowUnixSeconds: () => Math.floor(Date.now() / 1000),
+      getCurrentMode: () => modeMachine.getCurrentMode(),
+      auditSink: undefined,
+      backupServicePort: backupVault,
+      vault: backupVault,
+      deletionController: backupDeletionController,
+      requestingAgentInstanceId: input.agentInstanceId,
+      protectedStoragePolicy,
+      sensitiveContentAccessPolicy,
+      readSuppressionLedger,
+      localToolPolicyEngine,
+      ponderGitRepositoryPath: workspaceBoundary.getWorkspaceRoot(),
+      evidenceBundleBuilder,
+      factVerificationClaimIdentifier: input.factVerificationClaimIdentifier,
+      installationGateGuard,
+      taskExecutionId: input.taskExecutionId,
+      configurablePermissionPolicyEngine: input.useConfigurablePermissionProfileEngine
+        ? configurablePermissionPolicyEngine
+        : null,
+      currentPermissionProfileReference: input.useConfigurablePermissionProfileEngine
+        ? currentPermissionProfileReference
+        : null,
+    });
+
   const controller = new MainController({
     modeMachine,
     sessionManager,
@@ -707,33 +749,39 @@ export async function createApplicationRuntime(
         ])),
     buildWorkerToolPort: (task: TaskDependencyNode, allowedToolNames: Set<string>) =>
       new ScopeGatedToolPort(
-        new PolicyWrapper({
-        permissionDecider,
-        registry,
-        workspaceBoundary,
-        temporaryDirectoryPath,
-        workerAllowedToolNames: allowedToolNames,
-        nowUnixSeconds: () => Math.floor(Date.now() / 1000),
-        getCurrentMode: () => modeMachine.getCurrentMode(),
-        auditSink: undefined,
-        backupServicePort: backupVault,
-        vault: backupVault,
-        deletionController: backupDeletionController,
-        requestingAgentInstanceId: `worker:${task.id}`,
-        protectedStoragePolicy,
-        sensitiveContentAccessPolicy,
-        readSuppressionLedger,
-        localToolPolicyEngine,
-        ponderGitRepositoryPath: workspaceBoundary.getWorkspaceRoot(),
-        evidenceBundleBuilder,
-        factVerificationClaimIdentifier: `task-exec:${task.id}`,
-        installationGateGuard,
-        taskExecutionId: `task-exec:${task.id}`,
-        configurablePermissionPolicyEngine,
-        currentPermissionProfileReference,
+        createPolicyWrapperForAgent({
+          agentInstanceId: `worker:${task.id}`,
+          allowedToolNames,
+          factVerificationClaimIdentifier: `task-exec:${task.id}`,
+          taskExecutionId: `task-exec:${task.id}`,
+          useConfigurablePermissionProfileEngine: true,
         }),
         scopeAuthorizationGate,
       ),
+    // T06B/ADR-0014：思索模式本地只读白名单（查看项目文件、检索文本、查询只读任务状态）。
+    // 只暴露白名单工具描述符；权限裁决与策略引擎在派发与真实执行两个时点 fail-closed。
+    ponderReadonlyToolingFactory: (agentInstanceId: string) => {
+      const allowedToolNames = new Set(
+        PONDER_READONLY_TOOL_NAMES.filter(
+          (toolName) => registry.getDescriptor(toolName) !== undefined,
+        ),
+      );
+      const toolDescriptors = [...allowedToolNames]
+        .map((toolName) => registry.getDescriptor(toolName))
+        .filter(
+          (descriptor): descriptor is ToolDescriptor => descriptor !== undefined,
+        );
+      return {
+        toolDescriptors,
+        toolPort: createPolicyWrapperForAgent({
+          agentInstanceId,
+          allowedToolNames,
+          factVerificationClaimIdentifier: null,
+          taskExecutionId: null,
+          useConfigurablePermissionProfileEngine: false,
+        }),
+      };
+    },
     buildPermissionExplanation: (toolName: string) =>
       `执行任务需要调用工具 ${toolName}`,
     resolveToolDescriptors: (task: TaskDependencyNode): ToolDescriptor[] =>

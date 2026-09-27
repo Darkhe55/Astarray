@@ -7,6 +7,7 @@
 import { randomUUID } from "node:crypto";
 
 import { DomainError } from "../core/errors.js";
+import { runToolLoop } from "../runtime/tool-loop.js";
 
 import type {
   AgentMode,
@@ -87,6 +88,14 @@ export interface MainControllerOptions {
     agentInstanceId: string,
     task: TaskDependencyNode,
   ) => AgentRuntime;
+  /**
+   * T06B/ADR-0014：思索模式本地只读白名单工具（描述符 + 端口）。
+   * 未装配时思索模式退化为纯问答、不暴露任何工具。
+   */
+  ponderReadonlyToolingFactory?: (agentInstanceId: string) => {
+    toolDescriptors: ToolDescriptor[];
+    toolPort: ToolPort;
+  };
   /** Worker 工具端口工厂：按任务工具子集包装权限策略。 */
   buildWorkerToolPort: (
     task: TaskDependencyNode,
@@ -606,17 +615,33 @@ export class MainController {
   private async respondInPonderMode(message: string): Promise<void> {
     const agentInstanceId = `main:ponder:${randomUUID().slice(0, 8)}`;
     const runtime = this.options.mainRuntimeFactory(agentInstanceId);
-    for await (const event of runtime.run(
-      {
-        missionId: null,
-        agentId: agentInstanceId,
-        systemPrompt: "你是主 Agent（Ponder 模式）：纯问答，不调用任何工具。",
-        userPrompt: message,
-        availableToolDescriptors: [],
-        maxLoopIterations: 1,
-      },
-      new AbortController().signal,
-    )) {
+    // T06B/ADR-0014：思索模式允许本地只读白名单工具（查看项目文件、检索文本、只读任务状态），
+    // 其余工具不暴露；即便模型凭空构造调用，也由本地权限裁决与策略引擎 fail-closed。
+    const ponderTooling =
+      this.options.ponderReadonlyToolingFactory?.(agentInstanceId) ?? null;
+    const ponderAgentRunInput = {
+      missionId: null,
+      agentId: agentInstanceId,
+      systemPrompt:
+        "你是主 Agent（思索模式）：可调用本地只读白名单工具查看项目文件、检索文本与查询只读任务状态；" +
+        "禁止任何写入、删改、进程执行、安装、网络、备份或副作用不明确的工具；" +
+        "禁止声称已执行实际未执行的操作。",
+      userPrompt: message,
+      availableToolDescriptors: ponderTooling?.toolDescriptors ?? [],
+      maxLoopIterations:
+        ponderTooling === null ? 1 : Math.max(2, this.options.maxLoopIterations),
+    };
+    const cancellationController = new AbortController();
+    const events =
+      ponderTooling === null
+        ? runtime.run(ponderAgentRunInput, cancellationController.signal)
+        : await runToolLoop(ponderAgentRunInput, {
+            runtime,
+            toolPort: ponderTooling.toolPort,
+            maxLoopIterations: ponderAgentRunInput.maxLoopIterations,
+            cancellationSignal: cancellationController.signal,
+          });
+    for await (const event of events) {
       if (event.kind === "textDelta") {
         this.options.streamOutput(null, event.deltaText);
       }
