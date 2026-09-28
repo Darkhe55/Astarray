@@ -126,6 +126,8 @@ async function createProviderApplication(endpoint: string) {
     stateDirectory,
     mode: "assist",
     runtime: "provider",
+    // 测试显式隔离：默认路径集成验收见 tests/core/integration/feedback-process-default-path.test.ts
+    useFeedbackProcess: false,
     providerRuntimeRegistry: registry,
     provider: {
       providerId: OPENAI_COMPATIBLE_PROVIDER_ID,

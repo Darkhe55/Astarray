@@ -9,6 +9,25 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
+// ─── Provider 运行时公开入口 ───
+// SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
+// 否则 runtime: "provider" 在打包产物上不可用。
+export {
+  PROVIDER_RUNTIME_CAPABILITIES,
+  ProviderConfigurationError,
+  ProviderRuntimeRegistry,
+  type ProviderRuntimeCapability,
+  type ProviderRuntimeConfig,
+  type ProviderRuntimeRegistration,
+  type ResolvedProviderRuntime,
+} from "./runtime/provider-runtime-registry.js";
+export {
+  OPENAI_COMPATIBLE_PROVIDER_ID,
+  OPENAI_COMPATIBLE_PROTOCOL,
+  OPENAI_COMPATIBLE_PROTOCOL_VERSION,
+  createOpenAiCompatibleProviderRegistration,
+} from "./runtime/openai-compatible-provider-registration.js";
+
 import type { AgentMode, AgentRuntime, TaskDependencyNode } from "./core/types.js";
 import type { MainController } from "./orchestration/main-controller.js";
 import type { PermissionProfileReference } from "./tools/permission-profile-store.js";
@@ -711,7 +730,9 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       concurrency: options.concurrency ?? 1,
       failureThreshold: options.failureThreshold ?? 1,
       maxLoopIterations: options.maximumLoopIterations ?? 8,
-      useFeedbackProcess: options.useFeedbackProcess ?? false,
+      // T04：正式任务运行路径（真实 Provider）默认启用独立反馈进程；
+      // mock 离线路径保持进程内，嵌入方可用 useFeedbackProcess 显式覆盖。
+      useFeedbackProcess: options.useFeedbackProcess ?? runtimeKind === "provider",
       streamOutput: options.streamOutput ?? (() => {}),
       backupDeletionControlPort: null,
       installationUserPort: null,

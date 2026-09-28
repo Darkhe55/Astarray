@@ -104,6 +104,8 @@ describe("T09A-R1-01：产品请求中的上下文装配", () => {
       stateDirectory,
       mode: "assist",
       runtime: "provider",
+      // 测试显式隔离：默认路径集成验收见 tests/core/integration/feedback-process-default-path.test.ts
+      useFeedbackProcess: false,
       providerRuntimeRegistry: registry,
       provider: {
         providerId: OPENAI_COMPATIBLE_PROVIDER_ID,
