@@ -32,14 +32,20 @@ feedbackProcessModulePath: null,
   - 默认（mock）诊断如实报告 `isFeedbackProcessIndependent === false`；
   - 入口解析返回绝对路径且 basename 为 `feedback-process-entry.js`（dist 回退生效）；
   - `tsc --noEmit` = 0、`eslint .` = 0（全量）。
-- **待官方门禁复验**：第 2 例"显式启用 → 独立进程"需要 fork（受限沙箱 `spawn EPERM`）。该用例与既有 TUI `bootstrap useFeedbackProcess:true` 用例机制相同（同样的解析 + fork 路径），在完整访问下应当通过；本轮因审批通道停滞未能复跑。
+- **官方门禁（完整访问 + 默认 forks 池）已复验**：构建成功；全量 **235 文件 / 1877 用例**通过，其中第 2 例"显式启用 → 独立进程"在完整访问下通过（~5.2s，含 fork + 握手）。
 - 受限沙箱内 threads 全量：**213/235 文件通过**，失败集合为已知的 spawn/cwd 依赖套件（git、反馈进程、CLI 子进程、e2e01），另有两处环境性失败（`tool-registry` 的 Windows 临时目录 `ENOTEMPTY`、`e2e01-vertical-rework` 超时），与本改动无关。
 
-## 4. 本轮**刻意未做**（需用户裁决 + 可验证窗口）
+## 4. 后续进展（同日第二轮）：CLI 产品入口已开启 + 子进程 stdout 隔离
 
-1. **默认值**：未把 `useFeedbackProcess` 在 SDK 缺省改为 true。原因：会改变所有 provider 集成测试的进程拓扑（`tests/**` 有 8 处 `runtime: "provider"` 的 SDK 用法），且本轮无法用官方门禁验证。
-2. **CLI `run` 开启**：曾实现 `useFeedbackProcess: runConfig.runtime !== "mock"`，但受限沙箱内既有 `tests/tui/integration/run-provider-entry.test.ts` 会因 `spawn EPERM` 失败，无法在提交前证明其通过，故**已回退**，留待官方门禁可用时一并提交（同一检查点）。
-3. 同一 SDK 路径上的相邻可疑项（本轮仅记录，未改）：`backupDeletionControlPort: null`、`installationUserPort: null`（协同模式删除/安装的逐次授权面缺失）、`authenticatedUserId: "sdk-user"`（合成审计身份，会写进授权回执的 `approvedByUserId`）。
+1. **CLI `run` 开启独立反馈进程**（`packages/tui/src/cli/run-command.ts`）：`useFeedbackProcess: runConfig.runtime !== "mock"`——真实 Provider 运行走独立进程，mock 离线路径保持进程内（避免测试期无谓 fork）。
+2. **修复子进程 stdout 继承**（`process-supervisor.ts`）：原 `stdio: ["ignore","inherit","inherit","ipc"]` 让反馈子进程直接写父进程 stdout，违反 headless `run` 的"stdout 仅 JSON"契约；改为 `["ignore","pipe","inherit","ipc"]` 并把子进程 stdout 转发到父进程 stderr（输出不丢，stdout 保持干净）。
+3. **测试预算调整**（`tests/tui/integration/run-provider-entry.test.ts`）：真实链路新增 fork + 握手（实测约 5s），按仓库既有风格改为 `vi.setConfig({ testTimeout: 60_000 })`，断言不变。
+4. **官方门禁（完整访问 + 默认 forks 池）**：构建成功；全量 **235 文件 / 1877 用例**；覆盖率 **93.12 / 85.44 / 93.29 / 93.14**；安全关键模块 **22/22**；目标用例（`run-provider-entry` + 反馈进程接线）6/6 通过。首次全量出现 1 次未处理错误（任务链临时文件 ENOENT 竞态，位于**用户并行修改**的 `application-sdk-task-events.test.ts`），单独复跑通过、全量复跑无错误 → 判定偶发。
+
+## 4b. 仍未做（需用户裁决）
+
+1. **SDK 默认值**：未把 `useFeedbackProcess` 在 SDK 缺省改为 true。原因：会改变 `tests/**` 中 8 处 `runtime: "provider"` SDK 用法的进程拓扑；当前以"嵌入方显式开启 + 诊断面"交付。
+2. 同一 SDK 路径上的相邻可疑项（仅记录，未改）：`backupDeletionControlPort: null`、`installationUserPort: null`（协同模式删除/安装的逐次授权面缺失）、`authenticatedUserId: "sdk-user"`（合成审计身份，会写进授权回执的 `approvedByUserId`）。
 
 ## 5. 需要你决定
 

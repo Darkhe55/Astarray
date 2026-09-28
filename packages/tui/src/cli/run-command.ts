@@ -110,6 +110,9 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
     failureThreshold: runConfig.toolFailureThreshold,
     maximumLoopIterations: 8,
     statusPollIntervalMilliseconds: 25,
+    // T04：产品入口使用独立反馈进程（AGENTS.md：反馈工具不得退化为进程内定时器/协程）。
+    // mock 离线路径保持进程内，避免测试期无谓 fork 抖动。
+    useFeedbackProcess: runConfig.runtime !== "mock",
     streamOutput: (_missionIdentifier, text) => {
       streamedAnswerChunks.push(text);
       logToStderr(text);

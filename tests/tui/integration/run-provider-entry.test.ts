@@ -9,6 +9,10 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// T04：真实 provider 运行链路现在会启动独立反馈进程（fork + 握手），
+// 仅调整用例超时预算，断言不变。
+vi.setConfig({ testTimeout: 60_000 });
+
 import { executeRunCommand } from "../../../packages/tui/src/cli/run-command.js";
 
 class ProcessExitSignal extends Error {

@@ -131,9 +131,15 @@ export class FeedbackProcessSupervisor {
   }
 
   private spawnChildProcess(): void {
+    // T04：子进程 stdout 必须走管道并转发到父进程 stderr——
+    // CLI/SDK 的 stdout 由调用方独占（headless run 要求"stdout 仅 JSON"），
+    // 反馈进程一旦继承 stdout 就会污染机器可读输出。
     const childProcess = fork(this.modulePath, [], {
-      stdio: ["ignore", "inherit", "inherit", "ipc"],
+      stdio: ["ignore", "pipe", "inherit", "ipc"],
       env: { ...process.env, ASTARRAY_FEEDBACK_CHILD: "1" },
+    });
+    childProcess.stdout?.on("data", (chunk: Buffer | string) => {
+      process.stderr.write(String(chunk));
     });
     this.childProcess = childProcess;
     const client = new ForkFeedbackClient(childProcess);
