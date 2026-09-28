@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { runConfigSchema } from "../../../core/src/core/schemas.js";
+import { resolveHostUserIdentifier } from "../../../core/src/core/host-user-context.js";
 import { bootstrapCli } from "./bootstrap.js";
 import { EXIT_CODES, failWith, logToStderr, printJson } from "./json-output.js";
 import { defaultStateDirectory } from "./run-command.js";
@@ -16,6 +17,21 @@ export interface StatusCommandOptions {
   missionId: string | undefined;
   isJsonOutput: boolean;
   stateDirectory: string;
+}
+
+/**
+ * 检查点 B：需要人工授权/归属的 CLI 操作必须先取得可信身份；
+ * 宿主上下文不可用时立即拒绝（fail-closed，不等待）。
+ */
+function requireHostUserId(): string {
+  const identifier = resolveHostUserIdentifier();
+  if (identifier === null) {
+    failWith(
+      new Error("缺少可信认证身份，拒绝需要人工授权的操作"),
+      EXIT_CODES.FAILURE,
+    );
+  }
+  return identifier;
 }
 
 export async function executeStatusCommand(
@@ -1087,7 +1103,7 @@ export async function executeConfigContextBudgetCommand(
     const updated = await budgetStore.updatePolicy({
       expectedRevision: current.globalContextBudgetPolicyRevision,
       configuredMaximumGlobalContextTokenCount: options.tokens,
-      updatedByUserId: "cli-user",
+      updatedByUserId: requireHostUserId(),
     });
     const summary = {
       configuredMaximumGlobalContextTokenCount:
@@ -1136,7 +1152,7 @@ export async function executeDirectDispatchCommand(
     envelope: {
       schemaVersion: 1,
       envelopeId: `envelope-${Date.now()}`,
-      authenticatedUserId: "cli-user",
+      authenticatedUserId: requireHostUserId(),
       targetSecondaryAgentInstanceId: options.targetSecondaryAgentInstanceId,
       scopeDescription: options.scopeDescription,
       originalUserInstruction: options.originalUserInstruction,
@@ -1197,7 +1213,7 @@ export async function executeAgentTreeCommand(
     conversationTarget: {
       role: "main",
       displayName: "主 Agent（唯一连续对话对象）",
-      agentInstanceId: "main-agent-cli",
+      agentInstanceId: bootstrap.mainAgentInstanceId,
     },
     routes: {
       directDispatchAvailable: true,
@@ -1828,7 +1844,8 @@ export async function executeWorksetStatusCommand(
       workingSetWarningThresholdFileCount: 8,
     },
     budgetState: controller.getBudgetSnapshot({
-      agentInstanceId: "main-agent-cli",
+      // 该命令不装配运行时：这里是**视图作用域**键，不是任何 Agent 身份。
+      agentInstanceId: "workset-status-view",
       taskChainIdentifier: "cli-session",
     }),
     expansionAvailable: true,

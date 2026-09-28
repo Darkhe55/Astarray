@@ -193,7 +193,8 @@ describe("E2E-01-02 切片 6：产品级侦察与规划", () => {
           ...baseProposal,
           proposalId: "proposal-user-1",
           sourceKind: "user",
-          sourceActorId: "cli-user",
+          // 检查点 B：用户来源必须绑定当前认证用户（不再使用固定字面量）
+          sourceActorId: runtime.authenticatedUserId ?? "test-user",
         }),
       ).resolves.toBeUndefined();
 
@@ -204,7 +205,7 @@ describe("E2E-01-02 切片 6：产品级侦察与规划", () => {
           proposalId: "proposal-agent-evil",
           expectedRevision: 3,
           sourceKind: "agent",
-          sourceActorId: "main-agent-cli",
+          sourceActorId: runtime.mainAgentInstanceId,
         }),
       ).rejects.toThrow();
     } finally {

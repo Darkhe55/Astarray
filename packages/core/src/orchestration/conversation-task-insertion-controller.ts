@@ -41,14 +41,14 @@ export interface TaskInsertionProposal {
 export interface ConversationTaskInsertionControllerOptions {
   manageController: TaskSequenceManageController;
   /** 当前对话用户标识（harness 注入）。 */
-  authenticatedUserId: string;
+  authenticatedUserId: string | null;
   /** 允许提案来源（默认 user/agent；tool/system 拒绝）。 */
   allowedSourceKinds?: TaskSourceKind[];
 }
 
 export class ConversationTaskInsertionController {
   private readonly manageController: TaskSequenceManageController;
-  private readonly authenticatedUserId: string;
+  private readonly authenticatedUserId: string | null;
   private readonly allowedSourceKinds: TaskSourceKind[];
 
   constructor(options: ConversationTaskInsertionControllerOptions) {

@@ -3,6 +3,8 @@
  * 装配实现见 packages/core/src/application/application-runtime.ts（T07D-R1-01 提取）。
  */
 import path from "node:path";
+
+import { resolveHostUserIdentifier } from "../../../core/src/core/host-user-context.js";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -26,8 +28,8 @@ export async function bootstrapCli(options: BootstrapOptions): Promise<CliBootst
     installationUserPort: new InteractiveInstallationGatePort({
       isInteractive: () => process.stdin.isTTY === true,
     }),
-    authenticatedUserId: "cli-user",
-    mainAgentInstanceId: "main-agent-cli",
+    // 检查点 B：身份来自可信宿主用户上下文；主 Agent 实例 ID 逐运行时唯一（不再固定）
+    authenticatedUserId: resolveHostUserIdentifier(),
     feedbackProcessModulePath: resolveFeedbackEntryPath(),
   });
 }

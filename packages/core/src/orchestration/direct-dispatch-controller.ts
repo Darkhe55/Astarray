@@ -29,7 +29,7 @@ export type DirectDispatchOutcome =
 
 export interface DirectDispatchControllerOptions {
   /** 认证用户标识（harness 注入）。 */
-  authenticatedUserId: string;
+  authenticatedUserId: string | null;
   /** 本地版本化资格策略。 */
   eligibilityPolicy: SmallTaskEligibilityPolicy;
   /** 目标次级 Agent 偏序集控制面（投递落点）。 */
@@ -60,7 +60,7 @@ export interface DispatchDirectTaskInput {
 }
 
 export class DirectDispatchController {
-  private readonly authenticatedUserId: string;
+  private readonly authenticatedUserId: string | null;
   private readonly eligibilityPolicy: SmallTaskEligibilityPolicy;
   private readonly sequenceManageController: TaskSequenceManageController;
   private readonly doesSecondaryAgentExist: (

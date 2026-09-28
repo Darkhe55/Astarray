@@ -37,6 +37,10 @@ import type {
   ProviderRuntimeRegistry,
 } from "./runtime/provider-runtime-registry.js";
 import type { ApplicationRuntime } from "./application/application-runtime.js";
+import type { BackupDeletionAuthorizationControlPort } from "./core/types.js";
+import type { InstallationGateUserPort } from "./tools/installation-gate-guard.js";
+
+export type { BackupDeletionAuthorizationControlPort, InstallationGateUserPort };
 import { createApplicationRuntime } from "./application/application-runtime.js";
 import { DomainError } from "./core/errors.js";
 import { resolveContextBudget } from "./orchestration/context-prompt-assembler.js";
@@ -635,6 +639,17 @@ export interface PublicApplicationOptions {
   useFeedbackProcess?: boolean;
   /** T04：反馈进程入口模块路径；缺省按包内 dist 入口自动解析。 */
   feedbackProcessModulePath?: string | null;
+  /**
+   * 检查点 B：可信认证用户标识。缺省取宿主用户上下文；两者都不可用时为 null，
+   * 此时需要人工授权的操作一律 fail-closed（不再伪造固定 "sdk-user"）。
+   */
+  authenticatedUserId?: string | null;
+  /** 检查点 B：主 Agent 实例 ID；缺省逐运行时唯一生成。 */
+  mainAgentInstanceId?: string;
+  /** 检查点 B：删除备份的交互授权端口（协同模式逐次授权；缺端口即拒绝且不等待）。 */
+  backupDeletionControlPort?: BackupDeletionAuthorizationControlPort | null;
+  /** 检查点 B：安装交互端口（询问已有资源 + 精确计划逐次授权；缺端口即拒绝且不等待）。 */
+  installationUserPort?: InstallationGateUserPort | null;
 }
 
 /** 公开 Provider 配置：只含受保护凭据引用与允许列表，不含秘密内容。 */
@@ -734,10 +749,10 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       // mock 离线路径保持进程内，嵌入方可用 useFeedbackProcess 显式覆盖。
       useFeedbackProcess: options.useFeedbackProcess ?? runtimeKind === "provider",
       streamOutput: options.streamOutput ?? (() => {}),
-      backupDeletionControlPort: null,
-      installationUserPort: null,
-      authenticatedUserId: "sdk-user",
-      mainAgentInstanceId: "main-agent-sdk",
+      backupDeletionControlPort: options.backupDeletionControlPort ?? null,
+      installationUserPort: options.installationUserPort ?? null,
+      authenticatedUserId: options.authenticatedUserId,
+      mainAgentInstanceId: options.mainAgentInstanceId,
       feedbackProcessModulePath: options.feedbackProcessModulePath ?? null,
       mainRuntimeFactory,
       workerRuntimeFactory,
@@ -768,11 +783,33 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
   getRuntimeDiagnostics(): {
     isFeedbackProcessIndependent: boolean;
     requiresCompletionControlEvent: boolean;
+    hasBackupDeletionControlPort: boolean;
+    hasInstallationUserPort: boolean;
+    authenticatedUserSource: "explicit" | "host" | "absent";
+    authenticatedUserId: string | null;
+    mainAgentInstanceId: string;
   } {
     return {
       isFeedbackProcessIndependent: this.runtime.isFeedbackProcessIndependent,
       requiresCompletionControlEvent: this.runtime.requiresCompletionControlEvent,
+      hasBackupDeletionControlPort: this.runtime.hasBackupDeletionControlPort,
+      hasInstallationUserPort: this.runtime.hasInstallationUserPort,
+      authenticatedUserSource: this.runtime.authenticatedUserSource,
+      authenticatedUserId: this.runtime.authenticatedUserId,
+      mainAgentInstanceId: this.runtime.mainAgentInstanceId,
     };
+  }
+
+  /** 检查点 B：需要人工授权/归属的公共操作必须先取得可信身份，否则立即拒绝（不等待）。 */
+  private requireAuthenticatedUserId(): string {
+    const identifier = this.runtime.authenticatedUserId;
+    if (identifier === null) {
+      throw new PublicApplicationError(
+        "authenticated-user-required",
+        "缺少可信认证身份，拒绝需要人工授权的操作",
+      );
+    }
+    return identifier;
   }
 
   private readonly stateDirectory: string | null;
@@ -1520,7 +1557,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     const sourceKind = input.sourceKind ?? "authenticated-user";
     const sourceIdentifier =
       sourceKind === "authenticated-user"
-        ? this.runtime.authenticatedUserId
+        ? this.requireAuthenticatedUserId()
         : "local-observation";
     const sequenceKey = sourceKind + "|" + sourceIdentifier;
     const sequence = (this.guidanceSequenceBySource.get(sequenceKey) ?? 0) + 1;
@@ -1710,7 +1747,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
         },
         taskTierOverrides: input.taskTierOverrides,
         expectedRevision: input.expectedRevision,
-        updatedByUserId: input.updatedByUserId ?? this.runtime.authenticatedUserId,
+        updatedByUserId: input.updatedByUserId ?? this.requireAuthenticatedUserId(),
         requestingAgentInstanceId: input.requestingAgentInstanceId ?? null,
       });
       return this.toPublicAccuracyPolicy(policy);
@@ -1755,7 +1792,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       currentTaskSequenceRevision:
         input.currentTaskSequenceRevision ?? input.taskSequenceRevision,
       expectedRecipientIdentifier:
-        input.expectedRecipientIdentifier ?? this.runtime.authenticatedUserId,
+        input.expectedRecipientIdentifier ?? this.requireAuthenticatedUserId(),
       currentArtifactRevisions: { ...(input.currentArtifactRevisions ?? {}) },
       isClarificationRequired: input.isClarificationRequired ?? false,
     };
@@ -2012,7 +2049,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
               ownerAgentInstanceId: input.insertionTarget.ownerAgentInstanceId,
               actor: {
                 sourceKind: "user",
-                actorId: this.runtime.authenticatedUserId,
+                actorId: this.requireAuthenticatedUserId(),
               },
               sequenceId: input.insertionTarget.sequenceId,
               expectedRevision: input.insertionTarget.expectedSequenceRevision,
@@ -2063,7 +2100,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       invalidatedAcceptanceEntryIdentifiers:
         input.invalidatedAcceptanceEntryIdentifiers,
       sourceKind: "authenticated-user",
-      sourceIdentifier: this.runtime.authenticatedUserId,
+      sourceIdentifier: this.requireAuthenticatedUserId(),
     });
     await this.runtime.guidanceChangeIntentJournal.write(
       this.runtime.guidanceChangeIntentController.snapshot(),

@@ -2,8 +2,10 @@
  * 公共应用运行时装配（T07D-R1-01）：CLI/TUI/SDK 共用同一装配入口。
  * 交互端口由界面层注入；本模块不依赖 TUI/GUI（依赖方向：core 不反向依赖界面）。
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
+
+import { resolveHostUserIdentifier } from "../core/host-user-context.js";
 
 import { ModeMachine } from "../core/mode-machine.js";
 import { SessionAuthorizationManager } from "../core/permission-policy.js";
@@ -150,7 +152,13 @@ export interface ApplicationRuntime {
   /** GUIDE 增量：变更意图状态日志（跨进程 history/revision 共用）。 */
   guidanceChangeIntentJournal: FileGuidanceChangeIntentJournal;
   /** 认证用户标识（指导来源必须绑定到具体人类个体）。 */
-  authenticatedUserId: string;
+  authenticatedUserId: string | null;
+  /** 身份来源：explicit（调用方）/ host（可信宿主用户上下文）/ absent（不可用）。 */
+  authenticatedUserSource: "explicit" | "host" | "absent";
+  /** 删除备份交互授权端口是否装配（缺端口=协同模式删除被拒，不等待）。 */
+  hasBackupDeletionControlPort: boolean;
+  /** 安装交互端口是否装配（缺端口=安装被拒，不等待）。 */
+  hasInstallationUserPort: boolean;
   /** GUIDE-01-03：长工具检查点与协作取消控制器。 */
   longToolCheckpointController: LongToolCheckpointController;
   /** T09A-R1-03：人工核验（延迟核验任务/签收/否决）。 */
@@ -190,7 +198,7 @@ export interface ApplicationRuntimeOptions {
   /** 安装门禁交互端口（界面层注入；null 表示无交互通道，fail-closed）。 */
   installationUserPort?: InstallationGateUserPort | null;
   /** 认证用户标识（可信本地 harness 注入）。 */
-  authenticatedUserId?: string;
+  authenticatedUserId?: string | null;
   /** 主 Agent 实例标识（报告/摘要路由用）。 */
   mainAgentInstanceId?: string;
   /** 独立反馈进程入口路径；不传则使用 supervisor 默认解析。 */
@@ -220,12 +228,39 @@ export interface ApplicationRuntimeOptions {
   scopeSuperiorApprovalPort?: ScopeGateSuperiorApprovalPort;
 }
 
+/**
+ * 检查点 B：会话级主 Agent 实例身份。
+ * 由 state dir 的绝对路径确定性派生：同一会话（同一 state dir）跨进程复用同一身份，
+ * 不同会话互不复用；不再使用固定字面量，也不额外落盘（避免绕过破坏性文件 API 守卫）。
+ */
+function deriveMainAgentInstanceIdFromStateDirectory(stateDirectory: string): string {
+  const pathDigest = createHash("sha256")
+    .update(path.resolve(stateDirectory))
+    .digest("hex");
+  return `main-${pathDigest.slice(0, 8)}`;
+}
+
 export async function createApplicationRuntime(
   options: ApplicationRuntimeOptions,
 ): Promise<ApplicationRuntime> {
   const stateDirectory = options.stateDirectory;
-  const mainAgentInstanceId = options.mainAgentInstanceId ?? "main-agent";
-  const authenticatedUserId = options.authenticatedUserId ?? "local-user";
+  // 检查点 B：主 Agent 实例 ID 不再固定字面量；同一 state dir（同一会话）内跨进程复用，
+  // 不同会话（不同 state dir）互不复用。
+  const mainAgentInstanceId =
+    options.mainAgentInstanceId ??
+    deriveMainAgentInstanceIdFromStateDirectory(stateDirectory);
+  // 检查点 B：身份绑定——显式提供优先；否则取可信宿主用户上下文；不可用即 null（fail-closed）
+  // 显式 null 表示"调用方声明无身份"，不得回退到宿主（否则 fail-closed 失效）。
+  const authenticatedUserId =
+    options.authenticatedUserId === undefined
+      ? resolveHostUserIdentifier()
+      : options.authenticatedUserId;
+  const authenticatedUserSource: "explicit" | "host" | "absent" =
+    authenticatedUserId === null
+      ? "absent"
+      : options.authenticatedUserId === undefined
+        ? "host"
+        : "explicit";
   const processInstanceId = `process-${randomUUID()}`;
   const missionLeaseStore = new MissionLeaseStore({ stateDirectory });
   const taskStore = new TaskStore({ baseDirectory: stateDirectory });
@@ -341,7 +376,7 @@ export async function createApplicationRuntime(
     inquiryController: installationInquiryController,
     authorizationController: installationAuthorizationController,
     userPort: installationUserPort,
-    authenticatedUserId: options.authenticatedUserId ?? "local-user",
+    authenticatedUserId,
     getCurrentMode: () => modeMachine.getCurrentMode(),
   });
 
@@ -421,7 +456,7 @@ export async function createApplicationRuntime(
   );
   const conversationTaskInsertionController = new ConversationTaskInsertionController({
     manageController: sequenceManageController,
-    authenticatedUserId: options.authenticatedUserId ?? "local-user",
+    authenticatedUserId,
   });
   // B6R-09：次级持续调度循环（生产装配；派发链回调由编排层注入）
   const dispatchRegistry = new UnboundedAgentInstanceRegistry({
@@ -479,7 +514,7 @@ export async function createApplicationRuntime(
     "../orchestration/quaternary-boundary-guards.js"
   );
   const directDispatchController = new DirectDispatchController({
-    authenticatedUserId: "cli-user",
+    authenticatedUserId,
     eligibilityPolicy: new SmallTaskEligibilityPolicy(),
     sequenceManageController,
     doesSecondaryAgentExist: (agentInstanceId) =>
@@ -596,12 +631,15 @@ export async function createApplicationRuntime(
 
   // GUIDE-01-04：运行中指导控制队列与长工具检查点（来源由本地控制面注册，模型无法注入）。
   const guidanceSourceRegistry = new GuidanceSourceRegistry();
-  guidanceSourceRegistry.register({
-    sourceKind: "authenticated-user",
-    sourceIdentifier: authenticatedUserId,
-    maximumBehaviorTier: "gate-and-request-pause",
-    registeredAtIso: new Date().toISOString(),
-  });
+  // 检查点 B：无可信身份时不注册"认证用户"来源——该来源的指导提交将直接不被受理。
+  if (authenticatedUserId !== null) {
+    guidanceSourceRegistry.register({
+      sourceKind: "authenticated-user",
+      sourceIdentifier: authenticatedUserId,
+      maximumBehaviorTier: "gate-and-request-pause",
+      registeredAtIso: new Date().toISOString(),
+    });
+  }
   guidanceSourceRegistry.register({
     sourceKind: "file-task-observation",
     sourceIdentifier: "local-observation",
@@ -858,6 +896,9 @@ export async function createApplicationRuntime(
     guidanceChangeIntentController,
     guidanceChangeIntentJournal,
     authenticatedUserId,
+    authenticatedUserSource,
+    hasBackupDeletionControlPort: backupDeletionControlPort !== null,
+    hasInstallationUserPort: installationUserPort !== null,
     registeredProjectRoots,
     scopeAuthorizationGate,
     accuracyPolicyStore,

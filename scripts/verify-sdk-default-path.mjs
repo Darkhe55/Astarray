@@ -52,6 +52,10 @@ let tarballPath;
 if (skipPack) {
   tarballPath = resolveTarballPath();
 } else {
+  if (skipPrepack) {
+    // --skip-prepack 只跳过 npm run check；dist 必须重建，否则会打到过期产物。
+    execSync("npm run build", { cwd: repositoryRoot, encoding: "utf8", stdio: "pipe" });
+  }
   const prepackFlag = skipPrepack ? " --ignore-scripts" : "";
   const packOutput = execSync(`npm pack --json --pack-destination "${packageArchiveRoot}"${prepackFlag}`, {
     cwd: repositoryRoot,
@@ -157,8 +161,56 @@ while (!["done", "failed", "blocked", "cancelled"].includes(status) && Date.now(
   status = (await application.queryTask({ sessionId: "session-1", taskIdentifier: "task-1" })).status;
 }
 await application.shutdown();
+
+// 检查点 B：端口存在性与身份来源必须如实报告；缺身份时需人工授权的操作 fail-closed。
+const explicitApplication = await AstarrayApplicationFacade.create({
+  stateDirectory: stateDirectory + "-explicit",
+  mode: "assist",
+  runtime: "mock",
+  authenticatedUserId: "carol",
+  installationUserPort: {
+    askExistingResource: async () => null,
+    askAllowOnce: async () => "deny",
+  },
+  backupDeletionControlPort: {
+    requestAuthorization: async () => ({ decision: "deny" }),
+  },
+});
+const explicitDiagnostics = explicitApplication.getRuntimeDiagnostics();
+await explicitApplication.shutdown();
+
+const anonymousApplication = await AstarrayApplicationFacade.create({
+  stateDirectory: stateDirectory + "-anonymous",
+  mode: "assist",
+  runtime: "mock",
+  authenticatedUserId: null,
+});
+let anonymousGuidanceErrorCode = null;
+try {
+  await anonymousApplication.submitRuntimeGuidance({
+    missionIdentifier: "mission-1",
+    taskIdentifier: "task-1",
+    instructionText: "需要身份的指导",
+    sourceKind: "authenticated-user",
+  });
+} catch (error) {
+  anonymousGuidanceErrorCode = error?.errorCode ?? String(error);
+}
+await anonymousApplication.shutdown();
+
 await new Promise((resolve) => server.close(() => resolve()));
-process.stdout.write(JSON.stringify({ diagnostics, status }, null, 2) + "\\n");
+process.stdout.write(
+  JSON.stringify(
+    {
+      diagnostics,
+      status,
+      explicitDiagnostics,
+      anonymousGuidanceErrorCode,
+    },
+    null,
+    2,
+  ) + "\\n",
+);
 `;
 writeFileSync(path.join(consumerRoot, "consumer.mjs"), consumerScript);
 
@@ -177,4 +229,26 @@ if (parsed.diagnostics?.isFeedbackProcessIndependent !== true) {
 if (parsed.status !== "done") {
   fail("任务未到达 done: " + parsed.status);
 }
-console.log("SDK 公开入口验收通过: 默认路径独立反馈进程 + 任务完成 ✓");
+// 检查点 B 断言：身份来源、端口存在性、无固定身份、主 Agent 实例唯一
+if (parsed.diagnostics?.authenticatedUserSource === "absent") {
+  fail("宿主机不可用时无法完成身份来源验收: " + JSON.stringify(parsed.diagnostics));
+}
+if (parsed.diagnostics?.authenticatedUserId === "sdk-user") {
+  fail("仍在使用固定 sdk-user 身份");
+}
+if (parsed.diagnostics?.mainAgentInstanceId === "main-agent-sdk") {
+  fail("仍在使用固定 main-agent-sdk 实例 ID");
+}
+if (parsed.diagnostics?.hasInstallationUserPort !== false || parsed.diagnostics?.hasBackupDeletionControlPort !== false) {
+  fail("未注入端口时诊断面应报告 false: " + JSON.stringify(parsed.diagnostics));
+}
+if (parsed.explicitDiagnostics?.hasInstallationUserPort !== true || parsed.explicitDiagnostics?.hasBackupDeletionControlPort !== true) {
+  fail("显式注入端口后诊断面应报告 true: " + JSON.stringify(parsed.explicitDiagnostics));
+}
+if (parsed.explicitDiagnostics?.authenticatedUserSource !== "explicit") {
+  fail("显式身份来源应为 explicit: " + JSON.stringify(parsed.explicitDiagnostics));
+}
+if (parsed.anonymousGuidanceErrorCode !== "authenticated-user-required") {
+  fail("缺身份时需人工授权的操作必须 fail-closed: " + String(parsed.anonymousGuidanceErrorCode));
+}
+console.log("SDK 公开入口验收通过: 默认路径独立反馈进程 + 身份/端口契约 + fail-closed ✓");

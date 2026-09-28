@@ -39,8 +39,8 @@ export interface InstallationGateGuardOptions {
   inquiryController: ExistingResourceInquiryController;
   authorizationController: AssistInstallationAuthorizationController;
   userPort: InstallationGateUserPort | null;
-  /** 认证用户 ID（harness 注入）。 */
-  authenticatedUserId: string;
+  /** 认证用户 ID（harness 注入）；不可用时为 null，安装一律拒绝。 */
+  authenticatedUserId: string | null;
   /** 当前模式（可信运行时提供）。 */
   getCurrentMode: () => "ponder" | "assist" | "devolve";
   /** 只读资源验证端口（可选）。 */
@@ -56,7 +56,7 @@ export class InstallationGateGuard {
   private readonly inquiryController: ExistingResourceInquiryController;
   private readonly authorizationController: AssistInstallationAuthorizationController;
   private readonly userPort: InstallationGateUserPort | null;
-  private readonly authenticatedUserId: string;
+  private readonly authenticatedUserId: string | null;
   private readonly getCurrentMode: () => "ponder" | "assist" | "devolve";
 
   constructor(options: InstallationGateGuardOptions) {
@@ -92,6 +92,10 @@ export class InstallationGateGuard {
     }
     if (this.userPort === null) {
       return { allowed: false, reason: "无可信交互通道，安装被拒绝（fail-closed）" };
+    }
+    if (this.authenticatedUserId === null) {
+      // 检查点 B：没有可信认证身份就无法形成可追责的逐次授权。
+      return { allowed: false, reason: "缺少可信认证身份，安装被拒绝（fail-closed）" };
     }
     // 阶段 1：询问是否已有资源
     const inquiry = this.inquiryController.createInquiry({
