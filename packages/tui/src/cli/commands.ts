@@ -14,6 +14,7 @@ import { EXIT_CODES, failWith, logToStderr, printJson } from "./json-output.js";
 import {
   RuntimeSelectionError,
   buildRuntimeSelection,
+  type RuntimeSelection,
 } from "./runtime-selection.js";
 import { defaultStateDirectory } from "./run-command.js";
 
@@ -2535,6 +2536,8 @@ export interface McpServeCommandOptions {
   providerEndpoint?: string;
   providerModelIdentifier?: string;
   providerApiKeyEnvironmentVariable?: string;
+  /** 受保护凭据引用（优先于环境变量；不存在即 fail-closed）。 */
+  providerCredentialReference?: string;
 }
 
 export async function executeMcpServeCommand(
@@ -2550,13 +2553,15 @@ export async function executeMcpServeCommand(
     "../../../core/src/bridge/mcp-stdio-server.js"
   );
   const sessionId = "mcp-session-stdio";
-  let runtimeSelection;
+  let runtimeSelection: RuntimeSelection;
   try {
-    runtimeSelection = buildRuntimeSelection({
+    runtimeSelection = await buildRuntimeSelection({
       runtime: options.runtime,
+      stateDirectory: options.stateDirectory,
       providerEndpoint: options.providerEndpoint,
       providerModelIdentifier: options.providerModelIdentifier,
       providerApiKeyEnvironmentVariable: options.providerApiKeyEnvironmentVariable,
+      providerCredentialReference: options.providerCredentialReference,
     });
   } catch (error) {
     if (error instanceof RuntimeSelectionError) {
@@ -2607,6 +2612,8 @@ export interface GuiServeCommandOptions {
   providerEndpoint?: string;
   providerModelIdentifier?: string;
   providerApiKeyEnvironmentVariable?: string;
+  /** 受保护凭据引用（优先于环境变量；不存在即 fail-closed）。 */
+  providerCredentialReference?: string;
 }
 
 function resolveBrowserOpenCommand(url: string): {
@@ -2664,13 +2671,15 @@ export async function executeGuiServeCommand(
   );
   const sessionId = "gui-session-local";
   const sessionMode = "assist" as const;
-  let runtimeSelection;
+  let runtimeSelection: RuntimeSelection;
   try {
-    runtimeSelection = buildRuntimeSelection({
+    runtimeSelection = await buildRuntimeSelection({
       runtime: options.runtime,
+      stateDirectory: options.stateDirectory,
       providerEndpoint: options.providerEndpoint,
       providerModelIdentifier: options.providerModelIdentifier,
       providerApiKeyEnvironmentVariable: options.providerApiKeyEnvironmentVariable,
+      providerCredentialReference: options.providerCredentialReference,
     });
   } catch (error) {
     if (error instanceof RuntimeSelectionError) {

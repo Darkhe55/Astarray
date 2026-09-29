@@ -94,6 +94,7 @@ program
         providerEndpoint?: string;
         providerModel?: string;
         providerApiKeyEnv?: string;
+      providerCredentialReference?: string;
       },
     ) => {
       process.exitCode = await executeRunCommand({
@@ -114,6 +115,9 @@ program
           : {}),
         ...(options.providerApiKeyEnv !== undefined
           ? { providerApiKeyEnvironmentVariable: options.providerApiKeyEnv }
+          : {}),
+        ...(options.providerCredentialReference !== undefined
+          ? { providerCredentialReference: options.providerCredentialReference }
           : {}),
       });
     },
@@ -559,12 +563,14 @@ mcpCommand
   .option("--provider-endpoint <url>", "openai-compatible 协议端点（必填）")
   .option("--provider-model <model>", "Provider 模型标识（必填）")
   .option("--provider-api-key-env <name>", "存放 API key 的环境变量名")
+  .option("--provider-credential-reference <reference>", "受保护凭据引用（优先于环境变量）")
   .action(
     async (options: {
       runtime?: string;
       providerEndpoint?: string;
       providerModel?: string;
       providerApiKeyEnv?: string;
+      providerCredentialReference?: string;
     }) => {
       process.exitCode = await executeMcpServeCommand({
         stateDirectory: defaultStateDirectory(),
@@ -577,6 +583,9 @@ mcpCommand
           : {}),
         ...(options.providerApiKeyEnv !== undefined
           ? { providerApiKeyEnvironmentVariable: options.providerApiKeyEnv }
+          : {}),
+        ...(options.providerCredentialReference !== undefined
+          ? { providerCredentialReference: options.providerCredentialReference }
           : {}),
       });
     },
@@ -962,6 +971,7 @@ program
   .option("--provider-endpoint <url>", "openai-compatible 协议端点（必填）")
   .option("--provider-model <model>", "Provider 模型标识（必填）")
   .option("--provider-api-key-env <name>", "存放 API key 的环境变量名")
+  .option("--provider-credential-reference <reference>", "受保护凭据引用（优先于环境变量）")
   .action(
     async (options: {
       port?: number;
@@ -970,6 +980,7 @@ program
       providerEndpoint?: string;
       providerModel?: string;
       providerApiKeyEnv?: string;
+      providerCredentialReference?: string;
     }) => {
       process.exitCode = await executeGuiServeCommand({
         stateDirectory: defaultStateDirectory(),
@@ -984,6 +995,9 @@ program
           : {}),
         ...(options.providerApiKeyEnv !== undefined
           ? { providerApiKeyEnvironmentVariable: options.providerApiKeyEnv }
+          : {}),
+        ...(options.providerCredentialReference !== undefined
+          ? { providerCredentialReference: options.providerCredentialReference }
           : {}),
       });
     },

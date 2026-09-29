@@ -28,6 +28,8 @@ export interface RunCommandOptions {
   providerModelIdentifier?: string;
   /** 存放 API key 的环境变量名；缺省读取 ASTARRAY_PROVIDER_API_KEY（不落盘/不回显）。 */
   providerApiKeyEnvironmentVariable?: string;
+  /** 受保护凭据引用（优先于环境变量；不存在即 fail-closed）。 */
+  providerCredentialReference?: string;
 }
 
 export async function executeRunCommand(options: RunCommandOptions): Promise<number> {
@@ -51,11 +53,13 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
 
   let runtimeSelection: RuntimeSelection;
   try {
-    runtimeSelection = buildRuntimeSelection({
+    runtimeSelection = await buildRuntimeSelection({
       runtime: runConfig.runtime,
       providerEndpoint: options.providerEndpoint,
       providerModelIdentifier: options.providerModelIdentifier,
       providerApiKeyEnvironmentVariable: options.providerApiKeyEnvironmentVariable,
+      providerCredentialReference: options.providerCredentialReference,
+      stateDirectory: options.stateDirectory,
     });
   } catch (error) {
     if (error instanceof RuntimeSelectionError) {

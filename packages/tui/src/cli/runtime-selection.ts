@@ -9,12 +9,20 @@ import {
 } from "../../../core/src/runtime/openai-compatible-provider-registration.js";
 import { ProviderRuntimeRegistry } from "../../../core/src/runtime/provider-runtime-registry.js";
 import type { PublicProviderConfiguration } from "../../../core/src/public-sdk.js";
+import { FileProviderCredentialStore } from "./provider-cli.js";
 
 export interface RuntimeSelectionOptions {
   runtime: string | undefined;
+  /** 状态目录（解析受保护凭据引用需要）。 */
+  stateDirectory?: string;
   providerEndpoint?: string;
   providerModelIdentifier?: string;
   providerApiKeyEnvironmentVariable?: string;
+  /**
+   * 受保护凭据引用（`config provider` 写入）。给出时**优先**于环境变量路径，
+   * 且引用不存在即 fail-closed（不回退环境变量、不回退 mock）。
+   */
+  providerCredentialReference?: string;
 }
 
 export interface RuntimeSelection {
@@ -34,9 +42,9 @@ export class RuntimeSelectionError extends Error {
   }
 }
 
-export function buildRuntimeSelection(
+export async function buildRuntimeSelection(
   options: RuntimeSelectionOptions,
-): RuntimeSelection {
+): Promise<RuntimeSelection> {
   if (options.runtime === undefined || options.runtime === "mock") {
     return { runtime: "mock" };
   }
@@ -45,6 +53,50 @@ export function buildRuntimeSelection(
       "runtime-unsupported",
       "不支持的运行时: " + String(options.runtime),
     );
+  }
+  const credentialReference = options.providerCredentialReference;
+  if (credentialReference !== undefined && credentialReference !== "") {
+    const stateDirectory = options.stateDirectory;
+    if (stateDirectory === undefined || stateDirectory === "") {
+      throw new RuntimeSelectionError(
+        "provider-state-directory-missing",
+        "--provider-credential-reference 需要状态目录（stateDirectory）",
+      );
+    }
+    const modelIdentifier = options.providerModelIdentifier;
+    if (modelIdentifier === undefined || modelIdentifier === "") {
+      throw new RuntimeSelectionError(
+        "provider-model-missing",
+        "--runtime openai-compatible 需要 --provider-model",
+      );
+    }
+    const credentialStore = new FileProviderCredentialStore(stateDirectory);
+    const credentialEntry = await credentialStore.readCredential(credentialReference);
+    if (credentialEntry === null) {
+      throw new RuntimeSelectionError(
+        "provider-credential-not-found",
+        "受保护凭据引用不存在: " + credentialReference,
+      );
+    }
+    const registryFromReference = new ProviderRuntimeRegistry({
+      protectedCredentialStore: {
+        doesReferenceExist: (referenceId) => credentialStore.doesReferenceExist(referenceId),
+        readCredential: (referenceId) => credentialStore.readCredential(referenceId),
+      },
+    });
+    registryFromReference.register(createOpenAiCompatibleProviderRegistration());
+    return {
+      runtime: "provider",
+      providerRuntimeRegistry: registryFromReference,
+      provider: {
+        providerId: OPENAI_COMPATIBLE_PROVIDER_ID,
+        modelIdentifier,
+        allowedModelIdentifiers: [modelIdentifier],
+        requiredCapabilities: ["streaming", "tool-calling"],
+        baseUrl: credentialEntry.baseUrl,
+        protectedCredentialReferenceId: credentialReference,
+      },
+    };
   }
   const endpoint = options.providerEndpoint;
   if (endpoint === undefined || endpoint === "") {
