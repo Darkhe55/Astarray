@@ -131,6 +131,8 @@ export interface ApplicationRuntime {
   taskSequenceManageController: TaskSequenceManageController;
   /** T07D-07：独立工作助手纵向闭环（场景 A 只读分析 / 场景 B 小型代码任务）。 */
   standaloneWorkflowRunner: StandaloneWorkflowRunner;
+  /** 产品入口实际选用的运行时种类（mock/provider）。 */
+  runtimeKind: "mock" | "provider";
   /** T04：反馈传输是否为独立进程（false = 进程内 noop），供产品入口/诊断读取。 */
   isFeedbackProcessIndependent: boolean;
   /** T07：是否强制要求版本化完成控制事件（Provider 产品运行时为 true）。 */
@@ -199,6 +201,8 @@ export interface ApplicationRuntimeOptions {
   installationUserPort?: InstallationGateUserPort | null;
   /** 认证用户标识（可信本地 harness 注入）。 */
   authenticatedUserId?: string | null;
+  /** 产品入口实际选用的运行时种类（诊断用；缺省 mock）。 */
+  runtimeKind?: "mock" | "provider";
   /** 主 Agent 实例标识（报告/摘要路由用）。 */
   mainAgentInstanceId?: string;
   /** 独立反馈进程入口路径；不传则使用 supervisor 默认解析。 */
@@ -879,6 +883,7 @@ export async function createApplicationRuntime(
     taskStore,
     supervisor,
     feedbackClient,
+    runtimeKind: options.runtimeKind ?? "mock",
     isFeedbackProcessIndependent: feedbackClient !== null,
     requiresCompletionControlEvent: options.requireCompletionControlEvent ?? false,
     missionLeaseStore,

@@ -747,6 +747,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       maxLoopIterations: options.maximumLoopIterations ?? 8,
       // T04：正式任务运行路径（真实 Provider）默认启用独立反馈进程；
       // mock 离线路径保持进程内，嵌入方可用 useFeedbackProcess 显式覆盖。
+      runtimeKind,
       useFeedbackProcess: options.useFeedbackProcess ?? runtimeKind === "provider",
       streamOutput: options.streamOutput ?? (() => {}),
       backupDeletionControlPort: options.backupDeletionControlPort ?? null,
@@ -781,6 +782,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
    * 供产品入口与测试确认反馈传输是否为独立进程、以及是否强制完成控制事件。
    */
   getRuntimeDiagnostics(): {
+    runtimeKind: "mock" | "provider";
     isFeedbackProcessIndependent: boolean;
     requiresCompletionControlEvent: boolean;
     hasBackupDeletionControlPort: boolean;
@@ -790,6 +792,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     mainAgentInstanceId: string;
   } {
     return {
+      runtimeKind: this.runtime.runtimeKind,
       isFeedbackProcessIndependent: this.runtime.isFeedbackProcessIndependent,
       requiresCompletionControlEvent: this.runtime.requiresCompletionControlEvent,
       hasBackupDeletionControlPort: this.runtime.hasBackupDeletionControlPort,

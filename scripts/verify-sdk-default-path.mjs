@@ -230,6 +230,12 @@ if (parsed.status !== "done") {
   fail("任务未到达 done: " + parsed.status);
 }
 // 检查点 B 断言：身份来源、端口存在性、无固定身份、主 Agent 实例唯一
+if (parsed.diagnostics?.runtimeKind !== "provider") {
+  fail("默认路径诊断应报告 provider 运行时: " + JSON.stringify(parsed.diagnostics));
+}
+if (parsed.explicitDiagnostics?.runtimeKind !== "mock") {
+  fail("显式 mock 应用诊断应报告 mock: " + JSON.stringify(parsed.explicitDiagnostics));
+}
 if (parsed.diagnostics?.authenticatedUserSource === "absent") {
   fail("宿主机不可用时无法完成身份来源验收: " + JSON.stringify(parsed.diagnostics));
 }
