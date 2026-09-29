@@ -555,11 +555,32 @@ const mcpCommand = program
 mcpCommand
   .command("serve")
   .description("以 stdio 运行 MCP 服务器（换行分隔 JSON-RPC；stdout 仅 MCP 消息）")
-  .action(async () => {
-    process.exitCode = await executeMcpServeCommand({
-      stateDirectory: defaultStateDirectory(),
-    });
-  });
+  .option("--runtime <runtime>", "运行时（mock | openai-compatible；缺省 mock）")
+  .option("--provider-endpoint <url>", "openai-compatible 协议端点（必填）")
+  .option("--provider-model <model>", "Provider 模型标识（必填）")
+  .option("--provider-api-key-env <name>", "存放 API key 的环境变量名")
+  .action(
+    async (options: {
+      runtime?: string;
+      providerEndpoint?: string;
+      providerModel?: string;
+      providerApiKeyEnv?: string;
+    }) => {
+      process.exitCode = await executeMcpServeCommand({
+        stateDirectory: defaultStateDirectory(),
+        ...(options.runtime !== undefined ? { runtime: options.runtime } : {}),
+        ...(options.providerEndpoint !== undefined
+          ? { providerEndpoint: options.providerEndpoint }
+          : {}),
+        ...(options.providerModel !== undefined
+          ? { providerModelIdentifier: options.providerModel }
+          : {}),
+        ...(options.providerApiKeyEnv !== undefined
+          ? { providerApiKeyEnvironmentVariable: options.providerApiKeyEnv }
+          : {}),
+      });
+    },
+  );
 
 const guideCommand = program
   .command("guide")
@@ -937,13 +958,36 @@ program
     (value: string) => Number.parseInt(value, 10),
   )
   .option("--no-open", "不自动打开浏览器")
-  .action(async (options: { port?: number; open?: boolean }) => {
-    process.exitCode = await executeGuiServeCommand({
-      stateDirectory: defaultStateDirectory(),
-      ...(options.port !== undefined ? { port: options.port } : {}),
-      isBrowserOpenEnabled: options.open !== false,
-    });
-  });
+  .option("--runtime <runtime>", "运行时（mock | openai-compatible；缺省 mock）")
+  .option("--provider-endpoint <url>", "openai-compatible 协议端点（必填）")
+  .option("--provider-model <model>", "Provider 模型标识（必填）")
+  .option("--provider-api-key-env <name>", "存放 API key 的环境变量名")
+  .action(
+    async (options: {
+      port?: number;
+      open?: boolean;
+      runtime?: string;
+      providerEndpoint?: string;
+      providerModel?: string;
+      providerApiKeyEnv?: string;
+    }) => {
+      process.exitCode = await executeGuiServeCommand({
+        stateDirectory: defaultStateDirectory(),
+        ...(options.port !== undefined ? { port: options.port } : {}),
+        isBrowserOpenEnabled: options.open !== false,
+        ...(options.runtime !== undefined ? { runtime: options.runtime } : {}),
+        ...(options.providerEndpoint !== undefined
+          ? { providerEndpoint: options.providerEndpoint }
+          : {}),
+        ...(options.providerModel !== undefined
+          ? { providerModelIdentifier: options.providerModel }
+          : {}),
+        ...(options.providerApiKeyEnv !== undefined
+          ? { providerApiKeyEnvironmentVariable: options.providerApiKeyEnv }
+          : {}),
+      });
+    },
+  );
 
 sessionCommand
   .command("elevation-list")

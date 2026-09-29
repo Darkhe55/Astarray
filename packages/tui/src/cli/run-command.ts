@@ -6,14 +6,13 @@
 import path from "node:path";
 
 import { AstarrayApplicationFacade } from "../../../core/src/public-sdk.js";
-import type { PublicProviderConfiguration } from "../../../core/src/public-sdk.js";
 import { runConfigSchema } from "../../../core/src/core/schemas.js";
-import {
-  OPENAI_COMPATIBLE_PROVIDER_ID,
-  createOpenAiCompatibleProviderRegistration,
-} from "../../../core/src/runtime/openai-compatible-provider-registration.js";
-import { ProviderRuntimeRegistry } from "../../../core/src/runtime/provider-runtime-registry.js";
 import { EXIT_CODES, failWith, logToStderr, printJson } from "./json-output.js";
+import {
+  RuntimeSelectionError,
+  buildRuntimeSelection,
+  type RuntimeSelection,
+} from "./runtime-selection.js";
 
 export interface RunCommandOptions {
   prompt: string;
@@ -50,55 +49,20 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
     );
   }
 
-  let runtimeSelection: {
-    runtime: "mock" | "provider";
-    providerRuntimeRegistry?: ProviderRuntimeRegistry;
-    provider?: PublicProviderConfiguration;
-  } = { runtime: "mock" };
-  if (runConfig.runtime === "openai-compatible") {
-    const endpoint = options.providerEndpoint;
-    const modelIdentifier = options.providerModelIdentifier;
-    if (endpoint === undefined || endpoint === "") {
-      failWith(
-        new Error(
-          "--runtime openai-compatible 需要 --provider-endpoint（本地协议服务器地址）",
-        ),
-        EXIT_CODES.USAGE_ERROR,
-      );
-    }
-    if (modelIdentifier === undefined || modelIdentifier === "") {
-      failWith(
-        new Error("--runtime openai-compatible 需要 --provider-model"),
-        EXIT_CODES.USAGE_ERROR,
-      );
-    }
-    const apiKeyEnvironmentVariable =
-      options.providerApiKeyEnvironmentVariable ?? "ASTARRAY_PROVIDER_API_KEY";
-    const apiKey =
-      process.env[apiKeyEnvironmentVariable] ?? "local-no-auth-required";
-    const registry = new ProviderRuntimeRegistry({
-      protectedCredentialStore: {
-        doesReferenceExist: async () => true,
-        // 端点由本次调用的受控参数给出；API key 只从环境变量读取，不落盘、不回显。
-        readCredential: async () => ({ baseUrl: endpoint, apiKey }),
-      },
+  let runtimeSelection: RuntimeSelection;
+  try {
+    runtimeSelection = buildRuntimeSelection({
+      runtime: runConfig.runtime,
+      providerEndpoint: options.providerEndpoint,
+      providerModelIdentifier: options.providerModelIdentifier,
+      providerApiKeyEnvironmentVariable: options.providerApiKeyEnvironmentVariable,
     });
-    registry.register(createOpenAiCompatibleProviderRegistration());
-    runtimeSelection = {
-      runtime: "provider",
-      providerRuntimeRegistry: registry,
-      provider: {
-        // 仅本地/受控端点：真实服务必须由用户授权并写入受保护凭据存储。
-        providerId: OPENAI_COMPATIBLE_PROVIDER_ID,
-        modelIdentifier,
-        allowedModelIdentifiers: [modelIdentifier],
-        requiredCapabilities: ["streaming", "tool-calling"],
-        baseUrl: endpoint,
-        protectedCredentialReferenceId: "credential-reference:cli-provider",
-      },
-    };
+  } catch (error) {
+    if (error instanceof RuntimeSelectionError) {
+      failWith(new Error(error.message), EXIT_CODES.USAGE_ERROR);
+    }
+    throw error;
   }
-
   // Ponder 模式下 handleUserMessage 返回的是内部哨兵值（不含正文），正文经 streamOutput 送达；
   // 这里同时留档，供 JSON 输出返回真实回答。
   const streamedAnswerChunks: string[] = [];

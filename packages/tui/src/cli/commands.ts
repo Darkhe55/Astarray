@@ -11,6 +11,10 @@ import { runConfigSchema } from "../../../core/src/core/schemas.js";
 import { resolveHostUserIdentifier } from "../../../core/src/core/host-user-context.js";
 import { bootstrapCli } from "./bootstrap.js";
 import { EXIT_CODES, failWith, logToStderr, printJson } from "./json-output.js";
+import {
+  RuntimeSelectionError,
+  buildRuntimeSelection,
+} from "./runtime-selection.js";
 import { defaultStateDirectory } from "./run-command.js";
 
 export interface StatusCommandOptions {
@@ -2526,6 +2530,11 @@ export async function executeWorkflowScenarioCommand(
 /** BRIDGE-01-02：MCP stdio 服务器（最小工具面：submit/query/cancel/read-result）。 */
 export interface McpServeCommandOptions {
   stateDirectory: string;
+  /** BRIDGE-01：运行时选择（缺省 mock；openai-compatible 需端点和模型，缺参数即 exit 2）。 */
+  runtime?: string;
+  providerEndpoint?: string;
+  providerModelIdentifier?: string;
+  providerApiKeyEnvironmentVariable?: string;
 }
 
 export async function executeMcpServeCommand(
@@ -2541,10 +2550,24 @@ export async function executeMcpServeCommand(
     "../../../core/src/bridge/mcp-stdio-server.js"
   );
   const sessionId = "mcp-session-stdio";
+  let runtimeSelection;
+  try {
+    runtimeSelection = buildRuntimeSelection({
+      runtime: options.runtime,
+      providerEndpoint: options.providerEndpoint,
+      providerModelIdentifier: options.providerModelIdentifier,
+      providerApiKeyEnvironmentVariable: options.providerApiKeyEnvironmentVariable,
+    });
+  } catch (error) {
+    if (error instanceof RuntimeSelectionError) {
+      failWith(new Error(error.message), EXIT_CODES.USAGE_ERROR);
+    }
+    throw error;
+  }
   const application = await AstarrayApplicationFacade.create({
     stateDirectory: options.stateDirectory,
     mode: "assist",
-    runtime: "mock",
+    ...runtimeSelection,
     statusPollIntervalMilliseconds: 25,
   });
   application.createSession({ sessionId, mode: "assist" });
@@ -2579,6 +2602,11 @@ export interface GuiServeCommandOptions {
   isBrowserOpenEnabled?: boolean;
   /** 本地关闭信号（默认等待 SIGINT/SIGTERM；测试可注入已结算信号）。 */
   shutdownSignal?: Promise<void>;
+  /** GUI-01-R：运行时选择（缺省 mock；openai-compatible 需端点和模型，缺参数即 exit 2）。 */
+  runtime?: string;
+  providerEndpoint?: string;
+  providerModelIdentifier?: string;
+  providerApiKeyEnvironmentVariable?: string;
 }
 
 function resolveBrowserOpenCommand(url: string): {
@@ -2636,10 +2664,24 @@ export async function executeGuiServeCommand(
   );
   const sessionId = "gui-session-local";
   const sessionMode = "assist" as const;
+  let runtimeSelection;
+  try {
+    runtimeSelection = buildRuntimeSelection({
+      runtime: options.runtime,
+      providerEndpoint: options.providerEndpoint,
+      providerModelIdentifier: options.providerModelIdentifier,
+      providerApiKeyEnvironmentVariable: options.providerApiKeyEnvironmentVariable,
+    });
+  } catch (error) {
+    if (error instanceof RuntimeSelectionError) {
+      failWith(new Error(error.message), EXIT_CODES.USAGE_ERROR);
+    }
+    throw error;
+  }
   const application = await AstarrayApplicationFacade.create({
     stateDirectory: options.stateDirectory,
     mode: sessionMode,
-    runtime: "mock",
+    ...runtimeSelection,
     statusPollIntervalMilliseconds: 25,
   });
   application.createSession({ sessionId, mode: sessionMode });
