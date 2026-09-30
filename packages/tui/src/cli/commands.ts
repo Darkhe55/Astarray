@@ -11,6 +11,7 @@ import { runConfigSchema } from "../../../core/src/core/schemas.js";
 import { resolveHostUserIdentifier } from "../../../core/src/core/host-user-context.js";
 import { bootstrapCli } from "./bootstrap.js";
 import { EXIT_CODES, failWith, logToStderr, printJson } from "./json-output.js";
+import { writeRuntimeDiagnosticsReport } from "./runtime-diagnostics-report.js";
 import {
   RuntimeSelectionError,
   buildRuntimeSelection,
@@ -2538,6 +2539,8 @@ export interface McpServeCommandOptions {
   providerApiKeyEnvironmentVariable?: string;
   /** 受保护凭据引用（优先于环境变量；不存在即 fail-closed）。 */
   providerCredentialReference?: string;
+  /** 可选：把本次实际选中的运行时写成公开诊断报告（供 tarball 级验收断言）。 */
+  runtimeDiagnosticsFilePath?: string;
 }
 
 export async function executeMcpServeCommand(
@@ -2574,6 +2577,15 @@ export async function executeMcpServeCommand(
     mode: "assist",
     ...runtimeSelection,
     statusPollIntervalMilliseconds: 25,
+  });
+  await writeRuntimeDiagnosticsReport({
+    reportFilePath: options.runtimeDiagnosticsFilePath,
+    runtimeKind: runtimeSelection.runtime,
+    providerId: runtimeSelection.provider?.providerId ?? null,
+    modelIdentifier: runtimeSelection.provider?.modelIdentifier ?? null,
+    protectedCredentialReferenceId:
+      runtimeSelection.provider?.protectedCredentialReferenceId ?? null,
+    application,
   });
   application.createSession({ sessionId, mode: "assist" });
   const bridge = new McpToolBridge({ applicationPort: application });
@@ -2614,6 +2626,8 @@ export interface GuiServeCommandOptions {
   providerApiKeyEnvironmentVariable?: string;
   /** 受保护凭据引用（优先于环境变量；不存在即 fail-closed）。 */
   providerCredentialReference?: string;
+  /** 可选：把本次实际选中的运行时写成公开诊断报告（供 tarball 级验收断言）。 */
+  runtimeDiagnosticsFilePath?: string;
 }
 
 function resolveBrowserOpenCommand(url: string): {
@@ -2692,6 +2706,15 @@ export async function executeGuiServeCommand(
     mode: sessionMode,
     ...runtimeSelection,
     statusPollIntervalMilliseconds: 25,
+  });
+  await writeRuntimeDiagnosticsReport({
+    reportFilePath: options.runtimeDiagnosticsFilePath,
+    runtimeKind: runtimeSelection.runtime,
+    providerId: runtimeSelection.provider?.providerId ?? null,
+    modelIdentifier: runtimeSelection.provider?.modelIdentifier ?? null,
+    protectedCredentialReferenceId:
+      runtimeSelection.provider?.protectedCredentialReferenceId ?? null,
+    application,
   });
   application.createSession({ sessionId, mode: sessionMode });
   let guiHandle: Awaited<ReturnType<typeof startGuiServer>> | undefined;

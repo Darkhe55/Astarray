@@ -83,6 +83,7 @@ program
     "--provider-api-key-env <variable>",
     "存放 API key 的环境变量名（缺省 ASTARRAY_PROVIDER_API_KEY；不落盘、不回显）",
   )
+  .option("--provider-credential-reference <reference>", "受保护凭据引用（优先于环境变量）")
   .action(
     async (
       prompt: string,
@@ -94,7 +95,7 @@ program
         providerEndpoint?: string;
         providerModel?: string;
         providerApiKeyEnv?: string;
-      providerCredentialReference?: string;
+        providerCredentialReference?: string;
       },
     ) => {
       process.exitCode = await executeRunCommand({
@@ -564,6 +565,10 @@ mcpCommand
   .option("--provider-model <model>", "Provider 模型标识（必填）")
   .option("--provider-api-key-env <name>", "存放 API key 的环境变量名")
   .option("--provider-credential-reference <reference>", "受保护凭据引用（优先于环境变量）")
+  .option(
+    "--runtime-diagnostics-file <path>",
+    "把本次选中的运行时写入公开诊断报告（供安装验收；不含凭据）",
+  )
   .action(
     async (options: {
       runtime?: string;
@@ -571,6 +576,7 @@ mcpCommand
       providerModel?: string;
       providerApiKeyEnv?: string;
       providerCredentialReference?: string;
+      runtimeDiagnosticsFile?: string;
     }) => {
       process.exitCode = await executeMcpServeCommand({
         stateDirectory: defaultStateDirectory(),
@@ -586,6 +592,9 @@ mcpCommand
           : {}),
         ...(options.providerCredentialReference !== undefined
           ? { providerCredentialReference: options.providerCredentialReference }
+          : {}),
+        ...(options.runtimeDiagnosticsFile !== undefined
+          ? { runtimeDiagnosticsFilePath: options.runtimeDiagnosticsFile }
           : {}),
       });
     },
@@ -972,6 +981,10 @@ program
   .option("--provider-model <model>", "Provider 模型标识（必填）")
   .option("--provider-api-key-env <name>", "存放 API key 的环境变量名")
   .option("--provider-credential-reference <reference>", "受保护凭据引用（优先于环境变量）")
+  .option(
+    "--runtime-diagnostics-file <path>",
+    "把本次选中的运行时写入公开诊断报告（供安装验收；不含凭据）",
+  )
   .action(
     async (options: {
       port?: number;
@@ -981,6 +994,7 @@ program
       providerModel?: string;
       providerApiKeyEnv?: string;
       providerCredentialReference?: string;
+      runtimeDiagnosticsFile?: string;
     }) => {
       process.exitCode = await executeGuiServeCommand({
         stateDirectory: defaultStateDirectory(),
@@ -998,6 +1012,9 @@ program
           : {}),
         ...(options.providerCredentialReference !== undefined
           ? { providerCredentialReference: options.providerCredentialReference }
+          : {}),
+        ...(options.runtimeDiagnosticsFile !== undefined
+          ? { runtimeDiagnosticsFilePath: options.runtimeDiagnosticsFile }
           : {}),
       });
     },
