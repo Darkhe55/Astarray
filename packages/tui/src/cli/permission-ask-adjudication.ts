@@ -199,6 +199,63 @@ export function hasDecisionInputChannel(): boolean {
   return process.stdin.isTTY !== true;
 }
 
+/**
+ * 按**换行**切分的 stdin 行读取器。
+ *
+ * 不能把"一次 data 事件"当成一行：管道里多行裁决会一次性到达
+ * （`printf 'allow-once\nallow-once\n' | …`），按 chunk 读会把整段当成一行而误判为拒绝
+ * （2026-10-02 真实 CLI 端到端复现）。此处缓存跨 chunk 的半行并逐行产出。
+ */
+export function createStdinLineReader(): () => Promise<string | null> {
+  const pendingLines: string[] = [];
+  const pendingResolvers: Array<(line: string | null) => void> = [];
+  let remainder = "";
+  let isEnded = false;
+
+  const flushLine = (line: string): void => {
+    const resolver = pendingResolvers.shift();
+    if (resolver === undefined) {
+      pendingLines.push(line);
+      return;
+    }
+    resolver(line);
+  };
+
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk: string) => {
+    const combined = remainder + chunk;
+    const segments = combined.split("\n");
+    remainder = segments.pop() ?? "";
+    for (const segment of segments) {
+      flushLine(segment.replace(/\r$/, ""));
+    }
+  });
+  process.stdin.on("end", () => {
+    isEnded = true;
+    if (remainder !== "") {
+      flushLine(remainder);
+      remainder = "";
+    }
+  });
+  process.stdin.on("error", () => {
+    isEnded = true;
+  });
+
+  return () =>
+    new Promise<string | null>((resolve) => {
+      const buffered = pendingLines.shift();
+      if (buffered !== undefined) {
+        resolve(buffered);
+        return;
+      }
+      if (isEnded) {
+        resolve(null);
+        return;
+      }
+      pendingResolvers.push(resolve);
+    });
+}
+
 /** 交互裁决端口（默认实现：TTY 或管道显式输入；逐次询问，无会话记忆）。 */
 export class InteractivePermissionAskDecisionPort implements PermissionAskDecisionPort {
   private readonly isInteractiveFlag: () => boolean;
@@ -222,17 +279,7 @@ export class InteractivePermissionAskDecisionPort implements PermissionAskDecisi
       options.isInteractive ?? (() => process.stdin.isTTY === true);
     this.hasInputChannelFlag = options.hasDecisionInput ?? hasDecisionInputChannel;
     this.readTimeoutMilliseconds = options.readTimeoutMilliseconds ?? 120_000;
-    this.readLine =
-      options.readLine ??
-      (() =>
-        new Promise<string | null>((resolve) => {
-          process.stdin.setEncoding("utf8");
-          const onData = (chunk: string): void => {
-            process.stdin.off("data", onData);
-            resolve(chunk.trim());
-          };
-          process.stdin.once("data", onData);
-        }));
+    this.readLine = options.readLine ?? createStdinLineReader();
   }
 
   /** 当前裁决输入等待上限（毫秒；供调用方与测试断言有界性）。 */
