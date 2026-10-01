@@ -103,6 +103,23 @@ export interface PolicyWrapperOptions {
   currentPermissionProfileReference?: PermissionProfileReference | null;
 }
 
+/**
+ * 授权类"拒绝执行"错误码：这些错误意味着工具**从未进入执行**，副作用确定为 none。
+ * 与"执行中失败/结果未知"严格区分，是门禁释放预留（使批准后重跑不被在途预留挡住）
+ * 的依据之一（2026-10-02 真实 CLI 端到端复现后固化）。
+ *
+ * 注意**不包含** `auth-scope-replay-rejected` / `operation-already-in-flight`：
+ * 这两种表示"该逻辑操作此前已执行/正在执行"，绝不能按无副作用释放（否则重放保护失效）。
+ */
+function isExecutionRefusalErrorCode(errorCode: string): boolean {
+  return (
+    errorCode === "permission-ask-pending" ||
+    errorCode === "tool-permission-denied" ||
+    errorCode === "auth-scope-awaiting-user-authorization" ||
+    errorCode === "auth-scope-denied"
+  );
+}
+
 export class PolicyWrapper implements ToolPort {
   private readonly operationClassifier = new LocalSensitiveOperationClassifier();
 
@@ -121,6 +138,8 @@ export class PolicyWrapper implements ToolPort {
         errorCode: "provider-cancelled",
         errorMessage: "工具调用被取消",
         isIdempotencyConfirmed: true,
+        // 被取消的调用从未进入执行 → 确定无副作用（门禁可释放预留、允许重试）。
+        sideEffectStatus: "none",
       };
     }
     try {
@@ -186,7 +205,11 @@ export class PolicyWrapper implements ToolPort {
           errorCode: error.errorCode,
           errorMessage: error.message,
           isIdempotencyConfirmed: false,
-          sideEffectStatus,
+          // 授权类拒绝（权限询问待决/策略拒绝/范围待授权）：工具**从未进入执行** →
+          // 确定无副作用，门禁据此释放预留，使"批准后重跑"不被在途预留挡住。
+          sideEffectStatus: isExecutionRefusalErrorCode(error.errorCode)
+            ? ("none" as const)
+            : sideEffectStatus,
         };
       }
       return {
