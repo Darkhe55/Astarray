@@ -41,26 +41,67 @@ status=blocked
   会写入 `consumedAtIso: null` 的新记录，**可再次授权**。
 - ADR-0039 §单次授权与重放：同一操作指纹再次执行返回 `auth-scope-replay-rejected`，内层工具不被调用。
 
-## 2. 剩余修复点（建议检查点，先反例后实现）
+## 2. ④ 已修复（提交 `ff487d8`）
 
-**语义**：用户 `allow-once` 针对的是"这一次精确操作"；被权限询问拦下的那次尝试**没有产生副作用**，
-重跑属于同一逻辑操作的**首次真实执行**，因此应在重跑前**重新登记一次作用域授权**，
-而不是让 replay 守卫把它当成第二次执行。
+**语义**：用户 `allow-once` 针对"这一次精确操作"；被权限询问拦下的那次尝试**没有产生副作用**，
+重跑是同一逻辑操作的**首次真实执行**，因此在授权时**重新登记一次**作用域授权；
+**重放保护本身没有放宽**（同一指纹第二次重放仍返回 `auth-scope-replay-rejected`）。
 
-实现要点（不需新增语义规则，只需接线）：
+实现（均为接线，未新增语义规则）：
 
-1. `ScopeAuthorizationGate` 已在 `PolicyWrapper` 选项内可达；确认运行时装配把 gate 传给 worker 的 PolicyWrapper。
-2. 在 CLI 裁决成功后（`permission-ask-adjudication.ts` 的 allow-once 分支）除 `grantSessionAuthorization` 外，
-   再调用一次**作用域授权**：`gate.grantUserAuthorization({ operation, approvedByUserId })`，
-   其中 `operation` 需由工具名 + 参数经与 `PolicyWrapper` 相同的分类逻辑构造
-   （`ScopeAuthorizationGate` 已导出工具→操作种类的映射，见同文件 389 行附近的 `case "createProjectFile"`）。
-3. 失败即 fail-closed（授权未登记则不放行），并在输出里如实报告。
-4. 反例：新增测试——被 `permission-ask-pending` 拦下 → 用户 allow-once → 重跑**内层工具执行次数 = 1**、
-   产物存在、任务 `done`；同时保留"同一指纹第二次重放仍被拒"的既有断言（不得放宽重放保护）。
+1. `MainController.grantScopeAuthorizationForToolCall({toolName, argumentsJson})`：
+   经 `describeToolOperation` 构造操作描述，以**解析后的认证身份**调用
+   `ScopeAuthorizationGate.grantUserAuthorization`；缺身份时拒绝登记（不伪造 `approvedByUserId`）。
+2. `public-sdk`：公开该入口，三入口共用。
+3. `permission-ask-adjudication`：`allow-once` 分支**先**登记作用域授权**再**下发 unblock
+   （unblock 会立即重新派发，顺序不能反），并如实输出作用域授权结果
+   （`granted` / `not-scope-gated` / `failed:…`）。
+4. `application-runtime`：注入 `scopeAuthorizationGate` 与**解析后**的 `authenticatedUserId`
+   （此前写成原始 `options` 值，CLI 下为 `null`，导致首次端到端仍报"缺少可信认证身份"）。
+5. `AssistScheduler.handleInstruction`：指令应用失败改为升级回用户，不再产生未处理拒绝
+   （同时消除了覆盖率运行里既有的 unhandled `DomainError: 非法状态迁移 pending → pending`）。
 
-## 3. 额度与产物
+### 2.1 反例与证据
 
-- 本轮真实额度消耗：**0**（全部走本地拦截代理）；新 3 次额度中累计已用 2 次，**剩 1 次**。
-- 端到端改进已可见：同一写任务由 `status=blocked` → **`status=done`**、`permissionAsk=allowed-once`
-  （④ 修好后才能落产物）。
-- 建议：④ 实现并离线验证通过后，再用**最后 1 次**额度跑真实写任务收口 T07D-R2-04「小型受控改动」。
+- `tests/core/integration/scope-authorization-regrant.test.ts` **3/3**：
+  无授权→等待裁决；复现实测序列（授权被消费→重跑 `auth-scope-replay-rejected`）；
+  **重新登记后重跑执行一次、同指纹重放仍被拒**。
+- 端到端（浏览器无关，本地拦截代理，**零真实额度**）：
+
+```
+astarray: 已按精确参数 allow-once 授权 createProjectFile（作用域授权: granted），并下发 unblock（任务 T-001）
+{ "status": "done", "permissionAsk": "allowed-once" }
+产物: .tmp/live-exec-probe3/tasks/PROBE-EXEC.md 内容 "# 工具执行验证"
+```
+
+- 门禁：`npm run check` **247 文件 / 1926 用例**；覆盖率 **92.84 / 85.22 / 93.02 / 92.86**（exit 0）；
+  `verify-package` ✅（217 文件）、`verify:entry-runtime-selection` ✅ 23/23、
+  `verify:provider-tool-protocol` ✅ 5/5、安全关键模块 **22/22**。
+- tarball sha256 `17cf197f705034e3a399a93208ff75621e88de498ca22df80f3e5fe7732ce17c`。
+
+## 3. 四层阻塞总览（全部已修）
+
+| 层 | 内容 | 提交 |
+| --- | --- | --- |
+| ① 消息协议 | `role:"function"` → `assistant.tool_calls` + `role="tool"` | `104dcf1` |
+| ② 权限引擎 | 授权未写判定侧引擎 + 参数哈希键序敏感 | `c1608b5` |
+| ③ 指令投递 | `unblock` 被子进程 mailbox 吞掉，scheduler 收不到 | `3387740` |
+| ④ 范围门禁 | 一次性授权被"被拒那次"消费，重跑命中 replay-rejected | `ff487d8` |
+
+## 4. 剩余一步：真实 Provider 收口（需要用户决定）
+
+离线链路已全绿，但 **T07D-R2-04「小型受控改动」要求在真实服务上完成**。
+当前额度：新 3 次累计已用 2 次，**剩 1 次**。
+
+建议动作（1 次请求）：
+
+```powershell
+# 在隔离 fixture 内，用真实端点 + 受保护引用；stdin 管道给出一次性授权
+'allow-once' | node dist/cli.js run "<创建 tasks/PROBE-LIVE.md 并给出完成控制事件的提示>" `
+  --mode assist --runtime openai-compatible --provider-model step-3.7-flash `
+  --provider-credential-reference prov-live-1 --timeout-seconds 150 --json
+```
+
+成功判据：`status=done`、`permissionAsk=allowed-once`、`tasks/PROBE-LIVE.md` 实际落盘且内容符合要求。
+失败则如实记录并保留 blocked（不得以文本声明结案）。
+
