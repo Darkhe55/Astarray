@@ -88,20 +88,56 @@ astarray: 已按精确参数 allow-once 授权 createProjectFile（作用域授�
 | ③ 指令投递 | `unblock` 被子进程 mailbox 吞掉，scheduler 收不到 | `3387740` |
 | ④ 范围门禁 | 一次性授权被"被拒那次"消费，重跑命中 replay-rejected | `ff487d8` |
 
-## 4. 剩余一步：真实 Provider 收口（需要用户决定）
+## 4. 真实 Provider 收口实测（额度第 3/3 次，2026-10-01）
 
-离线链路已全绿，但 **T07D-R2-04「小型受控改动」要求在真实服务上完成**。
-当前额度：新 3 次累计已用 2 次，**剩 1 次**。
-
-建议动作（1 次请求）：
+命令（隔离范围：只允许改 `.tmp/live-write-final/`；stdin 管道给出一次性授权）：
 
 ```powershell
-# 在隔离 fixture 内，用真实端点 + 受保护引用；stdin 管道给出一次性授权
-'allow-once' | node dist/cli.js run "<创建 tasks/PROBE-LIVE.md 并给出完成控制事件的提示>" `
+'allow-once' | node dist/cli.js run "<创建 .tmp/live-write-final/PROBE-LIVE.md 的提示>" `
   --mode assist --runtime openai-compatible --provider-model step-3.7-flash `
-  --provider-credential-reference prov-live-1 --timeout-seconds 150 --json
+  --provider-credential-reference prov-live-1 --timeout-seconds 180 --json
 ```
 
-成功判据：`status=done`、`permissionAsk=allowed-once`、`tasks/PROBE-LIVE.md` 实际落盘且内容符合要求。
-失败则如实记录并保留 blocked（不得以文本声明结案）。
+实测时间线（mission-e7c0ba91）：
+
+```
+[需要用户] 任务 T-001 需要权限调用 createProjectFile（… 参数: {"content": "# 真实 Provider 受控改动探针…", "filePath": ".tmp/live-write-final/PROBE-LIVE.md"}）
+[权限裁决] 任务 T-001 请求调用受限工具 createProjectFile …
+已按精确参数 allow-once 授权 createProjectFile（作用域授权: granted），并下发 unblock（任务 T-001）
+[需要用户] 任务 T-001 失败：缺少 ASTARRAY_TASK_COMPLETION_V1 完成控制事件（本地完成门禁未通过）（状态：（无文本输出））
+status=blocked（permissionAsk=requires-human-resubmission）
+```
+
+### 4.1 已达成的部分（工具链路修复被真实服务验证）
+
+| 判据 | 结果 |
+| --- | --- |
+| 权限裁决线（询问 → 用户 allow-once → 授权 → unblock） | ✅ 真实运行走通（含 `作用域授权: granted`） |
+| **受限工具真实执行并落盘产物** | ✅ `.tmp/live-write-final/PROBE-LIVE.md` 存在，内容三行完全符合要求，sha256 `7AFD668EF3F226842552D72AD3243A5956C54A337BBF454F51E1A391A07A5CFB` |
+| 无越界改动 | ✅ 该目录外无任何新文件；`git status` 仅用户并行文件 |
+| 任务终态 | ⛔ `blocked`（未过本地完成门禁） |
+
+即：**四层阻塞修复在真实服务上成立**（此前连工具都执行不了），但任务结案被另一件独立的事挡住。
+
+### 4.2 未达成的原因（新发现，与前面四层无关）
+
+- 工具执行后模型**没有在最终回复里重复输出** `ASTARRAY_TASK_COMPLETION_V1`，
+  运行时的续轮结果为空文本（`状态：（无文本输出）`）；
+- 本地完成门禁因此拒绝宣布成功（**门禁行为正确**，不是缺陷）；
+- 真实模型行为：第一轮先输出完成事件再发起工具调用；工具执行后往往只回一句空/简短结论，
+  **不再重复**版本化完成事件。
+
+### 4.3 建议修复候选（属产品口径，需用户裁决）
+
+1. **完成协议提示模板**：在任务提示/系统提示中明确"工具执行后的最终回复**仍须**包含完成控制事件"
+   （不改变门禁强度，只是让模型知道协议）；
+2. **协议重述点**：工具循环在回填工具结果时，附带一句本地协议提醒（如
+   `"完成时仍须在最后一行输出 ASTARRAY_TASK_COMPLETION_V1 …"`）作为 `role:"system"` 续发消息；
+3. 若采纳 1 或 2，需要用**新的真实额度**复跑同一写任务验证；届时 `T07D-R2-04` 可正式收口。
+
+### 4.4 额度
+
+- 新 3 次授权额度：**已全部用完**（① 文本探针前的两次写任务尝试 + 本次收口）。
+- 真实验证结论与未达成项已如实记录；**不把"产物已落盘"当作任务通过**。
+
 
