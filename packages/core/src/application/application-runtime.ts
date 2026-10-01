@@ -765,6 +765,10 @@ export async function createApplicationRuntime(
     currentPermissionProfileReference,
     // 修复（2026-10-01）：裁决授权必须能写进判定侧引擎，否则批准后重跑仍要求逐次裁决。
     configurablePermissionPolicyEngine,
+    // 修复（2026-10-01）：被询问拦下的那次会消耗作用域一次性授权，授权时需重新登记。
+    scopeAuthorizationGate,
+    // 用**解析后**的身份（host 上下文回退），不是原始 options 值。
+    authenticatedUserId,
     mainAgentReadonlyProjection,
     sessionElevationStore,
     sessionElevationController,

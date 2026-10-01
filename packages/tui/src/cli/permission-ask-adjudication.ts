@@ -32,6 +32,14 @@ export interface PermissionAskApplicationPort {
     argumentsJson: string,
     nowUnixSeconds: number,
   ): Promise<void>;
+  /**
+   * 重新登记作用域一次性授权（被询问拦下的那次会消耗它；缺失实现时跳过，
+   * 由调用方在结果上如实反映）。
+   */
+  grantScopeAuthorizationForToolCall?(input: {
+    toolName: string;
+    argumentsJson: string;
+  }): Promise<{ receiptIdentifier: string; operationFingerprint: string } | null>;
   sendSchedulerInstruction(missionId: string, instructionText: string): void;
 }
 
@@ -140,17 +148,33 @@ export async function runPermissionAskAdjudication(options: {
     return "denied";
   }
   const nowUnixSeconds = Math.floor(Date.now() / 1000);
+  // 顺序要紧：先登记两类授权，再下发 unblock（unblock 会立即重新派发任务）。
+  // 权限引擎授权：让受限工具在重跑时被判 allow。
   await options.application.grantSessionAuthorization(
     ask.toolName,
     ask.argumentsJson,
     nowUnixSeconds,
   );
+  // 作用域一次性授权：被询问拦下的那次已把它消费，重跑需重新登记一次。
+  let scopeGrantOutcome = "unsupported";
+  if (typeof options.application.grantScopeAuthorizationForToolCall === "function") {
+    try {
+      const scopeGrant = await options.application.grantScopeAuthorizationForToolCall({
+        toolName: ask.toolName,
+        argumentsJson: ask.argumentsJson,
+      });
+      scopeGrantOutcome = scopeGrant === null ? "not-scope-gated" : "granted";
+    } catch (error) {
+      scopeGrantOutcome = "failed:" + (error as Error).message;
+    }
+  }
   options.application.sendSchedulerInstruction(
     options.missionIdentifier,
     JSON.stringify({ action: "unblock", taskId: ask.taskIdentifier }),
   );
   writePrompt(
-    `已按精确参数 allow-once 授权 ${ask.toolName}，并下发 unblock（任务 ${ask.taskIdentifier}）。`,
+    `已按精确参数 allow-once 授权 ${ask.toolName}（作用域授权: ${scopeGrantOutcome}），` +
+      `并下发 unblock（任务 ${ask.taskIdentifier}）。`,
   );
   return "allowed-once";
 }

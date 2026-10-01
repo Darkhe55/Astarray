@@ -913,6 +913,19 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     );
   }
 
+  /**
+   * 用户 `allow-once` 后重新登记作用域一次性授权（修复 2026-10-01）：
+   * 被权限询问拦下的那次尝试会消耗该操作指纹的授权，重跑需要重新登记一次，
+   * 否则重跑命中 `auth-scope-replay-rejected`（内层工具不执行）。
+   * 重放保护不变（同一指纹第二次重放仍被拒）。
+   */
+  async grantScopeAuthorizationForToolCall(input: {
+    toolName: string;
+    argumentsJson: string;
+  }): Promise<{ receiptIdentifier: string; operationFingerprint: string } | null> {
+    return this.runtime.controller.grantScopeAuthorizationForToolCall(input);
+  }
+
   transitionMode(mode: AgentMode): void {
     this.runtime.controller.transitionMode(mode);
   }

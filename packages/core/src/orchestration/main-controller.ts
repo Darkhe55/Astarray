@@ -38,6 +38,8 @@ import type { PermissionProfileStore } from "../tools/permission-profile-store.j
 import type { PermissionProfileReference } from "../tools/permission-profile-store.js";
 import type { PermissionCapabilityCatalog } from "../tools/permission-capability-catalog.js";
 import type { ConfigurablePermissionPolicyEngine } from "../tools/configurable-permission-policy-engine.js";
+import type { ScopeAuthorizationGate } from "../tools/scope-authorization-gate.js";
+import { describeToolOperation } from "../tools/scope-authorization-gate.js";
 import type { CurrentPermissionSelectionStore } from "../tools/current-permission-selection.js";
 import type { MainAgentReadonlyToolProjection } from "../tools/main-agent-readonly-projection.js";
 import type { SessionPermissionElevationStore } from "../tools/session-permission-elevation.js";
@@ -135,6 +137,14 @@ export interface MainControllerOptions {
    * 用户批准后重跑仍被要求逐次裁决（授权双轨失配）。
    */
   configurablePermissionPolicyEngine?: ConfigurablePermissionPolicyEngine | null;
+  /**
+   * 修复（2026-10-01）：作用域一次性授权门禁（`ScopeGatedToolPort` 使用的同一实例）。
+   * 被权限询问拦下的那次尝试会消耗该操作指纹的授权，重跑须**重新登记**一次，
+   * 否则重跑命中 `auth-scope-replay-rejected`，内层工具永不执行。
+   */
+  scopeAuthorizationGate?: ScopeAuthorizationGate | null;
+  /** 已认证用户 ID（作用域授权记录 `approvedByUserId`；不得由模型/配置推断）。 */
+  authenticatedUserId?: string | null;
   /** B6R-06：主 Agent 永久只读投影（任意 profile/提升下不变）。 */
   mainAgentReadonlyProjection?: MainAgentReadonlyToolProjection | null;
   /** B6R-06：会话临时提升控制面（TUI/CLI 认证设置控制面；非模型工具）。 */
@@ -290,6 +300,37 @@ export class MainController {
         argumentsJson,
       });
     }
+  }
+
+  /**
+   * 用户 `allow-once` 后**重新登记**一次作用域授权（修复 2026-10-01）。
+   *
+   * 背景：被权限询问拦下的那次尝试会让 `ScopeAuthorizationGate` 记下并消费该操作指纹
+   * 的授权，重跑即命中 `auth-scope-replay-rejected`（内层工具从不执行）。
+   * 重跑对用户而言是同一逻辑操作的**首次真实执行**，因此在授权时重新登记一次；
+   * 重放保护本身不变（同一指纹第二次重放仍被拒）。
+   */
+  async grantScopeAuthorizationForToolCall(input: {
+    toolName: string;
+    argumentsJson: string;
+  }): Promise<{ receiptIdentifier: string; operationFingerprint: string } | null> {
+    const scopeGate = this.options.scopeAuthorizationGate;
+    if (scopeGate === null || scopeGate === undefined) {
+      return null;
+    }
+    const operation = describeToolOperation(input.toolName, input.argumentsJson);
+    if (operation === null) {
+      return null; // 该工具不受范围门禁约束
+    }
+    const approvedByUserId = this.options.authenticatedUserId;
+    if (approvedByUserId === null || approvedByUserId === undefined || approvedByUserId === "") {
+      // 无认证身份不得登记"用户已授权"记录：退回需人工裁决（复用既有稳定错误码）。
+      throw new DomainError(
+        "permission-ask-pending",
+        "缺少可信认证身份，无法登记作用域授权（需人工裁决）",
+      );
+    }
+    return scopeGate.grantUserAuthorization({ operation, approvedByUserId });
   }
 
   async queryMissionStatus(missionId: string) {

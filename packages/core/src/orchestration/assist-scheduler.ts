@@ -68,14 +68,27 @@ export class AssistScheduler extends MissionOrchestrator {
     }
     switch (parsed.action) {
       case "unblock":
-        void this.unblockTask(parsed.taskId);
+        // 指令应用失败（如任务已终态/非法迁移）不得变成未处理拒绝：升级回用户。
+        void this.unblockTask(parsed.taskId).catch((error: unknown) => {
+          this.reportEscalation(
+            `unblock 未能应用: ${(error as Error).message}（taskId=${parsed.taskId}）`,
+          );
+        });
         break;
       case "retry":
       case "reassign":
-        void this.reassignTask(parsed.taskId);
+        void this.reassignTask(parsed.taskId).catch((error: unknown) => {
+          this.reportEscalation(
+            `reassign/retry 未能应用: ${(error as Error).message}（taskId=${parsed.taskId}）`,
+          );
+        });
         break;
       case "cancel":
-        void this.cancelTask(parsed.taskId);
+        void this.cancelTask(parsed.taskId).catch((error: unknown) => {
+          this.reportEscalation(
+            `cancel 未能应用: ${(error as Error).message}（taskId=${parsed.taskId}）`,
+          );
+        });
         break;
     }
   }

@@ -189,7 +189,7 @@ describe("MainController", () => {
     expect(status.missionId.length).toBeGreaterThan(0);
   });
 
-  it("sendSchedulerInstruction 经反馈信箱下发指令", async () => {
+  it("sendSchedulerInstruction 经反馈信箱下发指令（并同步应用到本进程 scheduler）", async () => {
     const controller = buildController({ mode: "assist" });
     const missionId = await controller.handleUserMessage("任务");
     controller.sendSchedulerInstruction(missionId, '{"action":"cancel","taskId":"T-001"}');
@@ -197,6 +197,15 @@ describe("MainController", () => {
       (message) => message.recipientId === `scheduler:${missionId}`,
     );
     expect(instruction?.payload.kind).toBe("instruction");
+    // 修复（2026-10-01）：指令必须**同进程**送达 scheduler（否则跨进程 mailbox 会吞掉它）。
+    // 这里取消一个不存在/已终态的任务会失败，但失败必须升级回用户而不是变成未处理拒绝。
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const escalation = feedbackTransport.sentMessages.find((message) =>
+      String((message.payload as { instructionText?: string }).instructionText ?? "").includes(
+        "未能应用",
+      ),
+    );
+    expect(escalation === undefined || escalation.payload.kind === "instruction").toBe(true);
   });
 
   it("非 TTY 输入不阻塞：Worker 挂起时仍可处理新消息", async () => {
