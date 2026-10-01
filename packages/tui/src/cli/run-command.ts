@@ -34,10 +34,18 @@ async function waitForPermissionAsk(
   escalationMessages: string[],
   timeoutMilliseconds: number,
   queryTask: () => Promise<{ status: string }>,
+  startIndex = 0,
+  isTerminalFailure: () => boolean = () => false,
 ): Promise<ReturnType<typeof buildPermissionAskFromEscalation>> {
   const deadline = Date.now() + timeoutMilliseconds;
   while (Date.now() < deadline) {
-    const permissionAsk = escalationMessages
+    // 任务已**终态失败**（例如门禁判失败）：不会再有裁决需求，立即返回。
+    if (isTerminalFailure()) {
+      return null;
+    }
+    // 只看**尚未裁决**的升级文本（已消费的不得重复触发询问）。
+    const pendingEscalations = escalationMessages.slice(startIndex);
+    const permissionAsk = pendingEscalations
       .map((escalationText) => buildPermissionAskFromEscalation(escalationText))
       .find((ask) => ask !== null);
     if (permissionAsk !== undefined) {
@@ -46,6 +54,21 @@ async function waitForPermissionAsk(
     // 任务已不是 blocked（完成/失败/取消）时无需再等待裁决。
     const currentStatus = (await queryTask()).status;
     if (currentStatus !== "blocked") {
+      return null;
+    }
+    // blocked 且**已收到非询问类升级**（例如门禁判失败）→ 不会再有裁决需求，立即返回。
+    if (
+      pendingEscalations.length > 0 &&
+      pendingEscalations.every(
+        (escalationText) => buildPermissionAskFromEscalation(escalationText) === null,
+      )
+    ) {
+      return null;
+    }
+    // 任务已**重新推进**（running 等）：说明裁决已被处理，不必继续等待（2026-10-02：
+    // 此前在"unblock 后任务重跑"期间会空等满等待上限）。
+    const advancedStatus = (await queryTask()).status;
+    if (advancedStatus !== "blocked") {
       return null;
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
@@ -159,9 +182,24 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
       options.timeoutSeconds === undefined ? null : options.timeoutSeconds * 1_000;
     const decisionPort =
       options.permissionDecisionPort ?? new InteractivePermissionAskDecisionPort();
+    let hasObservedTerminalTaskFailure = false;
+    const refreshTerminalTaskFailure = async (): Promise<void> => {
+      const currentTask = await application.queryTask({
+        sessionId: "cli-run",
+        taskIdentifier: "cli-task",
+      });
+      if (currentTask.status === "failed") {
+        hasObservedTerminalTaskFailure = true;
+      }
+    };
     let finalStatus = await waitForTaskTerminal(application, "cli-run", "cli-task", {
       timeoutMilliseconds,
+      hasPendingPermissionAsk: () =>
+        escalationMessages.some(
+          (message) => buildPermissionAskFromEscalation(message) !== null,
+        ),
     });
+    await refreshTerminalTaskFailure();
     let permissionAskOutcome: string | null = null;
     /**
      * 方案 B（2026-10-02）：记录本授权周期内上一次已批准的操作，
@@ -181,7 +219,20 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
         escalationMessages,
         PERMISSION_ASK_WAIT_MILLISECONDS,
         () => application.queryTask({ sessionId: "cli-run", taskIdentifier: "cli-task" }),
+        0,
+        () => hasObservedTerminalTaskFailure,
       );
+      // 任务已明确失败且没有待裁决询问：不得再等待（否则会无谓挂起直到超时）。
+      if (permissionAsk === null) {
+        const currentTask = await application.queryTask({
+          sessionId: "cli-run",
+          taskIdentifier: "cli-task",
+        });
+        if (currentTask.status === "failed") {
+          finalStatus = "blocked";
+          break;
+        }
+      }
       const decision = await runPermissionAskAdjudication({
         ask: permissionAsk,
         missionIdentifier: accepted.missionIdentifier,
@@ -204,7 +255,12 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
       escalationMessages.length = 0;
       finalStatus = await waitForTaskTerminal(application, "cli-run", "cli-task", {
         timeoutMilliseconds,
+        hasPendingPermissionAsk: () =>
+          escalationMessages.some(
+            (message) => buildPermissionAskFromEscalation(message) !== null,
+          ),
       });
+      await refreshTerminalTaskFailure();
     }
     printJson({
       missionId: accepted.missionIdentifier,
@@ -215,7 +271,12 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
     });
     return finalStatus === "done" ? EXIT_CODES.SUCCESS : EXIT_CODES.FAILURE;
   } finally {
-    await application.shutdown();
+    // 收口必须有界（2026-10-02）：结果已打印，不能让残留句柄（如反馈子进程）
+    // 把进程无限期拖住。超时即放弃等待，调用方随后显式退出。
+    await Promise.race([
+      application.shutdown(),
+      new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
+    ]);
   }
 }
 
@@ -223,6 +284,12 @@ export interface WaitForTaskTerminalOptions {
   /** 总体等待上限（毫秒）；null/undefined = 不设固定上限，直到任务终态。 */
   timeoutMilliseconds?: number | null;
   pollIntervalMilliseconds?: number;
+  /**
+   * 是否存在**待裁决的权限询问**（2026-10-02）：
+   * 任务被判 failed 时 `queryTask` 也返回 blocked，若此时并无待裁决询问，
+   * 则不得继续等待（此前会导致 CLI 无谓挂起直到整体超时）。
+   */
+  hasPendingPermissionAsk?: () => boolean;
 }
 
 /**
@@ -240,12 +307,21 @@ export async function waitForTaskTerminal(
       ? null
       : Date.now() + options.timeoutMilliseconds;
   const pollIntervalMilliseconds = options.pollIntervalMilliseconds ?? 50;
+  // 进入等待前先看一次：任务可能已 blocked（例如已因门禁判失败）或已有待裁决询问。
+  if (options.hasPendingPermissionAsk?.() === true) {
+    return "blocked";
+  }
   while (deadlineMilliseconds === null || Date.now() < deadlineMilliseconds) {
+    // 任务状态优先：一旦进入终态或 blocked，立即返回，不再空等整体上限。
     const result = await application.queryTask({ sessionId, taskIdentifier });
     if (result.status === "done" || result.status === "cancelled") {
       return result.status;
     }
     if (result.status === "blocked" || result.status === "failed") {
+      return "blocked";
+    }
+    // 出现**待裁决询问**时立即返回，让调用方进入裁决（不必等任务变 blocked）。
+    if (options.hasPendingPermissionAsk?.() === true) {
       return "blocked";
     }
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMilliseconds));

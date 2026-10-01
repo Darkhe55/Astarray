@@ -123,6 +123,10 @@ export class WorkerAgent {
    * 结案前必须逐条确认仍然存在；缺失即拒绝结案（验收缺失不得结案）。
    */
   private readonly persistedArtifactPaths = new Set<string>();
+  /** 本 AGENT 成功执行过的写类工具（用于"必需操作是否真的执行过"的完成门禁）。 */
+  private readonly successfullyExecutedMutatingTools = new Set<string>();
+  /** 本 AGENT **尝试过**的写类工具（含被门禁拦下、执行失败的调用）。 */
+  private readonly attemptedMutatingTools = new Set<string>();
 
   constructor(private readonly options: WorkerAgentOptions) {}
 
@@ -160,6 +164,20 @@ export class WorkerAgent {
       return (
         "完成声明与本地产物不一致：以下产物不存在（验收缺失，不得结案）——" +
         failedArtifactGates.map((evidence) => evidence.gateName).join("；")
+      );
+    }
+    /**
+     * 必需操作是否真的执行过（2026-10-02 阻断项修复）：
+     * **确实尝试过写类工具、但一次都没成功**时不得结案——
+     * 否则"工具被门禁拦下却声称完成"会结案 done（真实 CLI 实测缺陷）。
+     * 只读任务从不尝试写工具，因此不受此规则影响。
+     */
+    const hasAttemptedMutatingTool = [...this.attemptedMutatingTools].length > 0;
+    if (hasAttemptedMutatingTool && this.successfullyExecutedMutatingTools.size === 0) {
+      return (
+        "必需操作未成功执行：本次尝试过的写类工具（" +
+        [...this.attemptedMutatingTools].join("、") +
+        "）从未成功执行（验收缺失，不得以文本声明结案）"
       );
     }
     return null;
@@ -227,6 +245,9 @@ export class WorkerAgent {
             this.toolCallsByCallId.get(event.callId) ??
             this.lastToolCall?.toolName ??
             "unknown-tool";
+          if (MUTATING_TOOL_NAMES.has(toolName)) {
+            this.attemptedMutatingTools.add(toolName);
+          }
           if (event.result === "error" && event.errorCode === "permission-ask-pending") {
             finalReason = {
               outcome: "permission-ask",
@@ -247,6 +268,9 @@ export class WorkerAgent {
           } else {
             this.options.failureCounter.recordSuccess(toolName);
             this.unresolvedMutatingToolFailures.delete(toolName);
+            if (MUTATING_TOOL_NAMES.has(toolName)) {
+              this.successfullyExecutedMutatingTools.add(toolName);
+            }
             // 写类工具成功 → 登记其目标路径，供结案前的产物存在性对账。
             const persistedArtifactPath = extractArtifactPathFromToolCall({
               toolName,

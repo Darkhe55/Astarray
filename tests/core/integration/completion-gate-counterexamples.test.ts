@@ -253,7 +253,11 @@ describe("完成门禁：未解决的必需操作失败不得结案", () => {
       // 授权生效时工具真的执行并以失败结案（判词落档）。
       const archivedSummaries = await readArchivedSummaries(stateDirectory);
       expect(
-        archivedSummaries.some((summary) => summary.includes("writeFileTemporary 未成功")),
+        archivedSummaries.some(
+          (summary) =>
+            summary.includes("writeFileTemporary 未成功") ||
+            summary.includes("必需操作未成功执行"),
+        ),
       ).toBe(true);
       expect(
         escalations.some((text) => text.includes("需要权限调用")),
@@ -293,10 +297,14 @@ describe("完成门禁：未解决的必需操作失败不得结案", () => {
         fs.access(path.join(workspaceDirectory, "nested", "PROBE.md")),
       ).rejects.toThrow();
       // 门禁判词必须落进工作存档（可追溯）。
+      // 判词可能来自两条规则：①"该写工具未成功"；②"尝试过写工具但从未成功执行"
+      // （2026-10-02 阻断项修复新增）。两者都表示"验收缺失、不得结案"。
       const archivedSummaries = await readArchivedSummaries(stateDirectory);
       expect(
-        archivedSummaries.some((summary) =>
-          summary.includes("writeFileTemporary 未成功"),
+        archivedSummaries.some(
+          (summary) =>
+            summary.includes("writeFileTemporary 未成功") ||
+            summary.includes("必需操作未成功执行"),
         ),
       ).toBe(true);
     } finally {
@@ -330,7 +338,11 @@ describe("完成门禁：未解决的必需操作失败不得结案", () => {
       expect(["blocked", "failed"]).toContain(status);
       const archivedSummaries = await readArchivedSummaries(stateDirectory);
       expect(
-        archivedSummaries.some((summary) => summary.includes("createProjectFile 未成功")),
+        archivedSummaries.some(
+          (summary) =>
+            summary.includes("createProjectFile 未成功") ||
+            summary.includes("必需操作未成功执行"),
+        ),
       ).toBe(true);
     } finally {
       await application.shutdown();
