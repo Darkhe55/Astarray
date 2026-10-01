@@ -621,16 +621,32 @@ export class MainController {
     return this.options.t08cRoutingFacade ?? null;
   }
 
-  /** 向次级调度发送裁决指令（Assist，经反馈信箱）。 */
+  /**
+   * 向次级调度发送裁决指令（Assist）。
+   *
+   * 修复（2026-10-01）：调度器实例运行在**本进程**（`activeOrchestrators`），而
+   * `scheduler:<missionId>` 的 mailbox 属于子进程；经反馈传输投递会被子进程标记已投递
+   * 而不回传父进程（实测父进程 `onMessage` 从不触发），导致用户授权后的 `unblock`
+   * 永远到不了调度器、任务停在 blocked。改为**同进程直接投递**；镜像一条反馈消息
+   * 以保留审计/信箱语义（派发失败不影响裁决生效）。
+   */
   sendSchedulerInstruction(missionId: string, instructionText: string): void {
-    void this.options.feedbackTransport.enqueue({
-      protocolVersion: 1,
-      messageId: randomUUID(),
-      source: { sourceType: "user", sourceIdentifier: "main-controller" },
-      recipientId: `scheduler:${missionId}`,
-      priority: "instruction",
-      createdAtIso: new Date().toISOString(),
-      idempotencyKey: `main-instruction:${missionId}:${Date.now()}`,
+    const activeEntry = this.activeOrchestrators.get(missionId);
+    const schedulerWithInstruction = activeEntry?.scheduler as
+      | { handleInstruction?: (instruction: string) => void }
+      | undefined;
+    if (typeof schedulerWithInstruction?.handleInstruction === "function") {
+      schedulerWithInstruction.handleInstruction(instructionText);
+    }
+    void this.options.feedbackTransport
+      .enqueue({
+        protocolVersion: 1,
+        messageId: randomUUID(),
+        source: { sourceType: "user", sourceIdentifier: "main-controller" },
+        recipientId: `scheduler:${missionId}`,
+        priority: "instruction",
+        createdAtIso: new Date().toISOString(),
+        idempotencyKey: `main-instruction:${missionId}:${Date.now()}`,
       payload: { kind: "instruction", instructionText },
     });
   }
