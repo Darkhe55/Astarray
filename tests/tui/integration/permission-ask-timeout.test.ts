@@ -49,6 +49,30 @@ describe("裁决输入有界性", () => {
     expect(elapsedMilliseconds).toBeLessThan(2_000);
   });
 
+  it("管道 EOF / 第二次裁决：首轮读到 allow-once，次轮无输入 → 返回 null 且不挂起", async () => {
+    // 复现 `echo allow-once | astarray run …`：管道只有一行，第二次询问时已 EOF。
+    let readCount = 0;
+    const port = new InteractivePermissionAskDecisionPort({
+      isInteractive: () => false,
+      hasDecisionInput: () => true,
+      readTimeoutMilliseconds: 60,
+      readLine: () =>
+        new Promise<string | null>((resolve) => {
+          readCount += 1;
+          if (readCount === 1) {
+            resolve("allow-once");
+            return;
+          }
+          // 第二轮：流已 EOF，不再产生数据（由超时兜底，绝不挂起进程）。
+          void resolve;
+        }),
+    });
+
+    expect(await port.readDecision(ASK)).toBe("allow-once");
+    expect(await port.readDecision(ASK)).toBeNull();
+    expect(readCount).toBe(2);
+  });
+
   it("默认超时为有界正数（不得为 0/Infinity）", () => {
     const port = new InteractivePermissionAskDecisionPort({
       isInteractive: () => false,

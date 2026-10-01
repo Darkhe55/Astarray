@@ -35,7 +35,8 @@
     "verify:read-format-package": "node scripts/verify-read-format-package.mjs",
     "verify:entry-runtime-selection": "node scripts/verify-entry-runtime-selection.mjs",
     "verify:provider-tool-protocol": "node scripts/verify-provider-tool-protocol.mjs",
-    "verify:provider-live-request": "node scripts/verify-provider-request-against-endpoint.mjs"
+    "verify:provider-live-request": "node scripts/verify-provider-request-against-endpoint.mjs",
+    "verify:t07d-r2-04-live": "node scripts/verify-t07d-r2-04-live-write.mjs"
   },
   "dependencies": {
     "commander": "^15.0.0",
