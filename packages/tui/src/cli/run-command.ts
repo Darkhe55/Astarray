@@ -13,6 +13,7 @@ import {
   buildPermissionAskFromEscalation,
   runPermissionAskAdjudication,
   type PermissionAskDecisionPort,
+  type PreviousApprovalRecord,
 } from "./permission-ask-adjudication.js";
 import {
   RuntimeSelectionError,
@@ -162,6 +163,13 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
       timeoutMilliseconds,
     });
     let permissionAskOutcome: string | null = null;
+    /**
+     * 方案 B（2026-10-02）：记录本授权周期内上一次已批准的操作，
+     * 使模型重发时只发生格式抖动（结尾换行/键序）的情形**不再重复询问用户**。
+     * `hasSucceededWithSameTarget` 目前保守取 false：成功后任务通常已终态、不会再产生询问；
+     * 若成功后仍被问，门禁的跨周期重放保护仍会拒绝（fail-closed）。
+     */
+    let previousApproval: PreviousApprovalRecord | null = null;
     // ADR-0011：permission-ask → 认证用户 allow-once → 授权 + unblock → 任务继续。
     // 非交互环境 fail-closed（不授权），由用户显式重提；轮数有界，绝不自动放行。
     for (
@@ -180,10 +188,18 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
         isInteractive: decisionPort.isInteractive(),
         readDecision: (ask) => decisionPort.readDecision(ask),
         application,
+        previousApproval,
       });
       permissionAskOutcome = decision;
       if (decision !== "allowed-once") {
         break;
+      }
+      if (permissionAsk !== null) {
+        previousApproval = {
+          toolName: permissionAsk.toolName,
+          argumentsJson: permissionAsk.argumentsJson,
+          hasSucceededWithSameTarget: false,
+        };
       }
       escalationMessages.length = 0;
       finalStatus = await waitForTaskTerminal(application, "cli-run", "cli-task", {

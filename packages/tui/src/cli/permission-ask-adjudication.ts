@@ -25,6 +25,84 @@ export type PermissionAskDecision =
   | "denied"
   | "requires-human-resubmission";
 
+/** 本授权周期内**已批准过**的一次操作（用于抑制参数抖动带来的重复裁决）。 */
+export interface PreviousApprovalRecord {
+  toolName: string;
+  /** 上次批准时的完整参数（用于识别"完全相同即已执行"）。 */
+  argumentsJson: string;
+  /** 同一目标路径是否已经**成功写入**过（成功后不得靠抖动复用，必须 fail-closed）。 */
+  hasSucceededWithSameTarget: boolean;
+}
+
+export type ApprovalReuseDecision =
+  /** 同一逻辑操作（同工具 + 同目标路径）且尚无副作用 → 直接复用本次批准，不再询问。 */
+  | "reuse-without-asking"
+  /** 该目标路径已成功执行过 → 不得复用（重放保护不放宽）。 */
+  | "already-executed"
+  /** 不是同一逻辑操作或缺少依据 → 必须询问用户。 */
+  | "ask-user";
+
+/** 参数中承载目标路径的键（与 `describeToolOperation` 同序）。 */
+const TARGET_PATH_KEYS = ["path", "filePath", "targetPath", "directoryPath"] as const;
+
+function readTargetPath(argumentsJson: string): string | null {
+  let parsedArguments: unknown;
+  try {
+    parsedArguments = JSON.parse(argumentsJson);
+  } catch {
+    return null;
+  }
+  if (parsedArguments === null || typeof parsedArguments !== "object") {
+    return null;
+  }
+  const record = parsedArguments as Record<string, unknown>;
+  for (const key of TARGET_PATH_KEYS) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim() !== "") {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+/**
+ * 方案 B（2026-10-02 用户选择）：**同一授权周期内容忍"无副作用重试"的参数抖动**。
+ *
+ * 判定依据全部是本地的客观事实：工具名 + 参数中的**目标路径** + 是否已成功写入过。
+ * - 目标路径相同、工具相同、尚无副作用 → 复用（参数只有换行/键序等格式差异）；
+ * - 该路径已成功写入过，且完整参数与上次相同 → 判"已执行"（fail-closed）；
+ * - 其余（路径不同/工具不同/参数不可解析/无批准记录）→ 必须询问用户。
+ *
+ * 该判定**不放松跨周期语义**：它只在"用户已经对同一逻辑操作批准过一次、且尚无副作用"时
+ * 免除重复询问；一旦成功，同一逻辑操作再次调用仍被门禁重放保护拒绝。
+ */
+export function shouldReusePreviousApproval(input: {
+  pendingAsk: PermissionAsk;
+  previousApproval: PreviousApprovalRecord | null;
+}): ApprovalReuseDecision {
+  const { pendingAsk, previousApproval } = input;
+  if (previousApproval === null) {
+    return "ask-user";
+  }
+  if (previousApproval.toolName !== pendingAsk.toolName) {
+    return "ask-user";
+  }
+  const pendingTargetPath = readTargetPath(pendingAsk.argumentsJson);
+  const approvedTargetPath = readTargetPath(previousApproval.argumentsJson);
+  if (pendingTargetPath === null || approvedTargetPath === null) {
+    return "ask-user";
+  }
+  if (pendingTargetPath !== approvedTargetPath) {
+    return "ask-user";
+  }
+  if (previousApproval.hasSucceededWithSameTarget) {
+    // 同一目标已成功写入过：完整参数相同时明确判"已执行"；参数不同也必须询问
+    // （不得自动放行，避免用抖动绕过重放保护）。
+    return "already-executed";
+  }
+  return "reuse-without-asking";
+}
+
 /** 裁决执行需要的最小应用面（避免依赖 facade 具体类型）。 */
 export interface PermissionAskApplicationPort {
   grantSessionAuthorization(
@@ -108,6 +186,12 @@ export async function runPermissionAskAdjudication(options: {
   application: PermissionAskApplicationPort;
   /** 交互提示输出（默认 stderr，保持 stdout 仅 JSON）。 */
   interactOutput?: (message: string) => void;
+  /**
+   * 本授权周期内上一次已批准的操作（方案 B，2026-10-02）：
+   * 同工具 + 同目标路径且尚无副作用 → **自动复用**，不再重复询问用户；
+   * 该路径已成功写入过 → 判 `requires-human-resubmission`（重放保护不放宽）。
+   */
+  previousApproval?: PreviousApprovalRecord | null;
 }): Promise<PermissionAskDecision> {
   const ask = options.ask;
   const writePrompt = options.interactOutput ?? logToStderr;
@@ -117,7 +201,24 @@ export async function runPermissionAskAdjudication(options: {
     );
     return "requires-human-resubmission";
   }
-  if (!options.isInteractive) {
+  // 方案 B：同一次授权周期内，参数抖动（结尾换行/键序）不重复打扰用户。
+  const reuseDecision = shouldReusePreviousApproval({
+    pendingAsk: ask,
+    previousApproval: options.previousApproval ?? null,
+  });
+  if (reuseDecision === "already-executed") {
+    writePrompt(
+      `同一目标路径已成功写入过：不再自动授权 ${ask.toolName}（如需再次执行请重新提交任务）。`,
+    );
+    return "requires-human-resubmission";
+  }
+  const isAutoReused = reuseDecision === "reuse-without-asking";
+  if (isAutoReused) {
+    writePrompt(
+      `同一逻辑操作（${ask.toolName} → ${ask.argumentsJson}）已在本次授权内批准且尚无副作用：` +
+        "自动复用该批准，不再重复询问。",
+    );
+  } else if (!options.isInteractive) {
     // 非交互：输出结构化询问（ADR-0011 载荷形态），不授权、不 unblock。
     writePrompt(
       "需要用户裁决（非交互环境，未授权）：" +
@@ -135,24 +236,26 @@ export async function runPermissionAskAdjudication(options: {
     );
     return "requires-human-resubmission";
   }
-  writePrompt(
-    `[权限裁决] 任务 ${ask.taskIdentifier} 请求调用受限工具 ${ask.toolName}\n` +
-      `  说明: ${ask.explanation}\n` +
-      `  参数: ${ask.argumentsJson}\n` +
-      "  allow-once = 仅本次按上述精确参数授权；参数变化将失效需要重新裁决。\n" +
-      "  输入 allow-once 授权 / 其他任意输入拒绝：",
-  );
-  const decision = await options.readDecision(ask);
-  if (decision === null) {
-    // 有界等待耗尽（管道已无输入）→ fail-closed，任务保持 blocked 待人工处理。
+  if (!isAutoReused) {
     writePrompt(
-      `未在等待上限内收到裁决输入（或输入通道已关闭）：未授权、未继续任务，${ask.toolName} 保持等待人工裁决。`,
+      `[权限裁决] 任务 ${ask.taskIdentifier} 请求调用受限工具 ${ask.toolName}\n` +
+        `  说明: ${ask.explanation}\n` +
+        `  参数: ${ask.argumentsJson}\n` +
+        "  allow-once = 仅本次按上述精确参数授权；参数变化将失效需要重新裁决。\n" +
+        "  输入 allow-once 授权 / 其他任意输入拒绝：",
     );
-    return "requires-human-resubmission";
-  }
-  if (decision !== "allow-once") {
-    writePrompt(`已拒绝权限调用 ${ask.toolName}（未授权、未继续任务）。`);
-    return "denied";
+    const decision = await options.readDecision(ask);
+    if (decision === null) {
+      // 有界等待耗尽（管道已无输入）→ fail-closed，任务保持 blocked 待人工处理。
+      writePrompt(
+        `未在等待上限内收到裁决输入（或输入通道已关闭）：未授权、未继续任务，${ask.toolName} 保持等待人工裁决。`,
+      );
+      return "requires-human-resubmission";
+    }
+    if (decision !== "allow-once") {
+      writePrompt(`已拒绝权限调用 ${ask.toolName}（未授权、未继续任务）。`);
+      return "denied";
+    }
   }
   const nowUnixSeconds = Math.floor(Date.now() / 1000);
   // 顺序要紧：先登记两类授权，再下发 unblock（unblock 会立即重新派发任务）。
@@ -180,7 +283,10 @@ export async function runPermissionAskAdjudication(options: {
     JSON.stringify({ action: "unblock", taskId: ask.taskIdentifier }),
   );
   writePrompt(
-    `已按精确参数 allow-once 授权 ${ask.toolName}（作用域授权: ${scopeGrantOutcome}），` +
+    (isAutoReused
+      ? `已复用本次授权（同逻辑操作、尚无副作用）授权 ${ask.toolName}`
+      : `已按精确参数 allow-once 授权 ${ask.toolName}`) +
+      `（作用域授权: ${scopeGrantOutcome}），` +
       `并下发 unblock（任务 ${ask.taskIdentifier}）。`,
   );
   return "allowed-once";
