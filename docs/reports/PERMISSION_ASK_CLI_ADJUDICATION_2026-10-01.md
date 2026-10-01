@@ -59,3 +59,32 @@ astarray: 已按精确参数 allow-once 授权 createProjectFile，并下发 unb
 - 产物：fixture 目录内 `.astarray/`（状态/任务链/工作存档）与 mission-500e9a58 / mission-7eb9bd92；
   `tasks/PROBE-001.md` **未创建**（授权未命中，工具未执行）。
 - 无泄漏：命令输出仅含参数 JSON（用户可见内容），不含任何凭据值。
+
+## 5. 后续（提交 `c1608b5`）：§3 的两个内核缺陷已修
+
+| 缺陷 | 修复 | 证据 |
+| --- | --- | --- |
+| 授权双轨失配：裁决只写旧 `SessionAuthorizationManager`，判定侧 `ConfigurablePermissionPolicyEngine` 读自己的授权表 | `MainController.grantSessionAuthorization` 同时写入引擎（绑定当前 profile revision 与 catalogVersion）；`application-runtime` 注入引擎 | `tests/core/integration/permission-authorization-hit.test.ts`（修复前引擎裁决失败） |
+| 参数哈希字节级敏感（键序不同即失配） | 新增 `canonicalizeToolArguments()`（对象键递归排序；数组顺序与值差异仍敏感；非 JSON 退回原文），`hashToolArguments` 与引擎 `hashArguments` 统一使用 | 同上用例的两条规范化断言 + 真实引擎 `ask → allow`（含键序不同） |
+
+- `run-command.ts` 亦修正：unblock 之后必须等**新一轮** permission-ask 到达再裁决（不得用上一轮旧文本重复裁决）。
+- 门禁（`c1608b5`）：`npm run check` exit 0 —— 全量 **245 文件 / 1921 用例**；
+  覆盖率 **92.95 / 85.37 / 93.09 / 92.97**。
+
+## 6. 仍未达成（端到端写任务）与下一步方向
+
+离线复现（本地拦截代理 + 管道 `allow-once`）：
+
+- 询问 → 授权 → unblock 均已真实发生（日志可见）；
+- 代理侧只收到 **2 个**模型请求，任务最终 `status=blocked`、任务链 `T-001` 停在 `blocked`，
+  工作存档只有一条 `decision | 等待权限: createProjectFile`，**没有第二轮执行的记录**；
+- `tasks/PROBE-001.md` 未创建。
+
+即：授权已在判定侧可命中（§5 已证），但 **unblock 之后的重跑/再派发没有把任务推进**。
+下一步建议按此顺序定位（都不需要新的真实额度）：
+
+1. 追踪 `assist-scheduler` 消费 `{"action":"unblock"}` 后是否真的重新派发给 Worker
+   （`handleInstruction` → `unblockTask` → ready set → 派发）；
+2. 检查 blocked 任务重新执行时是否复用同一 `agentInstanceId` 与任务包（是否会新建实例导致上下文丢失）；
+3. 检查 `PolicyWrapper` 在重跑时是否拿到同一 `argumentsJson`（工具参数由模型重新生成，可能与首次不同 → 属正常二次裁决，但不应停在 blocked 且无新询问）。
+
