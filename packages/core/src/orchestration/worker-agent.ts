@@ -16,6 +16,10 @@ import type {
   ToolPort,
 } from "../core/types.js";
 import { CompletionControlParser } from "../core/completion-protocol.js";
+import {
+  extractArtifactPathFromToolCall,
+  verifyArtifactExistence,
+} from "./artifact-verification.js";
 import { DomainError } from "../core/errors.js";
 import type { ContextPromptProvider } from "./context-prompt-assembler.js";
 import { runToolLoop } from "../runtime/tool-loop.js";
@@ -63,6 +67,11 @@ export interface WorkerAgentOptions {
   availableToolDescriptors?: ToolDescriptor[];
   /** T07D-R2-03：Provider 运行时必须给出本地完成控制事件才允许结案。 */
   requireCompletionEvent?: boolean;
+  /**
+   * 产物对账的工作区根（缺省 `process.cwd()`）。
+   * 用于"本 AGENT 成功写入过的路径必须真实存在才允许结案"（2026-10-02）。
+   */
+  artifactWorkspaceRootPath?: string;
   /** T09A-R1-01：上下文提示词装配（全局相关选择 + 局部活跃前沿）。 */
   contextPromptProvider?: ContextPromptProvider;
   /** GUIDE-01-04：运行中指导安全点端口（缺省表示该 worker 不接受运行中指导）。 */
@@ -109,6 +118,11 @@ export class WorkerAgent {
   private readonly outputTextChunks: string[] = [];
   /** 本轮尚未被同工具成功调用覆盖的写操作失败。 */
   private readonly unresolvedMutatingToolFailures = new Set<string>();
+  /**
+   * 本 AGENT 通过写类工具调用**成功**写入过的路径（本地确定性事实）。
+   * 结案前必须逐条确认仍然存在；缺失即拒绝结案（验收缺失不得结案）。
+   */
+  private readonly persistedArtifactPaths = new Set<string>();
 
   constructor(private readonly options: WorkerAgentOptions) {}
 
@@ -133,6 +147,20 @@ export class WorkerAgent {
     }
     if (!parsed.event.completedTaskIdentifiers.includes(this.options.task.id)) {
       return "完成事件未声明本任务: " + this.options.task.id;
+    }
+    // 产物对账（2026-10-02）：本 AGENT 成功写入过的路径 + 完成事件显式声明的产物，
+    // 必须真实存在；否则属"验收缺失"，不得结案。
+    const declaredArtifacts = parsed.event.declaredArtifacts ?? [];
+    const artifactEvidence = verifyArtifactExistence({
+      artifactPaths: [...this.persistedArtifactPaths, ...declaredArtifacts],
+      workspaceRootPath: this.options.artifactWorkspaceRootPath ?? process.cwd(),
+    });
+    const failedArtifactGates = artifactEvidence.filter((evidence) => !evidence.passed);
+    if (failedArtifactGates.length > 0) {
+      return (
+        "完成声明与本地产物不一致：以下产物不存在（验收缺失，不得结案）——" +
+        failedArtifactGates.map((evidence) => evidence.gateName).join("；")
+      );
     }
     return null;
   }
@@ -219,6 +247,14 @@ export class WorkerAgent {
           } else {
             this.options.failureCounter.recordSuccess(toolName);
             this.unresolvedMutatingToolFailures.delete(toolName);
+            // 写类工具成功 → 登记其目标路径，供结案前的产物存在性对账。
+            const persistedArtifactPath = extractArtifactPathFromToolCall({
+              toolName,
+              argumentsJson: this.lastToolCall?.argumentsJson ?? "{}",
+            });
+            if (persistedArtifactPath !== null) {
+              this.persistedArtifactPaths.add(persistedArtifactPath);
+            }
           }
           break;
         }

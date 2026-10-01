@@ -31,6 +31,12 @@ export const taskCompletionEventV1Schema = z.object({
   claimedStatus: z.literal("complete"),
   /** 声明所依据的本地状态修订号（陈旧则拒绝）。 */
   taskSequenceRevision: z.number().int().min(0),
+  /**
+   * 可选：本次完成声明所指的**产物路径**（工作区相对路径）。
+   * 本地会逐条核对存在性；缺失即拒绝结案（2026-10-02 扩展，向后兼容：
+   * 未声明时仅对账本 AGENT 自己成功写入过的路径）。
+   */
+  declaredArtifacts: z.array(z.string().min(1)).max(64).optional(),
 });
 
 export type TaskCompletionEventV1 = z.infer<typeof taskCompletionEventV1Schema>;

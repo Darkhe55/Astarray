@@ -83,6 +83,42 @@ describe("CompletionControlParser", () => {
     expect(parser.parseTextOutput({ finalOutputText: "随便提到 ASTARRAY_TASK_COMPLETION_V1 但没 JSON" }).kind).toBe("none");
   });
 
+  it("可选 declaredArtifacts：合法时解析出产物列表，缺失时字段为 undefined（向后兼容）", () => {
+    const outputWithArtifacts =
+      "已完成。\n" +
+      "ASTARRAY_TASK_COMPLETION_V1 " +
+      JSON.stringify({
+        ...makeCompletionEvent(),
+        declaredArtifacts: ["docs/A.md", "docs/B.md"],
+      });
+    const parsedWithArtifacts = parser.parseTextOutput({ finalOutputText: outputWithArtifacts });
+    expect(parsedWithArtifacts.kind).toBe("completion");
+    if (parsedWithArtifacts.kind === "completion") {
+      expect(parsedWithArtifacts.event.declaredArtifacts).toEqual(["docs/A.md", "docs/B.md"]);
+    }
+    // 未声明时不报错、不臆造产物。
+    const parsedWithout = parser.parseTextOutput({
+      finalOutputText: "已完成。\n" + formatCompletionMarkerLine(makeCompletionEvent()),
+    });
+    expect(parsedWithout.kind).toBe("completion");
+    if (parsedWithout.kind === "completion") {
+      expect(parsedWithout.event.declaredArtifacts).toBeUndefined();
+    }
+  });
+
+  it("可选 declaredArtifacts：类型非法（空串/非数组）→ 视为无合法完成事件", () => {
+    const invalidEmptyPath =
+      "已完成。\n" +
+      "ASTARRAY_TASK_COMPLETION_V1 " +
+      JSON.stringify({ ...makeCompletionEvent(), declaredArtifacts: [""] });
+    expect(parser.parseTextOutput({ finalOutputText: invalidEmptyPath }).kind).toBe("none");
+    const invalidType =
+      "已完成。\n" +
+      "ASTARRAY_TASK_COMPLETION_V1 " +
+      JSON.stringify({ ...makeCompletionEvent(), declaredArtifacts: "docs/A.md" });
+    expect(parser.parseTextOutput({ finalOutputText: invalidType }).kind).toBe("none");
+  });
+
   it("宽限期内可容忍末尾非标识行", () => {
     const event = makeCompletionEvent();
     const output = `正文\n${formatCompletionMarkerLine(event)}\n（补充说明）`;

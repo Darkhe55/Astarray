@@ -122,7 +122,8 @@ export function buildCompletionProtocolRestatement(): GuidanceInjectionMessage {
       "[本地完成协议] 你可以调用工具继续工作；但只要本轮尚未结束，你的**最终回复**必须包含版本化完成控制事件。\n" +
       `格式：最终输出的**最后一行**为独立一行 \`${TASK_COMPLETION_MARKER} <json>\`，` +
       'JSON 字段固定为 taskExecutionId、completionAttemptId（本轮一次性、不可复用）、' +
-      'completedTaskIdentifiers（非空数组）、claimedStatus（固定 "complete"）、taskSequenceRevision（非负整数）。\n' +
+      'completedTaskIdentifiers（非空数组）、claimedStatus（固定 "complete"）、taskSequenceRevision（非负整数）；' +
+      '可选 `declaredArtifacts`（工作区相对路径数组）声明本次完成所指产物——本地会逐条核对存在性，缺失即拒绝结案。\n' +
       "工具执行成功不等于任务结案：必须先确认任务要求的产物/状态已按本地事实达成，再输出该事件；" +
       "若未达成，请不要输出完成事件，改为说明当前状态。\n" +
       "工具选择提示（本地事实）：`createProjectFile` 是**仅新建、不覆盖**的工具——目标已存在时它会自行拒绝并返回错误；" +
