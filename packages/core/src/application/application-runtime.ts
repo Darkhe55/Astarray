@@ -763,6 +763,8 @@ export async function createApplicationRuntime(
     permissionCapabilityCatalog: permissionCatalog,
     currentPermissionSelectionStore,
     currentPermissionProfileReference,
+    // 修复（2026-10-01）：裁决授权必须能写进判定侧引擎，否则批准后重跑仍要求逐次裁决。
+    configurablePermissionPolicyEngine,
     mainAgentReadonlyProjection,
     sessionElevationStore,
     sessionElevationController,

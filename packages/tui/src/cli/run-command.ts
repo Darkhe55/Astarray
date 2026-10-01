@@ -23,6 +23,35 @@ import {
 /** 单次 run 内允许的裁决轮数上限（防止无限权限循环；达到即收敛为 blocked）。 */
 const MAXIMUM_ADJUDICATION_ROUNDS = 3;
 
+/**
+ * 等待本轮的 permission-ask 升级文本到达（unblock 后重新执行的询问是**新的**一条，
+ * 不能拿上一轮的旧文本重复裁决）。
+ */
+const PERMISSION_ASK_WAIT_MILLISECONDS = 30_000;
+
+async function waitForPermissionAsk(
+  escalationMessages: string[],
+  timeoutMilliseconds: number,
+  queryTask: () => Promise<{ status: string }>,
+): Promise<ReturnType<typeof buildPermissionAskFromEscalation>> {
+  const deadline = Date.now() + timeoutMilliseconds;
+  while (Date.now() < deadline) {
+    const permissionAsk = escalationMessages
+      .map((escalationText) => buildPermissionAskFromEscalation(escalationText))
+      .find((ask) => ask !== null);
+    if (permissionAsk !== undefined) {
+      return permissionAsk;
+    }
+    // 任务已不是 blocked（完成/失败/取消）时无需再等待裁决。
+    const currentStatus = (await queryTask()).status;
+    if (currentStatus !== "blocked") {
+      return null;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return null;
+}
+
 export interface RunCommandOptions {
   prompt: string;
   mode: string | undefined;
@@ -137,9 +166,11 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
       finalStatus === "blocked" && adjudicationRound < MAXIMUM_ADJUDICATION_ROUNDS;
       adjudicationRound += 1
     ) {
-      const permissionAsk = escalationMessages
-        .map((escalationText) => buildPermissionAskFromEscalation(escalationText))
-        .find((ask) => ask !== null) ?? null;
+      const permissionAsk = await waitForPermissionAsk(
+        escalationMessages,
+        PERMISSION_ASK_WAIT_MILLISECONDS,
+        () => application.queryTask({ sessionId: "cli-run", taskIdentifier: "cli-task" }),
+      );
       const decision = await runPermissionAskAdjudication({
         ask: permissionAsk,
         missionIdentifier: accepted.missionIdentifier,

@@ -11,11 +11,10 @@
  * 可配置权限目录；命中内部层只返回稳定最小"操作不可用"结果，
  * 详细分类只进入受保护内部审计。
  */
-import { createHash } from "node:crypto";
-
 import type { PermissionCapabilityCatalog } from "./permission-capability-catalog.js";
 import type { PermissionDecision } from "./permission-capability-catalog.js";
 import type { PermissionProfileStore } from "./permission-profile-store.js";
+import { hashToolArguments } from "../core/permission-policy.js";
 import type {
   PermissionProfileDocument,
   PermissionProfileReference,
@@ -169,6 +168,8 @@ export class ConfigurablePermissionPolicyEngine {
   }
 
   private hashArguments(argumentsJson: string): string {
-    return createHash("sha256").update(argumentsJson).digest("hex");
+    // 与 SessionAuthorizationManager 同源：规范化（对象键排序）后哈希，
+    // 否则语义等价的参数会失配，用户已批准的调用会被再次要求逐次裁决。
+    return hashToolArguments(argumentsJson);
   }
 }

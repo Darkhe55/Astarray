@@ -83,8 +83,44 @@ export class PermissionPolicy {
   }
 }
 
+/**
+ * 参数规范化（授权绑定口径）：JSON 对象**键序无语义**，故递归按键排序后序列化；
+ * 数组顺序与所有值保持原样（值变化仍必须使授权失效）。
+ *
+ * 反例（2026-10-01 真实运行）：模型两次生成语义等价但键序不同的参数
+ * （`{"content":…,"filePath":…}` vs `{"filePath":…,"content":…}`），
+ * 字节级哈希导致用户已批准的调用**再次**要求逐次裁决，且用户无法自行避免。
+ * 无法解析为 JSON 时退回原始字符串（保持严格性，不当作等价）。
+ */
+export function canonicalizeToolArguments(argumentsJson: string): string {
+  let parsedArguments: unknown;
+  try {
+    parsedArguments = JSON.parse(argumentsJson);
+  } catch {
+    return argumentsJson;
+  }
+  return serializeCanonical(parsedArguments);
+}
+
+function serializeCanonical(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => serializeCanonical(item)).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  const sortedKeys = Object.keys(record).sort();
+  return `{${sortedKeys
+    .map((key) => `${JSON.stringify(key)}:${serializeCanonical(record[key])}`)
+    .join(",")}}`;
+}
+
+/** 工具参数哈希：**规范化后**再 sha256（授权 key 与 argumentHash 必须同源）。 */
 export function hashToolArguments(argumentsJson: string): string {
-  return createHash("sha256").update(argumentsJson).digest("hex");
+  return createHash("sha256")
+    .update(canonicalizeToolArguments(argumentsJson))
+    .digest("hex");
 }
 
 export interface ToolPermissionRequest {

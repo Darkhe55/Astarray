@@ -37,6 +37,7 @@ import type { ContextNodeLifecyclePort } from "./worker-agent.js";
 import type { PermissionProfileStore } from "../tools/permission-profile-store.js";
 import type { PermissionProfileReference } from "../tools/permission-profile-store.js";
 import type { PermissionCapabilityCatalog } from "../tools/permission-capability-catalog.js";
+import type { ConfigurablePermissionPolicyEngine } from "../tools/configurable-permission-policy-engine.js";
 import type { CurrentPermissionSelectionStore } from "../tools/current-permission-selection.js";
 import type { MainAgentReadonlyToolProjection } from "../tools/main-agent-readonly-projection.js";
 import type { SessionPermissionElevationStore } from "../tools/session-permission-elevation.js";
@@ -128,6 +129,12 @@ export interface MainControllerOptions {
   currentPermissionSelectionStore?: CurrentPermissionSelectionStore | null;
   /** B6R-03/04b：当前权限组引用（可信运行时提供）。 */
   currentPermissionProfileReference?: PermissionProfileReference | null;
+  /**
+   * 修复（2026-10-01）：可配置权限引擎（生产次级 Agent 判定侧）。
+   * 用户裁决授权必须**同时**写入该引擎，否则 `ask` 判定读不到授权，
+   * 用户批准后重跑仍被要求逐次裁决（授权双轨失配）。
+   */
+  configurablePermissionPolicyEngine?: ConfigurablePermissionPolicyEngine | null;
   /** B6R-06：主 Agent 永久只读投影（任意 profile/提升下不变）。 */
   mainAgentReadonlyProjection?: MainAgentReadonlyToolProjection | null;
   /** B6R-06：会话临时提升控制面（TUI/CLI 认证设置控制面；非模型工具）。 */
@@ -267,6 +274,22 @@ export class MainController {
       hashToolArguments(argumentsJson),
       nowUnixSeconds,
     );
+    // 修复（2026-10-01）：生产次级 Agent 路径由 ConfigurablePermissionPolicyEngine 判定
+    // `ask`，该引擎只读自己的授权表；若只写旧 sessionManager，用户批准后重跑仍会被要求
+    // 逐次裁决（授权双轨失配）。此处同时写入引擎，绑定当前 profile revision。
+    const configurableEngine = this.options.configurablePermissionPolicyEngine;
+    const profileReference = await this.getCurrentPermissionProfileReference();
+    if (
+      configurableEngine !== null &&
+      configurableEngine !== undefined &&
+      profileReference !== null
+    ) {
+      await configurableEngine.grantSessionAuthorization({
+        toolName,
+        profileReference,
+        argumentsJson,
+      });
+    }
   }
 
   async queryMissionStatus(missionId: string) {
