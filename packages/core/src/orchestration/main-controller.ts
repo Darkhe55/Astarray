@@ -79,6 +79,11 @@ export interface MainControllerOptions {
   resolveToolDescriptors?: (task: TaskDependencyNode) => ToolDescriptor[];
   /** T07D-R2-03：Provider 运行时强制要求本地完成控制事件。 */
   requireCompletionControlEvent?: boolean;
+  /**
+   * 产物对账的工作区根（2026-10-02）：与工具实际写入的工作区保持一致；
+   * 缺省由装配方传入（通常 `options.workspaceRootPath ?? process.cwd()`）。
+   */
+  artifactWorkspaceRootPath?: string;
   /** T09A-R1-01：上下文提示词装配提供者。 */
   contextPromptProvider?: ContextPromptProvider;
   /** GUIDE-01-04：运行中指导控制队列（主 Agent 只读不变；指导由安全点消费）。 */
@@ -754,6 +759,9 @@ export class MainController {
         `scheduler:${missionId}`,
       gitIntegration: this.options.gitIntegration ?? null,
       requireCompletionControlEvent: this.options.requireCompletionControlEvent ?? false,
+      ...(this.options.artifactWorkspaceRootPath === undefined
+        ? {}
+        : { artifactWorkspaceRootPath: this.options.artifactWorkspaceRootPath }),
       contextPromptProvider: this.options.contextPromptProvider,
       guidanceControlQueue: this.options.guidanceControlQueue,
       contextNodeLifecycle: this.options.contextNodeLifecycle ?? null,
@@ -804,6 +812,9 @@ export class MainController {
         `scheduler:${missionId}`,
       gitIntegration: this.options.gitIntegration ?? null,
       requireCompletionControlEvent: this.options.requireCompletionControlEvent ?? false,
+      ...(this.options.artifactWorkspaceRootPath === undefined
+        ? {}
+        : { artifactWorkspaceRootPath: this.options.artifactWorkspaceRootPath }),
       contextPromptProvider: this.options.contextPromptProvider,
       guidanceControlQueue: this.options.guidanceControlQueue,
       contextNodeLifecycle: this.options.contextNodeLifecycle ?? null,

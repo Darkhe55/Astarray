@@ -79,6 +79,11 @@ export interface MissionOrchestratorOptions {
   workerFactories: OrchestratorWorkerFactories;
   /** T07D-R2-03：Provider 运行时是否强制要求本地完成控制事件。 */
   requireCompletionControlEvent?: boolean;
+  /**
+   * 产物对账的工作区根（2026-10-02）：必须与工具实际写入的工作区一致，
+   * 缺省由装配方传入（通常 `options.workspaceRootPath ?? process.cwd()`）。
+   */
+  artifactWorkspaceRootPath?: string;
   /** T09A-R1-01：上下文提示词装配提供者。 */
   contextPromptProvider?: ContextPromptProvider;
   /** GUIDE-01-04：运行中指导控制队列（每个任务构造独立安全点端口）。 */
@@ -424,6 +429,9 @@ export class MissionOrchestrator {
       availableToolDescriptors:
         this.options.workerFactories.toolDescriptorFactory?.(task) ?? [],
       requireCompletionEvent: this.options.requireCompletionControlEvent ?? false,
+      ...(this.options.artifactWorkspaceRootPath === undefined
+        ? {}
+        : { artifactWorkspaceRootPath: this.options.artifactWorkspaceRootPath }),
       contextPromptProvider: this.options.contextPromptProvider,
       guidanceSafePointPort:
         this.options.guidanceControlQueue === undefined

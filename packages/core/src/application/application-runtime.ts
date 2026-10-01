@@ -841,6 +841,8 @@ export async function createApplicationRuntime(
         .map((toolName) => registry.getDescriptor(toolName))
         .filter((descriptor): descriptor is ToolDescriptor => descriptor !== undefined),
     requireCompletionControlEvent: options.requireCompletionControlEvent ?? false,
+    // 产物对账必须使用与工具写入一致的工作区根（2026-10-02）。
+    artifactWorkspaceRootPath: registeredProjectRoots[0]?.rootPath ?? process.cwd(),
     contextPromptProvider,
     guidanceControlQueue,
     contextNodeLifecycle,

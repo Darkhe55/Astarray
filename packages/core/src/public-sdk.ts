@@ -618,6 +618,11 @@ function toPublicRecoveryMissionView(view: {
 /** 应用创建选项：由消费者从公开 exports 传入，不接触内部控制器。 */
 export interface PublicApplicationOptions {
   stateDirectory: string;
+  /**
+   * 工作区根（2026-10-02）：工具写入与**产物对账**共同使用的工作区目录。
+   * 缺省为进程 cwd；嵌入方（含测试）应显式指定，避免写入宿主仓库。
+   */
+  workspaceRootPath?: string;
   mode: AgentMode;
   /** 运行时选择：mock（离线）或 provider（真实 Provider，T07D-R2）。 */
   runtime?: "mock" | "provider";
@@ -758,6 +763,13 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       mainRuntimeFactory,
       workerRuntimeFactory,
       requireCompletionControlEvent: runtimeKind === "provider",
+      // 产物对账使用与工具写入一致的工作区根（缺省仓库/进程 cwd）。
+      ...(options.workspaceRootPath === undefined
+        ? {}
+        : { artifactWorkspaceRootPath: options.workspaceRootPath }),
+      ...(options.workspaceRootPath === undefined
+        ? {}
+        : { workspaceRootPath: options.workspaceRootPath }),
     });
     return new AstarrayApplicationFacade(runtime, {
       statusPollIntervalMilliseconds: options.statusPollIntervalMilliseconds ?? 25,

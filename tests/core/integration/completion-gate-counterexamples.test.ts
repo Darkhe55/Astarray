@@ -142,6 +142,9 @@ async function createApplication(
   registry.register(createOpenAiCompatibleProviderRegistration());
   const application = await AstarrayApplicationFacade.create({
     stateDirectory,
+    // 工作区根指向临时目录：否则工具会把文件真的写到**仓库根**（污染工作树），
+    // 产物对账也就无法覆盖真实写入路径（2026-10-02 修正）。
+    workspaceRootPath: workspaceDirectory,
     mode: "assist",
     runtime: "provider",
     useFeedbackProcess: false,
