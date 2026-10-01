@@ -124,7 +124,10 @@ export function buildCompletionProtocolRestatement(): GuidanceInjectionMessage {
       'JSON 字段固定为 taskExecutionId、completionAttemptId（本轮一次性、不可复用）、' +
       'completedTaskIdentifiers（非空数组）、claimedStatus（固定 "complete"）、taskSequenceRevision（非负整数）。\n' +
       "工具执行成功不等于任务结案：必须先确认任务要求的产物/状态已按本地事实达成，再输出该事件；" +
-      "若未达成，请不要输出完成事件，改为说明当前状态。",
+      "若未达成，请不要输出完成事件，改为说明当前状态。\n" +
+      "工具选择提示（本地事实）：`createProjectFile` 是**仅新建、不覆盖**的工具——目标已存在时它会自行拒绝并返回错误；" +
+      "因此**无需先做\"文件是否已存在\"的预检探查**，直接调用并按返回值判断即可；" +
+      "若探查工具因授权边界不可用，不要据此放弃创建，直接尝试创建并依据其返回结果决定下一步。",
   };
 }
 

@@ -387,6 +387,10 @@ describe("runToolLoop", () => {
     }) as Record<string, unknown> | undefined;
     expect(protocolReminder).toBeDefined();
     expect(String(protocolReminder?.["content"])).toContain("最后一行");
+    // 真实收口实测（2026-10-01）：模型先做"文件是否已存在"的预检探查，探查被授权边界拒绝后
+    // 便放弃创建。重述必须明确 create-only 语义（无需预检），否则任务会停在"模糊/受阻"。
+    expect(String(protocolReminder?.["content"])).toContain("无需先做");
+    expect(String(protocolReminder?.["content"])).toContain("createProjectFile");
     expect(secondIterationMessages.at(-1)).toBe(protocolReminder);
   });
 

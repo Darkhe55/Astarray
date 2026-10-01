@@ -86,7 +86,11 @@ const prompt = [
   "   - 端点：api.stepfun.com",
   "   - 模型：step-3.7-flash",
   "",
-  "要求：只调用 createProjectFile 一次，不创建或修改其他文件；核对工具返回结果是否为成功；",
+  "要求：",
+  "- **直接调用 createProjectFile 一次**：它是仅新建、不覆盖的工具，目标已存在时会自行拒绝并返回错误；",
+  "  因此**不要先做\"文件是否已存在\"的探查**（探查类工具可能受授权边界限制）；",
+  "- 以 createProjectFile 的返回结果为准：返回成功即视为产物已写入；返回失败则如实说明失败原因；",
+  "- 不创建或修改其他文件；",
   "最终回复的最后一行必须是下面这一行独立的完成控制事件（字段不得改动、不得放进代码块）：",
   '          ASTARRAY_TASK_COMPLETION_V1 {"taskExecutionId":"task-exec:t07d-r2-04","completionAttemptId":"attempt-t07d-r2-04-live-1","completedTaskIdentifiers":["T-001"],"claimedStatus":"complete","taskSequenceRevision":1}',
 ].join("\n");
