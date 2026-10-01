@@ -23,6 +23,11 @@ export interface RuntimeSelectionOptions {
    * 且引用不存在即 fail-closed（不回退环境变量、不回退 mock）。
    */
   providerCredentialReference?: string;
+  /**
+   * Provider 单次请求超时（毫秒）。缺省时由注册表默认（30_000）决定；
+   * 真实长任务需要显式放宽（实测某些模型单次响应 > 30s）。
+   */
+  providerRequestTimeoutMilliseconds?: number;
 }
 
 export interface RuntimeSelection {
@@ -95,6 +100,11 @@ export async function buildRuntimeSelection(
         requiredCapabilities: ["streaming", "tool-calling"],
         baseUrl: credentialEntry.baseUrl,
         protectedCredentialReferenceId: credentialReference,
+        ...(options.providerRequestTimeoutMilliseconds === undefined
+          ? {}
+          : {
+              requestTimeoutMilliseconds: options.providerRequestTimeoutMilliseconds,
+            }),
       },
     };
   }
@@ -133,6 +143,11 @@ export async function buildRuntimeSelection(
       requiredCapabilities: ["streaming", "tool-calling"],
       baseUrl: endpoint,
       protectedCredentialReferenceId: "credential-reference:cli-provider",
+      ...(options.providerRequestTimeoutMilliseconds === undefined
+        ? {}
+        : {
+            requestTimeoutMilliseconds: options.providerRequestTimeoutMilliseconds,
+          }),
     },
   };
 }

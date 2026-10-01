@@ -89,6 +89,10 @@ program
     "存放 API key 的环境变量名（缺省 ASTARRAY_PROVIDER_API_KEY；不落盘、不回显）",
   )
   .option("--provider-credential-reference <reference>", "受保护凭据引用（优先于环境变量）")
+  .option(
+    "--provider-request-timeout-seconds <seconds>",
+    "Provider 单次请求超时秒数（缺省 30；长任务需放宽）",
+  )
   .action(
     async (
       prompt: string,
@@ -101,6 +105,7 @@ program
         providerModel?: string;
         providerApiKeyEnv?: string;
         providerCredentialReference?: string;
+        providerRequestTimeoutSeconds?: string;
       },
     ) => {
       process.exitCode = await executeRunCommand({
@@ -124,6 +129,12 @@ program
           : {}),
         ...(options.providerCredentialReference !== undefined
           ? { providerCredentialReference: options.providerCredentialReference }
+          : {}),
+        ...(options.providerRequestTimeoutSeconds !== undefined
+          ? {
+              providerRequestTimeoutMilliseconds:
+                Number.parseInt(options.providerRequestTimeoutSeconds, 10) * 1_000,
+            }
           : {}),
       });
     },
@@ -649,6 +660,10 @@ mcpCommand
   .option("--provider-api-key-env <name>", "存放 API key 的环境变量名")
   .option("--provider-credential-reference <reference>", "受保护凭据引用（优先于环境变量）")
   .option(
+    "--provider-request-timeout-seconds <seconds>",
+    "Provider 单次请求超时秒数（缺省 30；长任务需放宽）",
+  )
+  .option(
     "--runtime-diagnostics-file <path>",
     "把本次选中的运行时写入公开诊断报告（供安装验收；不含凭据）",
   )
@@ -659,6 +674,7 @@ mcpCommand
       providerModel?: string;
       providerApiKeyEnv?: string;
       providerCredentialReference?: string;
+      providerRequestTimeoutSeconds?: string;
       runtimeDiagnosticsFile?: string;
     }) => {
       process.exitCode = await executeMcpServeCommand({
@@ -675,6 +691,12 @@ mcpCommand
           : {}),
         ...(options.providerCredentialReference !== undefined
           ? { providerCredentialReference: options.providerCredentialReference }
+          : {}),
+        ...(options.providerRequestTimeoutSeconds !== undefined
+          ? {
+              providerRequestTimeoutMilliseconds:
+                Number.parseInt(options.providerRequestTimeoutSeconds, 10) * 1_000,
+            }
           : {}),
         ...(options.runtimeDiagnosticsFile !== undefined
           ? { runtimeDiagnosticsFilePath: options.runtimeDiagnosticsFile }
@@ -1065,6 +1087,10 @@ program
   .option("--provider-api-key-env <name>", "存放 API key 的环境变量名")
   .option("--provider-credential-reference <reference>", "受保护凭据引用（优先于环境变量）")
   .option(
+    "--provider-request-timeout-seconds <seconds>",
+    "Provider 单次请求超时秒数（缺省 30；长任务需放宽）",
+  )
+  .option(
     "--runtime-diagnostics-file <path>",
     "把本次选中的运行时写入公开诊断报告（供安装验收；不含凭据）",
   )
@@ -1077,6 +1103,7 @@ program
       providerModel?: string;
       providerApiKeyEnv?: string;
       providerCredentialReference?: string;
+      providerRequestTimeoutSeconds?: string;
       runtimeDiagnosticsFile?: string;
     }) => {
       process.exitCode = await executeGuiServeCommand({
@@ -1095,6 +1122,12 @@ program
           : {}),
         ...(options.providerCredentialReference !== undefined
           ? { providerCredentialReference: options.providerCredentialReference }
+          : {}),
+        ...(options.providerRequestTimeoutSeconds !== undefined
+          ? {
+              providerRequestTimeoutMilliseconds:
+                Number.parseInt(options.providerRequestTimeoutSeconds, 10) * 1_000,
+            }
           : {}),
         ...(options.runtimeDiagnosticsFile !== undefined
           ? { runtimeDiagnosticsFilePath: options.runtimeDiagnosticsFile }

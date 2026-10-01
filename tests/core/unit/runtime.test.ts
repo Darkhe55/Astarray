@@ -369,6 +369,25 @@ describe("runToolLoop", () => {
         (message) => (message as Record<string, unknown>)["role"] === "function",
       ),
     ).toBe(false);
+    // 首轮不得注入完成协议重述（只在工具执行后出现，避免污染初始提示）。
+    const firstIterationMessages = capturedInputs[0]?.toolResultMessages ?? [];
+    expect(
+      firstIterationMessages.some((message) =>
+        JSON.stringify(message).includes("ASTARRAY_TASK_COMPLETION_V1"),
+      ),
+    ).toBe(false);
+    // 工具执行后必须注入本地完成协议重述：真实模型在工具执行后往往不再重复完成事件，
+    // 导致任务被判 blocked（2026-10-01 真实服务实测）。
+    const protocolReminder = secondIterationMessages.find((message) => {
+      const record = message as Record<string, unknown>;
+      return (
+        record["role"] === "system" &&
+        String(record["content"] ?? "").includes("ASTARRAY_TASK_COMPLETION_V1")
+      );
+    }) as Record<string, unknown> | undefined;
+    expect(protocolReminder).toBeDefined();
+    expect(String(protocolReminder?.["content"])).toContain("最后一行");
+    expect(secondIterationMessages.at(-1)).toBe(protocolReminder);
   });
 
   it("执行工具调用并回填结果后再次调用 runtime", async () => {

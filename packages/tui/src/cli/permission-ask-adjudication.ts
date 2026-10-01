@@ -143,6 +143,13 @@ export async function runPermissionAskAdjudication(options: {
       "  输入 allow-once 授权 / 其他任意输入拒绝：",
   );
   const decision = await options.readDecision(ask);
+  if (decision === null) {
+    // 有界等待耗尽（管道已无输入）→ fail-closed，任务保持 blocked 待人工处理。
+    writePrompt(
+      `未在等待上限内收到裁决输入（或输入通道已关闭）：未授权、未继续任务，${ask.toolName} 保持等待人工裁决。`,
+    );
+    return "requires-human-resubmission";
+  }
   if (decision !== "allow-once") {
     writePrompt(`已拒绝权限调用 ${ask.toolName}（未授权、未继续任务）。`);
     return "denied";
@@ -197,6 +204,7 @@ export class InteractivePermissionAskDecisionPort implements PermissionAskDecisi
   private readonly isInteractiveFlag: () => boolean;
   private readonly hasInputChannelFlag: () => boolean;
   private readonly readLine: () => Promise<string | null>;
+  private readonly readTimeoutMilliseconds: number;
 
   constructor(options: {
     isInteractive?: () => boolean;
@@ -204,10 +212,16 @@ export class InteractivePermissionAskDecisionPort implements PermissionAskDecisi
     hasDecisionInput?: () => boolean;
     /** 读取一行（默认 process.stdin）；测试可注入。 */
     readLine?: () => Promise<string | null>;
+    /**
+     * 裁决输入等待上限（毫秒，默认 120_000）。管道输入在上一轮被消费后，
+     * 若再无输入必须**有界中止**并 fail-closed，不得永久挂起进程。
+     */
+    readTimeoutMilliseconds?: number;
   } = {}) {
     this.isInteractiveFlag =
       options.isInteractive ?? (() => process.stdin.isTTY === true);
     this.hasInputChannelFlag = options.hasDecisionInput ?? hasDecisionInputChannel;
+    this.readTimeoutMilliseconds = options.readTimeoutMilliseconds ?? 120_000;
     this.readLine =
       options.readLine ??
       (() =>
@@ -221,6 +235,11 @@ export class InteractivePermissionAskDecisionPort implements PermissionAskDecisi
         }));
   }
 
+  /** 当前裁决输入等待上限（毫秒；供调用方与测试断言有界性）。 */
+  getReadTimeoutMilliseconds(): number {
+    return this.readTimeoutMilliseconds;
+  }
+
   isInteractive(): boolean {
     return this.isInteractiveFlag() || this.hasInputChannelFlag();
   }
@@ -229,7 +248,13 @@ export class InteractivePermissionAskDecisionPort implements PermissionAskDecisi
     if (!this.isInteractiveFlag() && !this.hasInputChannelFlag()) {
       return null;
     }
-    const answer = await this.readLine();
+    // 有界等待：无输入即 fail-closed（返回 null → 不授权、不 unblock）。
+    const answer = await Promise.race([
+      this.readLine(),
+      new Promise<null>((resolve) => {
+        setTimeout(() => resolve(null), this.readTimeoutMilliseconds);
+      }),
+    ]);
     if (answer === null) {
       return null;
     }

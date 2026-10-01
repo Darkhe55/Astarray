@@ -4,6 +4,7 @@
  * 结果回填 → 再次调用 runtime，直到 success/error/cancelled 或达到最大迭代数。
  */
 import type { AgentEvent } from "../core/events.js";
+import { TASK_COMPLETION_MARKER } from "../core/completion-protocol.js";
 import type {
   AgentRunInput,
   ToolCallResult,
@@ -102,6 +103,31 @@ export function toToolResultContent(result: ToolCallResult): string {
     ? result.outputText
     : `错误(${result.errorCode}): ${result.errorMessage}`;
 }
+
+/**
+ * 工具执行后的本地完成协议重述（2026-10-01 真实服务实测补充）。
+ *
+ * 真实模型常在**发起工具调用前**就输出过完成控制事件，工具执行后只回一句简短/空结论，
+ * **不再重复**该事件；而本地完成门禁按设计只认最终输出的独立末行事件，
+ * 于是任务被判 `blocked`（实测 stepfun `step-3.7-flash`）。
+ *
+ * 该消息只做"让模型知道协议"，**不降低门禁强度**：事件仍须由模型给出、
+ * 仍由本地 verifier 结案；文案中的标识直接取自协议常量，避免与 schema 漂移。
+ */
+export function buildCompletionProtocolRestatement(): GuidanceInjectionMessage {
+  return {
+    role: "system",
+    name: "local-completion-protocol",
+    content:
+      "[本地完成协议] 你可以调用工具继续工作；但只要本轮尚未结束，你的**最终回复**必须包含版本化完成控制事件。\n" +
+      `格式：最终输出的**最后一行**为独立一行 \`${TASK_COMPLETION_MARKER} <json>\`，` +
+      'JSON 字段固定为 taskExecutionId、completionAttemptId（本轮一次性、不可复用）、' +
+      'completedTaskIdentifiers（非空数组）、claimedStatus（固定 "complete"）、taskSequenceRevision（非负整数）。\n' +
+      "工具执行成功不等于任务结案：必须先确认任务要求的产物/状态已按本地事实达成，再输出该事件；" +
+      "若未达成，请不要输出完成事件，改为说明当前状态。",
+  };
+}
+
 
 /** 一次迭代内产生的工具调用（assistant 消息需要完整回填）。 */
 function buildAssistantToolCallMessage(
@@ -284,6 +310,8 @@ export async function runToolLoop(
         },
       );
     }
+    // 本轮工具执行完毕：重申本地完成协议（真实模型常在工具执行后不再重复完成事件）。
+    conversationMessages.push(buildCompletionProtocolRestatement());
   }
 
   if (iterationCount >= options.maxLoopIterations && outcome.reason === "error") {

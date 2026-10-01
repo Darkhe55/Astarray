@@ -2767,6 +2767,8 @@ export interface McpServeCommandOptions {
   providerApiKeyEnvironmentVariable?: string;
   /** 受保护凭据引用（优先于环境变量；不存在即 fail-closed）。 */
   providerCredentialReference?: string;
+  /** Provider 单次请求超时（毫秒）；缺省由注册表默认（30_000）决定。 */
+  providerRequestTimeoutMilliseconds?: number;
   /** 可选：把本次实际选中的运行时写成公开诊断报告（供 tarball 级验收断言）。 */
   runtimeDiagnosticsFilePath?: string;
 }
@@ -2793,6 +2795,7 @@ export async function executeMcpServeCommand(
       providerModelIdentifier: options.providerModelIdentifier,
       providerApiKeyEnvironmentVariable: options.providerApiKeyEnvironmentVariable,
       providerCredentialReference: options.providerCredentialReference,
+      providerRequestTimeoutMilliseconds: options.providerRequestTimeoutMilliseconds,
     });
   } catch (error) {
     if (error instanceof RuntimeSelectionError) {
@@ -2854,6 +2857,8 @@ export interface GuiServeCommandOptions {
   providerApiKeyEnvironmentVariable?: string;
   /** 受保护凭据引用（优先于环境变量；不存在即 fail-closed）。 */
   providerCredentialReference?: string;
+  /** Provider 单次请求超时（毫秒）；缺省由注册表默认（30_000）决定。 */
+  providerRequestTimeoutMilliseconds?: number;
   /** 可选：把本次实际选中的运行时写成公开诊断报告（供 tarball 级验收断言）。 */
   runtimeDiagnosticsFilePath?: string;
 }
@@ -2922,6 +2927,7 @@ export async function executeGuiServeCommand(
       providerModelIdentifier: options.providerModelIdentifier,
       providerApiKeyEnvironmentVariable: options.providerApiKeyEnvironmentVariable,
       providerCredentialReference: options.providerCredentialReference,
+      providerRequestTimeoutMilliseconds: options.providerRequestTimeoutMilliseconds,
     });
   } catch (error) {
     if (error instanceof RuntimeSelectionError) {
@@ -3773,6 +3779,5 @@ export async function executeSummaryShowCommand(
     await application.shutdown();
   }
 }
-
 
 
