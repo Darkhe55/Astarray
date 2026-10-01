@@ -9,10 +9,19 @@ import { AstarrayApplicationFacade } from "../../../core/src/public-sdk.js";
 import { runConfigSchema } from "../../../core/src/core/schemas.js";
 import { EXIT_CODES, failWith, logToStderr, printJson } from "./json-output.js";
 import {
+  InteractivePermissionAskDecisionPort,
+  buildPermissionAskFromEscalation,
+  runPermissionAskAdjudication,
+  type PermissionAskDecisionPort,
+} from "./permission-ask-adjudication.js";
+import {
   RuntimeSelectionError,
   buildRuntimeSelection,
   type RuntimeSelection,
 } from "./runtime-selection.js";
+
+/** 单次 run 内允许的裁决轮数上限（防止无限权限循环；达到即收敛为 blocked）。 */
+const MAXIMUM_ADJUDICATION_ROUNDS = 3;
 
 export interface RunCommandOptions {
   prompt: string;
@@ -30,6 +39,8 @@ export interface RunCommandOptions {
   providerApiKeyEnvironmentVariable?: string;
   /** 受保护凭据引用（优先于环境变量；不存在即 fail-closed）。 */
   providerCredentialReference?: string;
+  /** permission-ask 交互裁决端口（默认：TTY 逐次询问；非 TTY fail-closed）。 */
+  permissionDecisionPort?: PermissionAskDecisionPort;
 }
 
 export async function executeRunCommand(options: RunCommandOptions): Promise<number> {
@@ -70,6 +81,8 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
   // Ponder 模式下 handleUserMessage 返回的是内部哨兵值（不含正文），正文经 streamOutput 送达；
   // 这里同时留档，供 JSON 输出返回真实回答。
   const streamedAnswerChunks: string[] = [];
+  // permission-ask 的结构化询问随升级文本到达（ADR-0011），单独留档供裁决解析。
+  const escalationMessages: string[] = [];
   const application = await AstarrayApplicationFacade.create({
     stateDirectory: options.stateDirectory,
     mode: runConfig.mode,
@@ -83,6 +96,10 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
     useFeedbackProcess: runConfig.runtime !== "mock",
     streamOutput: (_missionIdentifier, text) => {
       streamedAnswerChunks.push(text);
+      // ADR-0011：权限询问随升级文本到达，需结构化留档供用户裁决。
+      if (buildPermissionAskFromEscalation(text) !== null) {
+        escalationMessages.push(text);
+      }
       logToStderr(text);
     },
   });
@@ -105,16 +122,45 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
       taskIdentifier: "cli-task",
       prompt: options.prompt,
     });
-    const finalStatus = await waitForTaskTerminal(application, "cli-run", "cli-task", {
-      timeoutMilliseconds:
-        options.timeoutSeconds === undefined
-          ? null
-          : options.timeoutSeconds * 1_000,
+    const timeoutMilliseconds =
+      options.timeoutSeconds === undefined ? null : options.timeoutSeconds * 1_000;
+    const decisionPort =
+      options.permissionDecisionPort ?? new InteractivePermissionAskDecisionPort();
+    let finalStatus = await waitForTaskTerminal(application, "cli-run", "cli-task", {
+      timeoutMilliseconds,
     });
+    let permissionAskOutcome: string | null = null;
+    // ADR-0011：permission-ask → 认证用户 allow-once → 授权 + unblock → 任务继续。
+    // 非交互环境 fail-closed（不授权），由用户显式重提；轮数有界，绝不自动放行。
+    for (
+      let adjudicationRound = 0;
+      finalStatus === "blocked" && adjudicationRound < MAXIMUM_ADJUDICATION_ROUNDS;
+      adjudicationRound += 1
+    ) {
+      const permissionAsk = escalationMessages
+        .map((escalationText) => buildPermissionAskFromEscalation(escalationText))
+        .find((ask) => ask !== null) ?? null;
+      const decision = await runPermissionAskAdjudication({
+        ask: permissionAsk,
+        missionIdentifier: accepted.missionIdentifier,
+        isInteractive: decisionPort.isInteractive(),
+        readDecision: (ask) => decisionPort.readDecision(ask),
+        application,
+      });
+      permissionAskOutcome = decision;
+      if (decision !== "allowed-once") {
+        break;
+      }
+      escalationMessages.length = 0;
+      finalStatus = await waitForTaskTerminal(application, "cli-run", "cli-task", {
+        timeoutMilliseconds,
+      });
+    }
     printJson({
       missionId: accepted.missionIdentifier,
       mode: runConfig.mode,
       status: finalStatus,
+      ...(permissionAskOutcome === null ? {} : { permissionAsk: permissionAskOutcome }),
       prompt: options.prompt,
     });
     return finalStatus === "done" ? EXIT_CODES.SUCCESS : EXIT_CODES.FAILURE;
