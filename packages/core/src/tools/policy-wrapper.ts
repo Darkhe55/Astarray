@@ -4,7 +4,7 @@
  * ask：抛 permission-ask-pending（由上层转用户裁决）；
  * deny：硬拒绝 + 审计事件 + 抛 tool-permission-denied。
  */
-import { DomainError } from "../core/errors.js";
+import { DomainError, SideEffectNoneError } from "../core/errors.js";
 import type { PermissionDecider } from "../core/permission-policy.js";
 import type { ToolBackupServicePort } from "../core/types.js";
 import type {
@@ -175,6 +175,10 @@ export class PolicyWrapper implements ToolPort {
         callId,
       );
     } catch (error) {
+      // 工具自报"确定未进入副作用通道"（如排他创建因目标已存在被拒）：据此允许门禁
+      // 释放预留；其余错误一律按结果未知处理（必须对账，不得自动释放/重放）。
+      const sideEffectStatus =
+        error instanceof SideEffectNoneError ? ("none" as const) : ("unknown" as const);
       if (error instanceof DomainError) {
         return {
           kind: "error",
@@ -182,6 +186,7 @@ export class PolicyWrapper implements ToolPort {
           errorCode: error.errorCode,
           errorMessage: error.message,
           isIdempotencyConfirmed: false,
+          sideEffectStatus,
         };
       }
       return {
@@ -190,6 +195,7 @@ export class PolicyWrapper implements ToolPort {
         errorCode: "unknown",
         errorMessage: (error as Error).message,
         isIdempotencyConfirmed: false,
+        sideEffectStatus,
       };
     }
   }

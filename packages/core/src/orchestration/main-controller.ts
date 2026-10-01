@@ -330,7 +330,13 @@ export class MainController {
         "缺少可信认证身份，无法登记作用域授权（需人工裁决）",
       );
     }
-    return scopeGate.grantUserAuthorization({ operation, approvedByUserId });
+    // 新契约（2026-10-02）：授权绑定**逻辑操作 ID + 完整规范化参数**，不只绑定范围指纹；
+    // 同路径内容变化必须重新裁决，键序等价的参数视为同一逻辑操作。
+    return scopeGate.grantUserAuthorization({
+      operation,
+      approvedByUserId,
+      argumentsJson: input.argumentsJson,
+    });
   }
 
   async queryMissionStatus(missionId: string) {

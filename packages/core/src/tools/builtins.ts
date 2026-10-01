@@ -11,6 +11,7 @@ import path from "node:path";
 import { isAbsoluteOnAllPlatforms } from "./cross-platform-path-canonicalization.js";
 
 import type { ToolDescriptor } from "../core/types.js";
+import { SideEffectNoneError } from "../core/errors.js";
 import type { ToolBackupServicePort } from "../core/types.js";
 import type { WorkspaceBoundary } from "./workspace-boundary.js";
 import type { BackupDeletionAuthorizationController } from "./backup-vault.js";
@@ -402,9 +403,11 @@ export async function executeBuiltinTool(
         });
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-          throw new Error("createProjectFile 拒绝覆盖已存在文件: " + filePath, {
-            cause: error,
-          });
+          // 排他创建在**写入前**被拒 → 确定未产生副作用（可由门禁释放一次性授权）。
+          throw new SideEffectNoneError(
+            "createProjectFile 拒绝覆盖已存在文件: " + filePath,
+            { cause: error },
+          );
         }
         throw error;
       }

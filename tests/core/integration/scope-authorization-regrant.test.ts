@@ -92,6 +92,7 @@ describe("作用域一次性授权的重新登记", () => {
     await gate.grantUserAuthorization({
       operation: operation as NonNullable<typeof operation>,
       approvedByUserId: "probe-user",
+      argumentsJson: CREATE_FILE_ARGUMENTS,
     });
     const consumingOutcome = await gatedPort.execute(
       "createProjectFile",
@@ -125,12 +126,20 @@ describe("作用域一次性授权的重新登记", () => {
     const typedOperation = operation as NonNullable<typeof operation>;
 
     // 第 1 次授权被"被拒那次"消费。
-    await gate.grantUserAuthorization({ operation: typedOperation, approvedByUserId: "probe-user" });
+    await gate.grantUserAuthorization({
+      operation: typedOperation,
+      approvedByUserId: "probe-user",
+      argumentsJson: CREATE_FILE_ARGUMENTS,
+    });
     await gatedPort.execute("createProjectFile", CREATE_FILE_ARGUMENTS, "call-consume", new AbortController().signal);
     expect(counter.count).toBe(1);
 
     // allow-once 后**重新登记**（修复点）：重跑成为首次真实执行。
-    await gate.grantUserAuthorization({ operation: typedOperation, approvedByUserId: "probe-user" });
+    await gate.grantUserAuthorization({
+      operation: typedOperation,
+      approvedByUserId: "probe-user",
+      argumentsJson: CREATE_FILE_ARGUMENTS,
+    });
     const rerunOutcome = await gatedPort.execute(
       "createProjectFile",
       CREATE_FILE_ARGUMENTS,

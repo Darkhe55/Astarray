@@ -137,20 +137,26 @@ describe("AUTH-SCOPE-03 范围授权门禁", () => {
       operationKind: "project-file-write" as const,
       targetPath: path.join(outsideDirectoryPath, "c.txt"),
     };
-    await gate.grantUserAuthorization({ operation, approvedByUserId: "user-1" });
+    // 新契约：授权必须绑定**完整规范化参数**（逻辑操作），只登记范围指纹不再足够。
+    const authorizedArgumentsJson = JSON.stringify({ path: operation.targetPath, content: "x" });
+    await gate.grantUserAuthorization({
+      operation,
+      approvedByUserId: "user-1",
+      argumentsJson: authorizedArgumentsJson,
+    });
     const counting = createCountingToolPort();
     const gatedPort = new ScopeGatedToolPort(counting.port, gate);
 
     const first = await gatedPort.execute(
       "createProjectFile",
-      JSON.stringify({ path: operation.targetPath, content: "x" }),
+      authorizedArgumentsJson,
       "call-1",
       new AbortController().signal,
     );
     expect(first.kind).toBe("success");
     const second = await gatedPort.execute(
       "createProjectFile",
-      JSON.stringify({ path: operation.targetPath, content: "x" }),
+      authorizedArgumentsJson,
       "call-2",
       new AbortController().signal,
     );

@@ -66,3 +66,18 @@ export class DomainError extends Error {
     this.isRecoverable = isRecoverable;
   }
 }
+
+/**
+ * 「确定未进入副作用通道」的工具错误（2026-10-02 授权结算语义）。
+ *
+ * 工具只有在能够**证明**本次调用没有产生任何副作用时才抛出本错误
+ * （例如排他创建因目标已存在而在写入前被拒、参数非法、路径/范围校验失败）；
+ * 执行中失败、写入后失败或结果未知**一律不得**使用本错误——那类失败必须按
+ * "结果未知"进入对账。该分类是工具实现方的本地确定性事实，不得由模型或上层推断。
+ */
+export class SideEffectNoneError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "SideEffectNoneError";
+  }
+}

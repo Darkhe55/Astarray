@@ -504,6 +504,13 @@ export type ToolCallResult =
       errorMessage: string;
       /** 是否可确认幂等（不确定时必须进入 blocked，不得盲目重试，见 §9.4）。 */
       isIdempotencyConfirmed: boolean;
+      /**
+       * 副作用事实（2026-10-02 授权结算语义）：
+       * - `"none"`：工具**确定未进入副作用通道**（由 `SideEffectNoneError` 声明）；
+       * - `"partial"` / `"unknown"` / 缺省：可能有副作用或结果未知 → 必须对账。
+       * 门禁只据此决定"释放预留"还是"进入对账"，不得由模型或上层推断。
+       */
+      sideEffectStatus?: "none" | "partial" | "unknown";
     };
 
 /** 工具端口：权限检查必须先于实际执行（策略包装层在 T06）。 */

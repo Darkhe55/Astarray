@@ -6,7 +6,11 @@
  * - 放权模式项目内操作默认无人工等待；协同模式项目内由本地上级批准并留回执；
  *   项目外/未知等待认证用户授权；安装类仍受独立开关约束。
  */
+import { createHash } from "node:crypto";
+
 import type { ToolCallResult, ToolPort } from "../core/types.js";
+import { DomainError } from "../core/errors.js";
+import { canonicalizeToolArguments } from "../core/permission-policy.js";
 import {
   computeOperationFingerprint,
   decideScopeAuthorization,
@@ -19,6 +23,41 @@ import {
   type ScopeApprovalReceipt,
   type ScopeClass,
 } from "./scope-resolution.js";
+
+/** 逻辑操作预留（执行前建立、执行后结算）。 */
+export interface ExecutionReservation {
+  reservationIdentifier: string;
+  logicalOperationFingerprint: string;
+  reservedAtIso: string;
+  /** null = 尚未结算（在途）。 */
+  settlement: "settled" | "requires-reconciliation" | null;
+  settledAtIso?: string;
+  sideEffectStatus?: "none" | "partial" | "unknown";
+  /**
+   * 建立预留时从授权表取走的授权快照。仅当结算为"明确未执行、无副作用"时**恢复**，
+   * 使重试不必再次要求用户裁决；其余结算情形不恢复（防重放）。
+   */
+  armedAuthorization?: {
+    approvedByUserId: string | null;
+    authorizationRevision: number;
+    grantedAtIso: string;
+  };
+}
+
+export type ExecutionReservationStatus =
+  | "reserved"
+  | "reserved-in-flight"
+  | "replay-rejected"
+  | "requires-reconciliation"
+  | "awaiting-user-authorization";
+
+export interface ExecutionReservationOutcome {
+  status: ExecutionReservationStatus;
+  reservationIdentifier?: string;
+  logicalOperationFingerprint: string;
+  errorCode?: string;
+  reasons?: string[];
+}
 
 export interface ScopeGateDecisionRecord {
   receiptIdentifier: string;
@@ -80,8 +119,233 @@ const READ_ONLY_OPERATION_KINDS: ReadonlySet<OperationKind> = new Set([
 
 export class ScopeAuthorizationGate {
   private readonly recordsByFingerprint = new Map<string, ScopeGateDecisionRecord>();
+  /**
+   * 逻辑操作预留表（键 = 规范化完整参数指纹，2026-10-02 用户指定语义）：
+   * **执行前原子预留、执行后结算**；仅"明确未执行、无副作用"的失败可释放，
+   * 执行中失败/结果未知一律进入对账，禁止自动释放或静默重放。
+   */
+  private readonly reservationsByLogicalOperation = new Map<string, ExecutionReservation>();
+  /**
+   * 逻辑操作授权表（键 = 逻辑操作指纹；2026-10-02 用户指定语义）：
+   * 授权绑定**完整规范化参数**，不是只绑定范围指纹——同路径内容变化必须重新裁决。
+   * 预留建立时同步消费，保证"执行前原子预留"。
+   */
+  private readonly authorizationsByLogicalOperation = new Map<
+    string,
+    { approvedByUserId: string | null; authorizationRevision: number; grantedAtIso: string }
+  >();
 
   constructor(private readonly options: ScopeAuthorizationGateOptions) {}
+
+  /**
+   * 逻辑操作指纹：**完整规范化参数 + 操作种类 + 目标路径**。
+   * 授权只绑定作用域指纹（kind/scope/project/targetPath）是不够的——
+   * 同一路径的内容变化也必须重新裁决。
+   */
+  private computeLogicalOperationFingerprint(input: {
+    operation: OperationDescriptor;
+    argumentsJson: string;
+  }): string {
+    return (
+      "logical:" +
+      createHash("sha256")
+        .update(
+          [
+            input.operation.operationKind,
+            input.operation.targetPath ?? "-",
+            canonicalizeToolArguments(input.argumentsJson),
+          ].join("|"),
+          "utf8",
+        )
+        .digest("hex")
+    );
+  }
+
+  /**
+   * 执行前**原子预留**：命中未结算的授权 → 建立预留（同一时刻只允许一个持有者）；
+   * 已预留未结算 → `reserved-in-flight`；已结算成功 → `replay-rejected`；
+   * 结果未知待对账 → `requires-reconciliation`；无可用授权 → 走范围裁决。
+   */
+  async reserveForExecution(input: {
+    operation: OperationDescriptor;
+    argumentsJson: string;
+  }): Promise<ExecutionReservationOutcome> {
+    const logicalFingerprint = this.computeLogicalOperationFingerprint(input);
+    // 以下判定与预留建立**在同一同步段内完成**（无 await）：并发调用只有一个能建立预留。
+    const existingReservation = this.reservationsByLogicalOperation.get(logicalFingerprint);
+    if (existingReservation !== undefined) {
+      if (existingReservation.settlement === null) {
+        return {
+          status: "reserved-in-flight",
+          reservationIdentifier: existingReservation.reservationIdentifier,
+          logicalOperationFingerprint: logicalFingerprint,
+          errorCode: "operation-already-in-flight",
+        };
+      }
+      if (existingReservation.settlement === "requires-reconciliation") {
+        return {
+          status: "requires-reconciliation",
+          reservationIdentifier: existingReservation.reservationIdentifier,
+          logicalOperationFingerprint: logicalFingerprint,
+          errorCode: "operation-settlement-unknown",
+        };
+      }
+      return {
+        status: "replay-rejected",
+        reservationIdentifier: existingReservation.reservationIdentifier,
+        logicalOperationFingerprint: logicalFingerprint,
+        errorCode: "auth-scope-replay-rejected",
+      };
+    }
+
+    const existingAuthorization = this.authorizationsByLogicalOperation.get(logicalFingerprint);
+    if (
+      existingAuthorization !== undefined &&
+      existingAuthorization.authorizationRevision === this.options.getAuthorizationRevision()
+    ) {
+      this.authorizationsByLogicalOperation.delete(logicalFingerprint);
+      return this.createReservation(logicalFingerprint, existingAuthorization);
+    }
+    if (existingAuthorization !== undefined) {
+      // revision 变化使旧授权失效（fail-closed）。
+      this.authorizationsByLogicalOperation.delete(logicalFingerprint);
+    }
+
+    // 无逻辑操作授权：先做**只读预演**（不消费任何记录）决定是否需要用户裁决。
+    const preview = await this.previewDecision(input.operation);
+    if (preview.decision === "deny") {
+      return {
+        status: "awaiting-user-authorization",
+        logicalOperationFingerprint: logicalFingerprint,
+        errorCode: "auth-scope-denied",
+        reasons: preview.reasons,
+      };
+    }
+    if (preview.decision === "ask-user") {
+      return {
+        status: "awaiting-user-authorization",
+        logicalOperationFingerprint: logicalFingerprint,
+        errorCode: "auth-scope-awaiting-user-authorization",
+        reasons: preview.reasons,
+      };
+    }
+    // `allow` 与 `ask-superior`（协同模式项目内默认由本地上级批准）：走一次正式授权，
+    // 保留回执与审计；随后**同步**建立预留，并把授权快照挂到预留上（明确无副作用的
+    // 失败可据此恢复授权重试，成功后不恢复）。
+    const authorization = await this.authorizeForExecution(input.operation);
+    if (!authorization.isAllowed) {
+      return {
+        status: "awaiting-user-authorization",
+        logicalOperationFingerprint: logicalFingerprint,
+        errorCode: authorization.errorCode ?? "auth-scope-denied",
+        reasons: authorization.reasons,
+      };
+    }
+    return this.createReservation(logicalFingerprint);
+  }
+
+  /** 建立预留（同步段内调用；调用点前不得有 await）。 */
+  private createReservation(
+    logicalFingerprint: string,
+    armedAuthorization?: {
+      approvedByUserId: string | null;
+      authorizationRevision: number;
+      grantedAtIso: string;
+    },
+  ): ExecutionReservationOutcome {
+    const reservation: ExecutionReservation = {
+      reservationIdentifier: "scope-reservation-" + logicalFingerprint.slice(8, 24),
+      logicalOperationFingerprint: logicalFingerprint,
+      reservedAtIso: this.nowIso(),
+      settlement: null,
+      ...(armedAuthorization === undefined ? {} : { armedAuthorization }),
+    };
+    this.reservationsByLogicalOperation.set(logicalFingerprint, reservation);
+    return {
+      status: "reserved",
+      reservationIdentifier: reservation.reservationIdentifier,
+      logicalOperationFingerprint: logicalFingerprint,
+    };
+  }
+
+  /**
+   * 登记逻辑操作授权（用户裁决 / 入口授权调用）。
+   * 与 `grantUserAuthorization` 并行存在：后者只覆盖范围指纹，前者绑定完整规范化参数。
+   */
+  async grantLogicalOperationAuthorization(input: {
+    operation: OperationDescriptor;
+    argumentsJson: string;
+    approvedByUserId: string | null;
+  }): Promise<{ logicalOperationFingerprint: string }> {
+    const logicalFingerprint = this.computeLogicalOperationFingerprint({
+      operation: input.operation,
+      argumentsJson: input.argumentsJson,
+    });
+    // 用户对同一逻辑操作**重新授权**：清除既有结算状态，使新授权的首次执行不被
+    // 旧的重放守卫挡住；在途预留不得清除（防止并发期间被重新打开）。
+    const existingReservation = this.reservationsByLogicalOperation.get(logicalFingerprint);
+    if (existingReservation !== undefined && existingReservation.settlement !== null) {
+      this.reservationsByLogicalOperation.delete(logicalFingerprint);
+    }
+    this.authorizationsByLogicalOperation.set(logicalFingerprint, {
+      approvedByUserId: input.approvedByUserId,
+      authorizationRevision: this.options.getAuthorizationRevision(),
+      grantedAtIso: this.nowIso(),
+    });
+    return { logicalOperationFingerprint: logicalFingerprint };
+  }
+
+  /**
+   * 执行后**结算**：
+   * - 成功 → `settled`（此后同一逻辑操作 = 重放，仍拒绝）；
+   * - 失败且**工具自报确定未执行/无副作用**（`sideEffectStatus: "none"`）→ `released`（可重试，不再要授权）；
+   * - 其余失败（部分副作用/未知）→ `requires-reconciliation`（禁止自动释放）。
+   */
+  async settleReservation(input: {
+    reservationIdentifier: string;
+    outcome: {
+      kind: "success" | "error";
+      isIdempotencyConfirmed?: boolean;
+      sideEffectStatus?: "none" | "partial" | "unknown";
+    };
+  }): Promise<{ status: "settled" | "released" | "requires-reconciliation"; logicalOperationFingerprint: string }> {
+    const entry = [...this.reservationsByLogicalOperation.entries()].find(
+      ([, reservation]) => reservation.reservationIdentifier === input.reservationIdentifier,
+    );
+    if (entry === undefined) {
+      throw new DomainError(
+        "invalid-task-chain",
+        `预留不存在: ${input.reservationIdentifier}`,
+      );
+    }
+    const [logicalFingerprint, reservation] = entry;
+    if (reservation.settlement !== null) {
+      // 重复结算不改变结论（幂等）。
+      return { status: reservation.settlement, logicalOperationFingerprint: logicalFingerprint };
+    }
+    if (input.outcome.kind === "success") {
+      reservation.settlement = "settled";
+      reservation.settledAtIso = this.nowIso();
+      reservation.sideEffectStatus = "partial";
+      return { status: "settled", logicalOperationFingerprint: logicalFingerprint };
+    }
+    const sideEffectStatus = input.outcome.sideEffectStatus ?? "unknown";
+    if (sideEffectStatus === "none") {
+      // 确定未执行、无副作用：释放预留，并**恢复**原授权（重试不必再次要求裁决）。
+      this.reservationsByLogicalOperation.delete(logicalFingerprint);
+      if (reservation.armedAuthorization !== undefined) {
+        this.authorizationsByLogicalOperation.set(
+          logicalFingerprint,
+          reservation.armedAuthorization,
+        );
+      }
+      return { status: "released", logicalOperationFingerprint: logicalFingerprint };
+    }
+    reservation.settlement = "requires-reconciliation";
+    reservation.settledAtIso = this.nowIso();
+    reservation.sideEffectStatus = sideEffectStatus;
+    return { status: "requires-reconciliation", logicalOperationFingerprint: logicalFingerprint };
+  }
 
   private nowIso(): string {
     return this.options.nowIso?.() ?? new Date().toISOString();
@@ -97,11 +361,18 @@ export class ScopeAuthorizationGate {
     });
   }
 
-  /** 认证用户授予精确操作授权（单次使用；重放不产生副作用）。 */
+  /**
+   * 认证用户授予精确操作授权（单次使用；重放不产生副作用）。
+   *
+   * 兼容入口：给出 `argumentsJson` 时**同时**登记逻辑操作授权（绑定完整规范化参数），
+   * 使 `reserveForExecution` 能直接命中；未给出参数时只登记范围指纹级记录（旧行为）。
+   */
   grantUserAuthorization(input: {
     operation: OperationDescriptor;
     approvedByUserId: string;
     expiresAtIso?: string | null;
+    /** 完整规范化参数（推荐给出；绑定逻辑操作 ID，避免同路径内容变化被沿用）。 */
+    argumentsJson?: string;
   }): Promise<{ receiptIdentifier: string; operationFingerprint: string }> {
     return (async () => {
       const resolution = await this.resolve(input.operation);
@@ -123,6 +394,13 @@ export class ScopeAuthorizationGate {
         expiresAtIso: input.expiresAtIso ?? null,
       };
       this.recordsByFingerprint.set(operationFingerprint, record);
+      if (input.argumentsJson !== undefined) {
+        await this.grantLogicalOperationAuthorization({
+          operation: input.operation,
+          argumentsJson: input.argumentsJson,
+          approvedByUserId: input.approvedByUserId,
+        });
+      }
       return { receiptIdentifier: record.receiptIdentifier, operationFingerprint };
     })();
   }
@@ -431,16 +709,50 @@ export class ScopeGatedToolPort implements ToolPort {
     if (operation === null) {
       return this.innerToolPort.execute(toolName, argumentsJson, callId, cancellationSignal);
     }
-    const outcome = await this.gate.authorizeForExecution(operation);
-    if (!outcome.isAllowed) {
+    // 执行前**原子预留**（未获授权绝不触达内层工具）。
+    const reservation = await this.gate.reserveForExecution({ operation, argumentsJson });
+    if (reservation.status !== "reserved") {
+      const errorCodeByStatus: Record<string, string> = {
+        "reserved-in-flight": "operation-already-in-flight",
+        "replay-rejected": "auth-scope-replay-rejected",
+        "requires-reconciliation": "operation-settlement-unknown",
+        "awaiting-user-authorization": "auth-scope-awaiting-user-authorization",
+      };
       return {
         kind: "error",
         callId,
-        errorCode: outcome.errorCode ?? "auth-scope-denied",
-        errorMessage: outcome.reasons.join("；") || "范围授权未通过",
+        errorCode: reservation.errorCode ?? errorCodeByStatus[reservation.status] ?? "auth-scope-denied",
+        errorMessage:
+          (reservation.reasons ?? []).join("；") ||
+          `范围授权未通过（${reservation.status}）`,
+        // 预留未建立 → 内层工具未被调用 → 确定无副作用（可重试）。
         isIdempotencyConfirmed: true,
+        sideEffectStatus: reservation.status === "replay-rejected" ? "partial" : "none",
       };
     }
-    return this.innerToolPort.execute(toolName, argumentsJson, callId, cancellationSignal);
+
+    const reservationIdentifier = reservation.reservationIdentifier ?? "";
+    const innerResult = await this.innerToolPort.execute(
+      toolName,
+      argumentsJson,
+      callId,
+      cancellationSignal,
+    );
+    // 执行后**结算**：成功 → settled（此后同逻辑操作=重放）；
+    // 失败且工具自报"确定无副作用" → released（可重试）；否则 → requires-reconciliation。
+    await this.gate.settleReservation({
+      reservationIdentifier,
+      outcome:
+        innerResult.kind === "success"
+          ? { kind: "success" }
+          : {
+              kind: "error",
+              isIdempotencyConfirmed: innerResult.isIdempotencyConfirmed,
+              ...(innerResult.sideEffectStatus === undefined
+                ? {}
+                : { sideEffectStatus: innerResult.sideEffectStatus }),
+            },
+    });
+    return innerResult;
   }
 }
