@@ -160,14 +160,37 @@ function record(checkName, isPassed, detail) {
 
 const fileExists = existsSync(outputFilePath);
 const actualContent = fileExists ? readFileSync(outputFilePath, "utf8") : null;
+/**
+ * 判据口径（2026-10-01 明确）：**行内容必须逐字精确，结尾换行不敏感**。
+ * 原因：提示词只要求"三行 Markdown"，未规定文件是否以换行结尾；模型两次生成
+ * 可能只差结尾换行，用字节级 sha256 会把它误判为失败（实测发生过）。
+ * 实现：按行切分并丢弃末尾空行后逐行比对；其余字符仍逐字精确。
+ */
+const toComparableLines = (text) => {
+  const lines = text.split("\n").map((line) => line.replace(/\r$/, ""));
+  while (lines.length > 0 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+  return lines;
+};
+const expectedSha256 = createHash("sha256").update(expectedContent).digest("hex");
 const actualSha256 =
   actualContent === null ? null : createHash("sha256").update(actualContent).digest("hex");
-const expectedSha256 = createHash("sha256").update(expectedContent).digest("hex");
+const isContentMatched =
+  actualContent !== null &&
+  JSON.stringify(toComparableLines(actualContent)) ===
+    JSON.stringify(toComparableLines(expectedContent));
 
 record("任务终态 status=done", parsedResult?.status === "done", String(parsedResult?.status));
 record("权限裁决结果为 allowed-once", parsedResult?.permissionAsk === "allowed-once", String(parsedResult?.permissionAsk));
 record("产物文件存在", fileExists, outputFilePath);
-record("产物内容与期望一致（含 sha256）", actualSha256 === expectedSha256, String(actualSha256));
+record(
+  "产物内容与期望一致（逐行精确，结尾换行不敏感）",
+  isContentMatched,
+  actualContent === null
+    ? "文件缺失"
+    : "实际 sha256=" + String(actualSha256) + " / 期望 sha256=" + expectedSha256,
+);
 record(
   "仓库其他文件未被改动",
   spawnSync("git", ["status", "--porcelain=v1", "--", outputFileRelativePath], { cwd: repositoryRoot })
