@@ -198,7 +198,18 @@ describe("T07D-R2-03：Provider 工具循环与完成门禁", () => {
     expect(result.status).toBe("done");
     const secondRequest = server.receivedBodies[1] ?? "";
     expect(secondRequest).toMatch(/未注册|tool-not-found|不在本 Worker/);
-    expect(secondRequest).not.toContain("whoami");
+    // 禁用工具的拒绝必须以工具结果回填（OpenAI 规范 role="tool"），
+    // 且**结果内容**里不得出现被拒命令的输出（模型自述的 tool_calls 参数不算执行）。
+    const secondRequestBody = JSON.parse(secondRequest) as {
+      messages?: Array<{ role?: string; tool_call_id?: string; content?: string | null }>;
+    };
+    const toolResultMessages = (secondRequestBody.messages ?? []).filter(
+      (message) => message.role === "tool",
+    );
+    expect(toolResultMessages.length).toBe(1);
+    expect(toolResultMessages[0]?.tool_call_id).toBe("tc-1");
+    expect(String(toolResultMessages[0]?.content)).toContain("tool-not-found");
+    expect(String(toolResultMessages[0]?.content)).not.toContain("whoami");
   });
 
   it("缺少版本化完成控制事件时不得宣布成功", async () => {

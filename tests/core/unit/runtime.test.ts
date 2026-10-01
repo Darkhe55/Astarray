@@ -293,6 +293,84 @@ describe("OpenAiCompatibleRuntime", () => {
 });
 
 describe("runToolLoop", () => {
+  it("工具结果回填为 OpenAI 规范消息序列：assistant(tool_calls) + role=tool（不得用 role=function）", async () => {
+    const capturedInputs: AgentRunInput[] = [];
+    let iterationIndex = 0;
+    const capturingRuntime: AgentRuntime = {
+      async *run(agentRunInput: AgentRunInput): AsyncIterable<never> {
+        capturedInputs.push({
+          ...agentRunInput,
+          toolResultMessages: [...(agentRunInput.toolResultMessages ?? [])],
+        });
+        iterationIndex += 1;
+        if (iterationIndex === 1) {
+          yield {
+            kind: "toolCallRequested",
+            agentId: agentRunInput.agentId,
+            toolName: "createProjectFile",
+            callId: "call-spec-1",
+            argumentsJson: '{"filePath":"tasks/PROBE-001.md","content":"x"}',
+          } as never;
+          yield {
+            kind: "runFinished",
+            agentId: agentRunInput.agentId,
+            reason: "tool-calls",
+            detail: "请求工具",
+          } as never;
+          return;
+        }
+        yield {
+          kind: "runFinished",
+          agentId: agentRunInput.agentId,
+          reason: "success",
+          detail: "完成",
+        } as never;
+      },
+    };
+    const toolPort: { execute: (...args: unknown[]) => Promise<ToolCallResult> } = {
+      execute: async () => ({
+        kind: "error",
+        callId: "call-spec-1",
+        errorCode: "permission-ask-pending",
+        errorMessage: "工具需要用户裁决",
+        isIdempotencyConfirmed: true,
+      }),
+    };
+    await collectEvents(
+      await runToolLoop(makeRunInput(), {
+        runtime: capturingRuntime,
+        toolPort: toolPort as unknown as never,
+        maxLoopIterations: 5,
+        cancellationSignal: new AbortController().signal,
+      }),
+    );
+
+    // 第 2 次迭代必须携带规范化的续发消息。
+    const secondIterationMessages = capturedInputs[1]?.toolResultMessages ?? [];
+    expect(secondIterationMessages.length).toBeGreaterThanOrEqual(2);
+    const assistantMessage = secondIterationMessages[0] as Record<string, unknown>;
+    expect(assistantMessage["role"]).toBe("assistant");
+    expect(Array.isArray(assistantMessage["tool_calls"])).toBe(true);
+    const assistantToolCalls = assistantMessage["tool_calls"] as Array<
+      Record<string, unknown>
+    >;
+    expect(assistantToolCalls[0]).toMatchObject({
+      id: "call-spec-1",
+      type: "function",
+      function: { name: "createProjectFile" },
+    });
+    const toolMessage = secondIterationMessages[1] as Record<string, unknown>;
+    expect(toolMessage["role"]).toBe("tool");
+    expect(toolMessage["tool_call_id"]).toBe("call-spec-1");
+    expect(String(toolMessage["content"])).toContain("permission-ask-pending");
+    // 真实 OpenAI 兼容端点会拒绝 role=function（实测 400 invalid msg role）。
+    expect(
+      secondIterationMessages.some(
+        (message) => (message as Record<string, unknown>)["role"] === "function",
+      ),
+    ).toBe(false);
+  });
+
   it("执行工具调用并回填结果后再次调用 runtime", async () => {
     const callLog: string[] = [];
     const scriptedRuntime = new ScriptedRuntime([

@@ -231,12 +231,12 @@ describe("生产装配：本地只读工具", () => {
     }
     await application.shutdown();
 
-    const functionMessages = (JSON.parse(receivedBodies[1] ?? "{}").messages ?? []).filter(
-      (message: { role?: string }) => message.role === "function",
+    const toolResultMessages = (JSON.parse(receivedBodies[1] ?? "{}").messages ?? []).filter(
+      (message: { role?: string }) => message.role === "tool",
     );
     // 运行链路的范围门禁会先要求授权（范围未知），但**不应**再出现"引擎未装配"：
     // 该错误码只在装配缺口时出现，是本检查点要锁定的回归信号。
-    const joined = functionMessages.map((message: { content?: string }) => String(message.content)).join("|");
+    const joined = toolResultMessages.map((message: { content?: string }) => String(message.content)).join("|");
     expect(joined).not.toContain("本地策略引擎未装配");
     expect(joined.length).toBeGreaterThan(0);
   });

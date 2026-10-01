@@ -33,7 +33,9 @@
     "verify:e2e01": "node scripts/e2e01-acceptance.mjs fixture",
     "verify:security-coverage": "node scripts/verify-security-coverage.mjs",
     "verify:read-format-package": "node scripts/verify-read-format-package.mjs",
-    "verify:entry-runtime-selection": "node scripts/verify-entry-runtime-selection.mjs"
+    "verify:entry-runtime-selection": "node scripts/verify-entry-runtime-selection.mjs",
+    "verify:provider-tool-protocol": "node scripts/verify-provider-tool-protocol.mjs",
+    "verify:provider-live-request": "node scripts/verify-provider-request-against-endpoint.mjs"
   },
   "dependencies": {
     "commander": "^15.0.0",

@@ -32,7 +32,10 @@ export interface ToolLoopOptions {
   toolPort: ToolPort;
   maxLoopIterations: number;
   cancellationSignal: AbortSignal;
-  /** 工具结果注入 provider 的格式（默认 OpenAI 风格 role=function）。 */
+  /**
+   * 覆盖工具结果消息形态（默认已按 OpenAI Chat Completions 规范构造
+   * `role="tool"` + `tool_call_id`；仅在特殊 provider 适配时覆盖）。
+   */
   buildToolResultMessage?: (
     callId: string,
     toolName: string,
@@ -44,7 +47,42 @@ export interface ToolLoopOptions {
   onGuidanceApplied?: (application: AppliedGuidance) => void;
 }
 
-function buildGuidanceInjectionMessage(application: AppliedGuidance): unknown {
+/**
+ * 续发消息（OpenAI Chat Completions 规范）：
+ * 工具调用后必须**先**回填 assistant 的 `tool_calls`，**再**逐条给出 `role="tool"` 结果，
+ * 且 `tool_call_id` 一一对应。实测（stepfun `step-3.7-flash`，2026-10-01）：
+ * 只发 `role="function"` 的结果会被真实端点以
+ * `400 invalid msg role: function` 拒绝。
+ */
+export interface AssistantToolCallMessage {
+  role: "assistant";
+  content: string | null;
+  tool_calls: Array<{
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }>;
+}
+
+export interface ToolRoleResultMessage {
+  role: "tool";
+  tool_call_id: string;
+  content: string;
+}
+
+/** 运行中指导注入消息（本地约定：system 角色，非 OpenAI 工具协议的一部分）。 */
+export interface GuidanceInjectionMessage {
+  role: "system";
+  name: string;
+  content: string;
+}
+
+export type ProviderConversationMessage =
+  | AssistantToolCallMessage
+  | ToolRoleResultMessage
+  | GuidanceInjectionMessage;
+
+function buildGuidanceInjectionMessage(application: AppliedGuidance): GuidanceInjectionMessage {
   return {
     role: "system",
     name: "runtime-guidance",
@@ -55,6 +93,31 @@ function buildGuidanceInjectionMessage(application: AppliedGuidance): unknown {
       String(application.guidanceRevision) +
       "] " +
       application.instructionText,
+  };
+}
+
+/** 工具执行结果 → 回填文本（与既有 `role=function` 时代的内容保持一致）。 */
+export function toToolResultContent(result: ToolCallResult): string {
+  return result.kind === "success"
+    ? result.outputText
+    : `错误(${result.errorCode}): ${result.errorMessage}`;
+}
+
+/** 一次迭代内产生的工具调用（assistant 消息需要完整回填）。 */
+function buildAssistantToolCallMessage(
+  toolCalls: Array<{ callId: string; toolName: string; argumentsJson: string }>,
+): AssistantToolCallMessage {
+  return {
+    role: "assistant",
+    content: null,
+    tool_calls: toolCalls.map((toolCall) => ({
+      id: toolCall.callId,
+      type: "function",
+      function: {
+        name: toolCall.toolName,
+        arguments: toolCall.argumentsJson,
+      },
+    })),
   };
 }
 
@@ -76,7 +139,7 @@ export async function runToolLoop(
 ): Promise<AsyncIterable<AgentEvent>> {
   let iterationCount = 0;
   const assistantTextBuffer: string[] = [];
-  const toolResultMessages: unknown[] = [];
+  const conversationMessages: ProviderConversationMessage[] = [];
   let outcome: ToolLoopOutcome = {
     reason: "error",
     detail: "循环未产生结果",
@@ -106,13 +169,13 @@ export async function runToolLoop(
         iterationCount,
       })) ?? [];
     for (const application of beforeModelGuidance) {
-      toolResultMessages.push(buildGuidanceInjectionMessage(application));
+      conversationMessages.push(buildGuidanceInjectionMessage(application));
       options.onGuidanceApplied?.(application);
     }
 
     const iterationInput: AgentRunInput = {
       ...agentRunInput,
-      toolResultMessages: [...toolResultMessages],
+      toolResultMessages: [...conversationMessages],
     };
     for await (const event of options.runtime.run(
       iterationInput,
@@ -166,6 +229,9 @@ export async function runToolLoop(
       break;
     }
 
+    // OpenAI 规范：先把本轮全部 assistant tool_calls 回填，再逐条给出 tool 结果。
+    conversationMessages.push(buildAssistantToolCallMessage(pendingToolCalls));
+
     for (const toolCall of pendingToolCalls) {
       // 安全点 2：工具执行前消费控制队列。
       const beforeToolGuidance =
@@ -175,7 +241,7 @@ export async function runToolLoop(
           toolName: toolCall.toolName,
         })) ?? [];
       for (const application of beforeToolGuidance) {
-        toolResultMessages.push(buildGuidanceInjectionMessage(application));
+        conversationMessages.push(buildGuidanceInjectionMessage(application));
         options.onGuidanceApplied?.(application);
       }
       // 门禁档：立即门禁并请求暂停——不执行该工具调用，改为返回门禁回执。
@@ -205,19 +271,16 @@ export async function runToolLoop(
         outputSummary: truncate(toolResult.kind === "success" ? toolResult.outputText : toolResult.errorMessage),
         errorCode: toolResult.kind === "error" ? toolResult.errorCode : undefined,
       });
-      // 将工具结果作为下一轮输入的一部分
-      toolResultMessages.push(
-        options.buildToolResultMessage?.(
+      // 将工具结果作为下一轮输入的一部分（默认按 OpenAI 规范 role="tool"）。
+      conversationMessages.push(
+        (options.buildToolResultMessage?.(
           toolCall.callId,
           toolCall.toolName,
           toolResult,
-        ) ?? {
-          role: "function",
+        ) as ProviderConversationMessage | undefined) ?? {
+          role: "tool",
           tool_call_id: toolCall.callId,
-          name: toolCall.toolName,
-          content: toolResult.kind === "success"
-            ? toolResult.outputText
-            : `错误(${toolResult.errorCode}): ${toolResult.errorMessage}`,
+          content: toToolResultContent(toolResult),
         },
       );
     }
