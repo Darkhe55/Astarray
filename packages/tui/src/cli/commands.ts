@@ -1565,12 +1565,240 @@ export async function executePresetListCommand(
 /** T07D-06：Provider 配置装配命令（config provider list/show、doctor --provider）。 */
 
 async function loadProviderCliInfra(stateDirectory: string) {
-  const { FileProviderCredentialStore, ProviderCliCatalog } = await import(
-    "./provider-cli.js"
-  );
+  const { FileProviderCredentialStore, ProviderCliCatalog, toProviderPublicDto } =
+    await import("./provider-cli.js");
   const credentialStore = new FileProviderCredentialStore(stateDirectory);
   const catalog = new ProviderCliCatalog(stateDirectory);
-  return { credentialStore, catalog };
+  return { credentialStore, catalog, toProviderPublicDto };
+}
+
+/** 受保护凭据引用的允许支持等级（与 ProviderRegistration 同源）。 */
+const SUPPORT_LEVELS = [
+  "adapter-only",
+  "fake-server-conformant",
+  "live-smoke-verified",
+  "product-path-verified",
+] as const;
+
+/** STDIN 输入上限：凭据负载远小于此，超出即拒绝（避免无界缓冲）。 */
+const MAXIMUM_CREDENTIAL_STDIN_BYTES = 64 * 1024;
+
+/**
+ * 从 STDIN 读取受保护凭据负载（**唯一允许的机密输入通道**）。
+ * 排他原则：API key 不得经命令行参数、环境变量或日志出现。
+ */
+async function readCredentialPayloadFromStdin(
+  stdinStream: NodeJS.ReadableStream,
+): Promise<{ ok: true; payloadText: string } | { ok: false; message: string }> {
+  return await new Promise((resolve) => {
+    let payloadText = "";
+    let receivedByteCount = 0;
+    let isSettled = false;
+    const settle = (result: { ok: true; payloadText: string } | { ok: false; message: string }): void => {
+      if (isSettled) {
+        return;
+      }
+      isSettled = true;
+      stdinStream.removeListener("data", onData);
+      stdinStream.removeListener("end", onEnd);
+      resolve(result);
+    };
+    const onData = (chunk: Buffer | string): void => {
+      const chunkText = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      receivedByteCount += Buffer.byteLength(chunkText, "utf8");
+      if (receivedByteCount > MAXIMUM_CREDENTIAL_STDIN_BYTES) {
+        // 只报告上限与类别，绝不回显（可能含 secret 片段）。
+        settle({
+          ok: false,
+          message: `STDIN 输入过大（上限 ${String(MAXIMUM_CREDENTIAL_STDIN_BYTES)} 字节；凭据负载不应超过此值）`,
+        });
+        return;
+      }
+      payloadText += chunkText;
+    };
+    const onEnd = (): void => {
+      settle({ ok: true, payloadText });
+    };
+    stdinStream.setEncoding("utf8");
+    stdinStream.on("data", onData);
+    stdinStream.on("end", onEnd);
+  });
+}
+
+interface ParsedCredentialPayload {
+  referenceId: string;
+  baseUrl: string;
+  apiKey: string;
+}
+
+/** 解析并校验 STDIN 凭据负载；错误信息与原文解耦（不回显输入内容）。 */
+function parseCredentialPayload(
+  payloadText: string,
+): { ok: true; payload: ParsedCredentialPayload } | { ok: false; message: string } {
+  let parsedValue: unknown;
+  try {
+    parsedValue = JSON.parse(payloadText);
+  } catch {
+    return {
+      ok: false,
+      message:
+        "STDIN 必须是 JSON 对象：{ referenceId, baseUrl, apiKey }（内容不回显）",
+    };
+  }
+  if (parsedValue === null || typeof parsedValue !== "object" || Array.isArray(parsedValue)) {
+    return { ok: false, message: "STDIN JSON 必须是对象" };
+  }
+  const record = parsedValue as Record<string, unknown>;
+  const takenString = (keyName: string): string =>
+    typeof record[keyName] === "string" ? (record[keyName] as string).trim() : "";
+  const referenceId = takenString("referenceId");
+  if (referenceId === "") {
+    return { ok: false, message: "缺少 referenceId（非空字符串）" };
+  }
+  const baseUrl = takenString("baseUrl");
+  if (baseUrl === "") {
+    return { ok: false, message: "缺少 baseUrl（非空字符串）" };
+  }
+  try {
+    const parsedBaseUrl = new URL(baseUrl);
+    if (parsedBaseUrl.protocol !== "http:" && parsedBaseUrl.protocol !== "https:") {
+      return { ok: false, message: "baseUrl 协议必须是 http 或 https" };
+    }
+  } catch {
+    return { ok: false, message: "baseUrl 不是合法 URL" };
+  }
+  const apiKey = takenString("apiKey");
+  if (apiKey === "") {
+    return { ok: false, message: "缺少 apiKey（非空字符串）" };
+  }
+  return { ok: true, payload: { referenceId, baseUrl, apiKey } };
+}
+
+/** 公开面脱敏：只保留主机名（丢弃路径、查询串、用户信息与端口之外的细节）。 */
+function toEndpointHost(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).hostname;
+  } catch {
+    return "(无法解析)";
+  }
+}
+
+export interface ProviderCredentialSetCommandOptions {
+  stateDirectory: string;
+  /** 凭据负载输入流（默认 process.stdin；测试可注入）。 */
+  stdinStream?: NodeJS.ReadableStream;
+  isJsonOutput: boolean;
+}
+/**
+ * config provider credential-set：从 STDIN 写入受保护凭据引用。
+ * 拒收任何经命令行/环境变量传入的机密；输出只含引用 ID、端主机名与是否含 key。
+ */
+export async function executeProviderCredentialSetCommand(
+  options: ProviderCredentialSetCommandOptions,
+): Promise<number> {
+  const readResult = await readCredentialPayloadFromStdin(
+    options.stdinStream ?? process.stdin,
+  );
+  if (!readResult.ok) {
+    logToStderr(readResult.message);
+    return EXIT_CODES.USAGE_ERROR;
+  }
+  const parseResult = parseCredentialPayload(readResult.payloadText);
+  if (!parseResult.ok) {
+    logToStderr(parseResult.message);
+    return EXIT_CODES.USAGE_ERROR;
+  }
+  const { credentialStore } = await loadProviderCliInfra(options.stateDirectory);
+  let writeResult: { isBackupCreated: boolean };
+  try {
+    writeResult = await credentialStore.writeCredentialSecurely(
+      parseResult.payload,
+    );
+  } catch (error) {
+    logToStderr(
+      `写入受保护凭据失败（未回显内容）: ${(error as Error).message}`,
+    );
+    return EXIT_CODES.FAILURE;
+  }
+  const summary = {
+    referenceId: parseResult.payload.referenceId,
+    endpointHost: toEndpointHost(parseResult.payload.baseUrl),
+    apiKeyPresent: parseResult.payload.apiKey !== "",
+    isBackupCreated: writeResult.isBackupCreated,
+    credentialFilePath: credentialStore.filePath,
+  };
+  if (options.isJsonOutput) {
+    printJson(summary);
+  } else {
+    process.stdout.write(
+      `受保护凭据引用已写入: ${summary.referenceId}\n` +
+        `端点主机: ${summary.endpointHost}（路径与查询串不显示）\n` +
+        `含 API key: ${summary.apiKeyPresent ? "是" : "否"}\n` +
+        `覆盖前备份: ${summary.isBackupCreated ? "已生成 .bak" : "无既有文件"}\n` +
+        `凭据文件: ${summary.credentialFilePath}\n`,
+    );
+  }
+  return EXIT_CODES.SUCCESS;
+}
+
+export interface ProviderRegisterCommandOptions {
+  stateDirectory: string;
+  providerProfileId: string;
+  protocolName: string;
+  apiVersion: string;
+  capabilityNames: string[];
+  supportLevel: string;
+  protectedCredentialReferenceId: string;
+  isJsonOutput: boolean;
+}
+
+/**
+ * config provider register：登记 Provider 到本地目录（凭据只以引用 ID 入目录）。
+ * 引用不存在或支持等级非法 → 用法错误（退出码 2），不写目录。
+ */
+export async function executeProviderRegisterCommand(
+  options: ProviderRegisterCommandOptions,
+): Promise<number> {
+  if (options.providerProfileId.trim() === "") {
+    logToStderr("provider register 需要 provider-id");
+    return EXIT_CODES.USAGE_ERROR;
+  }
+  if (!(SUPPORT_LEVELS as readonly string[]).includes(options.supportLevel)) {
+    logToStderr(
+      `--support-level 必须是 ${SUPPORT_LEVELS.join(" | ")} 之一（收到: ${options.supportLevel}）`,
+    );
+    return EXIT_CODES.USAGE_ERROR;
+  }
+  const { credentialStore, catalog, toProviderPublicDto } = await loadProviderCliInfra(
+    options.stateDirectory,
+  );
+  let registration;
+  try {
+    registration = await catalog.registerProvider({
+      providerProfileId: options.providerProfileId,
+      protocolName: options.protocolName,
+      apiVersion: options.apiVersion,
+      capabilities: options.capabilityNames,
+      supportLevel: options.supportLevel as (typeof SUPPORT_LEVELS)[number],
+      protectedCredentialReferenceId: options.protectedCredentialReferenceId,
+      credentialStore,
+    });
+  } catch (error) {
+    logToStderr((error as Error).message);
+    return EXIT_CODES.USAGE_ERROR;
+  }
+  if (options.isJsonOutput) {
+    process.stdout.write(`${JSON.stringify(toProviderPublicDto(registration))}\n`);
+  } else {
+    process.stdout.write(
+      `Provider 已登记: ${registration.providerProfileId}\n` +
+        `协议: ${registration.protocolName}@${registration.apiVersion}\n` +
+        `能力: ${registration.capabilities.join(", ")}\n` +
+        `支持等级: ${registration.supportLevel}\n` +
+        `凭据引用: ${registration.protectedCredentialReferenceId}\n`,
+    );
+  }
+  return EXIT_CODES.SUCCESS;
 }
 
 export interface ProviderListCommandOptions {

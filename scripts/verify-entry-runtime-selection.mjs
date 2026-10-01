@@ -169,28 +169,15 @@ await new Promise((resolve) => protocolServer.listen(0, "127.0.0.1", () => resol
 const protocolEndpoint =
   "http://127.0.0.1:" + protocolServer.address().port + "/v1/chat/completions";
 
-// 受保护凭据引用（`config provider` 的存储格式；值只落本地隔离状态目录）
+// 受保护凭据引用：只用公共写入面 `config provider credential-set`（STDIN JSON）预置，
+// 不再手工写凭据文件——这样"写入面 → 引用运行"在隔离安装产物上是同一闭环。
 const protectedCredentialReferenceId = "cred-ref-install-1";
 const protectedApiKeyValue = "install-verify-secret-key";
-mkdirSync(path.join(stateDirectory, "providers"), { recursive: true });
-writeFileSync(
-  path.join(stateDirectory, "providers", "provider-credentials.json"),
-  JSON.stringify(
-    {
-      [protectedCredentialReferenceId]: {
-        referenceId: protectedCredentialReferenceId,
-        baseUrl: protocolEndpoint,
-        apiKey: protectedApiKeyValue,
-      },
-    },
-    null,
-    2,
-  ) + "\n",
-  "utf8",
-);
+const protectedEndpointWithQuery =
+  protocolEndpoint + "?tenant=install-verify-tenant";
 
 /** 在隔离安装产物上运行 CLI（不经 shell，退出码/stderr 可精确断言）。 */
-function runInstalledCli(commandArguments) {
+function runInstalledCli(commandArguments, stdinText) {
   return new Promise((resolve) => {
     const childProcess = spawn(
       process.execPath,
@@ -212,7 +199,7 @@ function runInstalledCli(commandArguments) {
     childProcess.stderr.on("data", (chunk) => {
       stderrText += chunk;
     });
-    childProcess.stdin.end();
+    childProcess.stdin.end(stdinText ?? "");
     const killTimer = setTimeout(() => {
       childProcess.kill();
     }, 120_000);
@@ -276,7 +263,123 @@ async function runLongRunningEntry(commandArguments, reportFilePath) {
   return { report, stdoutText, stderrText };
 }
 
-console.log("\n[1] --help 必须暴露运行时选择与受保护凭据引用选项");
+console.log("\n[1] 受保护凭据写入面（config provider credential-set / register）");
+const credentialSetResult = await runInstalledCli(
+  ["config", "provider", "credential-set", "--json"],
+  JSON.stringify({
+    referenceId: protectedCredentialReferenceId,
+    baseUrl: protectedEndpointWithQuery,
+    apiKey: protectedApiKeyValue,
+  }) + "\n",
+);
+let credentialSetReport = null;
+try {
+  credentialSetReport = JSON.parse(credentialSetResult.stdoutText);
+} catch {
+  credentialSetReport = null;
+}
+recordCheck(
+  "credential-set：STDIN → 引用落盘（输出只含引用 ID 与端点主机）",
+  credentialSetResult.exitCode === 0 &&
+    credentialSetReport?.referenceId === protectedCredentialReferenceId &&
+    credentialSetReport?.endpointHost === "127.0.0.1" &&
+    credentialSetReport?.apiKeyPresent === true &&
+    !JSON.stringify(credentialSetReport).includes(protectedApiKeyValue),
+  `退出码 ${credentialSetResult.exitCode}，endpointHost=${String(credentialSetReport?.endpointHost)}`,
+);
+recordCheck(
+  "credential-set：不回显 key、查询串或内联 secret",
+  !credentialSetResult.stdoutText.includes(protectedApiKeyValue) &&
+    !credentialSetResult.stderrText.includes(protectedApiKeyValue) &&
+    !credentialSetResult.stdoutText.includes("install-verify-tenant"),
+  "stdout/stderr 均无凭据值与查询串",
+);
+
+const providerRegisterResult = await runInstalledCli([
+  "config",
+  "provider",
+  "register",
+  "install-verify-provider",
+  "--protocol",
+  "generic-openai-compatible",
+  "--api-version",
+  "2024-06-01",
+  "--capability",
+  "text",
+  "tool-calling",
+  "--support-level",
+  "fake-server-conformant",
+  "--credential-reference",
+  protectedCredentialReferenceId,
+]);
+recordCheck(
+  "register：引用存在即登记（人读面显示引用 ID）",
+  providerRegisterResult.exitCode === 0 &&
+    providerRegisterResult.stdoutText.includes("install-verify-provider") &&
+    providerRegisterResult.stdoutText.includes(protectedCredentialReferenceId) &&
+    !providerRegisterResult.stdoutText.includes(protectedApiKeyValue),
+  `退出码 ${providerRegisterResult.exitCode}`,
+);
+
+const providerListResult = await runInstalledCli([
+  "config",
+  "provider",
+  "list",
+  "--json",
+]);
+recordCheck(
+  "list：公开面列出 Provider 且不含凭据引用",
+  providerListResult.exitCode === 0 &&
+    providerListResult.stdoutText.includes("install-verify-provider") &&
+    !providerListResult.stdoutText.includes(protectedCredentialReferenceId) &&
+    !providerListResult.stdoutText.includes(protectedApiKeyValue),
+  `退出码 ${providerListResult.exitCode}`,
+);
+
+const providerDoctorResult = await runInstalledCli([
+  "doctor",
+  "--provider",
+  "install-verify-provider",
+  "--json",
+]);
+let providerDoctorReport = null;
+try {
+  providerDoctorReport = JSON.parse(providerDoctorResult.stdoutText);
+} catch {
+  providerDoctorReport = null;
+}
+recordCheck(
+  "doctor --provider：引用已解析（写入面 → 读取面闭环）",
+  providerDoctorResult.exitCode === 0 &&
+    providerDoctorReport?.credentialReferenceResolved === true &&
+    !providerDoctorResult.stdoutText.includes(protectedApiKeyValue),
+  `退出码 ${providerDoctorResult.exitCode}，credentialReferenceResolved=${String(providerDoctorReport?.credentialReferenceResolved)}`,
+);
+
+const missingReferenceRegisterResult = await runInstalledCli([
+  "config",
+  "provider",
+  "register",
+  "ghost-provider",
+  "--protocol",
+  "generic-openai-compatible",
+  "--api-version",
+  "2024-06-01",
+  "--capability",
+  "text",
+  "--support-level",
+  "adapter-only",
+  "--credential-reference",
+  "cred-ref-absent",
+]);
+recordCheck(
+  "register：引用不存在 → 退出码 2，不登记",
+  missingReferenceRegisterResult.exitCode === 2 &&
+    missingReferenceRegisterResult.stderrText.includes("受保护凭据引用不存在"),
+  `退出码 ${missingReferenceRegisterResult.exitCode}`,
+);
+
+console.log("\n[2] --help 必须暴露运行时选择与受保护凭据引用选项");
 for (const commandArguments of [["gui", "--help"], ["mcp", "serve", "--help"]]) {
   const helpResult = await runInstalledCli(commandArguments);
   const helpText = helpResult.stdoutText + helpResult.stderrText;
@@ -297,7 +400,7 @@ for (const commandArguments of [["gui", "--help"], ["mcp", "serve", "--help"]]) 
   );
 }
 
-console.log("\n[2] 缺 provider 参数必须 fail-closed（退出码 2，不回退 mock）");
+console.log("\n[3] 缺 provider 参数必须 fail-closed（退出码 2，不回退 mock）");
 const missingParameterCases = [
   { commandArguments: ["gui", "--runtime", "openai-compatible"], expectedReason: "provider-endpoint" },
   {
@@ -336,7 +439,7 @@ for (const testCase of missingParameterCases) {
   );
 }
 
-console.log("\n[3] 受保护凭据引用被选用（gui / mcp serve）");
+console.log("\n[4] 受保护凭据引用被选用（gui / mcp serve）");
 for (const entryName of ["gui", "mcp"]) {
   const reportFilePath = path.join(stateDirectory, `runtime-diagnostics-${entryName}.json`);
   const commandArguments =
@@ -399,7 +502,7 @@ for (const entryName of ["gui", "mcp"]) {
   void stdoutText;
 }
 
-console.log("\n[4] 引用缺失 → 退出码 2 且不写报告（fail-closed）");
+console.log("\n[5] 引用缺失 → 退出码 2 且不写报告（fail-closed）");
 const missingReferenceReportPath = path.join(stateDirectory, "runtime-diagnostics-missing.json");
 const missingReferenceResult = await runInstalledCli([
   "gui",
@@ -425,7 +528,7 @@ recordCheck(
   existsSync(missingReferenceReportPath) ? "仍写入了报告" : "未写入报告",
 );
 
-console.log("\n[5] 未给运行时参数 → mock 默认（离线路径未被破坏，不误报 provider）");
+console.log("\n[6] 未给运行时参数 → mock 默认（离线路径未被破坏，不误报 provider）");
 const mockReportPath = path.join(stateDirectory, "runtime-diagnostics-mock.json");
 const mockResult = await runLongRunningEntry(
   ["gui", "--no-open", "--port", "0", "--runtime-diagnostics-file", mockReportPath],
@@ -440,7 +543,7 @@ recordCheck(
   }),
 );
 
-console.log("\n[6] run 入口同源：受保护引用可驱动任务到 done（真实 HTTP 请求）");
+console.log("\n[7] run 入口同源：受保护引用可驱动任务到 done（真实 HTTP 请求）");
 const runResult = await runInstalledCli([
   "run",
   "安装验收探针",

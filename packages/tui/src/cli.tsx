@@ -14,6 +14,7 @@ import {
   executeContextStatusCommand,
   executeContextTransactionCommand,
   executeDoctorCommand,
+  executeDoctorProviderCommand,
   executeProfileCopyCommand,
   executeProfileCreateCommand,
   executeProfileDeleteCommand,
@@ -25,6 +26,10 @@ import {
   executeProfileSetCapabilityCommand,
   executeProfileShowCommand,
   executeProfileSwitchCommand,
+  executeProviderCredentialSetCommand,
+  executeProviderListCommand,
+  executeProviderRegisterCommand,
+  executeProviderShowCommand,
   executeRecoverAbandonCommand,
   executeRecoverListCommand,
   executeRecoverResumeCommand,
@@ -345,6 +350,84 @@ configCommand
       stateDirectory: defaultStateDirectory(),
       isEnabled: enabled.toLowerCase() === "true",
     });
+  });
+
+// T07D-06：Provider 配置装配（含受保护凭据引用的**写入面**）
+const providerCommand = configCommand
+  .command("provider")
+  .description("Provider 配置：受保护凭据引用写入/登记与只读查询（凭据不回显）");
+providerCommand
+  .command("credential-set")
+  .description(
+    "从 STDIN 写入受保护凭据引用（JSON: {referenceId, baseUrl, apiKey}）；key 不得经命令行或环境变量传入",
+  )
+  .option("--json", "JSON 输出")
+  .action(async (options: { json?: boolean }) => {
+    process.exitCode = await executeProviderCredentialSetCommand({
+      stateDirectory: defaultStateDirectory(),
+      isJsonOutput: options.json === true,
+    });
+  });
+providerCommand
+  .command("register")
+  .description("登记 Provider（凭据只以引用 ID 入目录；引用不存在即拒绝）")
+  .argument("<provider-id>", "Provider 档案 ID")
+  .requiredOption("--protocol <protocol>", "协议名（如 generic-openai-compatible）")
+  .requiredOption("--api-version <version>", "协议 API 版本")
+  .requiredOption("--capability <name...>", "能力名（可重复；如 text tool-calling）")
+  .requiredOption("--support-level <level>", "adapter-only|fake-server-conformant|live-smoke-verified|product-path-verified")
+  .requiredOption("--credential-reference <reference>", "受保护凭据引用 ID")
+  .option("--json", "JSON 输出")
+  .action(
+    async (
+      providerId: string,
+      options: {
+        protocol: string;
+        apiVersion: string;
+        capability: string[];
+        supportLevel: string;
+        credentialReference: string;
+        json?: boolean;
+      },
+    ) => {
+      process.exitCode = await executeProviderRegisterCommand({
+        stateDirectory: defaultStateDirectory(),
+        providerProfileId: providerId,
+        protocolName: options.protocol,
+        apiVersion: options.apiVersion,
+        capabilityNames: options.capability,
+        supportLevel: options.supportLevel,
+        protectedCredentialReferenceId: options.credentialReference,
+        isJsonOutput: options.json === true,
+      });
+    },
+  );
+providerCommand
+  .command("list")
+  .description("列出已登记 Provider（公开信息；无凭据）")
+  .option("--json", "JSON 输出")
+  .action(async (options: { json?: boolean }) => {
+    process.exitCode = await executeProviderListCommand({
+      stateDirectory: defaultStateDirectory(),
+      isJsonOutput: options.json === true,
+    });
+  });
+providerCommand
+  .command("show")
+  .description("查看已登记 Provider 的协议/能力/支持等级（无凭据、无响应正文）")
+  .argument("<provider-id>", "Provider 档案 ID")
+  .option("--json", "JSON 输出")
+  .action(async (providerId: string, options: { json?: boolean }) => {
+    try {
+      process.exitCode = await executeProviderShowCommand({
+        stateDirectory: defaultStateDirectory(),
+        providerProfileId: providerId,
+        isJsonOutput: options.json === true,
+      });
+    } catch (error) {
+      process.stderr.write(`${(error as Error).message}\n`);
+      process.exitCode = 2;
+    }
   });
 
 // B6R-04：认证用户设置控制面——权限组生命周期
@@ -1100,7 +1183,21 @@ program
   .command("doctor")
   .description("诊断环境")
   .option("--json", "输出机器可解析 JSON")
-  .action(async (options: { json?: boolean }) => {
+  .option("--provider <provider-id>", "只报告该 Provider 的配置/凭据引用/支持等级（不探测网络）")
+  .action(async (options: { json?: boolean; provider?: string }) => {
+    if (options.provider !== undefined && options.provider.trim() !== "") {
+      try {
+        process.exitCode = await executeDoctorProviderCommand({
+          stateDirectory: defaultStateDirectory(),
+          providerProfileId: options.provider,
+          isJsonOutput: options.json === true,
+        });
+      } catch (error) {
+        process.stderr.write(`${(error as Error).message}\n`);
+        process.exitCode = 2;
+      }
+      return;
+    }
     process.exitCode = await executeDoctorCommand({
       isJsonOutput: options.json === true,
       stateDirectory: defaultStateDirectory(),

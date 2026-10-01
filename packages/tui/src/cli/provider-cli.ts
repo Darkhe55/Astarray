@@ -1,18 +1,20 @@
 /**
  * Provider 配置装配与受保护凭据引用（T07D-06 / T07D 任务卡 §6.4）。
  *
- * - CLI 提供 config provider list/show 与 doctor --provider：
+ * - CLI 提供 config provider list/show/register/credential-set 与 doctor --provider：
  *   只报告配置存在、协议/能力匹配与安全连通状态，不回显凭据、
  *   完整 Endpoint secret、完整响应或用户 prompt；
  * - API key 不经命令行传递：本地受保护凭据引用文件
- *   （<stateDir>/providers/credentials.json，进程内读取，值不进日志/导出）；
+ *   （<stateDir>/providers/provider-credentials.json，进程内读取，值不进日志/导出）；
  * - mock 继续是默认离线测试路径；无凭据时不得静默改用未授权 Provider，
  *   也不伪造真实模型结果（未验证/条件兼容如实报告）。
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 import { DomainError } from "../../../core/src/core/errors.js";
+import { backupExistingFile } from "../../../core/src/infra/atomic-json.js";
 
 /** 受保护凭据引用文件（本地敏感；禁止模型读取，gitignore 覆盖）。 */
 const CREDENTIALS_FILE_NAME = "provider-credentials.json";
@@ -44,6 +46,13 @@ export class FileProviderCredentialStore implements ProviderCredentialStore {
     );
   }
 
+  /**
+   * 凭据文件绝对路径（公开，用于诊断/提示；文件内容仍是敏感值，不得读取回显）。
+   */
+  get filePath(): string {
+    return this.credentialsFilePath;
+  }
+
   private async readAll(): Promise<Record<string, ProviderCredentialEntry>> {
     try {
       const rawContent = await fs.readFile(this.credentialsFilePath, "utf8");
@@ -62,6 +71,51 @@ export class FileProviderCredentialStore implements ProviderCredentialStore {
       `${JSON.stringify(next, null, 2)}\n`,
       "utf8",
     );
+  }
+
+  /**
+   * 写入单个受保护引用，但**不落任何会持久化敏感值的中间文件**：
+   * 1. 现有文件先备份为 `<文件>.bak`（覆盖前自动备份）；
+   * 2. 合并新旧引用后经同目录受限权限**临时文件**写入并 flush，随即将权限收紧为 0600；
+   * 3. rename 替换目标后删除临时文件（临时文件是唯一可能短暂持有敏感值的文件，
+   *    不通过 writeAtomicJson 的共享名称，避免撞名/被误读）。
+   *
+   * 纯追加（`<文件>.jsonl`）刻意不采用：JSONL 会把同一引用的历史密钥长期留档，
+   * 反而扩大暴露面；需要旧值时可读 `.bak`。
+   */
+  async writeCredentialSecurely(
+    entry: ProviderCredentialEntry,
+  ): Promise<{ isBackupCreated: boolean }> {
+    const directoryPath = path.dirname(this.credentialsFilePath);
+    await fs.mkdir(directoryPath, { recursive: true });
+    const isBackupCreated = await backupExistingFile(
+      this.credentialsFilePath,
+      this.credentialsFilePath + ".bak",
+    );
+    const all = await this.readAll();
+    const next = { ...all, [entry.referenceId]: entry };
+    const serialized = `${JSON.stringify(next, null, 2)}\n`;
+    const tempFilePath = path.join(
+      directoryPath,
+      `${CREDENTIALS_FILE_NAME}.${process.pid}.${randomUUID()}.tmp`,
+    );
+    try {
+      const fileHandle = await fs.open(tempFilePath, "wx", 0o600);
+      try {
+        await fileHandle.writeFile(serialized, "utf8");
+        await fileHandle.sync();
+      } finally {
+        await fileHandle.close();
+      }
+      if (process.platform !== "win32") {
+        await fs.chmod(tempFilePath, 0o600);
+        await fs.chmod(this.credentialsFilePath, 0o600).catch(() => {});
+      }
+      await fs.rename(tempFilePath, this.credentialsFilePath);
+    } finally {
+      await fs.rm(tempFilePath, { force: true }).catch(() => {});
+    }
+    return { isBackupCreated };
   }
 
   async readCredential(referenceId: string): Promise<ProviderCredentialEntry | null> {

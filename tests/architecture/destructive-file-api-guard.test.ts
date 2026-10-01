@@ -103,8 +103,9 @@ const ALLOWED_MODULES: Record<string, { tokens: AllowedTokens; reason: string }>
     reason: "CLI：doctor 探针 wx 创建/唯一名清理、config init 写入、导出前 .bak 复制",
   },
   "tui/src/cli/provider-cli.ts": {
-    tokens: ["writeFile"],
-    reason: "Provider 配置文件写入（经受控备份路径）",
+    tokens: ["writeFile", "rm", "rename"],
+    reason:
+      "Provider 凭据写入（经受控备份路径）+ 受保护凭据写入：受限权限临时文件写入后 rename 原子替换，写完即删临时文件（唯一额外持有敏感值的中间文件）",
   },
 };
 
