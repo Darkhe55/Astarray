@@ -29,15 +29,29 @@ const MAXIMUM_ADJUDICATION_ROUNDS = 3;
  * 不能拿上一轮的旧文本重复裁决）。
  */
 const PERMISSION_ASK_WAIT_MILLISECONDS = 30_000;
-
+/**
+ * `allow-once` 之后等待"重跑是否产生新询问/终态"的窗口（毫秒，2026-10-02 修复）：
+ * 授权后 worker 会重新执行，期间任务短暂处于 running；必须给它这个窗口，
+ * 否则 CLI 会在工具真正执行之前收口（正向闭环失败）。
+ */
+const AUTHORIZATION_RETRY_WINDOW_MILLISECONDS = 15_000;
 async function waitForPermissionAsk(
   escalationMessages: string[],
   timeoutMilliseconds: number,
   queryTask: () => Promise<{ status: string }>,
   startIndex = 0,
   isTerminalFailure: () => boolean = () => false,
+  /**
+   * 任务已重新推进（running）时的等待窗口（毫秒，2026-10-02 修复）：
+   * `allow-once` 后的重跑会先进入 running；此期间**不得**立即收口，
+   * 否则授权后的重跑从未被等待（正向闭环失败）。窗口内出现新询问或终态即返回；
+   * 窗口耗尽仍未出现则如实返回 null（由调用方按 blocked 收口）。
+   */
+  advancementWindowMilliseconds = 0,
 ): Promise<ReturnType<typeof buildPermissionAskFromEscalation>> {
   const deadline = Date.now() + timeoutMilliseconds;
+  let advancementWindowDeadline: number | null =
+    advancementWindowMilliseconds > 0 ? Date.now() + advancementWindowMilliseconds : null;
   while (Date.now() < deadline) {
     // 任务已**终态失败**（例如门禁判失败）：不会再有裁决需求，立即返回。
     if (isTerminalFailure()) {
@@ -54,8 +68,18 @@ async function waitForPermissionAsk(
     // 任务已不是 blocked（完成/失败/取消）时无需再等待裁决。
     const currentStatus = (await queryTask()).status;
     if (currentStatus !== "blocked") {
+      // 处于推进窗口内：继续等新询问（不立即收口）。
+      if (
+        advancementWindowDeadline !== null &&
+        Date.now() < advancementWindowDeadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        continue;
+      }
       return null;
     }
+    // 一旦回到 blocked，推进窗口结束。
+    advancementWindowDeadline = null;
     // blocked 且**已收到非询问类升级**（例如门禁判失败）→ 不会再有裁决需求，立即返回。
     if (
       pendingEscalations.length > 0 &&
@@ -63,12 +87,6 @@ async function waitForPermissionAsk(
         (escalationText) => buildPermissionAskFromEscalation(escalationText) === null,
       )
     ) {
-      return null;
-    }
-    // 任务已**重新推进**（running 等）：说明裁决已被处理，不必继续等待（2026-10-02：
-    // 此前在"unblock 后任务重跑"期间会空等满等待上限）。
-    const advancedStatus = (await queryTask()).status;
-    if (advancedStatus !== "blocked") {
       return null;
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
@@ -221,6 +239,9 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
         () => application.queryTask({ sessionId: "cli-run", taskIdentifier: "cli-task" }),
         0,
         () => hasObservedTerminalTaskFailure,
+        // 第 2 轮起（已授权、任务正在重跑）：给推进窗口，等新询问或终态，
+        // 不得一见 running 就收口（否则授权后的重跑从未被等待）。
+        adjudicationRound === 0 ? 0 : AUTHORIZATION_RETRY_WINDOW_MILLISECONDS,
       );
       // 任务已明确失败且没有待裁决询问：不得再等待（否则会无谓挂起直到超时）。
       if (permissionAsk === null) {

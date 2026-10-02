@@ -239,6 +239,14 @@ export class WorkerAgent {
             argumentsJson: event.argumentsJson,
           };
           this.toolCallsByCallId.set(event.callId, event.toolName);
+          /**
+           * 在**请求时刻**登记"尝试过的写类工具"（2026-10-02 修复）：
+           * 被权限门禁拦下的调用不会产生工具结果，若只在结果处登记，
+           * 则"从未执行却声称完成"会漏过完成门禁（真实 CLI 实测缺陷）。
+           */
+          if (MUTATING_TOOL_NAMES.has(event.toolName)) {
+            this.attemptedMutatingTools.add(event.toolName);
+          }
           break;
         case "toolCallFinished": {
           const toolName =

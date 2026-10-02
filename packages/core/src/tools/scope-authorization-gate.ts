@@ -118,6 +118,9 @@ const READ_ONLY_OPERATION_KINDS: ReadonlySet<OperationKind> = new Set([
 ]);
 
 export class ScopeAuthorizationGate {
+  /**
+   * 用于判定"预留"与"授权"是否落在**同一个 gate 实例**上。
+   */
   private readonly recordsByFingerprint = new Map<string, ScopeGateDecisionRecord>();
   /**
    * 逻辑操作预留表（键 = 规范化完整参数指纹，2026-10-02 用户指定语义）：
