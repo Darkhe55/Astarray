@@ -84,6 +84,7 @@ export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
     backupPolicy: "not-required",
     authorizationPolicy: "standard",
     supportedTaskTypes: ["data", "doc", "code"],
+    isIdempotent: true,
     inputSchema: {
       type: "object",
       properties: {
@@ -101,6 +102,7 @@ export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
     backupPolicy: "not-required",
     authorizationPolicy: "standard",
     supportedTaskTypes: ["data", "doc", "code"],
+    isIdempotent: true,
     inputSchema: { type: "object", properties: { directoryPath: { type: "string" } } },
   },
   {
@@ -111,6 +113,7 @@ export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
     backupPolicy: "not-required",
     authorizationPolicy: "standard",
     supportedTaskTypes: ["doc", "code", "data"],
+    isIdempotent: true,
     inputSchema: {
       type: "object",
       properties: {
@@ -127,6 +130,7 @@ export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
     backupPolicy: "not-required",
     authorizationPolicy: "standard",
     supportedTaskTypes: ["doc", "code", "data"],
+    isIdempotent: true,
     inputSchema: {
       type: "object",
       properties: {
@@ -143,6 +147,7 @@ export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
     backupPolicy: "automatic-preimage",
     authorizationPolicy: "standard",
     supportedTaskTypes: ["doc", "code", "data"],
+    isIdempotent: false,
     inputSchema: {
       type: "object",
       properties: {
@@ -159,6 +164,7 @@ export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
     backupPolicy: "not-required",
     authorizationPolicy: "backup-vault-action",
     supportedTaskTypes: ["data", "doc", "code"],
+    isIdempotent: false,
     inputSchema: {
       type: "object",
       properties: {
@@ -175,6 +181,7 @@ export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
     backupPolicy: "protected-vault-deletion",
     authorizationPolicy: "backup-deletion",
     supportedTaskTypes: ["data", "doc", "code"],
+    isIdempotent: false,
     inputSchema: {
       type: "object",
       properties: {
@@ -190,6 +197,7 @@ export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
     backupPolicy: "not-required",
     authorizationPolicy: "standard",
     supportedTaskTypes: ["data", "doc", "code"],
+    isIdempotent: true,
     inputSchema: {
       type: "object",
       properties: { sequenceId: { type: "string" } },
@@ -203,6 +211,7 @@ export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
     backupPolicy: "not-required",
     authorizationPolicy: "standard",
     supportedTaskTypes: ["data", "doc", "code"],
+    isIdempotent: true,
     inputSchema: {
       type: "object",
       properties: { pattern: { type: "string" } },
@@ -216,6 +225,7 @@ export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
     backupPolicy: "not-required",
     authorizationPolicy: "standard",
     supportedTaskTypes: ["data", "doc", "code"],
+    isIdempotent: true,
     inputSchema: {
       type: "object",
       properties: {
@@ -232,6 +242,7 @@ export const BUILTIN_TOOL_DESCRIPTORS: ToolDescriptor[] = [
     backupPolicy: "not-required",
     authorizationPolicy: "standard",
     supportedTaskTypes: ["data", "doc", "code"],
+    isIdempotent: false,
     inputSchema: {
       type: "object",
       properties: {

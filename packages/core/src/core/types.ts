@@ -123,6 +123,16 @@ export interface ToolDescriptor {
   backupPolicy: ToolBackupPolicy;
   authorizationPolicy: ToolAuthorizationPolicy;
   supportedTaskTypes: string[];
+  /**
+   * 工具副作用是否可安全重放（RELIABILITY-01-02 · R1，2026-10-02）。
+   *
+   * 由工具实现方按**实现语义**声明，是恢复分类的权威依据（不靠调用方猜测）：
+   * - `true`：重放不产生额外副作用（只读、条件幂等如"目标已存在即拒"）；
+   * - `false`：重放可能产生重复副作用（覆盖写、删除、远端写入）。
+   *
+   * 缺失时视为 `false`（保守：不得因此把非幂等工具判为可重试）。
+   */
+  isIdempotent: boolean;
   /** 工具入参 schema（zod/JSON schema 形态），由 runtime 注入给执行层。 */
   inputSchema: unknown;
 }

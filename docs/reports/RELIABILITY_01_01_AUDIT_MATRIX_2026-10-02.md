@@ -91,7 +91,7 @@
 
 | 维度 | 现状 | 缺口/风险 | 状态 |
 | --- | --- | --- | --- |
-| 副作用与幂等性 | 工具按 `mutationKind` 分类；`isSideEffectFree` 仅成功时返回 | 缺工具级 `isIdempotent` 元数据，恢复分类依赖检查点写入方自行判断 | **失败**（已登记） |
+| 副作用与幂等性 | 工具按 `mutationKind` 分类；**已补工具级 `isIdempotent` 元数据（R1，2026-10-02）**；`isSideEffectFree` 仅成功时返回 | `isIdempotent` 由工具实现方声明（缺失视为 `false` 保守）；恢复分类不再依赖调用方猜测 | **已修复**（R1，`recovery-classification-service` + `ToolDescriptor`） |
 | 操作身份 | 逻辑操作指纹 = 工具+路径+完整规范化参数（本轮前序工作） | `operationId` 与 `attemptId` 未在工具层显式分离 | 部分 |
 | 去重原子性 | 作用域门禁有"执行前原子预留"（同步段内建立） | SDK `submitTask` 的 idempotencyKey **非原子且不持久**（疑点 2） | **失败** |
 | 重试边界 | `ToolFailureCounter` 阈值 + recovery 预算 | 嵌套重试（工具内 + 任务级）是否有乘法膨胀 **未验证** | 未验证 |
@@ -104,6 +104,8 @@
 
 1. **R1（小，先做）**：为 11 个工具补 `isIdempotent` 元数据（由 `mutationKind` + 实现语义推导），
    让恢复分类不再依赖调用方判断；补 `planned/started + 非幂等` 的分类反例。
+   → **已完成（2026-10-02）**：`ToolDescriptor.isIdempotent` + 11 个内置工具取值 +
+   `planned/started + 非幂等 → blocked-uncertain-side-effect`；反例 ⑥⑦ 覆盖。
 2. **R2（小）**：`git-process` 超时按**进程组**收口（POSIX `detached`+`process.kill(-pid)`；
    Windows 用 `taskkill /T`），并补"子进程残留"反例。
 3. **R3（中）**：`git-integration-coordinator` 的 merge/checkout 失败路径改为**显式对账**

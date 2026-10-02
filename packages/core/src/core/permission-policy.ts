@@ -170,6 +170,8 @@ export class PermissionDecider {
           summary: "",
           category: request.category,
           mutationKind: request.category === "readonly" ? "none" : "delete-content",
+          // RELIABILITY-01-02 · R1：该处只做只读白名单判定，保守标为非幂等。
+          isIdempotent: false,
           backupPolicy: "not-required",
           authorizationPolicy: "standard",
           supportedTaskTypes: [],

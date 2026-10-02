@@ -153,4 +153,49 @@ describe("恢复分类：已确认成功不得重放（含非幂等）", () => {
       "bounded-retry",
     );
   });
+
+  it("⑥ planned/started + 非幂等 → 不得判为可盲目重试（卡内点名的 started 非幂等）", () => {
+    for (const state of ["planned", "started"] as const) {
+      const result = service.classifyRecovery({
+        checkpoint: makeCheckpoint({
+          toolCalls: [
+            {
+              toolCallIdentifier: "tc-" + state + "-nonidempotent",
+              toolName: "remote.push",
+              state,
+              isIdempotent: false,
+              completionAttemptIdentifier: null,
+            },
+          ],
+        }),
+        remainingRetryBudget: 3,
+      });
+      const classification = result.toolCallClassifications[0]?.classification;
+      // 非幂等：不得直接给可重试（要么阻塞对账，要么复用已确认结果）。
+      expect(classification?.category).not.toBe("bounded-retry");
+    }
+  });
+
+  it("⑦ planned/started + 幂等 → 允许有界重试（既有语义不得回归）", () => {
+    for (const state of ["planned", "started"] as const) {
+      const result = service.classifyRecovery({
+        checkpoint: makeCheckpoint({
+          toolCalls: [
+            {
+              toolCallIdentifier: "tc-" + state + "-idempotent",
+              toolName: "project.read",
+              state,
+              isIdempotent: true,
+              completionAttemptIdentifier: null,
+            },
+          ],
+        }),
+        remainingRetryBudget: 2,
+      });
+      expect(result.toolCallClassifications[0]?.classification).toEqual({
+        category: "bounded-retry",
+        remainingRetryBudget: 2,
+      });
+    }
+  });
 });

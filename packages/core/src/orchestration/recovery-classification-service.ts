@@ -139,7 +139,21 @@ export class RecoveryClassificationService {
         reason: `非幂等工具调用 ${toolCall.toolName}（${toolCall.toolCallIdentifier}）结果未知；禁止自动重试，需用户裁决`,
       };
     }
-    // planned/started/result-unknown 且幂等：可重新调度
+    /**
+     * 非幂等的 `planned` / `started` 同样**不自动重试**（RELIABILITY-01-02 · R1）：
+     * 检查点写入是粗粒度的——可能"检查点未更新但副作用已发生"（部分副作用），
+     * 因此不得把非幂等操作判为可重放；转人工/对账裁决。
+     */
+    if (
+      (toolCall.state === "planned" || toolCall.state === "started") &&
+      !toolCall.isIdempotent
+    ) {
+      return {
+        category: "blocked-uncertain-side-effect",
+        reason: `非幂等工具调用 ${toolCall.toolName}（${toolCall.toolCallIdentifier}）处于 ${toolCall.state}；无法排除部分副作用，禁止自动重试`,
+      };
+    }
+    // 幂等的 planned/started/result-unknown：可重新调度
     return { category: "bounded-retry", remainingRetryBudget };
   }
 

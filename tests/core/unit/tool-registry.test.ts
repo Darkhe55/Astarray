@@ -123,6 +123,7 @@ describe("ToolRegistry", () => {
         backupPolicy: "not-required",
         authorizationPolicy: "standard",
         supportedTaskTypes: ["doc"],
+      isIdempotent: false,
         inputSchema: { type: "object" },
       }),
     ).toThrowError(/自动备份|未映射/);
@@ -139,6 +140,7 @@ describe("ToolRegistry", () => {
         backupPolicy: "automatic-preimage",
         authorizationPolicy: "backup-deletion",
         supportedTaskTypes: ["maintenance"],
+      isIdempotent: false,
         inputSchema: { type: "object" },
       }),
     ).toThrowError(/特权删除策略/);
@@ -155,6 +157,7 @@ describe("ToolRegistry", () => {
         backupPolicy: "protected-vault-deletion",
         authorizationPolicy: "standard",
         supportedTaskTypes: ["maintenance"],
+      isIdempotent: false,
         inputSchema: { type: "object" },
       }),
     ).toThrowError(/专用授权策略/);

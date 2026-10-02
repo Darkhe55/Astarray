@@ -38,6 +38,7 @@ function readonlyDescriptor(toolName: string): ToolDescriptor {
     backupPolicy: "not-required",
     authorizationPolicy: "standard",
     supportedTaskTypes: ["data", "doc", "code"],
+      isIdempotent: false,
     inputSchema: {},
   };
 }
