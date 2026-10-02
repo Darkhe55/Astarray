@@ -109,6 +109,12 @@ describe("授权后必须等待重跑（正向闭环）", () => {
    * 因此本用例暂以 `it.skip` 保留为**待通过的反例**，不使用 `it` 让门禁长期变红，
    * 也**不删除**（删除等于假装闭环成立）。修复后应改回 `it`。
    */
+  /**
+   * 现状（2026-10-02，第 16 轮）：**假 done 已被消除**——跨运行必需操作契约生效后，
+   * 该场景不再返回 `status=done`（任务转为失败，CLI 侧耗时 3.6s → 33.6s 说明确实等待/拦截）。
+   * 但"授权后不再请求工具"这一层仍在，故**产物仍不存在**，本用例继续以 `it.skip` 标记，
+   * 直到"unblock 驱动一次真实重试"落地后改回 `it` 并保持绿。
+   */
   it.skip("① 一次 allow-once 之后：工具必须真正执行并产出文件，任务 done", async () => {
     const relativePath = ".tmp/CLOSURE.md";
     const absolutePath = path.join(projectPath, relativePath);

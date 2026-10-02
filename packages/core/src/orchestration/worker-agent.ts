@@ -97,6 +97,14 @@ export interface WorkerAgentOptions {
   } | null;
   /** T05A：上级选择性附加的存档上下文列表（按属主，默认不注入完整存档）。 */
   archiveAttachments?: AgentWorkArchiveAttachment[];
+  /**
+   * 跨运行必需写操作契约（2026-10-02，T07D-R2-04 正向闭环修复）。
+   *
+   * 任务曾因权限询问被打断、且这些写类工具**至今从未成功**时，由调度侧在
+   * 重跑时传入。完成门禁据此要求它们**在本次运行中成功执行**，
+   * 否则不得以"本次没请求该工具"为由结案（此前只覆盖单次运行，重跑即可绕过）。
+   */
+  requiredMutatingToolNames?: readonly string[];
 }
 
 /**
@@ -178,6 +186,21 @@ export class WorkerAgent {
         "必需操作未成功执行：本次尝试过的写类工具（" +
         [...this.attemptedMutatingTools].join("、") +
         "）从未成功执行（验收缺失，不得以文本声明结案）"
+      );
+    }
+    /**
+     * 跨运行必需写操作契约（2026-10-02，T07D-R2-04 正向闭环修复）：
+     * 该任务此前曾因权限询问被打断，而这些写类工具**至今从未成功**。
+     * 即使本次运行根本没有请求它们（模型可能直接宣称完成），也不得结案——
+     * 否则"授权后续跑 → 不再请求工具 → 假 done"会绕过上面的单次运行规则。
+     */
+    const requiredNotYetSucceeded = (this.options.requiredMutatingToolNames ?? [])
+      .filter((toolName) => !this.successfullyExecutedMutatingTools.has(toolName));
+    if (requiredNotYetSucceeded.length > 0) {
+      return (
+        "必需操作未成功执行：本任务此前因权限询问被打断、且以下写类工具至今从未成功（" +
+        requiredNotYetSucceeded.join("、") +
+        "）（验收缺失，不得以文本声明结案）"
       );
     }
     return null;

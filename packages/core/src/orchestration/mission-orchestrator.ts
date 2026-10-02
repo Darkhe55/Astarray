@@ -21,7 +21,18 @@ import type { GitIntegrationReport } from "../core/types.js";
 import type { ToolDescriptor } from "../core/types.js";
 import type { ContextPromptProvider } from "./context-prompt-assembler.js";
 import type { GuidanceControlQueue } from "../runtime-guidance/guidance-control-queue.js";
-import type { GuidanceSafePointPort } from "../runtime/tool-loop.js";
+
+/**
+ * 会改变本地状态的写类工具（与 `worker-agent.ts` 的 MUTATING_TOOL_NAMES 一致）：
+ * 用于在权限询问被打断时登记"跨运行必需操作契约"。
+ */
+const MUTATING_TOOL_NAMES_FOR_RETRY = new Set([
+  "createProjectFile",
+  "replaceFileContent",
+  "writeFileTemporary",
+  "backupVault",
+  "deleteBackup",
+]);import type { GuidanceSafePointPort } from "../runtime/tool-loop.js";
 import type { GuidanceScopeTarget } from "../runtime-guidance/runtime-guidance.js";
 import type { ContextNodeLifecyclePort } from "./worker-agent.js";
 import type { AgentWorkArchiveStore } from "./work-archive-store.js";
@@ -128,6 +139,11 @@ export type WorkerOutcomeHandler = (
 export class MissionOrchestrator {
   private readonly dagScheduler: DagScheduler;
   private readonly failureCounters = new Map<string, ToolFailureCounter>();
+  /**
+   * 因权限询问被打断、且尚未成功的写类工具（按任务，2026-10-02 T07D-R2-04 修复）：
+   * 重跑时作为**跨运行必需操作契约**传给 Worker 的完成门禁。
+   */
+  private readonly pendingMutatingToolNamesByTask = new Map<string, Set<string>>();
   private readonly inFlightTaskIds = new Set<string>();
   private readonly inFlightWorkerPromises = new Set<Promise<void>>();
   /** T05B：任务 → worker 分配记录（写入型任务）。 */
@@ -455,6 +471,13 @@ export class MissionOrchestrator {
         this.options.workerFactories.buildPermissionExplanation,
       workArchiveStore,
       archiveAttachments,
+      ...(this.pendingMutatingToolNamesByTask.get(task.id) === undefined
+        ? {}
+        : {
+            requiredMutatingToolNames: [
+              ...(this.pendingMutatingToolNamesByTask.get(task.id) ?? []),
+            ],
+          }),
     });
     const workerPromise = (async () => {
       try {
@@ -480,8 +503,7 @@ export class MissionOrchestrator {
     });
   }
 
-  private getFailureCounter(taskId: string): ToolFailureCounter {
-    let counter = this.failureCounters.get(taskId);
+  private getFailureCounter(taskId: string): ToolFailureCounter {    let counter = this.failureCounters.get(taskId);
     if (counter === undefined) {
       counter = new ToolFailureCounter(this.options.failureThreshold);
       this.failureCounters.set(taskId, counter);
@@ -565,6 +587,8 @@ export class MissionOrchestrator {
             }
           }
           await this.dagScheduler.finishTask(taskId, "done", outcome.resultLocation);
+          // 跨运行必需操作契约已满足：清除记录，避免后续运行被旧契约挡住。
+          this.pendingMutatingToolNamesByTask.delete(taskId);
         } catch (error) {
           // Git 提交/审查异常：任务保持未完成并升级，不允许 unhandled rejection
           await this.dagScheduler.blockTaskForHumanDecision(taskId).catch(() => null);
@@ -587,6 +611,17 @@ export class MissionOrchestrator {
         );
         break;
       case "permission-ask":
+        /**
+         * 记录"被打断的写类工具"（2026-10-02，T07D-R2-04 正向闭环修复）：
+         * 用户批准后 `unblock` 会重跑该任务，但重跑对模型而言是一次全新任务，
+         * 可能**根本不请求该工具**就直接宣称完成。把工具名留在调度侧，
+         * 由完成门禁按**跨运行契约**要求它真正成功，否则不得结案。
+         */
+        if (outcome.toolName !== null && MUTATING_TOOL_NAMES_FOR_RETRY.has(outcome.toolName)) {
+          const pending = this.pendingMutatingToolNamesByTask.get(taskId) ?? new Set<string>();
+          pending.add(outcome.toolName);
+          this.pendingMutatingToolNamesByTask.set(taskId, pending);
+        }
         await this.dagScheduler.blockTaskForHumanDecision(taskId);
         this.options.onUserEscalation(
           `任务 ${taskId} 需要权限调用 ${outcome.toolName}（${outcome.explanation}），参数: ${outcome.argumentsJson}`,
