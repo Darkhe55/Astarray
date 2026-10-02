@@ -679,6 +679,85 @@ export class PublicApplicationError extends Error {
   }
 }
 
+/**
+ * 任务提交幂等账目（RELIABILITY-01-02 · R4，2026-10-02）。
+ *
+ * 语义：同一 `(sessionId, idempotencyKey)` 绑定**规范化完整参数哈希**；
+ *  - 同键同参 → 复用已受理结果（含重启后）；
+ *  - **同键异参 → 拒绝**（`idempotency-key-conflict`）；
+ *  - 同键并发 → 只有第一个取得 claim，其余按 `idempotency-claim-pending` 拒绝
+ *    （**不**双执行，也**不**假定成功）；
+ *  - claim 在**任何 await 之前**建立并落盘，消除"检查-登记"之间的并发窗口。
+ */
+interface TaskIdempotencyLedgerEntry {
+  sessionIdentifier: string;
+  idempotencyKey: string;
+  /** 规范化完整参数哈希（同键异参据此拒绝）。 */
+  inputHash: string;
+  taskIdentifier: string;
+  missionIdentifier: string | null;
+  claimedAtIso: string;
+  settledAtIso: string | null;
+}
+
+/** 解析幂等账目文件（容错：结构非法视为空账目，不伪造历史）。 */
+export function parseTaskIdempotencyLedger(rawText: string): TaskIdempotencyLedgerEntry[] {
+  try {
+    const parsed = JSON.parse(rawText) as {
+      schemaVersion?: unknown;
+      entries?: unknown;
+    };
+    if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.entries)) {
+      return [];
+    }
+    const entries: TaskIdempotencyLedgerEntry[] = [];
+    for (const rawEntry of parsed.entries) {
+      if (rawEntry === null || typeof rawEntry !== "object") {
+        continue;
+      }
+      const record = rawEntry as Record<string, unknown>;
+      if (
+        typeof record.sessionIdentifier !== "string" ||
+        typeof record.idempotencyKey !== "string" ||
+        typeof record.inputHash !== "string" ||
+        typeof record.taskIdentifier !== "string" ||
+        typeof record.claimedAtIso !== "string"
+      ) {
+        continue;
+      }
+      entries.push({
+        sessionIdentifier: record.sessionIdentifier,
+        idempotencyKey: record.idempotencyKey,
+        inputHash: record.inputHash,
+        taskIdentifier: record.taskIdentifier,
+        missionIdentifier:
+          typeof record.missionIdentifier === "string" ? record.missionIdentifier : null,
+        claimedAtIso: record.claimedAtIso,
+        settledAtIso: typeof record.settledAtIso === "string" ? record.settledAtIso : null,
+      });
+    }
+    return entries;
+  } catch {
+    return [];
+  }
+}
+
+/** 从状态目录加载幂等账目（缺文件/损坏 → 空账目，绝不伪造历史）。 */
+export async function loadTaskIdempotencyLedger(
+  stateDirectory: string | undefined,
+): Promise<TaskIdempotencyLedgerEntry[]> {
+  if (stateDirectory === undefined || stateDirectory === "") {
+    return [];
+  }
+  const filePath = path.join(stateDirectory, "task-idempotency-ledger.json");
+  try {
+    const rawText = await fs.readFile(filePath, "utf8");
+    return parseTaskIdempotencyLedger(rawText);
+  } catch {
+    return [];
+  }
+}
+
 interface TaskRecord {
   sessionId: string;
   missionIdentifier: string | null;
@@ -774,6 +853,10 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     return new AstarrayApplicationFacade(runtime, {
       statusPollIntervalMilliseconds: options.statusPollIntervalMilliseconds ?? 25,
       stateDirectory: options.stateDirectory,
+      // 幂等账目跨进程持久化（R4）：重启后同键同参复用，不重复执行。
+      idempotencyLedgerEntries: await loadTaskIdempotencyLedger(
+        options.stateDirectory,
+      ),
     });
   }
 
@@ -782,11 +865,45 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     options: {
       statusPollIntervalMilliseconds?: number;
       stateDirectory?: string;
+      idempotencyLedgerEntries?: TaskIdempotencyLedgerEntry[];
     } = {},
   ) {
     this.statusPollIntervalMilliseconds =
       options.statusPollIntervalMilliseconds ?? 25;
     this.stateDirectory = options.stateDirectory ?? null;
+    this.idempotencyLedgerFilePath =
+      this.stateDirectory === null
+        ? null
+        : path.join(this.stateDirectory, "task-idempotency-ledger.json");
+    for (const entry of options.idempotencyLedgerEntries ?? []) {
+      this.taskIdempotencyLedger.set(
+        entry.sessionIdentifier + "|" + entry.idempotencyKey,
+        entry,
+      );
+    }
+  }
+
+  /** 幂等账目是否已持久化（无状态目录时为 false，调用方须按未持久化处理）。 */
+  private async persistTaskIdempotencyLedger(): Promise<void> {
+    const filePath = this.idempotencyLedgerFilePath;
+    if (filePath === null) {
+      return;
+    }
+    const { writeAtomicJson } = await import("./infra/atomic-json.js");
+    await writeAtomicJson(filePath, {
+      schemaVersion: 1,
+      entries: [...this.taskIdempotencyLedger.values()],
+    });
+  }
+
+  /**
+   * 规范化**任务内容**哈希（同键异参据此拒绝）。
+   *
+   * 只纳入任务内容（prompt）：`taskIdentifier` 是本地受理标识，不同标识但同内容
+   * 属同一逻辑请求；改内容则是不同参数 → 拒绝（RELIABILITY-01-02 · R4）。
+   */
+  private computeTaskSubmissionInputHash(input: { prompt: string }): string {
+    return createHash("sha256").update(input.prompt).digest("hex");
   }
 
   /**
@@ -832,7 +949,9 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
 
   private readonly sessionStates = new Map<string, PublicSessionState>();
   private readonly tasksByTaskIdentifier = new Map<string, TaskRecord>();
-  private readonly taskIdentifierByIdempotencyKey = new Map<string, string>();
+  /** 幂等账目（内存镜像；键 = `sessionId|idempotencyKey`）。 */
+  private readonly taskIdempotencyLedger = new Map<string, TaskIdempotencyLedgerEntry>();
+  private readonly idempotencyLedgerFilePath: string | null;
   private readonly taskMonitors = new Map<string, NodeJS.Timeout>();
   private readonly inFlightPolls = new Set<Promise<void>>();
   private readonly listeners = new Set<(event: PublicAstarrayEvent) => void>();
@@ -2239,16 +2358,54 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
   }): Promise<PublicTaskResult> {
     this.assertOpen();
     this.requireSession(input.sessionId);
-    if (input.idempotencyKey !== undefined) {
-      const existingTaskIdentifier = this.taskIdentifierByIdempotencyKey.get(
-        input.sessionId + "|" + input.idempotencyKey,
-      );
-      if (existingTaskIdentifier !== undefined) {
-        const existingRecord = this.tasksByTaskIdentifier.get(existingTaskIdentifier);
-        if (existingRecord !== undefined) {
-          return this.toTaskResult(existingTaskIdentifier, existingRecord);
+    /**
+     * 幂等 claim（R4，2026-10-02）：**在任何 await 之前**完成
+     * "查账目 → 判同键异参 → 登记 pending claim"，消除检查-登记之间的并发窗口。
+     */
+    const ledgerKey =
+      input.idempotencyKey === undefined
+        ? null
+        : input.sessionId + "|" + input.idempotencyKey;
+    const submissionInputHash = this.computeTaskSubmissionInputHash({
+      prompt: input.prompt,
+    });
+    if (ledgerKey !== null && input.idempotencyKey !== undefined) {
+      const existingEntry = this.taskIdempotencyLedger.get(ledgerKey);
+      if (existingEntry !== undefined) {
+        if (existingEntry.inputHash !== submissionInputHash) {
+          throw new PublicApplicationError(
+            "idempotency-key-conflict",
+            "同一 idempotencyKey 绑定了不同参数，拒绝复用: " + String(input.idempotencyKey),
+          );
         }
+        if (existingEntry.missionIdentifier === null) {
+          // 已 claim 未结算：不重复执行，也不假定成功。
+          throw new PublicApplicationError(
+            "idempotency-claim-pending",
+            "同一 idempotencyKey 的提交仍在进行中，未重复执行: " + String(input.idempotencyKey),
+          );
+        }
+        const settledRecord = this.tasksByTaskIdentifier.get(existingEntry.taskIdentifier);
+        if (settledRecord !== undefined) {
+          return this.toTaskResult(existingEntry.taskIdentifier, settledRecord);
+        }
+        return {
+          taskIdentifier: existingEntry.taskIdentifier,
+          missionIdentifier: existingEntry.missionIdentifier,
+          status: "accepted" as PublicTaskStatus,
+          summaryPreview: null,
+        };
       }
+      this.taskIdempotencyLedger.set(ledgerKey, {
+        sessionIdentifier: input.sessionId,
+        idempotencyKey: input.idempotencyKey,
+        inputHash: submissionInputHash,
+        taskIdentifier: input.taskIdentifier,
+        missionIdentifier: null,
+        claimedAtIso: new Date().toISOString(),
+        settledAtIso: null,
+      });
+      await this.persistTaskIdempotencyLedger();
     }
     const existing = this.tasksByTaskIdentifier.get(input.taskIdentifier);
     if (existing !== undefined) {
@@ -2287,11 +2444,17 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       revision: 0,
     };
     this.tasksByTaskIdentifier.set(input.taskIdentifier, record);
-    if (input.idempotencyKey !== undefined) {
-      this.taskIdentifierByIdempotencyKey.set(
-        input.sessionId + "|" + input.idempotencyKey,
-        input.taskIdentifier,
-      );
+    if (ledgerKey !== null) {
+      // 结算 claim：绑定 mission，使重启后可复用（同键同参不再执行）。
+      const claimedEntry = this.taskIdempotencyLedger.get(ledgerKey);
+      if (claimedEntry !== undefined) {
+        this.taskIdempotencyLedger.set(ledgerKey, {
+          ...claimedEntry,
+          missionIdentifier,
+          settledAtIso: new Date().toISOString(),
+        });
+        await this.persistTaskIdempotencyLedger();
+      }
     }
     this.emit({
       eventType: "task-status",
@@ -2382,7 +2545,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     await Promise.allSettled([...this.inFlightPolls]);
     this.sessionStates.clear();
     this.tasksByTaskIdentifier.clear();
-    this.taskIdentifierByIdempotencyKey.clear();
+    this.taskIdempotencyLedger.clear();
     this.listeners.clear();
     await this.runtime.shutdown();
   }
