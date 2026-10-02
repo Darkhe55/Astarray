@@ -148,7 +148,45 @@ else → this.options.permissionDecider.decide(...)     // 旧 PermissionDecider
 上一轮已验证），因此需在其**调用侧**补齐（CLI 裁决路径）。
 
 **同时更正 5.3 的表述**：`PolicyWrapper.execute` **确实被调用过**（第 1 次预留成功后），
-当时的"零输出"是输出过滤造成的假阴性。
+当时的"零输出是输出过滤造成的假阴性。
+
+### 5.5 精确到"函数 + 行号"的根因（本轮新证据）
+
+用**逐字节相同**的工具参数做判别实验（排除"指纹变化"这一可能）：
+
+```
+模型侧三次发出的 arguments：完全一致（{"filePath":".tmp/IDENTICAL.md","content":"# IDENTICAL\n"}）
+[scope-grant] outcome=granted fingerprint=sha256:554edffbb67cd35c9f748f0159529c970fdfb1b4e58a1559a6effff27003e30a
+```
+
+⇒ 参数一致 ⇒ 三次**逻辑/范围指纹相同**；`allow-once` 后的**重新登记确实成功**。
+
+但重跑仍被拒绝，唯一产出该文案的位置是：
+
+```
+scope-authorization-gate.ts:491-495
+  if (existingRecord !== undefined && existingRecord.consumedAtIso !== null) {
+    return { isAllowed:false, errorCode:"auth-scope-replay-rejected",
+             reasons:["该授权已被消费：重放不产生副作用，需重新授权"] };
+  }
+```
+
+而 `grantUserAuthorization`（`:386-399`）在登记时会把该指纹的记录**整体替换**为
+`consumedAtIso: null` 的新记录。两者合并起来产生一个**明确矛盾**：
+
+> 授权登记写入的记录是"未消费"，但重跑看到的是"已消费"。
+
+**因此剩余待答问题是唯一的、可一次验证的**：重跑的 `authorizeForExecution` 与
+授权登记**是否落在同一条范围记录上**（键 = `computeOperationFingerprint({operation, resolution})`）。
+下一步最小验证：在 `grantUserAuthorization` 与 `authorizeForExecution` 各自打印
+`operationFingerprint` 与 `consumedAtIso`，比对两次的键与状态即可定论。
+
+**已排除的方向**（避免重复劳动）：
+- 不是"指纹因参数变化而不同"（本轮逐字节相同实验已排除）；
+- 不是"重新登记失败"（`outcome=granted`，并返回了指纹）；
+- 不是"授权未写入引擎/profile 缺失"（`engine=true profile=resolved`）；
+- 不是"两个 gate 实例"（`gate-*` 标识始终一致）；
+- 不是"安装门禁/策略层"（`PolicyWrapper.execute` 第 1 次确实执行）。
 
 因此待通过的反例保留在
 `tests/tui/integration/authorization-retry-closure.test.ts`，当前以 **`it.skip`** 标记：
