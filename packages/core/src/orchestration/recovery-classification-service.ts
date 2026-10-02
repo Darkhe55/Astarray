@@ -115,16 +115,25 @@ export class RecoveryClassificationService {
     toolCall: ToolCallRecoveryStateRecord,
     remainingRetryBudget: number,
   ): ToolCallClassification {
-    if (toolCall.state === "confirmed-success" && toolCall.isIdempotent) {
+    /**
+     * 已确认成功**一律复用结果**，与是否幂等无关（2026-10-02 修复）：
+     * 卡内要求"已确认成功不重复副作用"。此前 `confirmed-success` 且 `isIdempotent=false`
+     * 会落到尾部分支被判为可重试 → 重新执行一次已成功的副作用。
+     */
+    if (toolCall.state === "confirmed-success") {
       return { category: "reuse-confirmed-result" };
     }
-    if (toolCall.state === "confirmed-failure" && remainingRetryBudget > 0) {
-      return { category: "bounded-retry", remainingRetryBudget };
+    if (toolCall.state === "confirmed-failure") {
+      if (remainingRetryBudget > 0) {
+        return { category: "bounded-retry", remainingRetryBudget };
+      }
+      // 零预算：不得给出可重试分类（预算必须真正生效）。
+      return {
+        category: "blocked-uncertain-side-effect",
+        reason: `工具调用 ${toolCall.toolName}（${toolCall.toolCallIdentifier}）已确认失败但重试预算为 0；不再自动重试`,
+      };
     }
-    if (
-      toolCall.state === "result-unknown" &&
-      !toolCall.isIdempotent
-    ) {
+    if (toolCall.state === "result-unknown" && !toolCall.isIdempotent) {
       return {
         category: "blocked-uncertain-side-effect",
         reason: `非幂等工具调用 ${toolCall.toolName}（${toolCall.toolCallIdentifier}）结果未知；禁止自动重试，需用户裁决`,
