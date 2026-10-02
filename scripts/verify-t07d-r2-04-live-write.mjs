@@ -23,7 +23,7 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 // 输出解析复用共享模块（一次实现、可单测；见 tests/core/unit/acceptance-output-parsing.test.ts）。
@@ -51,8 +51,15 @@ const providerEndpointOverride = takeArgument("--provider-endpoint", null);
 /** 干跑模式：跳过 TTY 强制（仅用于自动化验证脚本自身，绝不可用于真实验收）。 */
 const isDryRun = process.env["ASTARRAY_ACCEPTANCE_DRY_RUN"] === "1";
 
-const outputDirectory = path.join(repositoryRoot, ".tmp", "t07d-r2-04-live");
-const outputFileRelativePath = ".tmp/t07d-r2-04-live/LIVE-PROOF.md";
+/**
+ * 产物相对路径（可覆盖，2026-10-02）：干跑必须写到**独立目录**，
+ * 否则干跑留下的同名文件会让真实运行因"仅新建工具拒绝覆盖"而必然失败（实测踩过）。
+ */
+const outputFileRelativePath = takeArgument(
+  "--output-relative-path",
+  ".tmp/t07d-r2-04-live/LIVE-PROOF.md",
+);
+const outputDirectory = path.dirname(path.join(repositoryRoot, outputFileRelativePath));
 const outputFilePath = path.join(repositoryRoot, outputFileRelativePath);
 const expectedContent = [
   "# 真实 Provider 受控改动（T07D-R2-04）",
@@ -86,7 +93,21 @@ if (!existsSync(cliEntryPath)) {
   fail("找不到 CLI 入口（请先 npm run build）: " + cliEntryPath, 2);
 }
 
+/**
+ * 清理目标产物（2026-10-02 实测教训）：
+ * `createProjectFile` 是**仅新建、不覆盖**的工具；上一轮干跑或上一次验收留下的同名文件
+ * 会让本次真实运行必然失败（模型本身没有做错任何事）。因此每次运行前先移除目标文件，
+ * 确保"仅新建"语义下真的有东西可新建。
+ * 同时打印是否发生过清理，便于审计"本次是否复用了旧产物"。
+ */
+const hadPreviousArtifact = existsSync(outputFilePath);
+rmSync(outputFilePath, { force: true });
 mkdirSync(outputDirectory, { recursive: true });
+console.log(
+  hadPreviousArtifact
+    ? "已清理上一轮遗留产物（否则仅新建工具会拒绝覆盖）: " + outputFileRelativePath
+    : "目标产物不存在（符合仅新建工具的前置条件）: " + outputFileRelativePath,
+);
 
 const prompt = [
   "只读约束与范围：本次任务只允许改动 .tmp/t07d-r2-04-live/ 目录下的内容，",

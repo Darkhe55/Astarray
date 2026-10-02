@@ -21,8 +21,9 @@ const scriptPath = path.join(repositoryRoot, "scripts", "verify-t07d-r2-04-live-
  * 脚本把产物写在**仓库根**的 .tmp/t07d-r2-04-live/ 下（脚本内以 repositoryRoot 计算），
  * 因此干跑会真实产出该文件；干跑前先清理，结束后按需保留用于人工核对。
  */
-const outputFilePath = path.join(repositoryRoot, ".tmp", "t07d-r2-04-live", "LIVE-PROOF.md");
-await fs.rm(outputFilePath, { force: true });
+const dryRunRelativePath = ".tmp/t07d-r2-04-live-dry/LIVE-PROOF.md";
+const outputFilePath = path.join(repositoryRoot, ".tmp", "t07d-r2-04-live-dry", "LIVE-PROOF.md");
+await fs.rm(path.dirname(outputFilePath), { recursive: true, force: true });
 
 const expectedContent = [
   "# 真实 Provider 受控改动（T07D-R2-04）",
@@ -65,7 +66,7 @@ const server = http.createServer((request, response) => {
       );
     } else {
       const argumentsJson = JSON.stringify({
-        filePath: ".tmp/t07d-r2-04-live/LIVE-PROOF.md",
+        filePath: dryRunRelativePath,
         content: expectedContent,
       });
       response.write(
@@ -109,6 +110,8 @@ const child = spawn(
     "step-3.7-flash",
     "--provider-endpoint",
     endpoint,
+    "--output-relative-path",
+    dryRunRelativePath,
     "--allow-live-request",
   ],
   {
@@ -156,4 +159,7 @@ if (existsSync(outputFilePath)) {
       JSON.stringify(expectedContent.split("\n")),
   );
 }
+// 干跑结束自清理：绝不在真实验收路径上留下任何东西。
+await fs.rm(path.dirname(outputFilePath), { recursive: true, force: true });
+console.log("干跑产物已自清理（真实验收路径不受影响）");
 process.exitCode = exitCode === 0 ? 0 : 1;
