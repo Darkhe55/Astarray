@@ -74,6 +74,27 @@ else → this.options.permissionDecider.decide(...)     // 旧 PermissionDecider
 一次运行即可判定"是否回落旧判定器"，再决定是补装配（让 worker 用引擎）
 还是让授权同时写旧表实例。
 
+### 5.2 最小验证结果（决定性，已执行）
+
+在 `PolicyWrapper.decidePermission` 入口注入诊断（并**核对产物确实包含该诊断**：
+`dist/chunk-G64DFCRP.js` 含 `[decide]`/`ASTARRAY_DECIDE_TRACE`），随后运行真实 CLI：
+**诊断依然零输出**。
+
+含义（关键）：
+- `decidePermission` **根本没有被调用**；
+- 而 `PolicyWrapper.execute` 中产生 `permission-ask-pending` 的位置只有两处：
+  ① `decidePermission` 返回 `ask` 后 `throw`（`policy-wrapper.ts:178`）；
+  ② **安装门禁拒绝** `InstallationGateGuard.buildDenial(...)`（`policy-wrapper.ts:171-172`）。
+- ② 之前被执行 ⇒ 由于 ① 未执行，**该 `permission-ask-pending` 来自安装门禁分支**。
+
+这与用户侧现象一致：安装门禁把内置写工具当成"安装类操作"询问，
+而用户裁决写入的是 `sessionManager` + `ConfigurablePermissionPolicyEngine`——
+**安装门禁的 allow-once 是第三张表（nonce 表）**，两者从未对上。
+
+**下一轮修复方向**：让安装门禁对**内置工具**（`mutationKind` 为 create-only/overwrite 等、
+非 `process-execution`/`system-level` 的已知内置工具）**不进入安装分类**，
+或在分类器层把它们归为非安装操作；并补一条"内置写工具不得被安装门禁询问"的反例。
+
 因此待通过的反例保留在
 `tests/tui/integration/authorization-retry-closure.test.ts`，当前以 **`it.skip`** 标记：
 既不让门禁长期变红，也**不删除**（删除等于假装闭环成立）。修复后应改回 `it`。
