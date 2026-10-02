@@ -50,13 +50,33 @@
 授权生效后的重跑**依然**得到 `permission-ask-pending`：
 实测三次 `reserve` 全部发生在授权**之前**，且授权与它们同秒发生（3500ms 内五次请求）。
 
+### 5.1 本轮新增的关键线索（引擎诊断零输出）
+
+在 `ConfigurablePermissionPolicyEngine.decide/grantSessionAuthorization` 注入诊断后运行真实 CLI：
+**引擎侧诊断一次都没有输出**（而 `[closure] grantSessionAuthorization engine=true profile=resolved`
+确实打印过，说明"写入路径"走到了）。
+
+结合 `PolicyWrapper.decidePermission` 的装配条件：
+
+```
+if (configurableEngine != null && profileReference != null) → engine.decide(...)
+else → this.options.permissionDecider.decide(...)     // 旧 PermissionDecider
+```
+
+推论：**worker 工具执行链路上的 `currentPermissionProfileReference` 可能为 null**，
+于是判定落到旧 `PermissionDecider`；而用户裁决写入的是
+`sessionManager`（旧表）+ `ConfigurablePermissionPolicyEngine`（新表）。
+若 worker 的旧表与 CLI 写入的旧表**不是同一实例**，就会出现**第三处双轨失配**：
+授权写进了用户看不到的表，判定查的是另一张表。
+
+**下一轮第一步（最小验证）**：在 `PolicyWrapper.decidePermission` 打印
+`toolName / engine!=null / profileReference!=null / 走了哪条分支`，
+一次运行即可判定"是否回落旧判定器"，再决定是补装配（让 worker 用引擎）
+还是让授权同时写旧表实例。
+
 因此待通过的反例保留在
 `tests/tui/integration/authorization-retry-closure.test.ts`，当前以 **`it.skip`** 标记：
 既不让门禁长期变红，也**不删除**（删除等于假装闭环成立）。修复后应改回 `it`。
-
-**下一步建议（下一轮起点）**：在 `sendSchedulerInstruction(unblock)` 与"worker 重新执行
-工具调用"之间加**因果确认**——例如 unblock 后等待 worker 实际发起下一次工具调用
-（事件级信号）再判定，而不是依赖 `queryTask` 的状态推断。
 
 ## 6. 门禁
 
