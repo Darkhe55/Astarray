@@ -107,7 +107,7 @@ describe("授权后必须等待重跑（正向闭环）", () => {
    *  也不让门禁长期变红。剩余缺口 = "权限询问被打断的任务在重跑后仍未真正执行工具"，
    *  需下一轮继续定位（CLI 33.6s 耗时说明重试窗口与拦截确已生效）。
    */
-  it.skip("① 一次 allow-once 之后：工具必须真正执行并产出文件，任务 done", async () => {
+  it("① 一次 allow-once 之后：工具必须真正执行并产出文件，任务 done", async () => {
     const relativePath = ".tmp/CLOSURE.md";
     const absolutePath = path.join(projectPath, relativePath);
     const argumentsJson = JSON.stringify({ filePath: relativePath, content: "# CLOSURE\n" });
@@ -125,8 +125,15 @@ describe("授权后必须等待重跑（正向闭环）", () => {
          * 这样夹具才能验证"跨运行必需操作契约"是否真的传到了模型侧。
          */
         const hasResumeConstraint = rawBody.includes("【续跑约束】");
+        const hasToolSucceeded = rawBody.includes("已新建项目文件");
         response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
-        if (hasResumeConstraint || requestIndex <= 3) {
+        /**
+         * 模型行为（2026-10-02）：工具**成功后**不再重复调用，而是给出完成事件——
+         * 否则夹具会无限重调同一工具，最终被"连续失败阈值"判失败（与真实模型不符）。
+         */
+        if (hasToolSucceeded) {
+          response.write(sseCompletion("attempt-closure"));
+        } else if (hasResumeConstraint || requestIndex <= 3) {
           response.write(sseToolCall(argumentsJson, "c" + String(requestIndex)));
         } else {
           response.write(sseCompletion("attempt-closure"));
@@ -182,15 +189,23 @@ describe("授权后必须等待重跑（正向闭环）", () => {
         resolve();
       };
       childProcess.on("close", settle);
+      /**
+       * 结果检测（2026-10-02）：CLI 输出**多行 JSON**，且进程在给出结果后仍会滞留
+       * （已知残留项）——因此不能依赖子进程自然退出，必须"见到完整 JSON 即收口"。
+       */
       const resultChecker = setInterval(() => {
-        if (stdoutText.trimEnd().endsWith("}")) {
+        const trimmed = stdoutText.trim();
+        if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+          try {
+            JSON.parse(trimmed);
+          } catch {
+            return;
+          }
           clearInterval(resultChecker);
-          setTimeout(() => {
-            if (!isSettled) {
-              childProcess.kill();
-              settle();
-            }
-          }, 3_000);
+          if (!isSettled) {
+            childProcess.kill();
+            settle();
+          }
         }
       }, 100);
       setTimeout(() => {
@@ -203,7 +218,11 @@ describe("授权后必须等待重跑（正向闭环）", () => {
 
     const status = (() => {
       try {
-        return (JSON.parse(stdoutText.trim().split("\n").at(-1) ?? "null") as { status?: string })
+        const trimmed = stdoutText.trim();
+        const startIndex = trimmed.indexOf("{");
+        const endIndex = trimmed.lastIndexOf("}");
+        if (startIndex < 0 || endIndex <= startIndex) return null;
+        return (JSON.parse(trimmed.slice(startIndex, endIndex + 1)) as { status?: string })
           ?.status ?? null;
       } catch {
         return null;
