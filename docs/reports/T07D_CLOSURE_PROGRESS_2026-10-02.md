@@ -117,6 +117,39 @@ else → this.options.permissionDecider.decide(...)     // 旧 PermissionDecider
 **结论修正**：此前"错误来自安装门禁/策略层"的两版推论**均不成立**；
 真正的位置在**范围门禁的预留判定**，方向已明确。
 
+### 5.4 预留真实结果已拿到（可据以修复）
+
+> 教训：上一轮的"零输出"部分是**我自己的输出过滤（`Select-Object -First 20`）遮蔽**所致。
+> 本轮改为把子进程 stderr **完整落盘**再检索，才看到真实数据。
+
+```
+[reserve] tool=createProjectFile status=reserved errorCode= reasons=[]
+[reserve] tool=createProjectFile status=awaiting-user-authorization \
+          errorCode=auth-scope-replay-rejected \
+          reasons=["该授权已被消费：重放不产生副作用，需重新授权"]
+[reserve] tool=createProjectFile status=awaiting-user-authorization \
+          errorCode=auth-scope-replay-rejected reasons=[同上]
+```
+
+**可直接据以修复的链路**：
+1. 第 1 次预留 **成功**（`status=reserved`）→ 于是**内层 `PolicyWrapper` 确实被调用**，
+   并产生 `permission-ask-pending`（`decidePermission` 返回 `ask`）；
+2. 该次尝试**消费掉了**这条作用域授权；
+3. 用户 `allow-once` 之后重跑：第 2、3 次预留被 `auth-scope-replay-rejected` 拒绝
+   （"该授权已被消费"）→ **内层工具从未真正执行** → 无产物。
+
+**修复方向（下一轮落地）**：区分"**被消费但从未执行**"与"**被消费且已执行**"：
+- 前者（本次授权被权限询问消费，内层工具因 `permission-ask-pending` 未进入执行）
+  应允许在**用户批准后**为同一逻辑操作**重新登记**一次授权；
+- 后者（已真实执行）保持现有重放拒绝语义不变。
+
+注意：`main-controller.grantScopeAuthorizationForToolCall` 已有"重新登记一次"的注释与实现，
+但真实 CLI 未走到它（`grantUser`/`grantLogical` 的实例与预留实例**是同一个**，
+上一轮已验证），因此需在其**调用侧**补齐（CLI 裁决路径）。
+
+**同时更正 5.3 的表述**：`PolicyWrapper.execute` **确实被调用过**（第 1 次预留成功后），
+当时的"零输出"是输出过滤造成的假阴性。
+
 因此待通过的反例保留在
 `tests/tui/integration/authorization-retry-closure.test.ts`，当前以 **`it.skip`** 标记：
 既不让门禁长期变红，也**不删除**（删除等于假装闭环成立）。修复后应改回 `it`。
