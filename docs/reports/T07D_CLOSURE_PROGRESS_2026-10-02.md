@@ -188,6 +188,47 @@ scope-authorization-gate.ts:491-495
 - 不是"两个 gate 实例"（`gate-*` 标识始终一致）；
 - 不是"安装门禁/策略层"（`PolicyWrapper.execute` 第 1 次确实执行）。
 
+### 5.6 根因确定：**授权之后再也没有第二次执行尝试**（本轮决定性证据）
+
+在授权登记与 `authorizeForExecution` 两处同时打印指纹与消费状态，**输出顺序即真相**：
+
+```
+[fp] authorize fp=c3a231cbe16a88ce7cb4 found=false consumedAt=null            ← 第 1 次预留：授权并消费
+[fp] authorize fp=c3a231cbe16a88ce7cb4 found=true  consumedAt=03:43:20.777Z   ← 第 2 次：被拒（重放）
+[fp] authorize fp=c3a231cbe16a88ce7cb4 found=true  consumedAt=03:43:20.777Z   ← 第 3 次：被拒（重放）
+[fp] grant     fp=c3a231cbe16a88ce7cb4 consumedAt=null records=1              ← 重新登记在**三次之后**
+```
+
+- 三次 `authorize` 的**指纹完全相同**（`c3a231cb…`）⇒ "键不一致"的可能**排除**；
+- `grant` **确实**把消费标记重置为 `null`；
+- 但 `grant` 之后**再无任何 `authorize` 调用**。
+
+持久状态（同一运行）：
+```
+summary.status = done ; task T-001 = done
+archive assignment | 开始执行任务 T-001
+archive decision   | 等待权限: createProjectFile（执行任务需要调用工具 createProjectFile）
+archive assignment | 开始执行任务 T-001          ← 第二次运行
+archive result     | 完成                        ← 未再调用工具就声称完成
+```
+
+**结论**：`allow-once` 的重新登记本身**没有问题**（这正是此前 `grantScopeAuthorizationForToolCall`
+修复所做的事）。真正的缺口是：
+> **unblock 之后，worker 没有对同一工具发起新的执行尝试**，
+> 而模型随即声称"完成"，且**完成门禁没有拦住**（第二次运行里 `attempted` 为空——
+> 该轮模型确实没请求工具，故现有"请求时刻登记"规则不触发）。
+
+**修复方向（下一轮落地，二选一并补反例）**：
+1. **unblock 必须驱动一次真实重试**：任务在被权限询问打断后，`unblock` 应使 worker
+   重新执行**同一工具调用**（而不是让模型从零开始、可能直接宣称完成）；
+2. 或**完成门禁加强**：当该任务的历史中存在"被权限询问打断、且该工具至今从未成功"
+   时，禁止以"本轮未请求该工具"为由结案。
+
+推荐**先做 1**（因果清晰、与既有 unblock 语义一致），并用 2 作为独立防线。
+
+> 验证方式：`tests/tui/integration/authorization-retry-closure.test.ts` ① 已改回 `it` 实测——
+> 当前**仍红**（产物不存在），已恢复 `it.skip` 以免门禁长期变红；修复后应改回 `it` 并保持绿。
+
 因此待通过的反例保留在
 `tests/tui/integration/authorization-retry-closure.test.ts`，当前以 **`it.skip`** 标记：
 既不让门禁长期变红，也**不删除**（删除等于假装闭环成立）。修复后应改回 `it`。
