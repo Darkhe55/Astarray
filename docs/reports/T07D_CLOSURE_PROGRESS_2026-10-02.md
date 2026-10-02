@@ -96,6 +96,27 @@ else → this.options.permissionDecider.decide(...)     // 旧 PermissionDecider
 （进入 execute / `classifyOperation` 结果 / 安装门禁是否进入且结果），
 一次运行即可指出确切分支；或直接在 `throw` 处带上传入的 `toolName` 与阶段名。
 
+### 5.3 三点标记已执行：`PolicyWrapper.execute` **根本没被调用**（决定性）
+
+在 `execute` 内注入四点标记（A 进入 / B 安装门禁结果 / C 调用 decidePermission 前 / D decide 结果），
+并**核对产物包含 `[stage]`（`dist/chunk-2QX4HJSO.js`）+ 确认 `ASTARRAY_STAGE_TRACE` 已传入子进程**：
+运行真实 CLI 后 **A/B/C/D 全部零输出**。
+
+⇒ **`PolicyWrapper.execute` 从未被调用**。而 worker 的端口链是
+`ScopeGatedToolPort(PolicyWrapper(...))`（`application-runtime.ts:802-812`），
+且 `[closure] reserve` 确实被调用过 3 次 ⇒ **短路发生在范围门禁 `ScopeGatedToolPort.execute`
+内部**：`reserveForExecution` 返回了非"已预留"的结果，于是**内层端口没有被调用**，
+该错误被直接返回给模型。
+
+**因此要看的不是策略层，而是范围门禁的预留结果**（下一步最小验证）：
+在 `ScopeGatedToolPort.execute` 打印每次 `reserveForExecution` 的
+`status / errorCode / reasons`，即可确认究竟是
+`awaiting-user-authorization`、`denied` 还是 `requires-reconciliation`，
+以及"授权登记"为什么没有被这次预留看到。
+
+**结论修正**：此前"错误来自安装门禁/策略层"的两版推论**均不成立**；
+真正的位置在**范围门禁的预留判定**，方向已明确。
+
 因此待通过的反例保留在
 `tests/tui/integration/authorization-retry-closure.test.ts`，当前以 **`it.skip`** 标记：
 既不让门禁长期变红，也**不删除**（删除等于假装闭环成立）。修复后应改回 `it`。
