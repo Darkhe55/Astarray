@@ -118,11 +118,34 @@
    `unresolvedRisks`；`checkout --detach` 失败同样记入。反例 3 条（①② 修复前红）。
 4. **R4（中）**：SDK `submitTask` 的 idempotencyKey 改为**原子 claim + 持久化 + 同键异参拒绝**；
    补并发同键、重启同键、异参反例。
+   → **已完成（2026-10-02）**：新增持久化幂等账目（`<stateDir>/task-idempotency-ledger.json`，
+   原子写）；claim 在任何 `await` 之前建立；未结算 → `idempotency-claim-pending`；
+   异参 → `idempotency-key-conflict`；启动时加载账目（缺/损坏 → 空）。反例 5 条（修复前 3 红）。
 5. **R5（中）**：故障注入矩阵（卡内 §"故障注入矩阵"）落到 01-02：派发前/已持久化未执行/执行中/
    副作用完成但回执未写/回执写入但确认丢失/恢复过程中，六个时点 × 代表操作。
+   → **部分完成（2026-10-02）**：见 §6。
 
-## 6. 验收与限制
+## 6. 故障注入矩阵：已注入时点与结果（RELIABILITY-01-02 · R5）
 
-- 本检查点**只**产出审计矩阵与 1 项最小修复（疑点 1）。**不**宣称"可靠性要求已满足"。
-- 门禁：`npm run check`（真实退出码见提交说明）；未验证项已逐条标注，不得视为通过。
-- Linux/macOS 未实测，保留未验证。
+| 时点 | 代表操作 | 注入方式 | 结果 |
+| --- | --- | --- | --- |
+| 执行中（异常上抛） | 作用域受限写操作（`createProjectFile`） | 内层工具端口直接 `throw` | **缺陷已修**：原先预留永久停在"在途"→ 同逻辑操作后续全部被 `operation-already-in-flight` 拒绝且无对账路径；现按 `unknown` 结算 → `operation-settlement-unknown`（禁止自动重放）。反例 `reliability-fault-injection-reservation.test.ts` ① |
+| 执行中（结构化未知失败） | 同上 | 返回 `kind:"error"` + `sideEffectStatus:"none"` | 已证实：结算为 `released` → 重试可执行。反例 ② |
+| 副作用完成但回执未写 | 任务提交 | 幂等账目 claim 已落盘、`missionIdentifier` 仍为 `null` | 已证实：重启后同键**不重复执行**，返回 `idempotency-claim-pending`（不假定成功）。`reliability-sdk-idempotency.test.ts` |
+| 崩溃后重启（已结算） | 任务提交 | 新 facade 指向同一状态目录 | 已证实：同键同参复用同一 mission；异参拒绝 |
+| 副作用已发生但状态误分类 | 恢复分类 | 检查点写 `confirmed-success` + `isIdempotent=false` | **缺陷已修**：改为一律 `reuse-confirmed-result`（R1） |
+| 结果未知 + 非幂等 | 恢复分类 | `result-unknown` / `planned` / `started` + `isIdempotent=false` | **缺陷已修**：一律 `blocked-uncertain-side-effect`（R1），不自动重试 |
+| 超时（子进程） | git 命令 | 夹具派生的孙进程持续写心跳 + 1s 超时 | Windows 已证实收口；**POSIX 未验证**（R2） |
+| 合并失败/超时 | 目标分支合并 | 假 git：`merge` 抛超时、对账探测返回成功 | **缺陷已修**：只读对账 + 记入 `unresolvedRisks`（R3） |
+| 收尾步骤失败 | 脱离目标分支 | 假 git：`checkout --detach` 抛错 | **缺陷已修**：不再静默吞错（R3） |
+
+**尚未注入的时点（保留为后续工作，不视为通过）**：派发前崩溃、已持久化未执行、
+回执写入但确认丢失（反馈 ack 侧）、恢复过程中再次崩溃、磁盘满、损坏记录、零预算跨重启、
+权限撤销竞态、休息边界、父进程退出。
+
+## 7. 验收与限制
+
+- 本文件对应 **RELIABILITY-01-01（审计矩阵）** 与 **RELIABILITY-01-02（返修与故障注入）**；
+  R1–R5 的完成状态均在 §5/§6 逐条标注，**未注入时点不视为通过**。
+- 门禁：每轮以 `npm run check` 的**真实退出码**为准（见各提交说明）；覆盖率运行同样记录退出码。
+- Linux/macOS 未实测，保留未验证；POSIX 进程树收口为已知跨平台风险项。
