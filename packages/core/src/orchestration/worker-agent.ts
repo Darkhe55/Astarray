@@ -217,6 +217,19 @@ export class WorkerAgent {
       this.options.task,
       this.options.archiveAttachments ?? [],
     );
+    /**
+     * 跨运行必需操作契约的**提示侧**（2026-10-02 T07D-R2-04）：
+     * 让重跑知道"上次因权限被打断、本次必须真正执行这些工具"，
+     * 而不是把重跑当成一次全新任务（此前正是这样导致直接声称完成）。
+     */
+    const requiredMutatingToolNames = this.options.requiredMutatingToolNames ?? [];
+    if (requiredMutatingToolNames.length > 0) {
+      systemPrompt +=
+        "\n\n【续跑约束】本任务此前因权限询问被打断，以下工具**本次必须真正执行成功**，" +
+        "不得仅以文本声明完成：" +
+        requiredMutatingToolNames.join("、") +
+        "。如仍被拒绝，请如实上报阻塞，不要声称已完成。";
+    }
     const contextPromptProvider = this.options.contextPromptProvider;
     if (contextPromptProvider !== undefined) {
       const assembledContext = await contextPromptProvider({

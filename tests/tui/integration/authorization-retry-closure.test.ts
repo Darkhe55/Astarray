@@ -93,27 +93,19 @@ function sseCompletion(attemptId: string): string {
 
 describe("授权后必须等待重跑（正向闭环）", () => {
   /**
-   * 已知未完成（2026-10-02，T07D-R2-04 正向闭环阻断项）：
-   *
-   * 本轮已定位并修复两层根因：
-   *  1) CLI 侧：`waitForPermissionAsk` 一见任务回到 `running` 就立即返回 null，
-   *     授权后的重跑**从未被等待**（已加"推进窗口"，见 run-command）。
-   *  2) worker 侧：写类工具的"尝试"只在**工具结果**事件登记，被权限门禁拦下的调用
-   *     没有结果事件 → 完成门禁看到 `attempted=[]` 而放行"从未执行却声称完成"
-   *     （已改为在**请求时刻**登记，见 worker-agent）。
-   *
-   * 仍未打通的是：**授权生效后**的重跑依然得到 `permission-ask-pending`
-   * （实测：三次 reserve 全在授权之前、且授权同时刻发生），
-   * 说明"授权 → 下一次工具调用即可放行"这条时序在真实 CLI 链路中尚未闭合。
-   *
-   * 因此本用例暂以 `it.skip` 保留为**待通过的反例**，不使用 `it` 让门禁长期变红，
-   * 也**不删除**（删除等于假装闭环成立）。修复后应改回 `it`。
-   */
-  /**
    * 现状（2026-10-02，第 16 轮）：**假 done 已被消除**——跨运行必需操作契约生效后，
    * 该场景不再返回 `status=done`（任务转为失败，CLI 侧耗时 3.6s → 33.6s 说明确实等待/拦截）。
    * 但"授权后不再请求工具"这一层仍在，故**产物仍不存在**，本用例继续以 `it.skip` 标记，
    * 直到"unblock 驱动一次真实重试"落地后改回 `it` 并保持绿。
+   */
+  /**
+   * 现状（2026-10-02）：
+   *  - 已消除**假 done**：跨运行必需操作契约生效后，本场景不再返回 status=done；
+   *  - 已把"续跑约束"注入重跑的 system prompt（本次必须真正执行该工具）；
+   *  - 夹具已升级为**读取提示**（见到"【续跑约束】"即再次调用工具）。
+   *  但端到端**产物仍不存在**，故保持 it.skip：不删除（删除等于假装闭环成立），
+   *  也不让门禁长期变红。剩余缺口 = "权限询问被打断的任务在重跑后仍未真正执行工具"，
+   *  需下一轮继续定位（CLI 33.6s 耗时说明重试窗口与拦截确已生效）。
    */
   it.skip("① 一次 allow-once 之后：工具必须真正执行并产出文件，任务 done", async () => {
     const relativePath = ".tmp/CLOSURE.md";
@@ -122,15 +114,23 @@ describe("授权后必须等待重跑（正向闭环）", () => {
 
     let requestIndex = 0;
     const server = http.createServer((httpRequest, response) => {
-      httpRequest.on("data", () => {});
+      let rawBody = "";
+      httpRequest.on("data", (chunk) => (rawBody += String(chunk)));
       httpRequest.on("end", () => {
         requestIndex += 1;
+        /**
+         * 夹具升级（2026-10-02，第 17 轮）：**读取续跑约束**。
+         * 若有"【续跑约束】"，说明重跑已被要求真正执行该工具 → 返回工具调用；
+         * 否则按原行为（前 3 次调用工具、之后给完成事件）。
+         * 这样夹具才能验证"跨运行必需操作契约"是否真的传到了模型侧。
+         */
+        const hasResumeConstraint = rawBody.includes("【续跑约束】");
         response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
-        // 前 3 次都请求同一个写工具（与真实模型行为一致：授权前会反复请求）；
-        // 之后给出完成事件。
-        response.write(
-          requestIndex <= 3 ? sseToolCall(argumentsJson, "c" + String(requestIndex)) : sseCompletion("attempt-closure"),
-        );
+        if (hasResumeConstraint || requestIndex <= 3) {
+          response.write(sseToolCall(argumentsJson, "c" + String(requestIndex)));
+        } else {
+          response.write(sseCompletion("attempt-closure"));
+        }
         response.end();
       });
     });
