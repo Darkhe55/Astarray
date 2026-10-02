@@ -36,7 +36,9 @@
     "verify:entry-runtime-selection": "node scripts/verify-entry-runtime-selection.mjs",
     "verify:provider-tool-protocol": "node scripts/verify-provider-tool-protocol.mjs",
     "verify:provider-live-request": "node scripts/verify-provider-request-against-endpoint.mjs",
-    "verify:t07d-r2-04-live": "node scripts/verify-t07d-r2-04-live-write.mjs"
+    "verify:t07d-r2-04-live": "node scripts/verify-t07d-r2-04-live-write.mjs",
+    "verify:t07d-r2-04-dry": "node scripts/verify-t07d-r2-04-live-dry-run.mjs",
+    "test:scripts": "node --test \"scripts/lib/*.test.mjs\""
   },
   "dependencies": {
     "commander": "^15.0.0",

@@ -26,6 +26,8 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+// 输出解析复用共享模块（一次实现、可单测；见 tests/core/unit/acceptance-output-parsing.test.ts）。
+import { parseFirstJsonObject, toComparableLines } from "./lib/acceptance-output-parsing.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const argumentsList = process.argv.slice(2);
@@ -40,6 +42,14 @@ const modelIdentifier = takeArgument("--model", "step-3.7-flash");
 const requestTimeoutSeconds = takeArgument("--request-timeout-seconds", "120");
 const taskTimeoutSeconds = takeArgument("--task-timeout-seconds", "240");
 const cliEntryPath = path.resolve(takeArgument("--cli-entry", path.join(repositoryRoot, "dist", "cli.js")));
+/**
+ * 自定义 Provider 端点（**干跑用**，2026-10-02 新增）：
+ * 默认走凭证引用里配置的真实端点；给出本参数时会改用该端点，
+ * 用于在**零额度**下验证本脚本自身的判定链路（配合 ASTARRAY_ACCEPTANCE_DRY_RUN=1）。
+ */
+const providerEndpointOverride = takeArgument("--provider-endpoint", null);
+/** 干跑模式：跳过 TTY 强制（仅用于自动化验证脚本自身，绝不可用于真实验收）。 */
+const isDryRun = process.env["ASTARRAY_ACCEPTANCE_DRY_RUN"] === "1";
 
 const outputDirectory = path.join(repositoryRoot, ".tmp", "t07d-r2-04-live");
 const outputFileRelativePath = ".tmp/t07d-r2-04-live/LIVE-PROOF.md";
@@ -62,12 +72,15 @@ if (!isLiveAllowed) {
   );
   process.exit(2);
 }
-if (process.stdin.isTTY !== true) {
+if (process.stdin.isTTY !== true && !isDryRun) {
   console.error(
     "拒绝执行：本脚本要求 **TTY 交互**输入裁决（管道只能提供一次裁决，已多次导致误判）。\n" +
       "请在交互终端直接运行本脚本。",
   );
   process.exit(2);
+}
+if (!process.stdin.isTTY && isDryRun) {
+  console.log("（干跑模式：已跳过 TTY 强制；此模式仅用于验证脚本自身，不代表真实验收通过）");
 }
 if (!existsSync(cliEntryPath)) {
   fail("找不到 CLI 入口（请先 npm run build）: " + cliEntryPath, 2);
@@ -114,6 +127,9 @@ const childProcess = spawn(
     modelIdentifier,
     "--provider-credential-reference",
     referenceId,
+    ...(providerEndpointOverride === null
+      ? []
+      : ["--provider-endpoint", providerEndpointOverride]),
     "--provider-request-timeout-seconds",
     requestTimeoutSeconds,
     "--timeout-seconds",
@@ -132,8 +148,30 @@ let stdoutText = "";
 let stderrText = "";
 childProcess.stdout.setEncoding("utf8");
 childProcess.stderr.setEncoding("utf8");
+
+/** 见到完整结果即收口：CLI 给出结果后进程仍会滞留（已知残留项），不得依赖自然退出。 */
+let onResultObserved = null;
+let isResultObserved = false;
+function observeResultIfComplete() {
+  if (isResultObserved) {
+    return;
+  }
+  const candidate = parseFirstJsonObject(stdoutText);
+  if (candidate === null) {
+    return;
+  }
+  if (candidate === null) {
+    return;
+  }
+  isResultObserved = true;
+  if (typeof onResultObserved === "function") {
+    onResultObserved();
+  }
+}
+
 childProcess.stdout.on("data", (chunk) => {
   stdoutText += chunk;
+  observeResultIfComplete();
 });
 childProcess.stderr.on("data", (chunk) => {
   stderrText += chunk;
@@ -142,15 +180,24 @@ childProcess.stderr.on("data", (chunk) => {
 });
 
 const exitCode = await new Promise((resolve) => {
-  childProcess.on("close", (code) => resolve(code ?? 1));
+  let isSettled = false;
+  const settle = (code) => {
+    if (isSettled) return;
+    isSettled = true;
+    resolve(code);
+  };
+  childProcess.on("close", (code) => settle(code ?? 1));
+  onResultObserved = () => {
+    // 结果已完整取得；结束滞留的子进程并收口。
+    childProcess.kill();
+    settle(0);
+  };
+  if (isResultObserved) {
+    onResultObserved();
+  }
 });
 
-let parsedResult = null;
-try {
-  parsedResult = JSON.parse(stdoutText.trim().split("\n").at(-1) ?? "null");
-} catch {
-  parsedResult = null;
-}
+const parsedResult = parseFirstJsonObject(stdoutText);
 
 const checks = [];
 function record(checkName, isPassed, detail) {
@@ -166,13 +213,6 @@ const actualContent = fileExists ? readFileSync(outputFilePath, "utf8") : null;
  * 可能只差结尾换行，用字节级 sha256 会把它误判为失败（实测发生过）。
  * 实现：按行切分并丢弃末尾空行后逐行比对；其余字符仍逐字精确。
  */
-const toComparableLines = (text) => {
-  const lines = text.split("\n").map((line) => line.replace(/\r$/, ""));
-  while (lines.length > 0 && lines[lines.length - 1] === "") {
-    lines.pop();
-  }
-  return lines;
-};
 const expectedSha256 = createHash("sha256").update(expectedContent).digest("hex");
 const actualSha256 =
   actualContent === null ? null : createHash("sha256").update(actualContent).digest("hex");
