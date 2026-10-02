@@ -732,12 +732,31 @@ export class ScopeGatedToolPort implements ToolPort {
     }
 
     const reservationIdentifier = reservation.reservationIdentifier ?? "";
-    const innerResult = await this.innerToolPort.execute(
-      toolName,
-      argumentsJson,
-      callId,
-      cancellationSignal,
-    );
+    let innerResult: ToolCallResult;
+    try {
+      innerResult = await this.innerToolPort.execute(
+        toolName,
+        argumentsJson,
+        callId,
+        cancellationSignal,
+      );
+    } catch (error) {
+      /**
+       * 执行中异常（崩溃/断连）→ **结果未知**（RELIABILITY-01-02 · R5 故障注入）：
+       * 必须先按 `unknown` 结算预留再向上抛，否则预留永久停在"在途"，
+       * 同一逻辑操作此后全部被 `operation-already-in-flight` 拒绝且无对账路径。
+       * 结算失败不得吞掉原始异常。
+       */
+      try {
+        await this.gate.settleReservation({
+          reservationIdentifier,
+          outcome: { kind: "error", isIdempotencyConfirmed: false, sideEffectStatus: "unknown" },
+        });
+      } catch {
+        // 预留已不存在等情况：保持原始异常语义。
+      }
+      throw error;
+    }
     // 执行后**结算**：成功 → settled（此后同逻辑操作=重放）；
     // 失败且工具自报"确定无副作用" → released（可重试）；否则 → requires-reconciliation。
     await this.gate.settleReservation({
