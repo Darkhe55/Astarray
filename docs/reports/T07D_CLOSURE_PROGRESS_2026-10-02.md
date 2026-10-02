@@ -229,6 +229,38 @@ archive result     | 完成                        ← 未再调用工具就声�
 > 验证方式：`tests/tui/integration/authorization-retry-closure.test.ts` ① 已改回 `it` 实测——
 > 当前**仍红**（产物不存在），已恢复 `it.skip` 以免门禁长期变红；修复后应改回 `it` 并保持绿。
 
+### 5.7 最小修复点已定位（下一轮直接实现）
+
+本轮把 `unblock` 链路读到底，确认缺口位于**一个具体位置**：
+
+```
+mission-orchestrator.ts:589-591
+  case "permission-ask":
+    await this.dagScheduler.blockTaskForHumanDecision(taskId);
+    this.options.onUserEscalation(…);      // ← 只阻塞 + 上报；**没有记录"被打断的工具"**
+```
+
+- `dag-scheduler.unblockTask` 只做 `markPendingForRetry`（`:141-148`），**不携带任何"要重试什么"**；
+- 重跑时 worker 拿到的是**同一个任务提示**（`worker-agent.ts:455` 只列出 `可用工具`），
+  没有任何"上次因权限被打断、本次应继续执行该工具"的信息；
+- 因此第二次运行对模型而言就是**一次全新任务**，可以直接宣称完成；
+- 完成门禁只覆盖**单次运行**（`worker-agent.ts:175-182` 的
+  `attemptedMutatingTools` 是本实例字段），第二次运行 `attempted` 为空 → **放行**。
+
+**最小修复（建议顺序）**：
+1. `mission-orchestrator` 的 `permission-ask` 分支：把被打断的工具名与参数摘要
+   记入**任务节点**（随任务链持久化），例如 `unfinishedRequiredToolNames: string[]`；
+2. `unblockTask` 保留该字段（不清除），使重跑可读；
+3. worker 启动时读取该字段，并在任务提示中明确写出
+   "上次因权限被打断、本次须继续执行这些工具"；
+4. 完成门禁：若 `unfinishedRequiredToolNames` 非空，则要求这些工具
+   **在本次运行中成功执行**，否则不得结案（把现有单次运行规则提升为跨运行契约）；
+5. 反例：`authorization-retry-closure.test.ts` ① 改回 `it` 并保持绿；
+   另补"未执行即宣称完成 → 不得 done"的门禁反例。
+
+**注意**：夹具模型（计数器式假 Provider）不响应提示，因此第 3 步的收益**无法在本夹具上验证**；
+第 4 步（门禁跨运行契约）才是可被夹具验证的关键，建议优先实现第 1/2/4 步。
+
 因此待通过的反例保留在
 `tests/tui/integration/authorization-retry-closure.test.ts`，当前以 **`it.skip`** 标记：
 既不让门禁长期变红，也**不删除**（删除等于假装闭环成立）。修复后应改回 `it`。
