@@ -95,7 +95,7 @@
 | 操作身份 | 逻辑操作指纹 = 工具+路径+完整规范化参数（本轮前序工作） | `operationId` 与 `attemptId` 未在工具层显式分离 | 部分 |
 | 去重原子性 | 作用域门禁有"执行前原子预留"（同步段内建立） | SDK `submitTask` 的 idempotencyKey **非原子且不持久**（疑点 2） | **失败** |
 | 重试边界 | `ToolFailureCounter` 阈值 + recovery 预算 | 嵌套重试（工具内 + 任务级）是否有乘法膨胀 **未验证** | 未验证 |
-| 超时与取消 | git 超时区分"超时 vs 非零退出"；提供商请求超时可配 | 子进程树未收口；合并超时无对账（疑点 3） | 部分/**失败** |
+| 超时与取消 | git 超时区分"超时 vs 非零退出"；提供商请求超时可配 | **R2 实测（Windows）：孙进程已被系统收口**（夹具活性 + 心跳停止双证）；**POSIX 未验证**。**R3 已修**：merge 失败/超时改为只读对账并记入未决风险；`checkout --detach` 失败不再静默吞掉 | Windows 已证实 / POSIX 未验证 |
 | 恢复和并发所有权 | 检查点 + epoch/租约存在（T12A） | 旧 epoch 调用失效的**动态证据未覆盖** | 未验证 |
 | 结果状态 | 已确认成功不重复（本轮修复后） | `confirm` 丢失、部分副作用场景未注入 | 部分 |
 | 资源与公平性 | 等待用户/网络不持锁（设计如此） | 锁序、背压、暂停原因隔离 **未验证** | 未验证 |
@@ -108,8 +108,14 @@
    `planned/started + 非幂等 → blocked-uncertain-side-effect`；反例 ⑥⑦ 覆盖。
 2. **R2（小）**：`git-process` 超时按**进程组**收口（POSIX `detached`+`process.kill(-pid)`；
    Windows 用 `taskkill /T`），并补"子进程残留"反例。
+   → **Windows 实测无需修改**（2026-10-02）：`tests/core/integration/reliability-git-process-tree.test.ts`
+   用"父进程派生的孙进程写心跳"夹具验证；`⓪` 证明孙进程确实在写（>3 次心跳），
+   `①` 证明超时后心跳停止增长 → 该平台上进程树已随父进程收口。**POSIX 未验证**（保留为跨平台风险项）。
 3. **R3（中）**：`git-integration-coordinator` 的 merge/checkout 失败路径改为**显式对账**
    （查询 HEAD/分支状态判定"合并是否已生效"），去掉 `.catch(() => {})` 静默吞错。
+   → **已完成（2026-10-02）**：新增只读对账 `settleTargetBranchMerge`（`rev-parse` +
+   `merge-base --is-ancestor`，结果区分 merged/not-merged/unknown），merge 失败/超时记入
+   `unresolvedRisks`；`checkout --detach` 失败同样记入。反例 3 条（①② 修复前红）。
 4. **R4（中）**：SDK `submitTask` 的 idempotencyKey 改为**原子 claim + 持久化 + 同键异参拒绝**；
    补并发同键、重启同键、异参反例。
 5. **R5（中）**：故障注入矩阵（卡内 §"故障注入矩阵"）落到 01-02：派发前/已持久化未执行/执行中/

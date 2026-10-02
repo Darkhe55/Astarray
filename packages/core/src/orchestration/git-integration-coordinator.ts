@@ -306,21 +306,80 @@ export class GitIntegrationCoordinator {
         ["checkout", report.targetBranchName],
         `切换目标分支 ${report.targetBranchName}`,
       );
-      await this.gitProcess.run(
-        input.repositoryPath,
-        ["merge", "--no-ff", "--no-edit", report.integrationBranchName],
-        `目标分支合并集成分支`,
-      );
-      await this.gitProcess
-        .run(input.repositoryPath, ["checkout", "--detach", "HEAD"], `脱离目标分支`)
-        .catch(() => {});
+      try {
+        await this.gitProcess.run(
+          input.repositoryPath,
+          ["merge", "--no-ff", "--no-edit", report.integrationBranchName],
+          `目标分支合并集成分支`,
+        );
+      } catch (mergeError) {
+        /**
+         * 合并失败/超时**不得**等同于"未合并"（RELIABILITY-01-02 · R3）：
+         * 只读探测目标分支是否已包含集成分支，把结果记入未决风险，由用户/恢复流程裁决。
+         */
+        const settlement = await this.settleTargetBranchMerge({
+          repositoryPath: input.repositoryPath,
+          targetBranchName: report.targetBranchName,
+          integrationBranchName: report.integrationBranchName,
+        });
+        report.unresolvedRisks.push(
+          `目标分支合并未确认（${settlement.outcome}）：${settlement.detail}；` +
+            `原始错误: ${(mergeError as Error).message}`,
+        );
+      }
+      try {
+        await this.gitProcess.run(
+          input.repositoryPath,
+          ["checkout", "--detach", "HEAD"],
+          `脱离目标分支`,
+        );
+      } catch (detachError) {
+        // 不得静默吞掉：工作区可能仍停留在目标分支上。
+        report.unresolvedRisks.push(
+          `合并后脱离目标分支失败（工作区可能仍在 ${report.targetBranchName}）：` +
+            (detachError as Error).message,
+        );
+      }
     }
     await this.options.reportStore.saveReport(report);
     return report;
   }
 
-  /** 在仓库目录以 shell 执行集成测试命令（命令由会话配置，非模型输入）。 */
-  private runIntegrationTestCommand(
+  /**
+   * 目标分支合并的**只读对账**（RELIABILITY-01-02 · R3）。
+   *
+   * 合并失败或超时时，结果可能"已生效"、"未生效"或"未知（探测本身失败）"，
+   * 三者必须可区分；不得把超时当作"未合并"，也不得假定成功。
+   */
+  private async settleTargetBranchMerge(input: {
+    repositoryPath: string;
+    targetBranchName: string;
+    integrationBranchName: string;
+  }): Promise<{ outcome: "merged" | "not-merged" | "unknown"; detail: string }> {
+    try {
+      await this.gitProcess.run(
+        input.repositoryPath,
+        ["rev-parse", "--verify", "--quiet", `refs/heads/${input.targetBranchName}`],
+        `对账：确认目标分支 ${input.targetBranchName}`,
+      );
+      await this.gitProcess.run(
+        input.repositoryPath,
+        ["merge-base", "--is-ancestor", input.integrationBranchName, input.targetBranchName],
+        "对账：集成分支是否为目标分支祖先",
+      );
+      return {
+        outcome: "merged",
+        detail: `已确认 ${input.integrationBranchName} 是 ${input.targetBranchName} 的祖先`,
+      };
+    } catch (probeError) {
+      return {
+        outcome: "unknown",
+        detail: `只读探测失败，合并状态未知: ${(probeError as Error).message}`,
+      };
+    }
+  }
+
+  /** 在仓库目录以 shell 执行集成测试命令（命令由会话配置，非模型输入）。 */  private runIntegrationTestCommand(
     repositoryPath: string,
     command: string,
   ): boolean {
