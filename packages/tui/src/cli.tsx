@@ -85,6 +85,10 @@ program
   )
   .option("--provider-model <identifier>", "Provider 模型标识（必填）")
   .option(
+    "--provider-protocol <protocol>",
+    "Provider 协议（缺省 openai-compatible；可选 anthropic-messages）",
+  )
+  .option(
     "--provider-api-key-env <variable>",
     "存放 API key 的环境变量名（缺省 ASTARRAY_PROVIDER_API_KEY；不落盘、不回显）",
   )
@@ -105,6 +109,7 @@ program
         providerModel?: string;
         providerApiKeyEnv?: string;
         providerCredentialReference?: string;
+        providerProtocol?: string;
         providerRequestTimeoutSeconds?: string;
       },
     ) => {
@@ -129,6 +134,9 @@ program
           : {}),
         ...(options.providerCredentialReference !== undefined
           ? { providerCredentialReference: options.providerCredentialReference }
+          : {}),
+        ...(options.providerProtocol !== undefined
+          ? { providerProtocol: options.providerProtocol }
           : {}),
         ...(options.providerRequestTimeoutSeconds !== undefined
           ? {

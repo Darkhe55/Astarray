@@ -4,12 +4,39 @@
  * 绝不静默回退 mock。API key 只从环境变量读取，不落盘、不回显。
  */
 import {
+  ANTHROPIC_MESSAGES_PROVIDER_ID,
+  createAnthropicMessagesProviderRegistration,
+} from "../../../core/src/runtime/anthropic-messages-provider-registration.js";
+import {
   OPENAI_COMPATIBLE_PROVIDER_ID,
   createOpenAiCompatibleProviderRegistration,
 } from "../../../core/src/runtime/openai-compatible-provider-registration.js";
 import { ProviderRuntimeRegistry } from "../../../core/src/runtime/provider-runtime-registry.js";
 import type { PublicProviderConfiguration } from "../../../core/src/public-sdk.js";
 import { FileProviderCredentialStore } from "./provider-cli.js";
+
+/**
+ * 受控协议选择（2026-10-02 多协议装配）。
+ *
+ * **默认保持 `openai-compatible`**（不改变现有行为）；显式给出未支持的协议时 fail-closed，
+ * 不静默回退——回退会让调用方以为在用 Anthropic 协议，实际发出的是 OpenAI 形态请求。
+ */
+export type SelectedProviderProtocol = "openai-compatible" | "anthropic-messages";
+
+export function resolveProviderProtocol(
+  requestedProtocol: string | undefined,
+): SelectedProviderProtocol {
+  if (requestedProtocol === undefined || requestedProtocol === "" || requestedProtocol === "openai-compatible") {
+    return "openai-compatible";
+  }
+  if (requestedProtocol === "anthropic-messages") {
+    return "anthropic-messages";
+  }
+  throw new RuntimeSelectionError(
+    "provider-protocol-unsupported",
+    `不支持的协议: ${requestedProtocol}（可用: openai-compatible | anthropic-messages）`,
+  );
+}
 
 export interface RuntimeSelectionOptions {
   runtime: string | undefined;
@@ -23,6 +50,11 @@ export interface RuntimeSelectionOptions {
    * 且引用不存在即 fail-closed（不回退环境变量、不回退 mock）。
    */
   providerCredentialReference?: string;
+  /**
+   * 协议选择（2026-10-02 多协议装配）：缺省 `openai-compatible`（**不改变现有行为**）；
+   * `anthropic-messages` 使用 Anthropic Messages runtime（x-api-key + 顶层 system + tool_result）。
+   */
+  providerProtocol?: string;
   /**
    * Provider 单次请求超时（毫秒）。缺省时由注册表默认（30_000）决定；
    * 真实长任务需要显式放宽（实测某些模型单次响应 > 30s）。
@@ -89,12 +121,20 @@ export async function buildRuntimeSelection(
         readCredential: (referenceId) => credentialStore.readCredential(referenceId),
       },
     });
-    registryFromReference.register(createOpenAiCompatibleProviderRegistration());
+    const selectedProtocolFromReference = resolveProviderProtocol(options.providerProtocol);
+    if (selectedProtocolFromReference === "anthropic-messages") {
+      registryFromReference.register(createAnthropicMessagesProviderRegistration());
+    } else {
+      registryFromReference.register(createOpenAiCompatibleProviderRegistration());
+    }
     return {
       runtime: "provider",
       providerRuntimeRegistry: registryFromReference,
       provider: {
-        providerId: OPENAI_COMPATIBLE_PROVIDER_ID,
+        providerId:
+          selectedProtocolFromReference === "anthropic-messages"
+            ? ANTHROPIC_MESSAGES_PROVIDER_ID
+            : OPENAI_COMPATIBLE_PROVIDER_ID,
         modelIdentifier,
         allowedModelIdentifiers: [modelIdentifier],
         requiredCapabilities: ["streaming", "tool-calling"],
@@ -132,12 +172,20 @@ export async function buildRuntimeSelection(
       readCredential: async () => ({ baseUrl: endpoint, apiKey }),
     },
   });
-  registry.register(createOpenAiCompatibleProviderRegistration());
+  const selectedProtocol = resolveProviderProtocol(options.providerProtocol);
+  if (selectedProtocol === "anthropic-messages") {
+    registry.register(createAnthropicMessagesProviderRegistration());
+  } else {
+    registry.register(createOpenAiCompatibleProviderRegistration());
+  }
   return {
     runtime: "provider",
     providerRuntimeRegistry: registry,
     provider: {
-      providerId: OPENAI_COMPATIBLE_PROVIDER_ID,
+      providerId:
+        selectedProtocol === "anthropic-messages"
+          ? ANTHROPIC_MESSAGES_PROVIDER_ID
+          : OPENAI_COMPATIBLE_PROVIDER_ID,
       modelIdentifier,
       allowedModelIdentifiers: [modelIdentifier],
       requiredCapabilities: ["streaming", "tool-calling"],
