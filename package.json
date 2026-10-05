@@ -38,6 +38,8 @@
     "verify:provider-live-request": "node scripts/verify-provider-request-against-endpoint.mjs",
     "verify:t07d-r2-04-live": "node scripts/verify-t07d-r2-04-live-write.mjs",
     "verify:t07d-r2-04-dry": "node scripts/verify-t07d-r2-04-live-dry-run.mjs",
+    "verify:t07d-r2-04-tarball-dry": "node scripts/verify-t07d-r2-04-tarball-live.mjs --dry-run",
+    "verify:t07d-r2-04-tarball-live": "node scripts/verify-t07d-r2-04-tarball-live.mjs --allow-live-request",
     "test:scripts": "node --test \"scripts/lib/*.test.mjs\""
   },
   "dependencies": {
