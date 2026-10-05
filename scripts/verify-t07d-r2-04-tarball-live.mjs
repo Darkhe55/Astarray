@@ -507,11 +507,41 @@ if (isDryRun) {
     }
     return isAnthropic ? buildAnthropicCompletionStream() : buildOpenAiCompletionStream();
   }
-  /** 工具成功判据按协议产物形态判断。 */
+  /**
+   * 工具成功判据（2026-10-02 修正）：**不猜成功文案**，而是看最近一次 tool_result
+   * 是否**不含错误标记**。此前按 "已新建项目文件" 字面匹配，一旦实际成功文案不同
+   * （或工具被权限/范围门禁拒绝）就会误判为"未成功"，导致夹具无限重调工具，
+   * 最终被"连续失败阈值"判失败 —— 实测踩过。
+   */
   function hasToolSucceededInBody(body) {
-    return protocolLabel === "anthropic-messages"
-      ? body.includes('"tool_result"') && body.includes("已新建项目文件")
-      : body.includes("已新建项目文件");
+    const toolResultContents = [];
+    const collectFromContentBlocks = (content) => {
+      if (!Array.isArray(content)) return;
+      for (const block of content) {
+        if (block !== null && typeof block === "object" && block.type === "tool_result") {
+          toolResultContents.push(typeof block.content === "string" ? block.content : "");
+        }
+      }
+    };
+    try {
+      const parsed = JSON.parse(body);
+      for (const message of parsed.messages ?? []) {
+        collectFromContentBlocks(message.content);
+      }
+      // OpenAI 形态：role="tool" 的 content
+      for (const message of parsed.messages ?? []) {
+        if (message.role === "tool" && typeof message.content === "string") {
+          toolResultContents.push(message.content);
+        }
+      }
+    } catch {
+      return false;
+    }
+    if (toolResultContents.length === 0) {
+      return false;
+    }
+    const latestToolResult = toolResultContents[toolResultContents.length - 1] ?? "";
+    return !latestToolResult.includes("错误(") && latestToolResult.trim() !== "";
   }
   const dryRunEndpointPath =
     protocolLabel === "anthropic-messages" ? "/anthropic/v1/messages" : "/v1/chat/completions";
