@@ -325,11 +325,19 @@ export class InstructionWindowStore {
     instruction.unresolvedQuestions = [...receipt.unresolvedQuestions];
     instruction.updatedAtIso = new Date().toISOString();
 
-    // 部分完成仍占槽位（契约：partially-completed 计入占用）
+    // 部分完成仍占槽位（契约：partially-completed 计入占用）；
+    // 若回执带有**未决问题**，按契约进入 awaiting-clarification（同样占槽位，等待用户澄清）。
     if (receipt.receiptOutcome === "partially-completed") {
-      instruction.state = "partially-completed";
+      instruction.state =
+        receipt.unresolvedQuestions.length > 0 ? "awaiting-clarification" : "partially-completed";
       await this.enqueuePersist();
-      return { outcome: "partially-completed-kept", detail: "部分完成：仍占用槽位" };
+      return {
+        outcome: "partially-completed-kept",
+        detail:
+          instruction.state === "awaiting-clarification"
+            ? "存在未决问题：进入等待澄清（仍占用槽位）"
+            : "部分完成：仍占用槽位",
+      };
     }
 
     instruction.state =
