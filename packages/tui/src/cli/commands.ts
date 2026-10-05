@@ -960,6 +960,132 @@ export interface ContextMetricsCommandOptions {
 }
 
 /**
+ * USAGE-01-03：用量最小概览（只读；由已落盘账目复算）。
+ *
+ * 纪律：只报告本地账目估算并附免责说明（**不虚报官方余额**）；
+ * 按可见范围过滤（不泄漏其他个体明细）；查询不发起任何网络/Provider 请求。
+ */
+export interface UsageOverviewCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+  missionIdentifier?: string;
+  sourceAgentInstanceId?: string;
+  detailLevel?: string;
+  pageSize?: string;
+  cursor?: string;
+  inputTokenBudget?: string;
+}
+
+export async function executeUsageOverviewCommand(
+  options: UsageOverviewCommandOptions,
+): Promise<number> {
+  if (
+    options.detailLevel !== undefined &&
+    options.detailLevel !== "summary" &&
+    options.detailLevel !== "detail"
+  ) {
+    logToStderr("--detail 必须是 summary | detail 之一（收到: " + options.detailLevel + "）");
+    return EXIT_CODES.USAGE_ERROR;
+  }
+  const parsedPageSize =
+    options.pageSize === undefined ? undefined : Number.parseInt(options.pageSize, 10);
+  if (parsedPageSize !== undefined && (Number.isNaN(parsedPageSize) || parsedPageSize <= 0)) {
+    logToStderr("--page-size 必须是正整数（收到: " + String(options.pageSize) + "）");
+    return EXIT_CODES.USAGE_ERROR;
+  }
+  const parsedBudget =
+    options.inputTokenBudget === undefined
+      ? undefined
+      : Number.parseInt(options.inputTokenBudget, 10);
+  if (parsedBudget !== undefined && (Number.isNaN(parsedBudget) || parsedBudget < 0)) {
+    logToStderr(
+      "--input-token-budget 必须是非负整数（收到: " + String(options.inputTokenBudget) + "）",
+    );
+    return EXIT_CODES.USAGE_ERROR;
+  }
+
+  try {
+    const { UsageLedgerStore, queryUsageOverview } = await import(
+      "../../../core/src/orchestration/usage-ledger-store.js"
+    );
+    const store = new UsageLedgerStore({ baseDirectory: options.stateDirectory });
+    const overview = await queryUsageOverview({
+      store,
+      query: {
+        ...(options.missionIdentifier === undefined
+          ? {}
+          : { missionIdentifier: options.missionIdentifier }),
+        ...(options.sourceAgentInstanceId === undefined
+          ? {}
+          : { sourceAgentInstanceId: options.sourceAgentInstanceId }),
+        detailLevel: options.detailLevel === "detail" ? "detail" : "summary",
+        ...(parsedPageSize === undefined ? {} : { pageSize: parsedPageSize }),
+        ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+        ...(parsedBudget === undefined ? {} : { inputTokenBudget: parsedBudget }),
+      },
+    });
+    if (options.isJsonOutput) {
+      printJson(overview);
+    } else {
+      const metrics = overview.metrics;
+      process.stdout.write(
+        "coverage: matched=" +
+          String(overview.coverage.matchedEntryCount) +
+          "/total=" +
+          String(overview.coverage.totalEntryCount) +
+          "\n" +
+          "source: measured=" +
+          String(overview.usageSource.measuredEntryCount) +
+          " estimated=" +
+          String(overview.usageSource.estimatedEntryCount) +
+          (overview.usageSource.hasMissingUsage ? " (含未知用量)" : "") +
+          "\n" +
+          "tokens: input=" +
+          String(metrics.totals.inputTokenCount ?? "-") +
+          " output=" +
+          String(metrics.totals.outputTokenCount ?? "-") +
+          "\n" +
+          "billable-input=" +
+          String(metrics.billable.inputTokenCount ?? "-") +
+          " (excluded-estimated=" +
+          String(metrics.billable.excludedEstimatedCount) +
+          ")\n" +
+          "cost-estimate: " +
+          (overview.costEstimate.amountMinorUnits === null
+            ? "unavailable（" + String(overview.costEstimate.unavailableReason ?? "") + "）"
+            : String(overview.costEstimate.amountMinorUnits) +
+              " " +
+              overview.costEstimate.currency) +
+          "\n" +
+          "disclaimer: " +
+          overview.costEstimate.disclaimer +
+          "\n" +
+          (overview.budget === null
+            ? ""
+            : "budget: exceeded=" +
+              String(overview.budget.isExceeded) +
+              " consumed=" +
+              String(overview.budget.consumedTokenCount ?? "-") +
+              " budget=" +
+              String(overview.budget.inputTokenBudget) +
+              "\n") +
+          (overview.page === null
+            ? ""
+            : "page: " +
+              String(overview.page.entries.length) +
+              " next-cursor=" +
+              String(overview.page.nextCursor ?? "-") +
+              "\n"),
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr("用量概览查询失败（观测故障不得阻塞业务）: " + (error as Error).message);
+    return EXIT_CODES.FAILURE;
+  }
+}
+
+/**
  * PERF-01-03：性能最小概览（只读；由已落盘样本复算）。
  *
  * 纪律：查询**不发起任何 Provider/业务请求**；覆盖范围与样本窗口必须回显；

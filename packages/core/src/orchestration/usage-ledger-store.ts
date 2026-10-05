@@ -369,3 +369,112 @@ export function evaluateUsageBudget(
 export interface UserFacingUsageMetrics extends UsageAggregateMetrics {
   evaluateBudget: (input: { inputTokenBudget: number }) => UsageBudgetEvaluation;
 }
+
+export interface UsageOverviewQuery {
+  missionIdentifier?: string | null;
+  /** 可见范围：仅返回该具体个体的账目（不泄漏其他个体明细）。 */
+  sourceAgentInstanceId?: string | null;
+  detailLevel?: "summary" | "detail";
+  pageSize?: number;
+  cursor?: string;
+  /** 可选预算（token）；给出时做预算判定。 */
+  inputTokenBudget?: number | null;
+}
+
+export interface UsageOverviewResult {
+  coverage: {
+    totalEntryCount: number;
+    matchedEntryCount: number;
+    missionIdentifier: string | null;
+    sourceAgentInstanceId: string | null;
+  };
+  metrics: UserFacingUsageMetrics;
+  usageSource: {
+    measuredEntryCount: number;
+    estimatedEntryCount: number;
+    hasMissingUsage: boolean;
+  };
+  costEstimate: {
+    amountMinorUnits: number | null;
+    currency: string;
+    unavailableReason: string | null;
+    /** 免责说明：本地账目估算**不等于**官方余额/账单。 */
+    disclaimer: string;
+  };
+  budget: UsageBudgetEvaluation | null;
+  page: { entries: UsageLedgerEntry[]; nextCursor: string | null } | null;
+}
+
+/**
+ * 公开用量概览查询（USAGE-01-03）。
+ *
+ * 纪律：
+ *  - **不虚报余额**：只报告本地账目估算，并附免责说明；不提供"剩余额度/官方余额"字段；
+ *  - **不泄漏其他个体明细**：按 mission 与具体 agentInstanceId 过滤，明细页同样受限；
+ *  - **账目可复算**：纯函数聚合，同一账目多次查询结果一致；
+ *  - 只读：不发起任何 Provider/网络请求。
+ */
+export async function queryUsageOverview(input: {
+  store: UsageLedgerStore;
+  query?: UsageOverviewQuery;
+}): Promise<UsageOverviewResult> {
+  const query = input.query ?? {};
+  const allEntries = await input.store.readAll();
+  const matchedEntries = allEntries.filter((entry) => {
+    if (
+      query.missionIdentifier !== undefined &&
+      query.missionIdentifier !== null &&
+      entry.missionIdentifier !== query.missionIdentifier
+    ) {
+      return false;
+    }
+    if (
+      query.sourceAgentInstanceId !== undefined &&
+      query.sourceAgentInstanceId !== null &&
+      entry.sourceAgentInstanceId !== query.sourceAgentInstanceId
+    ) {
+      return false;
+    }
+    return true;
+  });
+
+  const metrics = aggregateUsageEntries(matchedEntries);
+  const detailLevel = query.detailLevel ?? "summary";
+  const page =
+    detailLevel === "detail"
+      ? input.store.paginate({
+          entries: matchedEntries,
+          pageSize: query.pageSize ?? 20,
+          ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+        })
+      : null;
+
+  const budget =
+    query.inputTokenBudget === undefined || query.inputTokenBudget === null
+      ? null
+      : metrics.evaluateBudget({ inputTokenBudget: query.inputTokenBudget });
+
+  return {
+    coverage: {
+      totalEntryCount: allEntries.length,
+      matchedEntryCount: matchedEntries.length,
+      missionIdentifier: query.missionIdentifier ?? null,
+      sourceAgentInstanceId: query.sourceAgentInstanceId ?? null,
+    },
+    metrics,
+    usageSource: {
+      measuredEntryCount: matchedEntries.filter((entry) => !entry.isEstimated).length,
+      estimatedEntryCount: matchedEntries.filter((entry) => entry.isEstimated).length,
+      hasMissingUsage: matchedEntries.some(
+        (entry) => entry.inputTokenCount === null || entry.outputTokenCount === null,
+      ),
+    },
+    costEstimate: {
+      ...metrics.costEstimate,
+      disclaimer:
+        "本数值为本地账目估算，**不等于**官方余额或账单；价格表缺失时不给出金额",
+    },
+    budget,
+    page,
+  };
+}

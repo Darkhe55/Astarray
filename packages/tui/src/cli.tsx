@@ -57,6 +57,7 @@ import {
   executeStatusCommand,
   executeWorkflowScenarioCommand,
   executePerfOverviewCommand,
+  executeUsageOverviewCommand,
 } from "./cli/commands.js";
 
 const program = new Command();
@@ -172,6 +173,45 @@ program
       stateDirectory: defaultStateDirectory(),
     });
   });
+
+/**
+ * USAGE-01-03：用量最小概览（只读；由已落盘账目复算；不虚报官方余额，不泄漏他人明细）。
+ */
+const usageCommand = program.command("usage").description("用量概览（只读；由已落盘账目复算）");
+usageCommand
+  .command("overview")
+  .description("用量最小概览：范围/明细分页/预算（只报本地账目估算，不冒充官方余额）")
+  .option("--mission <mission-id>", "限定可见范围（mission）")
+  .option("--agent <agent-instance-id>", "限定可见范围（具体 agentInstanceId，避免读取他人明细）")
+  .option("--detail <level>", "summary | detail（缺省 summary）")
+  .option("--page-size <count>", "detail 模式每页条数（缺省 20）")
+  .option("--cursor <cursor>", "detail 模式分页游标（上一页 nextCursor）")
+  .option("--input-token-budget <tokens>", "可选输入 token 预算（给出时做预算判定）")
+  .option("--json", "JSON 输出")
+  .action(
+    async (options: {
+      mission?: string;
+      agent?: string;
+      detail?: string;
+      pageSize?: string;
+      cursor?: string;
+      inputTokenBudget?: string;
+      json?: boolean;
+    }) => {
+      process.exitCode = await executeUsageOverviewCommand({
+        stateDirectory: defaultStateDirectory(),
+        isJsonOutput: options.json === true,
+        ...(options.mission === undefined ? {} : { missionIdentifier: options.mission }),
+        ...(options.agent === undefined ? {} : { sourceAgentInstanceId: options.agent }),
+        ...(options.detail === undefined ? {} : { detailLevel: options.detail }),
+        ...(options.pageSize === undefined ? {} : { pageSize: options.pageSize }),
+        ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+        ...(options.inputTokenBudget === undefined
+          ? {}
+          : { inputTokenBudget: options.inputTokenBudget }),
+      });
+    },
+  );
 
 /**
  * PERF-01-03：性能最小概览（只读；由已落盘样本复算；不发起任何 Provider/业务请求）。
