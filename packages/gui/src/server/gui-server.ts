@@ -158,6 +158,11 @@ export interface GuiServerOptions {
   /** 0 = 由操作系统分配端口。 */
   port?: number;
   csrfTokenFactory?: () => string;
+  /**
+   * SMART-01-04 / OBS 入口补做：可观测性概览的只读状态目录。
+   * 未提供时不暴露 /observability 端点（保持既有行为不变）。
+   */
+  observabilityStateDirectory?: string;
 }
 
 export interface GuiServerHandle {
@@ -720,6 +725,61 @@ export async function startGuiServer(
         200,
         await applicationService.queryRecoveryOverview(),
       );
+      return;
+    }
+    /**
+     * SMART-01-04 / OBS 入口补做：只读可观测性概览（性能/用量/诊断/跨项目）。
+     *
+     * 纪律：仅 GET；**严格只读**（只读已落盘样本与账目，不写盘、不注入任务、不联网）；
+     * 无法测量时如实回传 isReportable=false 与原因，**不报 0**。
+     */
+    if (requestUrl.pathname === "/observability") {
+      const observabilityStateDirectory = options.observabilityStateDirectory;
+      if (observabilityStateDirectory === undefined) {
+        writeCapabilityUnavailable(response);
+        return;
+      }
+      if (request.method !== "GET") {
+        writeJsonResponse(response, 405, { error: "只读端点仅接受 GET" });
+        return;
+      }
+      const { PerfEventStore, queryPerfOverview } = await import(
+        "../../../core/src/orchestration/perf-event-store.js"
+      );
+      const { UsageLedgerStore, queryUsageOverview } = await import(
+        "../../../core/src/orchestration/usage-ledger-store.js"
+      );
+      const { DiagnosticEventStore, queryDiagnosticSummary } = await import(
+        "../../../core/src/orchestration/diagnostic-event-store.js"
+      );
+      const { CrossProjectAuthorizationStore, summarizeCopyReceipts } = await import(
+        "../../../core/src/orchestration/cross-project-authorization-store.js"
+      );
+
+      const performance = await queryPerfOverview({
+        store: new PerfEventStore({ baseDirectory: observabilityStateDirectory }),
+      });
+      const usage = await queryUsageOverview({
+        store: new UsageLedgerStore({ baseDirectory: observabilityStateDirectory }),
+      });
+      const diagnostics = await queryDiagnosticSummary({
+        store: new DiagnosticEventStore({ baseDirectory: observabilityStateDirectory }),
+      });
+      const crossProjectStore = new CrossProjectAuthorizationStore({
+        baseDirectory: observabilityStateDirectory,
+      });
+      const crossProject = {
+        authorizations: await crossProjectStore.listAuthorizations(),
+        copyReceipts: await summarizeCopyReceipts({ store: crossProjectStore }),
+      };
+
+      writeJsonResponse(response, 200, {
+        isReadOnly: true,
+        performance,
+        usage,
+        diagnostics,
+        crossProject,
+      });
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/verifications") {

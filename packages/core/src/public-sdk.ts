@@ -12,6 +12,93 @@ import path from "node:path";
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
 // 否则 runtime: "provider" 在打包产物上不可用。
+// ─── OBS-01 / SMART-01 / PROJECT-01 公开入口（四入口之 SDK）───
+// SDK 消费者必须能只用公开 exports 查询性能/用量/诊断概览与跨项目授权（不得依赖内部路径）。
+export {
+  MINIMUM_SAMPLE_SIZE_FOR_DURATION_REPORTING,
+  PerfEventStore,
+  aggregatePerfSamples,
+  derivePerfAlerts,
+  isPerfSampleEvent,
+  paginatePerfSamples,
+  queryPerfOverview,
+  type PerfAggregateMetrics,
+  type PerfAlert,
+  type PerfAlertKind,
+  type PerfEventEnvelope,
+  type PerfIntegrityReport,
+  type PerfOverflowReport,
+  type PerfOverviewQuery,
+  type PerfOverviewResult,
+  type PerfSampleEvent,
+  type PerfSamplePage,
+} from "./orchestration/perf-event-store.js";
+export {
+  UsageLedgerStore,
+  aggregateUsageEntries,
+  evaluateUsageBudget,
+  queryUsageOverview,
+  type UsageAggregateMetrics,
+  type UsageAppendOutcome,
+  type UsageAppendResult,
+  type UsageBudgetEvaluation,
+  type UsageLedgerEntry,
+  type UsageOverviewQuery,
+  type UsageOverviewResult,
+  type UserFacingUsageMetrics,
+} from "./orchestration/usage-ledger-store.js";
+export {
+  DiagnosticEventStore,
+  aggregateDiagnosticEvents,
+  buildRedactedDiagnosticBundle,
+  computeDiagnosticFingerprint,
+  queryDiagnosticSummary,
+  redactSensitiveText,
+  type DiagnosticAggregateMetrics,
+  type DiagnosticEvent,
+  type DiagnosticEventClassification,
+  type DiagnosticFinding,
+  type DiagnosticGroup,
+  type DiagnosticRetentionReport,
+  type DiagnosticSummary,
+  type DiagnosticSummaryQuery,
+  type RedactedDiagnosticBundle,
+} from "./orchestration/diagnostic-event-store.js";
+export {
+  InstructionWindowStore,
+  type InstructionReceipt,
+  type InstructionRecord,
+  type InstructionState,
+  type InstructionWindowSnapshot,
+} from "./orchestration/instruction-window-store.js";
+export {
+  classifyModelStop,
+  extractClarificationAnswer,
+  resolveMissingReceipt,
+  type ClarificationExtraction,
+  type ModelStopClassification,
+  type ModelStopClassificationKind,
+  type MissingReceiptResolution,
+} from "./orchestration/instruction-stop-recovery.js";
+export {
+  MAIN_AGENT_DISPATCH_DEADLINE_MILLISECONDS,
+  buildBackfillPlan,
+  evaluateInstructionDeadline,
+  type BackfillPlan,
+  type InstructionDeadlineEvaluation,
+  type InstructionDeadlineKind,
+} from "./orchestration/main-agent-deadline-supervisor.js";
+export {
+  CrossProjectAuthorizationStore,
+  CrossProjectTransferService,
+  evaluateEffectiveCrossProjectPermission,
+  summarizeCopyReceipts,
+  type CrossProjectAuthorizationRecord,
+  type CrossProjectCopyReceipt,
+  type CrossProjectPermissionEvaluation,
+  type CrossProjectReadResult,
+} from "./orchestration/cross-project-authorization-store.js";
+
 export {
   PROVIDER_RUNTIME_CAPABILITIES,
   ProviderConfigurationError,
