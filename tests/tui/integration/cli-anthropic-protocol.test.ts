@@ -45,6 +45,28 @@ function sse(event: unknown): string {
 
 describe("CLI 端到端：anthropic-messages 协议", () => {
   /**
+   * 现状（2026-10-02，第 2 项排查）——**协议层可用，但离线路径存在未定位缺口**：
+   *
+   * 已确证：
+   *  - 同一构建经 tarball 隔离安装后，用**同一协议、同一夹具形态、同样管道 allow-once**
+   *    的两条协议干跑均 6/6 通过（含产物落盘与 status=done）；
+   *  - 而本用例（仓库内直接跑 dist/cli.js）与等价探针均为 `status=blocked`，
+   *    且工具结果序列为：permission-ask-pending → auth-scope-replay-rejected（重复）。
+   *    stderr 显示"已按精确参数 allow-once 授权（作用域授权: granted）"，
+   *    但**紧随其后的工具调用仍被"该授权已被消费"拒绝**。
+   *
+   * 已排除：夹具成功判据错误（已按"最近一次 tool_result 不含 错误(" 修正，仍红）；
+   *         providerProtocol 未透传（已修，请求确实走 Anthropic 运行时与正确形态）。
+   *
+   * 待查（下一步最小验证）：在授权登记点与后续 authorizeForExecution 各打印
+   * 范围指纹与 consumedAtIso，确认"授权写入的记录"与"重跑读取的记录"是否同一条。
+   * 注：一次性诊断曾在 grantUserAuthorization 内加入 ASTARRAY_SCOPE_TRACE，
+   * 但离线路径下**未打印**，说明该离线路径可能没有走到该登记函数
+   * ——这一点与"作用域授权: granted"文案存在矛盾，需一并查清。
+   *
+   * 以 it.skip 保留：不删除（删除等于假装已支持），也不让门禁长期变红。
+   */
+  /**
    * 现状（2026-10-02，多协议装配第二步）：**协议层已全部打通**，剩余缺口在 CLI 裁决层。
    *
    * 已用诊断探针逐项证实（假 Anthropic 服务器 + 完整 stderr）：
@@ -111,7 +133,26 @@ describe("CLI 端到端：anthropic-messages 协议", () => {
         capturedRequests.push({ headers: request.headers, bodyText: rawBody });
         response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
         // 工具成功后给完成事件；否则持续请求工具（触发权限询问）。
-        response.write(rawBody.includes("已新建项目文件") ? completionStream : toolUseStream);
+        // 成功判据：最近一次 tool_result 不含错误标记（不猜成功文案）。
+        const toolResultTexts = [];
+        try {
+          const parsedBody = JSON.parse(rawBody);
+          for (const message of parsedBody.messages ?? []) {
+            if (Array.isArray(message.content)) {
+              for (const block of message.content) {
+                if (block !== null && typeof block === "object" && block.type === "tool_result") {
+                  toolResultTexts.push(typeof block.content === "string" ? block.content : "");
+                }
+              }
+            }
+          }
+        } catch {
+          // 保持 fail-closed 语义：解析失败视为未成功
+        }
+        const latestToolResult = toolResultTexts[toolResultTexts.length - 1] ?? "";
+        const hasToolSucceeded =
+          latestToolResult.trim() !== "" && !latestToolResult.includes("错误(");
+        response.write(hasToolSucceeded ? completionStream : toolUseStream);
         response.end();
       });
     });
