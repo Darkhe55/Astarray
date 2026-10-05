@@ -80,11 +80,41 @@
 
 遗留与未主张完成项：
 
-- **SMART-01-04 范围缺口**：卡内验收含"SDK/CLI/TUI/GUI 入口和包验收"与"模拟慢模型/长下级任务真实运行实测"。本批交付**判定层 + 反例**；四入口交互式验收、真实运行实测、该检查点 tarball 包验收**尚未执行**，不主张完成。
-- **负载抖动**：满载门禁中 `summary-cli`、`cli-commands`、`context-runtime-cache-events`、`application-sdk-task-events` 等偶发超时失败，独立运行均通过；建议单独立检查点处理并发/超时预算。
+- **SMART-01-04 入口与包验收**：已补做完成，见下节「入口与包级验收补做」。
+- **SMART-01-04 真实运行实测**："模拟慢模型/长下级任务仍能接收新指令"的**真实运行**实测仍未执行（需真实运行环境/可能需用户参与）；本批交付判定层与反例，不主张该项完成。
+- **负载检查（明确延后）**：满载门禁中 `summary-cli`、`cli-commands`、`context-runtime-cache-events`、`application-sdk-task-events`、`provider-fake-server` 等偶发超时失败，独立运行均通过。经用户决定，**负载/并发预算检查留到正式上线前进行**，本批不处理。
 - 计划外未动项：T07D-R2-04 正向闭环、`auth-scope-replay-rejected`（已收窄至 CLI 接线未修；门禁层正确性由 `tests/core/integration/scope-authorization-regrant.test.ts` 3/3 通过证明）、CLI 结果后进程滞留（`it.skip`）、Anthropic 离线端到端用例（`it.skip`）、BRIDGE-01 / GUI-01-R / WB-00。
 
 本批真实 Provider 额度消耗：**0**（全程离线）。
+
+### 2026-10-02 — 入口与包级验收补做（用户指示补做缺口，负载检查延后）
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `npm run check`（入口补做轮） | 0 | 282 文件通过 + 1 跳过；2132 用例通过 + 2 跳过 |
+| `npm run verify:observability-entry-package` | **0** | **8/8 项通过**（tarball 隔离安装 + 四入口实跑 + 只读性） |
+| `npm run check`（包验收轮） | 1 | 抖动：`provider-fake-server` 53s；隔离运行 6/6 通过 |
+| `npm run test:scripts` | 0 | tests 5（scripts/lib 单元测试） |
+
+入口补做（提交 `41450b9`）：
+
+- **SDK 入口**：`public-sdk.ts` 显式 re-export 本批七组模块（性能/用量/诊断/指令窗口/停止恢复/期限监督/跨项目），
+  消费者仅用公开 exports 即可查询，不依赖内部路径。反例 `tests/core/integration/sdk-entry-surface.test.ts` 4 条。
+- **GUI 入口**：`GuiServerOptions.observabilityStateDirectory`（未提供则不暴露，既有行为不变）+
+  `GET /observability` 回传 performance/usage/diagnostics/crossProject；仅接受 GET；**严格只读**；
+  不可测量时如实回传 `isReportable=false` 与原因。反例 `tests/gui/integration/gui-observability-overview.test.ts` 5 条
+  （含"GET 后状态目录文件集合与内容均不变"）。
+- **CLI/TUI 入口**：`tests/tui/integration/cli-observability-entry.test.ts` 6 条（真实子进程、cwd 隔离）覆盖
+  `perf overview` / `usage overview` / `doctor --errors` / `doctor --bundle` / `cross-project list` 均 exit 0
+  且**不创建状态目录**，非法参数仍为退出码 2。
+
+包级验收（提交 `97a7256`）：
+
+- 新增 `scripts/verify-observability-entry-package.mjs` + `npm run verify:observability-entry-package`；
+  `npm pack --ignore-scripts`（默认跳过 prepack 以保证哈希可复现，`--run-prepack` 可开启）→ 隔离安装 →
+  用**已安装包**的 `node_modules/astarray/dist/cli.js` 实跑五条入口 → 断言只读性 → 落盘 `acceptance-verdict.json`。
+- 本次实测：tarball `astarray-0.1.0.tgz`（1088722 字节，`sha256=429fe8fd9753b9cd…`），来源提交 `41450b9`；
+  8/8 项通过，其中**只读性一项实测确认概览查询未创建 `.astarray` 状态目录**；真实额度消耗 0。
 
 ## 历史设计与验收记录
 
