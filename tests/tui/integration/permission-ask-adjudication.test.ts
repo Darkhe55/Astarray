@@ -9,6 +9,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  InteractivePermissionAskDecisionPort,
   buildPermissionAskFromEscalation,
   hasDecisionInputChannel,
   runPermissionAskAdjudication,
@@ -142,9 +143,6 @@ describe("裁决输入通道判定", () => {
   });
 
   it("注入端口时：无输入通道 → isInteractive=false（fail-closed，不读取、不授权）", async () => {
-    const { InteractivePermissionAskDecisionPort } = await import(
-      "../../../packages/tui/src/cli/permission-ask-adjudication.js"
-    );
     const port = new InteractivePermissionAskDecisionPort({
       isInteractive: () => false,
       hasDecisionInput: () => false,
@@ -160,9 +158,6 @@ describe("裁决输入通道判定", () => {
   });
 
   it("注入端口时：管道输入 allow-once → 授权；其他输入 → 拒绝", async () => {
-    const { InteractivePermissionAskDecisionPort } = await import(
-      "../../../packages/tui/src/cli/permission-ask-adjudication.js"
-    );
     const ask = {
       taskIdentifier: "T-001",
       toolName: "createProjectFile",

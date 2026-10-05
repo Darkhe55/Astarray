@@ -7,7 +7,10 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// 真实文件 I/O + 真实定时器：全量并行时放宽超时（仍为有界）。
+vi.setConfig({ testTimeout: 20_000 });
 
 import type { ApplicationRuntime } from "../../../packages/core/src/application/application-runtime.js";
 import { AstarrayApplicationFacade } from "../../../packages/core/src/public-sdk.js";

@@ -3,21 +3,84 @@
 > 愿星光破开迷途。
 > May starlight pierce the path astray.
 
-仓库目录职责与最近一次整理记录见 [`ORGANIZATION.md`](./ORGANIZATION.md)。
+面向长任务的多 Agent 编排工具，提供 CLI/TUI、本地 GUI 和 Node.js SDK。设计分工为主 Agent 交流与总体规划、次级调度和项目集成、三级执行任务，必要时受控委派四级。每个具体 Agent 独立存档，通过带来源的消息和附件协作。
 
-TUI Agent 编排工具：单一主 Agent + Ponder / Assist / Devolve 三种内置模式，并支持用户创建不限数量的命名自定义权限模式。主 Agent 将任务转交本地会话控制器后立即恢复接收用户输入；三级 Agent（主 → 次级调度/集成 → 三级执行）通过**独立反馈进程**解耦通信。
+**版本：0.1.0，仍处于产品接线、真实服务验证与验收收口阶段。** 本页于 **2026-10-01** 根据当前源码和仓库证据更新，不是对当前未提交工作树的全量测试声明。设计、实现、离线验证和真实服务验收不能互相替代。
 
-默认流程中，主 Agent 持续和用户交流、评估并提交任务插入提案，不等待后台执行或后台汇报。次级 Agent 按自己的任务偏序集持续调度，决定复用或新建三级 Agent，并统一负责 Git 分支、审查、合并以及获授权的 GitHub/远端项目操作。三级 Agent 一次只处理一条任务链，完成或中断后向所属次级 Agent 汇报。次级汇总结果只进入主 Agent 的报告存档；主 Agent 在后续用户对话确有需要时才读取。
+## 当前进展
 
-每个 Agent 个体使用不可复用的 `agentInstanceId` 独立保存记忆、工作存档、上下文、缓存和消息视图。同级 Agent 也不共享文件或上下文。跨 Agent 只传递明确选择、带来源与哈希的只读附件；附件仅服务当前任务，不会自动并入接收方长期记忆。
+| 能力 | 当前可确认范围 | 限制 |
+|---|---|---|
+| CLI/TUI、npm 包 | 已有 mock 任务路径、状态和配置入口，Windows tarball 隔离验收记录 | mock 不代表真实模型任务能力 |
+| Node SDK | 已接入共用应用运行时，公开 Provider 注册、任务及诊断入口；已有包级消费者证据 | 宿主负责适用的授权交互与真实用户认证 |
+| 独立反馈 | SDK 的 provider 路径默认独立进程，已有默认路径测试 | 当前仍允许显式覆盖；mock 默认不同 |
+| Provider | CLI 接受 openai-compatible；fake-server/工具循环已有证据，真实只读探针达到 done | “受控改动＋任务 done”真实闭环仍待收口，不代表所有厂商支持 |
+| 上下文与恢复 | 已有预算、关闭/回访组件及 context、recover 产品入口 | 实际续接和恢复预览不同，组合故障场景仍需验证 |
+| 摘要与运行引导 | 已有 summary、guide 入口及接线报告 | 不等于智能指令窗口和完整历史回溯已实现 |
+| 多格式代码读取 | C 系、Python、Rust、前端、LaTeX 等策略已有隔离包证据 | 不等于办公文档布局语义提取已完成 |
+| 本地 GUI / 外部桥接 | 已有 gui、mcp serve；GUI 服务器、SSE、设置/恢复及 Windows 包验证记录 | 人工体验、其他平台和真实服务分别验收；不代表全部外部协议支持 |
 
-次级和三级 Agent 第一次取得某工具组时接收完整公开用法；后续相同 revision 只收到标准帮助请求提醒。忘记用法时按 `ASTARRAY_TOOL_HELP_REQUEST_V1` 请求单工具说明，缺少能力时逐级上报，三级默认先报所属次级。Agent 实例没有累计或同级产品数量配额，资源不足时进入队列。直属上级经授权可把直属低一级 Agent 的限定沟通句柄交给具体同级 Agent，但不会同时转移任务、记忆、工具、Git 或权限。
+主要证据：
 
-每个调度 Agent 还在自己的记忆存档域维护独立的待办任务偏序集。任务发布者可指定前驱/后继插入位置；用户任务默认处于最高优先层，Agent 或工具自动生成的任务只能处于第二层或以下。次级 Agent 可将一条依赖链打包给三级 Agent；用户与获授权发布者可通过只读状态工具随时查看顺序、阻塞原因和任务包进度。该序列不替代项目任务文档或产出追踪。
+- [SDK 默认反馈进程与 Provider 公开入口](docs/reports/SDK_DEFAULT_FEEDBACK_PROCESS_AND_PROVIDER_EXPORTS_2026-09-28.md)
+- [SDK 授权端口与身份绑定](docs/reports/SDK_AUTHORIZATION_PORTS_AND_IDENTITY_2026-09-28.md)
+- [真实 Provider 阶段证据及限制](docs/reports/T07D_R2_04_LIVE_PROVIDER_EVIDENCE_2026-10-01.md)
+- [多格式读取包级验证](docs/reports/READ_FORMAT_05B_PACKAGE_AND_METRICS.md)
+- [运行引导产品入口](docs/reports/GUIDE01_04_PRODUCT_ENTRY.md)
+- [GUI Windows 打包证据](docs/reports/GUI01_R_04B_WINDOWS_PACKAGING_EVIDENCE_2026-09-19.md)
 
-规划中的上下文节点关闭机制会把历史分成全局决策库、长度受限的当前任务全局上下文，以及每个 Agent 独占的局部上下文偏序图。局部节点及所有必要分支完成后，关键设计理由、接口约定和长期约束先提升为带来源与版本的全局记录；每轮只注入与当前任务高度相关的最小必要内容。模型可见全局上下文默认上限为4096个估算token，认证用户可在设置中调高、调低或设为0；实际可用量还会为系统规则、当前任务和输出预留空间。无关内容和超出预算的详情进入按Agent/任务隔离的延后上下文文件，遇到相关任务时再受控读取。完整局部历史退出普通模型提示词但不会被删除；模型需要时可通过结构化回访按“索引、关闭胶囊、选定证据、完整片段”逐级恢复。
+状态表和旧卡仍有历史 pending/done 与后续报告未同步的记录。冲突时核对具体提交、检查点及动态证据，不按标题判断整项完成。实施顺序见 [产品 rollout](docs/tasks/PRODUCT_INTEGRATION_ROLLOUT.md)。
 
-人工验收的推进策略可以配置：协同模式默认阻塞依赖任务直到用户验收，放权模式默认继续执行并自动建立后续人工核验任务。协同模式也可由认证用户关闭阻塞，放权模式可改为阻塞。延迟核验节点会明确标记为“待人工追认”，不得显示为用户已经验收；事后否决会重新开放相关上下文并生成返修任务。
+## Agent 编排与通信连接图
+
+2026-10-05 静态核查：已有分层调度、定向反馈、个体来源与四级绑定组件；**尚不能宣称主—次级全连接及全入口唯一上级已完整落地**。下图展示当前代码对应的结构与可选组件，不是所有连接均已通过产品验收。字母仅为示例，实际对象必须按不可复用的 `agentInstanceId` 寻址。
+
+```mermaid
+flowchart TD
+    U[用户] <--> M[主 Agent M：沟通与总体规划]
+    M -->|定向任务提案| C[本地控制面：认证、派发、路由]
+    C --> S1[次级 S1：项目与任务调度]
+    C --> S2[次级 S2：另一任务调度]
+    S1 --> T1[三级 T1：实现]
+    S1 --> T2[三级 T2：测试或独立验收]
+    S2 --> T3[三级 T3：执行]
+    T1 -.->|可选四级委派组件| Q1[四级 Q1：严格子链]
+    T1 -.->|可选四级委派组件| Q2[四级 Q2：严格子链]
+    S2 -.->|受权通信转交组件：产品接线待核实| T2
+    T1 --> F[反馈传输：独立进程路径]
+    T2 --> F
+    T3 --> F
+    F -->|按具体收件人投递| S1
+    F -->|按具体收件人投递| S2
+    S1 --> R[主 Agent 个体报告索引]
+    S2 --> R
+    R -->|用户后续交流时按需读取，不主动唤醒| M
+```
+
+实线表示已有主要控制/报告路径，虚线表示可选组件，不能据此推断已在所有产品入口接通。反馈框是传输设施，不是额外 Agent；其扇入扇出不代表全员广播或共享记忆。SDK provider 默认独立反馈进程，显式覆盖与 mock 路径的差异仍见上方当前进展。
+
+### 新增目标：上层受控全连接，下层唯一上级（待实施）
+
+```mermaid
+flowchart TD
+    M1[主 M1：项目 A] <-->|同项目默认可达| S1[次级 S1：项目 A]
+    M1 <-.->|项目 B 主 Agent 或用户授权| S2[次级 S2：项目 B]
+    M2[主 M2：项目 B] <-.->|项目 A 主 Agent 或用户授权| S1
+    M2 <-->|同项目默认可达| S2
+    M1 <-.->|授权后只读查询与建议| M2
+    S1 <-.->|授权后只读查询与建议| S2
+    S1 <-->|唯一直属上级| T1[三级 T1]
+    S1 <-->|唯一直属上级| T2[三级 T2]
+    S2 <-->|唯一直属上级| T3[三级 T3]
+    T1 <-->|唯一直属上级| Q1[四级 Q1]
+    T1 <-->|唯一直属上级| Q2[四级 Q2]
+```
+
+目标图的所有边均由本地控制面和独立反馈进程路由，不是模型间直连。**同项目的主层与次级层默认全连接，不逐边申请通信授权；跨项目按需连接，须目标项目有权主 Agent 或用户授权。** 单会话仍只有一个主 Agent；同项目多个会话的主 Agent 均可定向联系本项目次级，但不共享会话历史。跨项目授权仅覆盖明确对象/范围及关联回复，可到期、撤销，不自动开放两个项目全网。全连接不表示默认广播、同层全互通、任务控制权转移或跨项目文件权限。
+
+三级、四级执行者只向唯一直属上级请示和报告；其他 Agent 的协作请求经直属上级代理转达，保留原始来源，不额外形成指挥关系。模型不负责猜测接收者，路由由本地身份、项目/会话、任务和关系 revision 校验。任务卡：[COMM-01 上层寻址与唯一上级](docs/tasks/COMM01_ADDRESSABLE_UPPER_LAYER_AND_SINGLE_PARENT_TASK_CARD.md)（pending，含旧转交规则迁移、测试与实施顺序）。
+
+**所有跨项目连接仅限授权范围内的只读查询、资料交流与建议，放权模式也不例外。** 主—主、次级—次级可以申请同层建议通道；三级/四级经唯一上级代理沟通。外来 Agent 不能直接修改目标项目，也不能借建议自动触发命令、文件、配置、任务队列或 Git 变更。目标项目有权 Agent 独立采纳建议后，才按本项目权限创建任务并执行；通信许可不代替资源读取或执行授权。
 
 ## 优化目标
 
@@ -28,146 +91,165 @@ TUI Agent 编排工具：单一主 Agent + Ponder / Assist / Devolve 三种内�
 3. **提高并发调用数量**——并发与调度仅受队列、回收和资源约束，不对历史 Agent 实例数量设产品配额；多 Worker、独立反馈进程与信箱机制支撑横向扩展。
 4. **多 Agent 沟通架构**——主 Agent 与子 Agent 脱离：任何时刻都可与主 Agent 通信但不打断任务进行。反馈进程独立运行，报告只入存档、不自动唤醒主 Agent。
 5. **安全与确定性基线**（支撑以上目标的约束）：思索模式本地只读、敏感操作本地判定、全模式敏感文件禁读、安装双重门禁、可配置权限模式、明确完成控制事件与早停恢复、事实验证与反自指/活锁防护。
+6. **只需一次方案部署，后续相同场景终身自动化**——将已验证方案沉淀为可复用工作流，在适用条件和有效授权范围内持续自动执行；场景、权限或关键依赖变化时重新校验，避免重复规划与部署。
 
 上下文优化不只观察普通缓存命中率，还会衡量可复用 token 比率、已关闭上下文的 token 节省率、关闭节点回访率、同一 revision 重复回访率、过早关闭率，以及延迟人工验收被否决后的下游影响范围。
 
 ## 安装与快速开始
 
-需要 Node.js ≥ 20（支持 Windows / macOS / Linux）。
+package.json 声明 **Node.js ≥20**。主要已有动态证据来自 Windows / Node 24；引擎声明不等于所有版本和平台已验收。本轮未核验 npm 注册表发布状态，推荐从源码或本次已验证 tarball 使用，不将注册表同名包当作本地最新版。
 
-```powershell
-npm install -g astarray
-# 或本地安装后：
-npx astarray --help
-```
+### 从源码运行
 
-开发环境：
+已有依赖可用时无需重复安装；npm ci 会安装依赖，应先确认资源和安装授权。
 
-```powershell
-npm install
+~~~powershell
+npm ci
 npm run check
 node dist/cli.js --help
-```
+node dist/cli.js run "验证本地任务流程" --mode assist --runtime mock --json
+node dist/cli.js status --json
+~~~
 
-### 冒烟验证
+TTY 下运行 node dist/cli.js 进入 TUI；本地浏览器工作台：
 
-```powershell
-npx astarray doctor --json
-npx astarray run "分析当前项目" --mode assist --runtime mock --json
-```
+~~~powershell
+node dist/cli.js gui --runtime mock
+# 仅启动服务，不自动打开浏览器
+node dist/cli.js gui --runtime mock --no-open
+~~~
 
-## 内置模式、自定义模式与权限模型
+GUI 是本地 loopback 服务，不应直接暴露为公网多用户服务。
 
-> 设计状态：可配置权限组、自定义模式、Assist 安装流程、默认控制流、Agent 个体记忆隔离和工具说明回访/通信转交仍待实现与动态验收；当前发布包尚未完整提供这些能力。
+### 打包与隔离验收
 
-| 模式 | 中文名 | 权限 | 行为 |
-|---|---|---|---|
-| `ponder` | 思索模式 | 本地只读白名单 | 可查看工作区项目文件、检索文本、查询只读任务状态，并按高严谨性策略使用专用事实搜索代理；不能编辑、使用通用网络、执行进程或访问备份工具，不产生项目/任务状态文件 |
-| `assist` | 协同模式 | 白名单 + 门禁询问 | 受限工具调用前必须询问用户；安装先询问是否已有资源，再受独立开关和逐次授权约束 |
-| `devolve` | 放权模式 | 默认全部直接允许 | 每项可配置权限都可单独改为禁止、询问或直接允许 |
+~~~powershell
+npm pack
+node scripts/verify-package.mjs ./astarray-0.1.0.tgz
+node scripts/smoke-install.mjs
+~~~
 
-- Devolve 设置页会列出所有可配置权限，每项可选“禁止 / 询问 / 直接允许”，出厂默认全部直接允许。Assist 使用另一套独立默认矩阵；Ponder 权限不可修改。
-- 用户可以创建、命名、复制和逐项定制任意数量的自定义权限模式。模式以不可变 ID 区分，名称可修改并用于界面识别；自定义模式数量不设产品上限。
-- 权限组和当前会话临时提升只决定次级 Agent 的权限上限；主 Agent 始终只能使用读取工具。次级 Agent 分配给三级 Agent 的权限不能超过自己的当前有效权限。
-- 用户可临时提升当前会话中全部现有及后续次级 Agent 的某项权限，也可只限定某个具体次级 Agent；关闭会话即失效。关闭时可把会话级公开有效权限导出为 JSON 或新的命名自定义模式，个体差异可选择分别导出。
+使用 npm pack 本次实际输出文件名，版本变化时同步调整。prepack 会运行 npm run check；隔离安装脚本可能调用 npm，应先检查缓存及安装/网络条件，不隐式下载。
 
-- Assist 在需要代码库、项目依赖、运行时、插件、工具链或系统包之前，必须先询问用户是否已有可复用资源。用户提供现有资源时只做只读兼容性验证；只有用户明确确认没有，且设置中的独立安装开关已开启，才可提出一次精确安装申请。开关不是授权，每次安装仍需用户 `allow-once`，不能由会话授权或 Agent 判断替代。
-- 高严谨性任务必须生成事实证据包，按“资料搜索 > 本地实验 > 纯推理”展示来源、冲突和局限。证据只供用户判断，工具不自动宣布最终合格。
-- 同一 Agent/任务默认 30 秒内重复读取未变化且已覆盖的文件时，本地返回已有读取回执而不重复正文；工具环、Agent 回派环和连续无进展重试会被有界暂停。
-- 参数变更后必须二次鉴权；模式降级后所有后续调用按新模式重新鉴权。
+需要全局安装时，在取得安装授权后使用已验收的本地包：
 
-## Provider 配置
+~~~powershell
+npm install -g ./astarray-0.1.0.tgz
+astarray --help
+~~~
 
-当前状态（T07D-00 审计，2026-08-22）：**仅 `mock` 运行时处于产品可用路径**（确定性、无凭据、可离线验证，`npm run check` 与 tarball 隔离安装全绿）。
+## Provider 接入
 
-`openai-compatible` 适配器仅存在代码（`packages/core/src/runtime/openai-compatible-runtime.ts`），支持等级为 **adapter-only**：尚未通过 fake-server 契约测试、非增量流式（缓冲全流解析）、未进入 CLI/TUI 产品路径、无生产代码读取环境变量。**当前不可宣称支持**。README 中既往的环境变量示例不构成可用配置。
+CLI 协议运行时名称为 openai-compatible；SDK 使用 runtime: "provider" 并注入公开的 ProviderRuntimeRegistry。这是协议接入，不表示仅支持某一家服务，也不代表所有兼容服务都已验收。
 
-真实 Provider 接入按 `docs/tasks/T07D_PROVIDER_RUNTIME_AND_STANDALONE_AGENT_TASK_CARD.md` 检查点推进（协议端口 → 增量流 → 厂商适配 → 产品装配 → 纵向闭环 → Public SDK）。支持矩阵与验证证据见 `docs/tasks/T07D00_PROVIDER_AUDIT.md`。
+真实调用先配置受保护凭据引用，并确认网络、模型和费用授权：
 
-API key 永不进入日志、错误、快照或交付报告（脱敏层见 `packages/core/src/infra/redaction.ts`）。
+~~~powershell
+node dist/cli.js config provider credential-set --help
+node dist/cli.js config provider register --help
+node dist/cli.js run --help
+~~~
 
-## 状态目录与恢复
+使用已配置引用的命令模板，须替换占位值：
 
-状态位于 `.astarray/`（当前工作目录）：
+~~~powershell
+node dist/cli.js run "一个明确的小任务" --mode assist --runtime openai-compatible --provider-model "<model-id>" --provider-credential-reference "<reference-id>" --timeout-seconds 120
+~~~
 
-```text
-.astarray/
-├─ agent-memory/<agentInstanceId>/ # 每个具体 Agent 独占的记忆、任务序列和个体命名空间
-├─ missions/<missionId>/
-│  ├─ task-chain.json      # 版本化任务链（schema_version + 单调 revision）
-│  ├─ task-chain.json.bak  # 原子替换备份
-│  ├─ summary.json         # mission 概要（模式/提示词/状态）
-│  └─ agents/<agentInstanceId>/work-archive.json # 个体 mission 工作存档
-├─ reports/main/<agentInstanceId>/ # 主 Agent 个体的只读后台报告索引，不等同于个人记忆
-├─ feedback/mailboxes/     # 反馈进程持久化信箱
-└─ config.json             # config init 生成
-```
+- 端点按当前实现使用完整请求 URL；需要显式提供时使用 --provider-endpoint，不假定自动补全请求路径。
+- 环境变量入口为 --provider-api-key-env <变量名>；不要把密钥写进提示词、命令字面量、日志或提交。优先使用受保护凭据引用。
+- Provider 目录登记与实际运行解析仍有接线限制，不能认为只登记名称即可自动选中模型/端点。
+- 真实只读探针已有成功；受控写入闭环、多入口真实一致性和多模态仍有未验证范围，详见阶段报告。
+- 协同交互首次验收建议使用 TTY，每次授权核对具体参数；管道 EOF、多次裁决和重试仍需对应证据，不能复用旧输入冒充新授权。
+- 工具成功、模型声称完成和本地任务 done 是不同证据，必须核对同一次运行的产物和终态。
 
-- 写入使用临时文件 + flush + 同目录原子替换；损坏文件从备份恢复，绝不静默覆盖。
-- 崩溃后 `astarray resume <mission-id>` 从任务链恢复；投递后 ack 前崩溃由信箱重放（幂等键去重）。
+本地 fake-server 不消耗真实模型额度；verify:t07d-r2-04-live 等真实脚本不应作为普通离线检查执行。
 
-## Headless 用法
+## SDK 与模式设置
 
-```powershell
-astarray run "任务" --mode assist --runtime mock --json
-astarray status [mission-id] [--json]
-astarray resume <mission-id> [--json]
-astarray cancel <mission-id> [--json]
-astarray doctor [--json]
-astarray config init
-astarray context status --agent <agent-id> --graph <graph-id> [--json]
-astarray recover list|show|resume|abandon <mission-id> [--json]
-```
+安装包通过 import … from "astarray" 提供 AstarrayApplicationFacade、Provider 注册接口及公开类型。消费者不应导入仓库内部文件。公开入口用法可参考 [SDK 包级消费脚本](scripts/verify-sdk-default-path.mjs)。
 
-- `--json` 模式 stdout 只输出机器可解析结果，日志与警告写 stderr。
-- 退出码：`0` 成功，`1` 执行失败，`2` 用法/参数错误。
+- getRuntimeDiagnostics() 显示实际运行时、反馈进程和授权端口；getMetricsSnapshot() 提供基础指标，不是完整监控平台。
+- backupDeletionControlPort、installationUserPort 可由宿主注入；需要交互但缺少端口或身份时不得自动批准。
+- 身份可来自宿主上下文或显式传入。一个字符串本身不是远程认证，多用户服务须由宿主完成认证。
+- 主 Agent 身份的跨会话隔离和恢复应结合部署方式验证，状态目录派生身份不等于通用多用户身份方案。
+- 使用结束必须关闭应用并回收子进程；导入包本身不应启动后台任务。
 
-## 独立反馈进程
+权限配置采用 deny / ask / allow，支持命名自定义权限组；具体入口见 profile --help、session --help。
 
-- 形态：独立进程（`child_process.fork`），主进程负责启动、健康检查、优雅关闭与崩溃重启；崩溃后重放未确认消息。
-- 投递语义：普通消息仅在接收 Agent `idle` 时投递；投递成功并收到 ack 后才消费；同优先级严格 FIFO，优先级 `instruction > failure > permission-ask > ambiguous > success`。
-- 退避：接收者忙碌时等待质数秒（2, 3, 5, 7, 11…），单次上限 3 小时；新消息入池即重置到 2 秒。
-- 排错：`doctor --json` 检查反馈进程入口存在性；子进程诊断日志继承 stdout/stderr；主进程退出时子进程自动退出（心跳看门狗 + disconnect 监听）。
+| 模式 | 中文名 | 公开使用方式 |
+|---|---|---|
+| ponder | 思索模式 | 只读分析模式，不提供可调整权限矩阵 |
+| assist | 协同模式 | 按实际作用范围和设置由有权上级或用户裁决；项目外、外部软件和范围未知操作需人工确认 |
+| devolve | 放权模式 | 可配置权限默认允许，可逐项改为询问或禁止；不自动启用实验功能 |
 
-## TUI
+安装前先确认是否已有资源；项目内且作用范围可验证的安装可由有权上级按设置批准，项目外/全局环境变更等仍需用户逐次授权。独立安装开关、精确参数绑定和执行前检查继续生效，不能只凭命令工作目录判断范围。
 
-TTY 下直接运行 `astarray` 进入全屏 TUI：
+## 状态、恢复与其他入口
 
-```text
-Tab: 切换面板  Ctrl+M: 模式  Ctrl+N: 新任务  Ctrl+C: 取消/退出  ?: 帮助
-1/2/3/4/Esc: 权限弹窗决策
-```
+以下命令使用安装后的 astarray；源码环境可替换为 node dist/cli.js。
 
-要求最小 80×24 终端；支持动态缩放、`NO_COLOR=1`、中英文与 emoji；模型/工具输出中的 ANSI/OSC 序列在 UI 边界统一清洗。
+~~~powershell
+astarray status --json
+astarray doctor --json
+astarray recover list --json
+astarray recover show <mission-id> --json
+astarray context --help
+astarray summary --help
+astarray guide --help
+astarray profile --help
+astarray session --help
+astarray mcp serve --help
+~~~
 
-## 跨平台差异与数据清理
+recover resume <mission-id> 与附加 --execute 的效果不同：后者在对账允许时实际续接任务，应先查看帮助及恢复结果。普通 resume、取消和诊断也应按具体命令确认副作用，不把所有 doctor 检查视为纯读取。
 
-- Windows：原子替换使用 `MoveFileEx(MOVEFILE_REPLACE_EXISTING)`；全局安装 shim 为 `astarray.cmd`；信号处理与子进程清理已覆盖。
-- 数据清理：删除 `.astarray/` 即清理全部任务/信箱/缓存数据；Ponder 的模型工具调用不写项目、任务、记忆、缓存或遥测文件。
-- 任务运行要求模型以版本化 `ASTARRAY_TASK_COMPLETION_V1` 控制事件明确声明完成。本地运行时还会核对任务节点、验收门禁和未决调用；若输出提前结束且本地状态未完成，看门狗从最近检查点有界续跑，超过续跑上限后转为失败/人工处理，不无限循环。
+JSON 用于机器消费；不能以输出中某个成功词代替退出码和任务状态。状态默认存放于工作目录的 .astarray/，包含任务、个体存档、配置和恢复数据。**不要把删除整个状态目录当作日常清理**；先确认需要保留的历史、备份和任务，再走适用的归档/清理流程。
 
-## 上下文生命周期（T09A / ADR-0031）
+## 后续设计与任务
 
-- 历史分为**全局决策库**、受 token 硬预算约束的**当前任务全局上下文**、按 `agentInstanceId` 隔离的**延后上下文片段**、**局部上下文偏序图**与不可变**关闭胶囊**；关闭只是从普通提示词逻辑排除，不删除原文。
-- 模型可见全局上下文默认上限 `maximumGlobalContextTokenCount = 4096`（认证用户可调高/调低/设为 0），实际上限取设置与 Provider 可用输入空间的较小值，并预扣系统规则/任务/输出预算；`context status --agent <id> --graph <id> --json` 同时返回配置上限、实际上限与缩减原因。
-- 人工验收：Assist 默认 `block-until-verified`（单次等待上限 3 小时，超时不自动通过），Devolve 默认 `continue-with-deferred-review`；延迟核验节点在界面/报告中始终标记为**待人工追认**，不得表述为用户已验收。
-- 回访请求 `ASTARRAY_CONTEXT_RECALL_REQUEST_V1` 按“索引 → 关闭胶囊 → 选定证据 → 有界完整片段”逐级返回，受冷却回执、任务级次数上限、敏感禁读与 token 预算约束；`agentInstanceId` 由 harness 注入。
+以下为实施计划，不是已交付功能承诺；基础模块存在不代表整卡通过。
 
-## 并发与恢复加固（T12/T12A）
+| 方向 | 任务入口 |
+|---|---|
+| 作用域权限、准确性开关、格式读取、本地 Git 保全 | [增量任务卡](docs/tasks/2026-09-16_INCREMENTAL_DESIGN_TASK_CARDS.md)，部分已有后续实现证据 |
+| 模型配置对齐的沟通经验 | [LESSON-01](docs/tasks/LESSON01_MODEL_ALIGNED_COMMUNICATION_MEMORY_TASK_CARD.md) |
+| 内容优先读取、对话设置、工作时段、可靠性审计 | [2026-10-01任务组](docs/tasks/2026-10-01_RUNTIME_USABILITY_AND_RELIABILITY_TASK_CARDS.md) |
+| 性能、用量、错误汇总与诊断 | [OBS-01](docs/tasks/OBS01_PERFORMANCE_USAGE_AND_DIAGNOSTICS_TASK_CARDS.md) |
+| 三条默认活动指令窗口、早停/澄清区分及主 Agent 响应期限 | [SMART-01](docs/tasks/SMART01_INSTRUCTION_WINDOW_AND_MAIN_RESPONSIVENESS_TASK_CARD.md) |
+| resume 后的历史时间线与工具链回溯 | [HISTORY-01](docs/tasks/HISTORY01_LOCAL_RUN_HISTORY_AND_RESUME_VIEW_TASK_CARD.md) |
+| 工作流折叠、有界探索、授权式定期历史梳理 | [EXP-01](docs/tasks/EXP01_WORKFLOW_DISCOVERY_AND_HISTORY_MAINTENANCE_TASK_CARDS.md) |
+| 内嵌文本/代码微调原型 | [WB-00](docs/tasks/WB00_MICRO_EDIT_WORKBENCH_PROTOTYPE_TASK_CARD.md) |
 
-- 跨进程 mission 活动租约：运行会话申请排他租约并按半周期续约，同 mission 的他进程并发被 `mission-locked` 快速失败；过期租约须经恢复分类后显式接管。
-- 反馈进程心跳由主进程半周期发送；子进程在断线或 2× 超时后自行退出，CLI/TUI 的 SIGINT/SIGTERM 会走 `shutdown()` 收口，避免孤儿进程。
-- `doctor` 增加状态目录一致性扫描（损坏任务链/summary、活动/过期租约计数），损坏即 `health: failed`；`status --json` 返回逐 mission 探针与租约标注。
+**所有实验功能默认关闭，仅用户可显式启用。**启用一项不连带开启其他项；定期梳理的首次方案和重大调整均需授权。高级媒体编辑仍是未来方向。
 
-## 当前限制（如实记录）
+## 验证范围与当前限制
 
-- Provider：`mock` 为唯一离线可用路径；各厂商适配器按 T07D 卡分级记录支持等级，未做真实凭据联网验收。
-- 覆盖率：全局分支 85.06% 达标；AR-07 §1 的 22 个关键安全模块单模块分支覆盖率均 ≥95%（12 个 100%，2026-09-10 复测，含属性/故障注入/安全反例测试）。遗留：Linux/macOS 跨平台矩阵、Node 20、dev 工具链 audit 修复、`recover` CLI 深层接线，以及沙箱受限时 `npm run build`/`test:coverage`/`pack` 的复跑。
-- 产品接线（INT-00 实测，2026-09-10）：Public SDK facade 尚未接入应用控制器（`readPublicResult` 恒 `null`，`submitTask` 把 `accepted` 当 `task-finished` 发出且不触发调度）；非 mock 运行时仍被 `run` 拒绝；上下文组件与 `recover` 未进入产品入口。证据见 `docs/reports/INT00_PRODUCT_PATH_MATRIX.md`、`docs/reports/INT00_BEHAVIOR_EVIDENCE.md`、`docs/reports/INT00_STATUS_RECONCILIATION.md`；返修卡 `T07D-R1`、`T07D-R2`、`T09A-R1`、`T12A-R1`。
+- Windows 有多轮 check、覆盖率和 SDK/GUI tarball 证据，见 [E2E质量声明](docs/reports/E2E01_04_QUALITY_STATEMENT.md)及其刷新报告。旧数字不能代表当前未提交工作树；本次文档更新未重跑测试。
+- Linux 路径/超时已有返修记录，不等于完整平台通过。Linux/macOS、Node 20 和 GUI 人工体验仍需对应最新证据，未验证项不能填绿。
+- 真实受控改动检查点仍待完整收口。一次性授权预留/结算、参数一致性及重试边界是近期返修重点；不同尝试分别成功不能拼成一次端到端通过。
+- 基础 usage 捕获存在，但真实计费用量不是处处可得；缺失不是零，估算不是账单。
+- SDK 身份字符串、主 Agent 实例归属及服务端认证仍须部署方核查，不把本机测试等同多用户生产验证。
+- 规划、执行、权限、恢复的组合可靠性仍需受控项目验证，不能据模块存在宣称任意工业项目无人值守完成。
+- 部分状态文档尚未同步后续报告；追溯证据，不任选有利结论。
 
-## 当前限制
+## 开发与文档导航
 
-- 任务分解使用确定性单任务（真实 LLM 分解由次级 Agent 运行时演进）。
-- `openai-compatible` 运行时需配置环境变量；headless `--runtime` 仅 `mock`。
-- 指标面板当前显示基线值（MetricsRegistry 已实现，尚未接入编排循环）。
-- 多 CLI 实例并发写同一 mission 由 revision 校验兜底（跨进程锁为后续演进项）。
+~~~powershell
+npm run typecheck
+npm run lint
+npm run test
+npm run test:coverage
+npm run build
+npm run check
+npm run verify:security-coverage
+~~~
+
+test 的 pretest 会构建；打包以本次 tarball 隔离安装为准。先确认已有依赖，不在检查中隐式安装新工具或触发真实服务。
+
+- [工程规范](AGENTS.md)：命名、协作与交付要求。
+- [架构大纲](agent-main-architecture.md)、[实施计划](IMPLEMENTATION_PLAN.md)、[状态记录](PLAN_STATUS.md)。
+- [任务索引](docs/tasks/README.md)、[产品 rollout](docs/tasks/PRODUCT_INTEGRATION_ROLLOUT.md)。
+- [目录职责与整理记录](ORGANIZATION.md)。
+
+每次领取一个检查点，先反例后实现与验证，记录剩余限制。保护人工和其他 Agent 的并行修改，不用历史完成记录替代当前版本验收。

@@ -1,7 +1,92 @@
 # PLAN_STATUS — Astarray 实施状态
 
+## 2026-09-13 摘要与运行引导任务布置
+
+用户已确认推荐方案，摘要采用动态长度且无固定总长上限。[四组任务卡](docs/tasks/SESSION_SUMMARY_AND_STEERING_TASK_CARDS.md)均为pending，实施未开始，不改变原任务验收结论。
+
+| 任务 | 状态 | 前驱 |
+|---|---|---|
+| SUM-01 动态摘要索引与展开 | pending | T09A-R1/T07D-R1相关接线 |
+| SUM-02 跨模型预算与可靠性 | pending | SUM-01 |
+| GUIDE-01 运行中引导 | pending | SUM-02、T07D-R2-02及T12A-R1相关路径 |
+| EVENT-01 紧急仲裁与恢复 | pending | GUIDE-01 |
+
 > 更新规则见 `IMPLEMENTATION_PLAN.md` §8.4：开始任务标记 `in_progress`，全部验收通过才标记 `done`。
 > 会话中断后从第一个 `in_progress` 或依赖已满足的 `pending` 任务恢复。
+
+## 2026-09-10 产品接线增补任务（均未执行）
+
+共同规则和独立任务卡链接见 [PRODUCT_INTEGRATION_ROLLOUT.md](docs/tasks/PRODUCT_INTEGRATION_ROLLOUT.md)。原卡done记录不代表新增接线验证已通过；INT-00核实原验收缺口后纠正相关旧状态，保留历史证据。
+
+| 任务 | 状态 | 前驱/推荐顺序 |
+|---|---|---|
+| INT-00 产品路径审计 | pending | 首项：INT-00-01 |
+| T07D-R1 应用服务与SDK接线 | pending | INT-00 |
+| T07D-R2 首个Provider产品接线 | pending | T07D-R1 |
+| T09A-R1 上下文运行接线 | pending | T07D-R1；入口联测需T07D-R2-02 |
+| T12A-R1 恢复产品接线 | pending | T07D-R1；最终联测需T07D-R2-02、T09A-R1 |
+| E2E-01 独立工作助手验收 | pending | 上述四张返修卡通过 |
+| BRIDGE-01 外部接入MVP | pending | T07D-R1；交付需E2E-01 |
+| GUI-01-R GUI产品接线 | pending | T07D-R1；联测需上下文/恢复返修；交付需E2E-01 |
+| WB-00 细节微淘原型 | pending | GUI-01-R；未来探索 |
+
+## Batch OBS/SMART/PROJECT（OBS-01、SMART-01、PROJECT-01 三卡）检查点记录
+
+### 2026-10-02 — 12 个检查点实现完成（用户授权记录核验结构）
+
+验收命令与实际结果（每条均为**当轮实测的真实退出码**，非替代性说明）：
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `npm run check`（PERF-01-02 轮） | 0 | 269 文件通过 + 1 跳过；2024 用例通过 + 2 跳过 |
+| `npm run check`（PERF-01-03 轮） | 0 | 270 文件通过 + 1 跳过；2032 用例通过 + 2 跳过 |
+| `npm run check`（USAGE-01-02 轮） | 1 | 抖动：`context-runtime-cache-events` 61s 超时；隔离运行 2 文件全部通过 |
+| `npm run check`（USAGE-01-03 轮） | 1 | 抖动：`summary-cli` 61s 超时；隔离运行 2 文件全部通过 |
+| `npm run check`（DIAG-01-02 轮） | 0 | 273 文件通过 + 1 跳过；2057 用例通过 + 2 跳过 |
+| `npm run check`（DIAG-01-03 轮） | 0 | 274 文件通过 + 1 跳过；2064 用例通过 + 2 跳过 |
+| `npm run check`（SMART-01-02 轮） | 0 | 275 文件通过 + 1 跳过；2074 用例通过 + 2 跳过 |
+| `npm run check`（SMART-01-03 轮） | 1 | 抖动：`application-sdk-task-events` 5.5s；隔离运行 4 条用例全部通过 |
+| `npm run check`（SMART-01-04 轮） | 0 | 277 文件通过 + 1 跳过；2095 用例通过 + 2 跳过 |
+| `npm run check`（PROJECT-01-03 轮） | 1 | 抖动：`cli-commands` 68s 超时；隔离运行 22/22 通过 |
+| `npm run check`（PROJECT-01-04 轮，**最终**） | 0 | 279 文件通过 + 1 跳过；2117 用例通过 + 2 跳过 |
+| `npx vitest run`（本批 11 个反例文件） | 0 | 11 文件 / **102 条反例**全部通过 |
+
+最终基线：`HEAD == origin/main == 73f7dd9`。本批提交**未包含**用户并行编辑的 `IMPLEMENTATION_PLAN.md`、`PLAN_STATUS.md`、`README.md`、`agent-main-architecture.md`、`docs/tasks/README.md`、`tests/core/unit/application-sdk-task-events.test.ts`、`tests/tui/integration/permission-ask-adjudication.test.ts`。
+
+检查点与提交：
+
+| 检查点 | 提交 | 交付要点 |
+|---|---|---|
+| PERF-01-02 | `08017df` | 追加式样本存储（并发不撕裂行、半行报告丢弃数、溢出计数）、纯函数聚合（无样本 mean=null）、游标分页、五类告警（含 clock-anomaly）；`tool-loop` 真实工具执行后上报耗时 |
+| PERF-01-03 | `3e8fa09` | `queryPerfOverview`（范围/时间窗/摘要明细/分页、覆盖范围回显、只读零请求、内存有界）；CLI `perf overview` |
+| USAGE-01-02 | `2e43b1b` | 请求级账目按键收敛原子落盘、同键异参拒绝、乱序终值拒绝、重启幂等、按模型分组、估算不入账单、取消缺 usage 记 null 不补 0、预算判定 |
+| USAGE-01-03 | `9b817be` | `queryUsageOverview`（可复算、不虚报余额+免责说明、估算来源分列、按具体个体过滤不泄漏他人明细）；CLI `usage overview` |
+| DIAG-01-02 | `5bcfb76` | 错误 JSONL 落盘前脱敏、指纹合并计数（文本不进指纹）、故障链根因+包装码顺序、三类分类分列、诊断自身失败报不可测量、明细有界 |
+| DIAG-01-03 | `7b64a90` | `queryDiagnosticSummary`（事实/推断/证据不足三列分列、证据引用可追溯）、`buildRedactedDiagnosticBundle`（纯构造不落盘、三项 contains\*=false）；CLI `doctor --errors` / `--bundle` |
+| SMART-01-02 | `d5347e5` | 指令窗口持久队列、同步段内原子准入（并发不超容）、同键异参拒绝、超容排队、回执为候选（revision/任务关联不符则不释放槽位）、终态补位、降上限总数守恒 |
+| SMART-01-03 | `1d999e5` | 停止分类（硬约束优先：停止/休息不注入）、漏回执仅凭独立权威证据补位、有界追问、澄清答案抽取且混合信封保留剩余任务；带未决问题回执进入 `awaiting-clarification` |
+| SMART-01-04 | `d28b6dd` | 三分钟期限判定（超期如实报超时、等待澄清不冒充完成）、门禁不被补位绕过、有界补位（不灌队列、跳过在途、记录来源与原因、不伪造用户消息） |
+| PROJECT-01-03 | `74cdb67` | 跨项目授权记录（绑定双方 revision + 完整参数哈希 + 期限 + 任务）、授权来源必须是认证用户、缩权派生、再转交拒绝、只读来源零写入、副本导入幂等回执 |
+| PROJECT-01-04 | `73f7dd9` | 有效授权 = 来源可导出 ∩ 目标可接收 ∩ 接收个体权限（deny 优先、思索只读、默认 allow 不建共享关系）、多项目/多同级个体过滤不串数据、副本可分辨；CLI `cross-project list` |
+
+反例过程中**实际发现并修复的缺陷**（非形式化通过）：
+
+- 并发落盘竞态：临时文件名仅含 pid → 并发互相 rename 掉对方临时文件（实测 `ENOENT`）。
+- 架构守卫拦截：自写 `writeFile/rename` 被 `tests/architecture/destructive-file-api-guard.test.ts` 正确拒绝 → 改用受控 `infra/atomic-json.writeAtomicJson`。
+- 并发导入竞态：5 个并发均通过"查回执→写回执"，产生 5 次副作用 → 改为同步段内原子认领。
+- 认领占位被持久化：崩溃重启后重放失效 → 认领后必须用真实回执覆盖并持久化，认领前 `ensureLoaded`。
+- 窗口槽位语义瑕疵（自查发现）：入窗与排队均记 `accepted` 会导致补位后槽位仍被占用 → 按契约区分 `dispatched`/`accepted`。
+- 三处测试自身错误（`toEqual` 含函数字段、正则无效转义、夹具自相矛盾）→ 按"改测试不改产品口径"修正。
+
+遗留与未主张完成项：
+
+- **SMART-01-04 范围缺口**：卡内验收含"SDK/CLI/TUI/GUI 入口和包验收"与"模拟慢模型/长下级任务真实运行实测"。本批交付**判定层 + 反例**；四入口交互式验收、真实运行实测、该检查点 tarball 包验收**尚未执行**，不主张完成。
+- **负载抖动**：满载门禁中 `summary-cli`、`cli-commands`、`context-runtime-cache-events`、`application-sdk-task-events` 等偶发超时失败，独立运行均通过；建议单独立检查点处理并发/超时预算。
+- 计划外未动项：T07D-R2-04 正向闭环、`auth-scope-replay-rejected`（已收窄至 CLI 接线未修；门禁层正确性由 `tests/core/integration/scope-authorization-regrant.test.ts` 3/3 通过证明）、CLI 结果后进程滞留（`it.skip`）、Anthropic 离线端到端用例（`it.skip`）、BRIDGE-01 / GUI-01-R / WB-00。
+
+本批真实 Provider 额度消耗：**0**（全程离线）。
+
+## 历史设计与验收记录
 
 > 2026-08-12 设计增补：反馈消息契约新增必填结构化 `source`。用户、Agent、系统来源均可追踪；转发保留原始来源。T00 契约、Schema、测试和架构文档已同步更新。
 > 2026-08-12 设计增补：Agent 来源进一步收紧为具体且不可复用的 `agentInstanceId`。新增 T05A：每个次级/三级 Agent 拥有独立工作存档，上级发布任务或重新调用前可选择具体条目附加，默认不注入。
