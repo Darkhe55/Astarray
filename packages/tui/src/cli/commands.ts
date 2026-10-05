@@ -960,6 +960,164 @@ export interface ContextMetricsCommandOptions {
 }
 
 /**
+ * DIAG-01-03：诊断错误汇总与脱敏诊断包预览（**严格只读**）。
+ *
+ * 边界（卡内 §5）：
+ *  - 只读取已落盘的脱敏诊断事件；**不执行进程、不联网、不创建文件**；
+ *  - 主动探测（进程执行/联网/复现步骤）**不在本命令内**，必须另行预览与授权；
+ *  - 事实与推断分列输出：确定事实与推断（推测）分别列出，且逐条标注；
+ *  - 诊断包预览是**纯构造**，不落盘；需要导出时另行授权。
+ */
+export interface DoctorErrorsCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+  missionIdentifier?: string;
+  sourceAgentInstanceId?: string;
+  windowStartIso?: string;
+  windowEndIso?: string;
+  pageSize?: string;
+  cursor?: string;
+  /** 输出脱敏诊断包预览（不落盘）。 */
+  shouldOutputBundle?: boolean;
+  astarrayVersion?: string;
+}
+
+export async function executeDoctorErrorsCommand(
+  options: DoctorErrorsCommandOptions,
+): Promise<number> {
+  if (options.windowStartIso !== undefined && Number.isNaN(Date.parse(options.windowStartIso))) {
+    logToStderr("--since 必须是可解析的 ISO 8601 时间（收到: " + options.windowStartIso + "）");
+    return EXIT_CODES.USAGE_ERROR;
+  }
+  if (options.windowEndIso !== undefined && Number.isNaN(Date.parse(options.windowEndIso))) {
+    logToStderr("--until 必须是可解析的 ISO 8601 时间（收到: " + options.windowEndIso + "）");
+    return EXIT_CODES.USAGE_ERROR;
+  }
+  const parsedPageSize =
+    options.pageSize === undefined ? undefined : Number.parseInt(options.pageSize, 10);
+  if (parsedPageSize !== undefined && (Number.isNaN(parsedPageSize) || parsedPageSize <= 0)) {
+    logToStderr("--page-size 必须是正整数（收到: " + String(options.pageSize) + "）");
+    return EXIT_CODES.USAGE_ERROR;
+  }
+
+  try {
+    const { DiagnosticEventStore, buildRedactedDiagnosticBundle, queryDiagnosticSummary } =
+      await import("../../../core/src/orchestration/diagnostic-event-store.js");
+    const store = new DiagnosticEventStore({ baseDirectory: options.stateDirectory });
+    const query = {
+      ...(options.missionIdentifier === undefined
+        ? {}
+        : { missionIdentifier: options.missionIdentifier }),
+      ...(options.sourceAgentInstanceId === undefined
+        ? {}
+        : { sourceAgentInstanceId: options.sourceAgentInstanceId }),
+      ...(options.windowStartIso === undefined ? {} : { windowStartIso: options.windowStartIso }),
+      ...(options.windowEndIso === undefined ? {} : { windowEndIso: options.windowEndIso }),
+      ...(parsedPageSize === undefined ? {} : { pageSize: parsedPageSize }),
+      ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+    };
+
+    if (options.shouldOutputBundle === true) {
+      const bundle = await buildRedactedDiagnosticBundle({
+        store,
+        environment: {
+          platform: process.platform,
+          astarrayVersion: options.astarrayVersion ?? "unknown",
+        },
+        ...(options.windowStartIso === undefined ? {} : { windowStartIso: options.windowStartIso }),
+        ...(options.windowEndIso === undefined ? {} : { windowEndIso: options.windowEndIso }),
+      });
+      if (options.isJsonOutput) {
+        printJson(bundle);
+      } else {
+        process.stdout.write(
+          "诊断包预览（脱敏；未落盘）\n" +
+            "environment: " +
+            bundle.environment.platform +
+            " / " +
+            bundle.environment.astarrayVersion +
+            "\n" +
+            "window: " +
+            String(bundle.windowStartIso ?? "-") +
+            " .. " +
+            String(bundle.windowEndIso ?? "-") +
+            "\n" +
+            "findings: total=" +
+            String(bundle.summary.matchedEventCount) +
+            " deterministic=" +
+            String(bundle.summary.deterministicFindingCount) +
+            " suspected=" +
+            String(bundle.summary.suspectedFindingCount) +
+            " insufficient-evidence=" +
+            String(bundle.summary.insufficientEvidenceFindingCount) +
+            "\n" +
+            "redaction: " +
+            bundle.redactionNotice +
+            "\n",
+        );
+      }
+      return EXIT_CODES.SUCCESS;
+    }
+
+    const summary = await queryDiagnosticSummary({ store, query });
+    if (options.isJsonOutput) {
+      printJson(summary);
+    } else {
+      process.stdout.write(
+        "coverage: matched=" +
+          String(summary.coverage.matchedEventCount) +
+          "/total=" +
+          String(summary.coverage.totalEventCount) +
+          "\n" +
+          "deterministic-findings（事实）: " +
+          String(summary.deterministicFindings.length) +
+          "\n" +
+          summary.deterministicFindings
+            .slice(0, 10)
+            .map(
+              (finding) =>
+                "  [事实] " +
+                finding.errorCode +
+                " @ " +
+                finding.component +
+                " ×" +
+                String(finding.occurrenceCount),
+            )
+            .join("\n") +
+          (summary.deterministicFindings.length === 0 ? "" : "\n") +
+          "suspected-findings（推断，不得作为确定根因）: " +
+          String(summary.suspectedFindings.length) +
+          "\n" +
+          summary.suspectedFindings
+            .slice(0, 10)
+            .map(
+              (finding) =>
+                "  [推断] " +
+                finding.errorCode +
+                " @ " +
+                finding.component +
+                " ×" +
+                String(finding.occurrenceCount),
+            )
+            .join("\n") +
+          (summary.suspectedFindings.length === 0 ? "" : "\n") +
+          "insufficient-evidence（证据不足）: " +
+          String(summary.insufficientEvidenceFindings.length) +
+          "\n" +
+          (summary.isReportable
+            ? ""
+            : "unreportable: " + String(summary.unreportableReason ?? "") + "\n") +
+          "（只读诊断：未执行进程、未联网、未创建文件；主动探测须另行授权）\n",
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr("诊断查询失败（观测故障不得阻塞业务）: " + (error as Error).message);
+    return EXIT_CODES.FAILURE;
+  }
+}
+
+/**
  * USAGE-01-03：用量最小概览（只读；由已落盘账目复算）。
  *
  * 纪律：只报告本地账目估算并附免责说明（**不虚报官方余额**）；

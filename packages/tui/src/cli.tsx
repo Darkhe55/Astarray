@@ -56,6 +56,7 @@ import {
   executeSummaryShowCommand,
   executeStatusCommand,
   executeWorkflowScenarioCommand,
+  executeDoctorErrorsCommand,
   executePerfOverviewCommand,
   executeUsageOverviewCommand,
 } from "./cli/commands.js";
@@ -1309,7 +1310,39 @@ program
   .description("诊断环境")
   .option("--json", "输出机器可解析 JSON")
   .option("--provider <provider-id>", "只报告该 Provider 的配置/凭据引用/支持等级（不探测网络）")
-  .action(async (options: { json?: boolean; provider?: string }) => {
+  .option("--errors", "只读诊断：错误汇总（事实与推断分列；不执行进程、不联网、不写文件）")
+  .option("--bundle", "只读诊断：输出脱敏诊断包预览（纯构造，不落盘）")
+  .option("--mission <mission-id>", "诊断：限定可见范围（mission）")
+  .option("--agent <agent-instance-id>", "诊断：限定可见范围（具体 agentInstanceId）")
+  .option("--since <iso>", "诊断：时间窗下界（ISO 8601）")
+  .option("--until <iso>", "诊断：时间窗上界（ISO 8601）")
+  .option("--page-size <count>", "诊断：分页条数")
+    .action(async (options: {
+      json?: boolean;
+      provider?: string;
+      errors?: boolean;
+      bundle?: boolean;
+      mission?: string;
+      agent?: string;
+      since?: string;
+      until?: string;
+      pageSize?: string;
+      cursor?: string;
+    }) => {
+      if (options.errors === true || options.bundle === true) {
+        process.exitCode = await executeDoctorErrorsCommand({
+          stateDirectory: defaultStateDirectory(),
+          isJsonOutput: options.json === true,
+          shouldOutputBundle: options.bundle === true,
+          ...(options.mission === undefined ? {} : { missionIdentifier: options.mission }),
+          ...(options.agent === undefined ? {} : { sourceAgentInstanceId: options.agent }),
+          ...(options.since === undefined ? {} : { windowStartIso: options.since }),
+          ...(options.until === undefined ? {} : { windowEndIso: options.until }),
+          ...(options.pageSize === undefined ? {} : { pageSize: options.pageSize }),
+          ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+        });
+        return;
+      }
     if (options.provider !== undefined && options.provider.trim() !== "") {
       try {
         process.exitCode = await executeDoctorProviderCommand({

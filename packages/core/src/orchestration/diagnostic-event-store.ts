@@ -299,3 +299,340 @@ export function aggregateDiagnosticEvents(
     },
   };
 }
+
+export interface DiagnosticEvidenceReference {
+  sourceAgentInstanceIds: string[];
+  requestIdentifiers: string[];
+  missionIdentifiers: string[];
+  taskIdentifiers: string[];
+}
+
+export interface DiagnosticFinding {
+  fingerprint: string;
+  errorCode: string;
+  component: string;
+  stage: DiagnosticEvent["stage"];
+  severity: DiagnosticEvent["severity"];
+  occurrenceCount: number;
+  firstOccurredAtIso: string;
+  lastOccurredAtIso: string;
+  /** 事实为 false；推断为 true（调用方不得把推断当确定根因）。 */
+  isInference: boolean;
+  evidence: DiagnosticEvidenceReference;
+  chain: { rootErrorCode: string | null; wrapperErrorCodes: string[] };
+  redactedSampleText: string;
+}
+
+export interface DiagnosticSummaryQuery {
+  missionIdentifier?: string | null;
+  /** 可见范围：仅该具体个体的记录（子 Agent 不得借诊断读取同级原始记录）。 */
+  sourceAgentInstanceId?: string | null;
+  windowStartIso?: string | null;
+  windowEndIso?: string | null;
+  pageSize?: number;
+  cursor?: string;
+}
+
+export interface DiagnosticSummary {
+  coverage: {
+    totalEventCount: number;
+    matchedEventCount: number;
+    missionIdentifier: string | null;
+    sourceAgentInstanceId: string | null;
+    windowStartIso: string | null;
+    windowEndIso: string | null;
+    discardedLineCount: number;
+  };
+  /** 仅确定事实：可用于"确定根因"表述。 */
+  deterministicFindings: DiagnosticFinding[];
+  /** 推断：只能作为推测呈现，不得作为自动授权或最终验收依据。 */
+  suspectedFindings: DiagnosticFinding[];
+  /** 证据不足：明确单列，不得混入确定事实。 */
+  insufficientEvidenceFindings: DiagnosticFinding[];
+  bySeverity: Record<DiagnosticEvent["severity"], number>;
+  byRecoveryState: Record<DiagnosticEvent["recoveryState"], number>;
+  isReportable: boolean;
+  unreportableReason: string | null;
+  page: { groups: DiagnosticFinding[]; nextCursor: string | null } | null;
+}
+
+/**
+ * 只读诊断汇总（DIAG-01-03）。
+ *
+ * 严格边界（卡内 §5）：
+ *  - 只读：只读取已落盘的脱敏事件，不执行进程、不联网、不创建文件；
+ *  - 按可见范围（mission / 具体 agentInstanceId）过滤；
+ *  - 事实与推断分列：deterministic-fact 才进 deterministicFindings；
+ *    suspected-cause 进 suspectedFindings 且 isInference=true；insufficient-evidence 单列；
+ *  - 每条 finding 带证据引用（来源个体/请求/mission/任务），可按真实回执追溯；
+ *  - 无事件时不得报"一切正常"，而是明确不可报告。
+ */
+export async function queryDiagnosticSummary(input: {
+  store: DiagnosticEventStore;
+  query?: DiagnosticSummaryQuery;
+}): Promise<DiagnosticSummary> {
+  const query = input.query ?? {};
+  const integrity = await input.store.readWithIntegrity();
+
+  const matchWindowStartMilliseconds =
+    query.windowStartIso === undefined || query.windowStartIso === null
+      ? null
+      : Date.parse(query.windowStartIso);
+  const matchWindowEndMilliseconds =
+    query.windowEndIso === undefined || query.windowEndIso === null
+      ? null
+      : Date.parse(query.windowEndIso);
+
+  const matchedEvents = integrity.events.filter((event) => {
+    if (
+      query.missionIdentifier !== undefined &&
+      query.missionIdentifier !== null &&
+      event.missionIdentifier !== query.missionIdentifier
+    ) {
+      return false;
+    }
+    if (
+      query.sourceAgentInstanceId !== undefined &&
+      query.sourceAgentInstanceId !== null &&
+      event.sourceAgentInstanceId !== query.sourceAgentInstanceId
+    ) {
+      return false;
+    }
+    const recordedAtMilliseconds = Date.parse(event.recordedAtIso);
+    if (Number.isNaN(recordedAtMilliseconds)) {
+      return false;
+    }
+    if (
+      matchWindowStartMilliseconds !== null &&
+      !Number.isNaN(matchWindowStartMilliseconds) &&
+      recordedAtMilliseconds < matchWindowStartMilliseconds
+    ) {
+      return false;
+    }
+    if (
+      matchWindowEndMilliseconds !== null &&
+      !Number.isNaN(matchWindowEndMilliseconds) &&
+      recordedAtMilliseconds > matchWindowEndMilliseconds
+    ) {
+      return false;
+    }
+    return true;
+  });
+
+  const bySeverity: Record<DiagnosticEvent["severity"], number> = {
+    info: 0,
+    warning: 0,
+    error: 0,
+  };
+  const byRecoveryState: Record<DiagnosticEvent["recoveryState"], number> = {
+    "known-resolved": 0,
+    recovering: 0,
+    "blocked-uncertain": 0,
+    unknown: 0,
+  };
+  const findingsByFingerprint = new Map<string, DiagnosticFinding>();
+  const classificationByFingerprint = new Map<string, DiagnosticEvent["classification"]>();
+
+  for (const event of matchedEvents) {
+    bySeverity[event.severity] += 1;
+    byRecoveryState[event.recoveryState] += 1;
+    const fingerprint = computeDiagnosticFingerprint(event);
+    classificationByFingerprint.set(fingerprint, event.classification);
+    const existing = findingsByFingerprint.get(fingerprint);
+    if (existing === undefined) {
+      findingsByFingerprint.set(fingerprint, {
+        fingerprint,
+        errorCode: event.errorCode,
+        component: event.component,
+        stage: event.stage,
+        severity: event.severity,
+        occurrenceCount: 1,
+        firstOccurredAtIso: event.recordedAtIso,
+        lastOccurredAtIso: event.recordedAtIso,
+        isInference: event.classification !== "deterministic-fact",
+        evidence: {
+          sourceAgentInstanceIds: [event.sourceAgentInstanceId],
+          requestIdentifiers: [event.requestIdentifier],
+          missionIdentifiers: event.missionIdentifier === null ? [] : [event.missionIdentifier],
+          taskIdentifiers: event.taskIdentifier === null ? [] : [event.taskIdentifier],
+        },
+        chain: {
+          rootErrorCode: event.chain.rootErrorCode,
+          wrapperErrorCodes: [...event.chain.wrapperErrorCodes],
+        },
+        redactedSampleText: redactSensitiveText(event.messageText),
+      });
+      continue;
+    }
+    existing.occurrenceCount += 1;
+    if (Date.parse(event.recordedAtIso) < Date.parse(existing.firstOccurredAtIso)) {
+      existing.firstOccurredAtIso = event.recordedAtIso;
+    }
+    if (Date.parse(event.recordedAtIso) > Date.parse(existing.lastOccurredAtIso)) {
+      existing.lastOccurredAtIso = event.recordedAtIso;
+    }
+    if (!existing.evidence.sourceAgentInstanceIds.includes(event.sourceAgentInstanceId)) {
+      existing.evidence.sourceAgentInstanceIds.push(event.sourceAgentInstanceId);
+    }
+    if (!existing.evidence.requestIdentifiers.includes(event.requestIdentifier)) {
+      existing.evidence.requestIdentifiers.push(event.requestIdentifier);
+    }
+    if (
+      event.missionIdentifier !== null &&
+      !existing.evidence.missionIdentifiers.includes(event.missionIdentifier)
+    ) {
+      existing.evidence.missionIdentifiers.push(event.missionIdentifier);
+    }
+    if (
+      event.taskIdentifier !== null &&
+      !existing.evidence.taskIdentifiers.includes(event.taskIdentifier)
+    ) {
+      existing.evidence.taskIdentifiers.push(event.taskIdentifier);
+    }
+  }
+
+  const allFindings = [...findingsByFingerprint.values()]
+    .map((finding) => ({
+      ...finding,
+      isInference:
+        classificationByFingerprint.get(finding.fingerprint) !== "deterministic-fact",
+    }))
+    .sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
+
+  const deterministicFindings = allFindings.filter(
+    (finding) => classificationByFingerprint.get(finding.fingerprint) === "deterministic-fact",
+  );
+  const suspectedFindings = allFindings.filter(
+    (finding) => classificationByFingerprint.get(finding.fingerprint) === "suspected-cause",
+  );
+  const insufficientEvidenceFindings = allFindings.filter(
+    (finding) => classificationByFingerprint.get(finding.fingerprint) === "insufficient-evidence",
+  );
+
+  const pageSize = Math.max(1, Math.floor(query.pageSize ?? 20));
+  let startIndex = 0;
+  if (query.cursor !== undefined && query.cursor !== "") {
+    const parsedCursor = Number.parseInt(query.cursor, 10);
+    startIndex = Number.isNaN(parsedCursor) || parsedCursor < 0 ? 0 : parsedCursor;
+  }
+  const pageGroups = allFindings.slice(startIndex, startIndex + pageSize);
+  const nextIndex = startIndex + pageGroups.length;
+
+  const isReportable = matchedEvents.length > 0;
+  return {
+    coverage: {
+      totalEventCount: integrity.events.length,
+      matchedEventCount: matchedEvents.length,
+      missionIdentifier: query.missionIdentifier ?? null,
+      sourceAgentInstanceId: query.sourceAgentInstanceId ?? null,
+      windowStartIso: query.windowStartIso ?? null,
+      windowEndIso: query.windowEndIso ?? null,
+      discardedLineCount: integrity.discardedLineCount,
+    },
+    deterministicFindings,
+    suspectedFindings,
+    insufficientEvidenceFindings,
+    bySeverity,
+    byRecoveryState,
+    isReportable,
+    // 无匹配事件不等于一切正常：必须显式说明样本缺失。
+    unreportableReason: isReportable
+      ? null
+      : "样本不足：该可见范围/时间窗内没有诊断记录，无法给出结论（不得视为一切正常）",
+    page: {
+      groups: pageGroups,
+      nextCursor: nextIndex < allFindings.length ? String(nextIndex) : null,
+    },
+  };
+}
+
+export interface RedactedDiagnosticBundle {
+  schemaVersion: 1;
+  generatedAtIso: string;
+  environment: { platform: string; astarrayVersion: string };
+  windowStartIso: string | null;
+  windowEndIso: string | null;
+  redactionNotice: string;
+  containsFullSession: false;
+  containsSourceCode: false;
+  containsRawLogs: false;
+  summary: {
+    totalEventCount: number;
+    matchedEventCount: number;
+    deterministicFindingCount: number;
+    suspectedFindingCount: number;
+    insufficientEvidenceFindingCount: number;
+  };
+  /** 仅元数据/摘要与证据引用（不含完整会话、源码、日志正文）。 */
+  findings: Array<{
+    fingerprint: string;
+    errorCode: string;
+    component: string;
+    stage: DiagnosticEvent["stage"];
+    severity: DiagnosticEvent["severity"];
+    occurrenceCount: number;
+    isInference: boolean;
+    evidence: DiagnosticEvidenceReference;
+  }>;
+}
+
+/**
+ * 构造脱敏诊断包（DIAG-01-03）。
+ *
+ * 关键：这是纯构造——不写盘、不联网、不执行进程。
+ * 默认只含必要元数据/摘要及证据引用；不附完整会话、源码或日志正文。
+ * 需要落盘导出时由调用方在单独授权后进行（不在本函数内）。
+ */
+export async function buildRedactedDiagnosticBundle(input: {
+  store: DiagnosticEventStore;
+  environment: { platform: string; astarrayVersion: string };
+  windowStartIso?: string | null;
+  windowEndIso?: string | null;
+}): Promise<RedactedDiagnosticBundle> {
+  const summary = await queryDiagnosticSummary({
+    store: input.store,
+    query: {
+      ...(input.windowStartIso === undefined || input.windowStartIso === null
+        ? {}
+        : { windowStartIso: input.windowStartIso }),
+      ...(input.windowEndIso === undefined || input.windowEndIso === null
+        ? {}
+        : { windowEndIso: input.windowEndIso }),
+      pageSize: 10_000,
+    },
+  });
+  const allFindings = [
+    ...summary.deterministicFindings,
+    ...summary.suspectedFindings,
+    ...summary.insufficientEvidenceFindings,
+  ];
+  return {
+    schemaVersion: 1,
+    generatedAtIso: new Date().toISOString(),
+    environment: input.environment,
+    windowStartIso: input.windowStartIso ?? null,
+    windowEndIso: input.windowEndIso ?? null,
+    redactionNotice:
+      "本诊断包已脱敏：仅含必要元数据、摘要与证据引用；不含完整会话、源码或日志正文。",
+    containsFullSession: false,
+    containsSourceCode: false,
+    containsRawLogs: false,
+    summary: {
+      totalEventCount: summary.coverage.totalEventCount,
+      matchedEventCount: summary.coverage.matchedEventCount,
+      deterministicFindingCount: summary.deterministicFindings.length,
+      suspectedFindingCount: summary.suspectedFindings.length,
+      insufficientEvidenceFindingCount: summary.insufficientEvidenceFindings.length,
+    },
+    findings: allFindings.map((finding) => ({
+      fingerprint: finding.fingerprint,
+      errorCode: finding.errorCode,
+      component: finding.component,
+      stage: finding.stage,
+      severity: finding.severity,
+      occurrenceCount: finding.occurrenceCount,
+      isInference: finding.isInference,
+      evidence: finding.evidence,
+    })),
+  };
+}
