@@ -737,6 +737,42 @@ writeFileSync(
 console.log("记录文件: " + recordPath);
 
 const failedChecks = checks.filter((check) => !check.isPassed);
+/**
+ * 判据落盘（2026-10-02，可审计性）：
+ * 五项判据与结论同时写入运行目录，避免"验收是否通过"只能从终端滚动缓冲区回看
+ * （实测发生过：只保留节选输出时无法复核 permissionAsk 等判据）。
+ * 该文件与 tarball-record.json 同目录、同一次运行一一对应。
+ */
+const verdictPath = path.join(archiveRoot, "acceptance-verdict.json");
+writeFileSync(
+  verdictPath,
+  JSON.stringify(
+    {
+      schemaVersion: 1,
+      verdict: failedChecks.length > 0 ? "failed" : "passed",
+      isDryRun,
+      sourceCommit,
+      tarballSha256,
+      vendorIdentifier,
+      modelIdentifier,
+      protocolLabel,
+      endpoint: providerEndpoint,
+      recordedAtIso: new Date().toISOString(),
+      checks,
+      failedCheckNames: failedChecks.map((check) => check.checkName),
+      rounds: rounds.map((round) => ({
+        roundName: round.roundName,
+        exitCode: round.exitCode,
+        parsedResult: round.parsedResult,
+        fileExists: round.fileExists,
+      })),
+    },
+    null,
+    2,
+  ) + "\n",
+);
+console.log("判据记录文件: " + verdictPath);
+
 if (failedChecks.length > 0) {
   console.error("\ntarball 验收未达成（" + String(failedChecks.length) + " 项失败）:");
   for (const failedCheck of failedChecks) {
