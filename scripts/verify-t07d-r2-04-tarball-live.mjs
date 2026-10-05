@@ -126,11 +126,24 @@ const endpointHostName = (() => {
   }
 })();
 const vendorIdentifier = takeArgument("--vendor-identifier", endpointHostName);
+/**
+ * 协议标签（2026-10-02）：与 CLI 的 `--provider-protocol` **必须一致**，
+ * 并写入产物内容，使"这次究竟用哪条协议跑的"可审计（不靠旁注推断）。
+ * 干跑时会校验该值合法，避免把笔误带进真实运行。
+ */
+const protocolLabel = takeArgument("--protocol-label", "openai-compatible");
+if (protocolLabel !== "openai-compatible" && protocolLabel !== "anthropic-messages") {
+  fail(
+    `--protocol-label 必须是 openai-compatible 或 anthropic-messages（收到: ${protocolLabel}）`,
+    2,
+  );
+}
 const expectedContent = [
   "# 真实 Provider 受控改动（T07D-R2-04）",
   "- 厂商：" + vendorIdentifier,
   "- 端点：" + endpointHostName,
   "- 模型：" + modelIdentifier,
+  "- 协议：" + protocolLabel,
   "",
 ].join("\n");
 
@@ -180,7 +193,7 @@ console.log(
       ? "干净（无改动）"
       : "有未提交改动（**tarball 内容可能与提交不完全一致**）"),
 );
-console.log("厂商: " + vendorIdentifier + " | 模型: " + modelIdentifier + " | 端点: " + String(providerEndpoint));
+console.log("厂商: " + vendorIdentifier + " | 模型: " + modelIdentifier + " | 协议: " + protocolLabel + " | 端点: " + String(providerEndpoint));
 console.log("运行标识: " + runIdentifier);
 
 const packOutputRaw = runNpmSync(
@@ -259,11 +272,12 @@ function buildPrompt() {
     "",
     "请用内置工具 createProjectFile（只能新建、不能覆盖；参数 filePath 与 content）完成一个极小的受控改动：",
     "1. filePath 必须是：" + outputFileRelativePath,
-    "2. content 必须严格为下面四行（Markdown，保留换行）：",
+    "2. content 必须严格为下面五行（Markdown，保留换行）：",
     "   # 真实 Provider 受控改动（T07D-R2-04）",
     "   - 厂商：" + vendorIdentifier,
     "   - 端点：" + endpointHostName,
     "   - 模型：" + modelIdentifier,
+    "   - 协议：" + protocolLabel,
     "",
     "要求：",
     "- 直接调用 createProjectFile 一次：它是仅新建、不覆盖的工具，目标已存在时会自行拒绝并返回错误；",
@@ -295,6 +309,11 @@ async function runOnce(input) {
       input.endpoint,
       "--provider-model",
       modelIdentifier,
+      // 协议选择（2026-10-02）：openai-compatible 为 CLI 默认，故仅在非默认时显式传参，
+      // 保持既有命令形态不变；anthropic-messages 必须显式传给 CLI。
+      ...(protocolLabel === "openai-compatible"
+        ? []
+        : ["--provider-protocol", protocolLabel]),
       "--provider-api-key-env",
       apiKeyEnvironmentVariableName,
       "--provider-request-timeout-seconds",
@@ -384,6 +403,119 @@ async function runOnce(input) {
 
 const rounds = [];
 if (isDryRun) {
+  /**
+   * 干跑夹具按**协议**生成对应形态（2026-10-02）：
+   * 干跑必须覆盖真实运行所用的协议，否则"干跑通过"证明不了那条路径。
+   */
+  const completionEventJson = JSON.stringify({
+    taskExecutionId: "task-exec:t07d-r2-04",
+    completionAttemptId: "attempt-t07d-r2-04-live-1",
+    completedTaskIdentifiers: ["T-001"],
+    claimedStatus: "complete",
+    taskSequenceRevision: 1,
+  });
+  const toolCallArgumentsJson = JSON.stringify({
+    filePath: outputFileRelativePath,
+    content: expectedContent,
+  });
+
+  function buildOpenAiToolCallStream(callId) {
+    return (
+      "data: " +
+      JSON.stringify({
+        choices: [
+          {
+            delta: {
+              role: "assistant",
+              tool_calls: [
+                {
+                  index: 0,
+                  id: callId,
+                  type: "function",
+                  function: { name: "createProjectFile", arguments: toolCallArgumentsJson },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      }) +
+      "\n\ndata: " +
+      JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }) +
+      "\n\ndata: [DONE]\n\n"
+    );
+  }
+  function buildOpenAiCompletionStream() {
+    return (
+      "data: " +
+      JSON.stringify({
+        choices: [
+          {
+            delta: {
+              role: "assistant",
+              content: "已完成。\nASTARRAY_TASK_COMPLETION_V1 " + completionEventJson,
+            },
+            finish_reason: "stop",
+          },
+        ],
+      }) +
+      "\n\ndata: [DONE]\n\n"
+    );
+  }
+  const anthropicSse = (event) =>
+    "event: message\ndata: " + JSON.stringify(event) + "\n\n";
+  function buildAnthropicToolCallStream(callId) {
+    return (
+      anthropicSse({ type: "message_start" }) +
+      anthropicSse({
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "tool_use", id: callId, name: "createProjectFile" },
+      }) +
+      anthropicSse({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "input_json_delta", partial_json: toolCallArgumentsJson },
+      }) +
+      anthropicSse({ type: "content_block_stop", index: 0 }) +
+      anthropicSse({ type: "message_delta", delta: { stop_reason: "tool_use" } }) +
+      anthropicSse({ type: "message_stop" })
+    );
+  }
+  function buildAnthropicCompletionStream() {
+    return (
+      anthropicSse({ type: "message_start" }) +
+      anthropicSse({
+        type: "content_block_delta",
+        index: 0,
+        delta: {
+          type: "text_delta",
+          text: "已完成。\nASTARRAY_TASK_COMPLETION_V1 " + completionEventJson,
+        },
+      }) +
+      anthropicSse({ type: "message_delta", delta: { stop_reason: "end_turn" } }) +
+      anthropicSse({ type: "message_stop" })
+    );
+  }
+  /** 按当前协议生成"请求工具"或"给出完成事件"。 */
+  function buildFixtureStream(input) {
+    const isAnthropic = protocolLabel === "anthropic-messages";
+    if (input.kind === "tool-call") {
+      return isAnthropic
+        ? buildAnthropicToolCallStream(input.callId)
+        : buildOpenAiToolCallStream(input.callId);
+    }
+    return isAnthropic ? buildAnthropicCompletionStream() : buildOpenAiCompletionStream();
+  }
+  /** 工具成功判据按协议产物形态判断。 */
+  function hasToolSucceededInBody(body) {
+    return protocolLabel === "anthropic-messages"
+      ? body.includes('"tool_result"') && body.includes("已新建项目文件")
+      : body.includes("已新建项目文件");
+  }
+  const dryRunEndpointPath =
+    protocolLabel === "anthropic-messages" ? "/anthropic/v1/messages" : "/v1/chat/completions";
+
   // 干跑 A：成功路径（工具真正执行 → 产物落盘、status=done）
   const successProject = path.join(archiveRoot, "dry-success");
   mkdirSync(successProject, { recursive: true });
@@ -393,70 +525,20 @@ if (isDryRun) {
     request.on("data", (chunk) => (body += String(chunk)));
     request.on("end", () => {
       requestCount += 1;
-      const hasToolSucceeded = body.includes("已新建项目文件");
+      const hasToolSucceeded = hasToolSucceededInBody(body);
       response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
-      if (hasToolSucceeded) {
-        response.write(
-          "data: " +
-            JSON.stringify({
-              choices: [
-                {
-                  delta: {
-                    role: "assistant",
-                    content:
-                      "已完成。\nASTARRAY_TASK_COMPLETION_V1 " +
-                      JSON.stringify({
-                        taskExecutionId: "task-exec:t07d-r2-04",
-                        completionAttemptId: "attempt-t07d-r2-04-live-1",
-                        completedTaskIdentifiers: ["T-001"],
-                        claimedStatus: "complete",
-                        taskSequenceRevision: 1,
-                      }),
-                  },
-                  finish_reason: "stop",
-                },
-              ],
-            }) +
-            "\n\ndata: [DONE]\n\n",
-        );
-      } else {
-        response.write(
-          "data: " +
-            JSON.stringify({
-              choices: [
-                {
-                  delta: {
-                    role: "assistant",
-                    tool_calls: [
-                      {
-                        index: 0,
-                        id: "c" + String(requestCount),
-                        type: "function",
-                        function: {
-                          name: "createProjectFile",
-                          arguments: JSON.stringify({
-                            filePath: outputFileRelativePath,
-                            content: expectedContent,
-                          }),
-                        },
-                      },
-                    ],
-                  },
-                  finish_reason: null,
-                },
-              ],
-            }) +
-            "\n\ndata: " +
-            JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }) +
-            "\n\ndata: [DONE]\n\n",
-        );
-      }
+      response.write(
+        buildFixtureStream({
+          kind: hasToolSucceeded ? "completion" : "tool-call",
+          callId: "c" + String(requestCount),
+        }),
+      );
       response.end();
     });
   });
   await new Promise((resolve) => successServer.listen(0, "127.0.0.1", resolve));
   const successEndpoint =
-    "http://127.0.0.1:" + successServer.address().port + "/v1/chat/completions";
+    "http://127.0.0.1:" + successServer.address().port + dryRunEndpointPath;
   const successResult = await runOnce({
     projectDirectory: successProject,
     endpoint: successEndpoint,
@@ -476,37 +558,59 @@ if (isDryRun) {
     request.on("data", () => {});
     request.on("end", () => {
       response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
-      response.write(
-        "data: " +
-          JSON.stringify({
-            choices: [
-              {
-                delta: {
-                  role: "assistant",
-                  content:
-                    "已完成（未真正执行工具，但**声明**了产物）。\nASTARRAY_TASK_COMPLETION_V1 " +
-                    JSON.stringify({
-                      taskExecutionId: "task-exec:t07d-r2-04",
-                      completionAttemptId: "attempt-t07d-r2-04-live-1",
-                      completedTaskIdentifiers: ["T-001"],
-                      claimedStatus: "complete",
-                      taskSequenceRevision: 1,
-                      // 关键：显式声明产物——门禁据此做"产物对账"，缺失即拒绝结案。
-                      declaredArtifacts: [outputFileRelativePath],
-                    }),
-                },
-                finish_reason: "stop",
+      /**
+       * 拒绝路径：**声明**产物但从不调用工具（按协议生成对应形态）。
+       * 门禁据此做产物对账，缺失即拒绝结案。
+       */
+      const rejectionCompletionJson = JSON.stringify({
+        taskExecutionId: "task-exec:t07d-r2-04",
+        completionAttemptId: "attempt-t07d-r2-04-live-1",
+        completedTaskIdentifiers: ["T-001"],
+        claimedStatus: "complete",
+        taskSequenceRevision: 1,
+        declaredArtifacts: [outputFileRelativePath],
+      });
+      if (protocolLabel === "anthropic-messages") {
+        response.write(
+          anthropicSse({ type: "message_start" }) +
+            anthropicSse({
+              type: "content_block_delta",
+              index: 0,
+              delta: {
+                type: "text_delta",
+                text:
+                  "已完成（未真正执行工具，但**声明**了产物）。\nASTARRAY_TASK_COMPLETION_V1 " +
+                  rejectionCompletionJson,
               },
-            ],
-          }) +
-          "\n\ndata: [DONE]\n\n",
-      );
+            }) +
+            anthropicSse({ type: "message_delta", delta: { stop_reason: "end_turn" } }) +
+            anthropicSse({ type: "message_stop" }),
+        );
+      } else {
+        response.write(
+          "data: " +
+            JSON.stringify({
+              choices: [
+                {
+                  delta: {
+                    role: "assistant",
+                    content:
+                      "已完成（未真正执行工具，但**声明**了产物）。\nASTARRAY_TASK_COMPLETION_V1 " +
+                      rejectionCompletionJson,
+                  },
+                  finish_reason: "stop",
+                },
+              ],
+            }) +
+            "\n\ndata: [DONE]\n\n",
+        );
+      }
       response.end();
     });
   });
   await new Promise((resolve) => rejectionServer.listen(0, "127.0.0.1", resolve));
   const rejectionEndpoint =
-    "http://127.0.0.1:" + rejectionServer.address().port + "/v1/chat/completions";
+    "http://127.0.0.1:" + rejectionServer.address().port + dryRunEndpointPath;
   const rejectionResult = await runOnce({
     projectDirectory: rejectionProject,
     endpoint: rejectionEndpoint,
@@ -592,6 +696,7 @@ writeFileSync(
       installedCliPath,
       vendorIdentifier,
       modelIdentifier,
+      protocolLabel,
       isDryRun,
       endpoint: providerEndpoint,
     },
