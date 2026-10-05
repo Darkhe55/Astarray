@@ -45,11 +45,19 @@ function sse(event: unknown): string {
 
 describe("CLI 端到端：anthropic-messages 协议", () => {
   /**
-   * 现状（2026-10-02，本轮）：runtime 与 CLI 选择已就位，但本端到端用例**仍红**——
-   * 结果为 `blocked`（协议请求已发出、SSE 已解析），说明"Anthropic 工具调用 → 本地工具循环
-   * → 完成门禁"这一段尚未打通。下一步排查方向：
-   *  - 工具循环回填的 assistant/user 形态是否被 Anthropic 端点接受（含 tool_use id 对应）；
-   *  - 或 SSE 中 tool_use 的 id/name 是否在流内被正确累积后交给工具层。
+   * 现状（2026-10-02，多协议装配第二步）：**协议层已全部打通**，剩余缺口在 CLI 裁决层。
+   *
+   * 已用诊断探针逐项证实（假 Anthropic 服务器 + 完整 stderr）：
+   *  - 修好 `providerProtocol` 透传后，请求确实走 Anthropic 运行时；
+   *  - 请求体形态正确：顶层 system、user 文本、工具用 input_schema；
+   *  - 工具循环回填形态正确：`assistant.tool_use` + `user.tool_result`（不再是 OpenAI 的 role=tool）；
+   *  - 升级文本可解析：`ask=createProjectFile`、参数完整（含 \n）。
+   *
+   * 剩余缺口（不在协议层）：工具调用返回 `permission-ask-pending` 后，
+   * CLI 未执行授权（无 grant 痕迹）且只走了 1 轮裁决 → 任务 blocked、
+   * 后续每次重跑仍得到 permission-ask-pending。
+   * 下一步：查非 TTY（管道）下裁决输入为何未被消费（`isInteractive`/stdin 行读取路径）。
+   *
    * 以 it.skip 保留为待通过反例：不删除（删除等于假装已支持），也不让门禁长期变红。
    */
   it.skip("① 工具调用 → 权限询问 → allow-once → 产物落盘且 status=done", async () => {

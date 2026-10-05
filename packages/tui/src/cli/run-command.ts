@@ -110,6 +110,11 @@ export interface RunCommandOptions {
   providerApiKeyEnvironmentVariable?: string;
   /** 受保护凭据引用（优先于环境变量；不存在即 fail-closed）。 */
   providerCredentialReference?: string;
+  /**
+   * Provider 协议（2026-10-02 多协议装配）：缺省 `openai-compatible`（**不改变现有行为**）；
+   * `anthropic-messages` 走 Anthropic Messages 运行时；未知协议 fail-closed。
+   */
+  providerProtocol?: string;
   /** Provider 单次请求超时（毫秒）；缺省由注册表默认（30_000）决定。 */
   providerRequestTimeoutMilliseconds?: number;
   /** permission-ask 交互裁决端口（默认：TTY 逐次询问；非 TTY fail-closed）。 */
@@ -143,6 +148,9 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
       providerModelIdentifier: options.providerModelIdentifier,
       providerApiKeyEnvironmentVariable: options.providerApiKeyEnvironmentVariable,
       providerCredentialReference: options.providerCredentialReference,
+      ...(options.providerProtocol === undefined
+        ? {}
+        : { providerProtocol: options.providerProtocol }),
       providerRequestTimeoutMilliseconds: options.providerRequestTimeoutMilliseconds,
       stateDirectory: options.stateDirectory,
     });
