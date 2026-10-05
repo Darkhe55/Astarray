@@ -108,9 +108,11 @@ const taskTimeoutSeconds = takeArgument("--task-timeout-seconds", "240");
 
 const outputFileRelativePath = ".tmp/t07d-r2-04-live/LIVE-PROOF.md";
 /**
- * 预期产物内容**由参数推导**（2026-10-02）：端点与模型来自本次实际使用的参数，
- * 因此提示词、产物内容与判定标准三者始终一致——不会出现"用 stepfun 跑却按别的端点判定"。
- * 干跑时必须显式传入真实端点（脚本不会发请求到该端点，仅用于渲染与判定），
+ * 预期产物内容**由参数推导**（2026-10-02 起**厂商无关**）：
+ * 厂商标签、端点、模型全部来自本次实际使用的参数，因此提示词、产物内容与判定标准三者一致——
+ * 不会出现"用 A 厂商跑却按 B 厂商判定"，也不会出现"产物写着别的厂商"。
+ *
+ * 干跑时必须显式传入真实端点（脚本不会向其发请求，仅用于渲染与判定），
  * 使干跑覆盖的产物内容与真实运行完全一致。
  */
 const endpointHostName = (() => {
@@ -123,8 +125,10 @@ const endpointHostName = (() => {
     return providerEndpoint;
   }
 })();
+const vendorIdentifier = takeArgument("--vendor-identifier", endpointHostName);
 const expectedContent = [
   "# 真实 Provider 受控改动（T07D-R2-04）",
+  "- 厂商：" + vendorIdentifier,
   "- 端点：" + endpointHostName,
   "- 模型：" + modelIdentifier,
   "",
@@ -176,10 +180,24 @@ console.log(
       ? "干净（无改动）"
       : "有未提交改动（**tarball 内容可能与提交不完全一致**）"),
 );
+console.log("厂商: " + vendorIdentifier + " | 模型: " + modelIdentifier + " | 端点: " + String(providerEndpoint));
 console.log("运行标识: " + runIdentifier);
 
 const packOutputRaw = runNpmSync(
-  ["pack", "--json", "--pack-destination", archiveRoot],
+  [
+    "pack",
+    "--json",
+    "--pack-destination",
+    archiveRoot,
+    /**
+     * 确定性打包（2026-10-02 实测教训）：
+     * prepack 会跑 npm run check（全量测试）；在打包这类重负载下，已知的负载敏感情景
+     * 会让某个用例抖动失败 → tarball 产出不稳定、哈希不可复现。
+     * 本验收要求**确定性产物**，故默认跳过 pack 生命周期脚本；仓库门禁由 npm run check
+     * 单独负责（本脚本在报告中引用其退出码）。如需连 prepack 一起跑，加 --run-prepack。
+     */
+    ...(argumentsList.includes("--run-prepack") ? [] : ["--ignore-scripts"]),
+  ],
   {
     cwd: repositoryRoot,
     encoding: "utf8",
@@ -241,8 +259,9 @@ function buildPrompt() {
     "",
     "请用内置工具 createProjectFile（只能新建、不能覆盖；参数 filePath 与 content）完成一个极小的受控改动：",
     "1. filePath 必须是：" + outputFileRelativePath,
-    "2. content 必须严格为下面三行（Markdown，保留换行）：",
+    "2. content 必须严格为下面四行（Markdown，保留换行）：",
     "   # 真实 Provider 受控改动（T07D-R2-04）",
+    "   - 厂商：" + vendorIdentifier,
     "   - 端点：" + endpointHostName,
     "   - 模型：" + modelIdentifier,
     "",
@@ -571,6 +590,7 @@ writeFileSync(
       tarballSha256,
       tarballSizeBytes: packResult.size,
       installedCliPath,
+      vendorIdentifier,
       modelIdentifier,
       isDryRun,
       endpoint: providerEndpoint,
