@@ -81,8 +81,8 @@
 遗留与未主张完成项：
 
 - **SMART-01-04 入口与包验收**：已补做完成，见下节「入口与包级验收补做」。
-- **SMART-01-04 真实运行实测**："模拟慢模型/长下级任务仍能接收新指令"的**真实运行**实测仍未执行（需真实运行环境/可能需用户参与）；本批交付判定层与反例，不主张该项完成。
-- **负载检查（明确延后）**：满载门禁中 `summary-cli`、`cli-commands`、`context-runtime-cache-events`、`application-sdk-task-events`、`provider-fake-server` 等偶发超时失败，独立运行均通过。经用户决定，**负载/并发预算检查留到正式上线前进行**，本批不处理。
+- **SMART-01-04 持续接收（模拟慢模型/长下级任务）**：已补做**离线部分**，见下节「持续接收补做」；卡内措辞中的"真实运行"整机实测仍未执行，不主张该项完成。
+- **负载检查（明确延后）**：满载门禁中 `summary-cli`、`cli-commands`、`context-runtime-cache-events`、`application-sdk-task-events`、`provider-fake-server`、`provider-tool-loop`、`e2e01-vertical-rework` 等偶发超时失败，独立运行均通过。经用户决定，**负载/并发预算检查留到正式上线前进行**，本批不处理。
 - 计划外未动项：T07D-R2-04 正向闭环、`auth-scope-replay-rejected`（已收窄至 CLI 接线未修；门禁层正确性由 `tests/core/integration/scope-authorization-regrant.test.ts` 3/3 通过证明）、CLI 结果后进程滞留（`it.skip`）、Anthropic 离线端到端用例（`it.skip`）、BRIDGE-01 / GUI-01-R / WB-00。
 
 本批真实 Provider 额度消耗：**0**（全程离线）。
@@ -115,6 +115,29 @@
   用**已安装包**的 `node_modules/astarray/dist/cli.js` 实跑五条入口 → 断言只读性 → 落盘 `acceptance-verdict.json`。
 - 本次实测：tarball `astarray-0.1.0.tgz`（1088722 字节，`sha256=429fe8fd9753b9cd…`），来源提交 `41450b9`；
   8/8 项通过，其中**只读性一项实测确认概览查询未创建 `.astarray` 状态目录**；真实额度消耗 0。
+
+### 2026-10-02 — 持续接收补做（慢模型/长下级任务）与指令窗口并发守卫
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `npx vitest run tests/core/integration/instruction-continuous-reception.test.ts` | 0 | 6 条反例通过 |
+| `npx vitest run`（窗口队列 + 持续接收） | 0 | 16 条通过（无回归） |
+| `npm run check` | 1 | 抖动：`provider-tool-loop` 50s、`e2e01-vertical-rework` 181s；隔离运行 **4/4 通过** |
+
+内容（提交 `f7d6337`）：
+
+- 反例①模拟慢模型（真实延迟 120ms：首条在途期间后续指令仍被受理，窗口满则排队不丢弃）；
+  ②长下级任务在途不阻断接收；③超期如实报超时且 `isWorkCompleted=false`（UI 不冒充成果完成）；
+  ④关闭回收后有界补位且跳过在途；⑤同一实例并发接收 4 条不丢不重；⑥多实例并存必须响亮失败。
+- **反例⑥ 证伪的静默丢数据缺陷（已修）**：两个实例并存访问同一状态目录时各自持有内存快照整体
+  覆盖落盘，实测丢失指令。修复：`atomic-json.ts` 的 `writeAtomicJson` 新增
+  `WriteAtomicJsonOptions.beforeCommit` 守卫钩子（临时文件 fsync 之后、**rename 提交之前**调用；
+  抛错则不提交并清理临时文件）；`instruction-window-store.ts` 增加状态指纹与
+  `assertForeignWriteBeforeCommit`，检测到外部写入即抛「指令窗口并发冲突…已拒绝覆盖以避免静默丢指令」；
+  提交成功后记录**磁盘实际指纹**（而非内存指纹——并发写链下后者会导致误判，已实测修正）。
+- **诚实边界**：这是「检测并拒绝」，消除的是**静默**覆盖；**不是**分布式共识，不承诺
+  「最后写入者胜」的并发正确性。该限制已写入代码注释，未主张多实例并发安全。
+- 本项覆盖「模拟慢模型/长下级任务」的**离线**部分；卡内「真实运行」整机实测未执行。
 
 ## 历史设计与验收记录
 
