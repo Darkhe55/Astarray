@@ -43,11 +43,52 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 /** Windows 上 npm 是 .cmd shim，execFile/spawn 不会自动补后缀。 */
 const npmExecutableName = process.platform === "win32" ? "npm.cmd" : "npm";
 /**
- * Windows + Node 24：直接 spawn `.cmd` 会抛 EINVAL（CVE-2024-27980 的修复行为）。
- * 本脚本传给 npm 的参数全部由脚本内部控制（无用户输入、无模型输入、无外部路径拼接），
- * 因此以 shell 执行是安全的；这是跨平台调用 npm 的最稳妥方式。
+ * 如何调用 npm（2026-10-02 实测教训）：
+ * - Windows + Node 24 直接 spawn `.cmd` → EINVAL（CVE-2024-27980 的修复行为）；
+ * - 改用 `shell: true` → **含冒号的绝对路径**（`C:\...`、ISO 时间戳）在 shell 拼接时被破坏，
+ *   实测 `npm pack` 因此失败。
+ * 因此：优先解析 npm 的 JS 入口，用 `node <npm-cli.js> <args>` 调用（**完全不经 shell**、
+ * 参数原样传递）；解析失败才退回 shell 模式。
  */
-const npmExecutionOptions = { shell: process.platform === "win32" };
+const npmCliPath = (() => {
+  try {
+    const lookupOutput = execFileSync(
+      process.platform === "win32" ? "where" : "which",
+      ["npm"],
+      {
+        encoding: "utf8",
+        shell: process.platform === "win32",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
+    for (const candidateLine of lookupOutput.split(/\r?\n/)) {
+      const candidate = candidateLine.trim();
+      if (candidate === "") continue;
+      const cliCandidate = path.join(
+        path.dirname(candidate),
+        "node_modules",
+        "npm",
+        "bin",
+        "npm-cli.js",
+      );
+      if (existsSync(cliCandidate)) {
+        return cliCandidate;
+      }
+    }
+  } catch {
+    // 退回 shell 模式
+  }
+  return null;
+})();
+function runNpmSync(npmArguments, options) {
+  if (npmCliPath !== null) {
+    return execFileSync(process.execPath, [npmCliPath, ...npmArguments], options);
+  }
+  return execFileSync(npmExecutableName, npmArguments, {
+    ...options,
+    shell: process.platform === "win32",
+  });
+}
 const argumentsList = process.argv.slice(2);
 function takeArgument(name, fallback) {
   const index = argumentsList.indexOf(name);
@@ -137,14 +178,12 @@ console.log(
 );
 console.log("运行标识: " + runIdentifier);
 
-const packOutputRaw = execFileSync(
-  npmExecutableName,
+const packOutputRaw = runNpmSync(
   ["pack", "--json", "--pack-destination", archiveRoot],
   {
     cwd: repositoryRoot,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
-    ...npmExecutionOptions,
   },
 );
 const packOutput = packOutputRaw.replace(/\u001B\[[0-9;]*m/g, "");
@@ -164,15 +203,10 @@ console.log("tarball sha256: " + tarballSha256);
 // ---------------------------------------------------------------------------
 // 2) 全新目录隔离安装（不复制仓库 .astarray；凭证只走环境变量）
 // ---------------------------------------------------------------------------
-execFileSync(npmExecutableName, ["init", "-y"], {
-  cwd: installRoot,
-  stdio: "ignore",
-  ...npmExecutionOptions,
-});
-execFileSync(npmExecutableName, ["install", "--no-audit", "--no-fund", tarballPath], {
+runNpmSync(["init", "-y"], { cwd: installRoot, stdio: "ignore" });
+runNpmSync(["install", "--no-audit", "--no-fund", tarballPath], {
   cwd: installRoot,
   stdio: "inherit",
-  ...npmExecutionOptions,
 });
 const installedCliPath = path.join(
   installRoot,
