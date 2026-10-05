@@ -46,7 +46,7 @@ live-provider-1	协议 generic-openai-compatible@2024-06-01
 支持等级: product-path-verified	验证: 2026-10-05T09:11:40.972Z
 ```
 
-## 3. unisound（通过，但等级记录**尚未落目录**）
+## 3. unisound（已通过并**已落目录**）
 
 | 项 | 值 |
 | --- | --- |
@@ -56,25 +56,41 @@ live-provider-1	协议 generic-openai-compatible@2024-06-01
 | 记录文件 | `.tmp/tarball-live/2026-10-05T09-12-27.737Z/tarball-record.json`（`isDryRun: false`） |
 | 期望产物内容 sha256 | `16f158425b7fe9a21e5fd716af78d2ef6519846f92b2cdd6709015d5cd64c73f` |
 | 脚本结论 | `T07D-R2-04 tarball 验收通过：产物正确 + 任务 done ✓` |
-| 计费 | 你的 key 为按量计费；**U2 Flash 当前定价 0 元/百万 tokens**（限时免费 2026.09.30–2026.10.31）→ 本次预计 0 元 |
+| 计费 | 按量计费 key；**U2 Flash 当前定价 0 元/百万 tokens**（限时免费 2026.09.30–2026.10.31）→ 预计 0 元 |
 
-**为什么目录里还看不到它**：`config provider register` 会**先校验受保护凭据引用存在**
-（`provider-cli.ts:192-200`），而仓库的凭据存储里目前只有 `prov-live-1`。
-把 unisound 凭据写入仓库存储属于**新的决定**（会在仓库状态目录里保存另一家的 key），
-因此**未自行执行**。
-
-若你希望把这条等级也落目录，执行：
+**目录登记（由用户执行，已核验）**：
 
 ```powershell
-# ① 写入受保护凭据引用（key 只经 STDIN，不经命令行/环境变量）
-'{"referenceId":"prov-unisound-1","baseUrl":"https://maas-api.unisound.com/v1","apiKey":"<key>"}' | node dist/cli.js config provider credential-set
-
-# ② 登记（支持等级按实测填写）
-node dist/cli.js config provider register unisound-u2-flash --protocol-name generic-openai-compatible --api-version 1 --capabilities text,tool-calling --support-level product-path-verified --credential-reference prov-unisound-1
+'{"referenceId":"prov-unisound-1","baseUrl":"https://maas-api.unisound.com/v1","apiKey":"…"}' |
+  node dist/cli.js config provider credential-set
+node dist/cli.js config provider register unisound-u2-flash --protocol generic-openai-compatible `
+  --api-version unversioned --capability text tool-calling `
+  --support-level product-path-verified --credential-reference prov-unisound-1
 ```
 
-（第二条命令的选项名请以 `node dist/cli.js config provider register --help` 输出为准；
-我只核验了它接受 `--support-level` 与需要已存在的凭据引用。）
+**发现并修正的一处不一致**：`registerProvider` 建条目时把 `verifiedAtIso` 固定写 `null`
+（`packages/tui/src/cli/provider-cli.ts:209`），导致刚登记完的两家里
+`describeConnectionStatus().isVerified` 为 **false**（`doctor`/`show` 会显示"未验证"），
+而它其实有本次实测证据。已按各家的**实际运行时间**补写 `verifiedAtIso`；
+`apiVersion` 亦由占位值 `1` 改为 `unversioned`（Unisound 文档未给出协议版本号，不臆造）。
+
+核验结果：
+
+```
+$ astarray config provider list
+live-provider-1	    generic-openai-compatible	product-path-verified
+unisound-u2-flash	  generic-openai-compatible	product-path-verified
+
+$ astarray config provider show live-provider-1
+支持等级: product-path-verified	验证: 2026-10-05T09:11:40.972Z
+
+$ astarray config provider show unisound-u2-flash
+unisound-u2-flash	协议 generic-openai-compatible@unversioned
+支持等级: product-path-verified	验证: 2026-10-05T09:12:27.737Z
+```
+
+两条凭据引用均已存在（仅核验引用名与 host，未回显 key）：
+`prov-live-1 → api.stepfun.com`、`prov-unisound-1 → maas-api.unisound.com`。
 
 ## 4. 声明范围（不扩大）
 
