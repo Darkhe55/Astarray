@@ -1749,6 +1749,8 @@ export interface ProviderRegisterCommandOptions {
   capabilityNames: string[];
   supportLevel: string;
   protectedCredentialReferenceId: string;
+  /** 验证时间（ISO 8601，2026-10-02 新增）；仅在已有实测证据时给出，未给出则写 null。 */
+  verifiedAtIso?: string;
   isJsonOutput: boolean;
 }
 
@@ -1769,6 +1771,21 @@ export async function executeProviderRegisterCommand(
     );
     return EXIT_CODES.USAGE_ERROR;
   }
+  /**
+   * 验证时间必须显式且合法（2026-10-02）：非法即用法错误、**不写目录**，
+   * 避免把不可解析的时间写进目录；未给出则保持 null（不臆造）。
+   */
+  let verifiedAtIso: string | null = null;
+  if (options.verifiedAtIso !== undefined) {
+    const parsedMilliseconds = Date.parse(options.verifiedAtIso);
+    if (Number.isNaN(parsedMilliseconds)) {
+      logToStderr(
+        `--verified-at 必须是可解析的 ISO 8601 时间（收到: ${options.verifiedAtIso}）`,
+      );
+      return EXIT_CODES.USAGE_ERROR;
+    }
+    verifiedAtIso = new Date(parsedMilliseconds).toISOString();
+  }
   const { credentialStore, catalog, toProviderPublicDto } = await loadProviderCliInfra(
     options.stateDirectory,
   );
@@ -1781,6 +1798,7 @@ export async function executeProviderRegisterCommand(
       capabilities: options.capabilityNames,
       supportLevel: options.supportLevel as (typeof SUPPORT_LEVELS)[number],
       protectedCredentialReferenceId: options.protectedCredentialReferenceId,
+      verifiedAtIso,
       credentialStore,
     });
   } catch (error) {

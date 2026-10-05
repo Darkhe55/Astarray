@@ -389,6 +389,10 @@ providerCommand
   .requiredOption("--support-level <level>", "adapter-only|fake-server-conformant|live-smoke-verified|product-path-verified")
   .requiredOption("--credential-reference <reference>", "受保护凭据引用 ID")
   .option("--json", "JSON 输出")
+  .option(
+    "--verified-at <iso>",
+    "验证时间（ISO 8601；仅在已有实测证据时给出。未给出则保持 null，不臆造）",
+  )
   .action(
     async (
       providerId: string,
@@ -398,6 +402,7 @@ providerCommand
         capability: string[];
         supportLevel: string;
         credentialReference: string;
+        verifiedAt?: string;
         json?: boolean;
       },
     ) => {
@@ -409,6 +414,7 @@ providerCommand
         capabilityNames: options.capability,
         supportLevel: options.supportLevel,
         protectedCredentialReferenceId: options.credentialReference,
+        ...(options.verifiedAt === undefined ? {} : { verifiedAtIso: options.verifiedAt }),
         isJsonOutput: options.json === true,
       });
     },

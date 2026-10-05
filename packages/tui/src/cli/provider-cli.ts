@@ -188,6 +188,13 @@ export class ProviderCliCatalog {
     supportLevel: ProviderRegistration["supportLevel"];
     protectedCredentialReferenceId: string;
     credentialStore: ProviderCredentialStore;
+    /**
+     * 验证时间（2026-10-02 新增）：有实测证据时由调用方给出；
+     * 未给出则保持 `null`（**不臆造**验证时间）。
+     * 此前该字段被固定写 null，导致"支持等级已按实测登记、却显示未验证"，
+     * 只能手工编辑状态目录里的 JSON 才能修正。
+     */
+    verifiedAtIso?: string | null;
   }): Promise<ProviderRegistration> {
     const doesReferenceExist = await input.credentialStore.doesReferenceExist(
       input.protectedCredentialReferenceId,
@@ -206,7 +213,7 @@ export class ProviderCliCatalog {
       capabilities: input.capabilities,
       supportLevel: input.supportLevel,
       protectedCredentialReferenceId: input.protectedCredentialReferenceId,
-      verifiedAtIso: null,
+      verifiedAtIso: input.verifiedAtIso ?? null,
     };
     this.registrationsByProviderId.set(input.providerProfileId, registration);
     await this.persistRegistrations();
