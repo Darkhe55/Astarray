@@ -960,6 +960,92 @@ export interface ContextMetricsCommandOptions {
 }
 
 /**
+ * PROJECT-01-04：跨项目授权与副本的**公开只读入口**。
+ *
+ * 纪律：只读（不联网、不执行进程、不写盘）；按来源/目标/接收个体过滤，
+ * 多项目与多同级个体**互不串数据**；副本显式标注"副本"并给出来源引用（人工可分辨）。
+ */
+export interface CrossProjectListCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+  sourceProjectIdentifier?: string;
+  targetProjectIdentifier?: string;
+  receivingAgentInstanceId?: string;
+}
+
+export async function executeCrossProjectListCommand(
+  options: CrossProjectListCommandOptions,
+): Promise<number> {
+  try {
+    const { CrossProjectAuthorizationStore, summarizeCopyReceipts } = await import(
+      "../../../core/src/orchestration/cross-project-authorization-store.js"
+    );
+    const store = new CrossProjectAuthorizationStore({ baseDirectory: options.stateDirectory });
+    const authorizations = await store.listAuthorizations({
+      ...(options.sourceProjectIdentifier === undefined
+        ? {}
+        : { sourceProjectIdentifier: options.sourceProjectIdentifier }),
+      ...(options.targetProjectIdentifier === undefined
+        ? {}
+        : { targetProjectIdentifier: options.targetProjectIdentifier }),
+      ...(options.receivingAgentInstanceId === undefined
+        ? {}
+        : { receivingAgentInstanceId: options.receivingAgentInstanceId }),
+    });
+    const copySummary = await summarizeCopyReceipts({ store });
+
+    if (options.isJsonOutput) {
+      printJson({
+        filter: {
+          sourceProjectIdentifier: options.sourceProjectIdentifier ?? null,
+          targetProjectIdentifier: options.targetProjectIdentifier ?? null,
+          receivingAgentInstanceId: options.receivingAgentInstanceId ?? null,
+        },
+        authorizations,
+        copyReceipts: copySummary,
+      });
+    } else {
+      process.stdout.write(
+        "authorizations: " +
+          String(authorizations.length) +
+          "\n" +
+          authorizations
+            .map(
+              (record) =>
+                "  " +
+                record.authorizationIdentifier +
+                " " +
+                record.operationKind +
+                " " +
+                record.sourceProjectIdentifier +
+                "@r" +
+                String(record.sourceProjectRevision) +
+                " → " +
+                record.targetProjectIdentifier +
+                " [" +
+                record.state +
+                "] task=" +
+                record.taskIdentifier,
+            )
+            .join("\n") +
+          (authorizations.length === 0 ? "" : "\n") +
+          "copy-receipts: " +
+          String(copySummary.count) +
+          "\n" +
+          copySummary.receipts
+            .map((entry) => "  " + entry.displayLabel)
+            .join("\n") +
+          (copySummary.receipts.length === 0 ? "" : "\n"),
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr("跨项目授权查询失败（只读入口不得阻塞业务）: " + (error as Error).message);
+    return EXIT_CODES.FAILURE;
+  }
+}
+
+/**
  * DIAG-01-03：诊断错误汇总与脱敏诊断包预览（**严格只读**）。
  *
  * 边界（卡内 §5）：

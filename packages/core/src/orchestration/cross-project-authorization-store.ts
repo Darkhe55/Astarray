@@ -41,6 +41,8 @@ export interface CrossProjectAuthorizationRecord {
   /** 认证用户；null 表示非用户来源（不得生效）。 */
   grantedByUserId: string | null;
   taskIdentifier: string;
+  /** 接收方具体个体（可空 = 未限定具体个体）。 */
+  receivingAgentInstanceId?: string | null;
   state: "active" | "revoked";
   revokedReason: string | null;
   /** 派生深度：0=用户直接授权；>0 为任务内缩权派生。 */
@@ -166,6 +168,7 @@ export class CrossProjectAuthorizationStore {
     expiresAtIso: string;
     grantedByUserId: string | null;
     taskIdentifier: string;
+    receivingAgentInstanceId?: string | null;
     nowIso?: string;
   }): Promise<{ outcome: GrantOutcome; record: CrossProjectAuthorizationRecord | null }> {
     await this.loadFromDisk();
@@ -189,6 +192,7 @@ export class CrossProjectAuthorizationStore {
       expiresAtIso: input.expiresAtIso,
       grantedByUserId: input.grantedByUserId,
       taskIdentifier: input.taskIdentifier,
+      receivingAgentInstanceId: input.receivingAgentInstanceId ?? null,
       state: "active",
       revokedReason: null,
       derivationDepth: 0,
@@ -218,9 +222,33 @@ export class CrossProjectAuthorizationStore {
     return this.authorizationsByIdentifier.get(authorizationIdentifier) ?? null;
   }
 
-  async listAuthorizations(): Promise<CrossProjectAuthorizationRecord[]> {
+  async listAuthorizations(filter?: {
+    sourceProjectIdentifier?: string;
+    targetProjectIdentifier?: string;
+    receivingAgentInstanceId?: string;
+  }): Promise<CrossProjectAuthorizationRecord[]> {
     await this.loadFromDisk();
-    return [...this.authorizationsByIdentifier.values()];
+    return [...this.authorizationsByIdentifier.values()].filter((record) => {
+      if (
+        filter?.sourceProjectIdentifier !== undefined &&
+        record.sourceProjectIdentifier !== filter.sourceProjectIdentifier
+      ) {
+        return false;
+      }
+      if (
+        filter?.targetProjectIdentifier !== undefined &&
+        record.targetProjectIdentifier !== filter.targetProjectIdentifier
+      ) {
+        return false;
+      }
+      if (
+        filter?.receivingAgentInstanceId !== undefined &&
+        (record.receivingAgentInstanceId ?? null) !== filter.receivingAgentInstanceId
+      ) {
+        return false;
+      }
+      return true;
+    });
   }
 
   /**
@@ -344,6 +372,12 @@ export class CrossProjectAuthorizationStore {
   async countCopyReceipts(): Promise<number> {
     await this.loadFromDisk();
     return this.copyReceiptsByKey.size;
+  }
+
+  /** 只读列出全部副本回执（公开入口用；不联网、不写盘）。 */
+  async listCopyReceipts(): Promise<CrossProjectCopyReceipt[]> {
+    await this.loadFromDisk();
+    return [...this.copyReceiptsByKey.values()];
   }
 }
 
@@ -558,4 +592,193 @@ export class CrossProjectTransferService {
   async countCopyReceipts(): Promise<number> {
     return this.options.store.countCopyReceipts();
   }
+}
+
+/** 路径前缀范围（来源可导出 / 目标可接收 / 接收个体权限）。 */
+export interface CrossProjectPathScope {
+  pathPrefixes: string[];
+}
+
+export type CrossProjectPermissionDecision =
+  | "allow-by-intersection"
+  | "allow-by-preset-shared-scope"
+  | "deny-wins"
+  | "deny-out-of-preset-shared-scope"
+  | "deny-target-does-not-receive"
+  | "deny-outside-source-export"
+  | "deny-outside-receiving-agent-permission"
+  | "deny-ponder-readonly-only"
+  | "ask-user";
+
+export interface CrossProjectPermissionEvaluation {
+  decision: CrossProjectPermissionDecision;
+  isAllowed: boolean;
+  isHumanDecisionRequired: boolean;
+  detail: string;
+}
+
+function isPathWithinScope(scope: CrossProjectPathScope, resourcePath: string): boolean {
+  return scope.pathPrefixes.some(
+    (prefix) => resourcePath === prefix.replace(/\/$/, "") || resourcePath.startsWith(prefix),
+  );
+}
+
+/**
+ * 有效跨项目授权判定（PROJECT-01-04 / 卡内 §4）。
+ *
+ * 判定顺序：
+ *  1) **deny 优先**：显式拒绝即整体拒绝；
+ *  2) 思索模式：跨项目 grant 不授予写/执行，仅原有只读能力 → 非只读操作一律拒绝；
+ *  3) 三集合交集：来源可导出 ∩ 目标可接收 ∩ 接收 Agent 当前权限（缺一即拒，并给具体原因）；
+ *  4) 模式：放权在**预设共享范围**内自动通过（无需人等）；协同/超范围仍需人裁决。
+ *
+ * 注意：**"可配置权限默认 allow"不自动创建项目间共享关系** ——
+ * 目标侧未声明可接收范围（空）即视为不接收，不因默认 allow 放行。
+ */
+export function evaluateEffectiveCrossProjectPermission(input: {
+  sourceExportScope: CrossProjectPathScope;
+  targetReceiveScope: CrossProjectPathScope;
+  receivingAgentPermissionScope: CrossProjectPathScope;
+  requestedResourcePath: string;
+  mode: "ponder" | "assist" | "devolve";
+  requestedOperationKind?: CrossProjectOperationKind;
+  explicitDenyScopes?: CrossProjectPathScope[];
+  requestedResourceIsDenied?: boolean;
+  hasUserPresetDelegation?: boolean;
+}): CrossProjectPermissionEvaluation {
+  // 1) deny 优先
+  if (input.requestedResourceIsDenied === true) {
+    return {
+      decision: "deny-wins",
+      isAllowed: false,
+      isHumanDecisionRequired: false,
+      detail: "显式拒绝优先：即使其它侧允许也不放行",
+    };
+  }
+
+  // 2) 思索模式：仅原有只读能力
+  if (input.mode === "ponder" && input.requestedOperationKind === "import-copy") {
+    return {
+      decision: "deny-ponder-readonly-only",
+      isAllowed: false,
+      isHumanDecisionRequired: false,
+      detail: "思索模式：跨项目 grant 不授予写入/执行；导入执行由获准执行层承担",
+    };
+  }
+
+  // 3) 目标侧未声明可接收范围 → 不接收（默认 allow 不等于同意接收）
+  if (input.targetReceiveScope.pathPrefixes.length === 0) {
+    return {
+      decision: "deny-target-does-not-receive",
+      isAllowed: false,
+      isHumanDecisionRequired: false,
+      detail: "目标项目未声明可接收范围：默认 allow 不自动创建项目间共享关系",
+    };
+  }
+
+  // 4) 三集合交集：分别识别是哪一侧挡住，给出**具体原因**
+  const outsideScopes: string[] = [];
+  if (!isPathWithinScope(input.sourceExportScope, input.requestedResourcePath)) {
+    outsideScopes.push("来源可导出范围");
+  }
+  if (!isPathWithinScope(input.targetReceiveScope, input.requestedResourcePath)) {
+    outsideScopes.push("目标可接收范围");
+  }
+  if (!isPathWithinScope(input.receivingAgentPermissionScope, input.requestedResourcePath)) {
+    outsideScopes.push("接收 Agent 当前有效权限");
+  }
+
+  if (outsideScopes.length > 0) {
+    // 放权模式：超出预设共享范围 → **不放行且无需人工介入**
+    if (input.mode === "devolve") {
+      return {
+        decision: "deny-out-of-preset-shared-scope",
+        isAllowed: false,
+        isHumanDecisionRequired: false,
+        detail:
+          "放权模式：超出用户预设共享范围（" + outsideScopes.join("、") + "）→ 不放行",
+      };
+    }
+    // 协同模式：超出范围 → 询问用户（不得自动放行）
+    return {
+      decision: "ask-user",
+      isAllowed: false,
+      isHumanDecisionRequired: true,
+      detail: "超出范围（" + outsideScopes.join("、") + "）：需人工裁决",
+    };
+  }
+
+  // 5) 三集合交集成立：按模式决定是否需人工介入
+  if (input.mode === "assist" && input.hasUserPresetDelegation !== true) {
+    return {
+      decision: "ask-user",
+      isAllowed: false,
+      isHumanDecisionRequired: true,
+      detail: "三集合交集成立，但协同模式未获用户预委托：仍需人工裁决",
+    };
+  }
+  return {
+    decision:
+      input.hasUserPresetDelegation === true ? "allow-by-preset-shared-scope" : "allow-by-intersection",
+    isAllowed: true,
+    isHumanDecisionRequired: false,
+    detail: "有效授权 = 来源可导出 ∩ 目标可接收 ∩ 接收 Agent 权限，三者均通过",
+  };
+}
+
+export interface CopyReceiptSummaryEntry {
+  receiptIdentifier: string;
+  /** 面向人的标签：显式标注"副本"并给出来源项目、revision 与内容哈希。 */
+  displayLabel: string;
+  sourceProjectIdentifier: string;
+  sourceRevision: number;
+  sourceResourcePath: string;
+  targetProjectIdentifier: string;
+  targetResourcePath: string;
+  contentHash: string;
+  isCopyOfExternalSource: true;
+  isOriginal: false;
+}
+
+export interface CopyReceiptSummary {
+  receipts: CopyReceiptSummaryEntry[];
+  count: number;
+}
+
+/**
+ * 副本摘要（公开入口）：**人工可分辨副本与原件**。
+ * 只读：仅读已落盘回执，不联网、不写盘。
+ */
+export async function summarizeCopyReceipts(input: {
+  store: CrossProjectAuthorizationStore;
+}): Promise<CopyReceiptSummary> {
+  const receipts = await input.store.listCopyReceipts();
+  return {
+    count: receipts.length,
+    receipts: receipts.map((receipt) => ({
+      receiptIdentifier: receipt.receiptIdentifier,
+      displayLabel:
+        "[副本] " +
+        receipt.sourceProjectIdentifier +
+        "@r" +
+        String(receipt.sourceRevision) +
+        " " +
+        receipt.sourceResourcePath +
+        " → " +
+        receipt.targetProjectIdentifier +
+        ":" +
+        receipt.targetResourcePath +
+        " (" +
+        receipt.contentHash +
+        ")",
+      sourceProjectIdentifier: receipt.sourceProjectIdentifier,
+      sourceRevision: receipt.sourceRevision,
+      sourceResourcePath: receipt.sourceResourcePath,
+      targetProjectIdentifier: receipt.targetProjectIdentifier,
+      targetResourcePath: receipt.targetResourcePath,
+      contentHash: receipt.contentHash,
+      isCopyOfExternalSource: true,
+      isOriginal: false,
+    })),
+  };
 }

@@ -56,6 +56,7 @@ import {
   executeSummaryShowCommand,
   executeStatusCommand,
   executeWorkflowScenarioCommand,
+  executeCrossProjectListCommand,
   executeDoctorErrorsCommand,
   executePerfOverviewCommand,
   executeUsageOverviewCommand,
@@ -210,6 +211,42 @@ usageCommand
         ...(options.inputTokenBudget === undefined
           ? {}
           : { inputTokenBudget: options.inputTokenBudget }),
+      });
+    },
+  );
+
+/**
+ * PROJECT-01-04：跨项目授权与副本的公开只读入口。
+ */
+const crossProjectCommand = program
+  .command("cross-project")
+  .description("跨项目授权与副本（只读；按来源/目标/个体过滤，不串数据）");
+crossProjectCommand
+  .command("list")
+  .description("列出跨项目授权与副本回执（副本显式标注，人工可分辨）")
+  .option("--source-project <project-id>", "限定来源项目")
+  .option("--target-project <project-id>", "限定目标项目")
+  .option("--agent <agent-instance-id>", "限定接收个体（多同级个体互不串数据）")
+  .option("--json", "JSON 输出")
+  .action(
+    async (options: {
+      sourceProject?: string;
+      targetProject?: string;
+      agent?: string;
+      json?: boolean;
+    }) => {
+      process.exitCode = await executeCrossProjectListCommand({
+        stateDirectory: defaultStateDirectory(),
+        isJsonOutput: options.json === true,
+        ...(options.sourceProject === undefined
+          ? {}
+          : { sourceProjectIdentifier: options.sourceProject }),
+        ...(options.targetProject === undefined
+          ? {}
+          : { targetProjectIdentifier: options.targetProject }),
+        ...(options.agent === undefined
+          ? {}
+          : { receivingAgentInstanceId: options.agent }),
       });
     },
   );
