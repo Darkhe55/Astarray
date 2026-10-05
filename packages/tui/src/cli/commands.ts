@@ -959,6 +959,125 @@ export interface ContextMetricsCommandOptions {
   isJsonOutput: boolean;
 }
 
+/**
+ * PERF-01-03：性能最小概览（只读；由已落盘样本复算）。
+ *
+ * 纪律：查询**不发起任何 Provider/业务请求**；覆盖范围与样本窗口必须回显；
+ * 无法测量时报"不可报告"而不是 0。
+ */
+export interface PerfOverviewCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+  missionIdentifier?: string;
+  windowStartIso?: string;
+  windowEndIso?: string;
+  detailLevel?: string;
+  pageSize?: string;
+  cursor?: string;
+}
+
+export async function executePerfOverviewCommand(
+  options: PerfOverviewCommandOptions,
+): Promise<number> {
+  if (
+    options.detailLevel !== undefined &&
+    options.detailLevel !== "summary" &&
+    options.detailLevel !== "detail"
+  ) {
+    logToStderr(
+      `--detail 必须是 summary | detail 之一（收到: ${options.detailLevel}）`,
+    );
+    return EXIT_CODES.USAGE_ERROR;
+  }
+  if (options.windowStartIso !== undefined && Number.isNaN(Date.parse(options.windowStartIso))) {
+    logToStderr(`--since 必须是可解析的 ISO 8601 时间（收到: ${options.windowStartIso}）`);
+    return EXIT_CODES.USAGE_ERROR;
+  }
+  if (options.windowEndIso !== undefined && Number.isNaN(Date.parse(options.windowEndIso))) {
+    logToStderr(`--until 必须是可解析的 ISO 8601 时间（收到: ${options.windowEndIso}）`);
+    return EXIT_CODES.USAGE_ERROR;
+  }
+  const parsedPageSize =
+    options.pageSize === undefined ? undefined : Number.parseInt(options.pageSize, 10);
+  if (parsedPageSize !== undefined && (Number.isNaN(parsedPageSize) || parsedPageSize <= 0)) {
+    logToStderr(`--page-size 必须是正整数（收到: ${String(options.pageSize)}）`);
+    return EXIT_CODES.USAGE_ERROR;
+  }
+
+  try {
+    const { PerfEventStore, queryPerfOverview } = await import(
+      "../../../core/src/orchestration/perf-event-store.js"
+    );
+    const store = new PerfEventStore({ baseDirectory: options.stateDirectory });
+    const overview = await queryPerfOverview({
+      store,
+      query: {
+        ...(options.missionIdentifier === undefined
+          ? {}
+          : { missionIdentifier: options.missionIdentifier }),
+        ...(options.windowStartIso === undefined ? {} : { windowStartIso: options.windowStartIso }),
+        ...(options.windowEndIso === undefined ? {} : { windowEndIso: options.windowEndIso }),
+        detailLevel: options.detailLevel === "detail" ? "detail" : "summary",
+        ...(parsedPageSize === undefined ? {} : { pageSize: parsedPageSize }),
+        ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      },
+    });
+    if (options.isJsonOutput) {
+      printJson(overview);
+    } else {
+      const metrics = overview.metrics;
+      process.stdout.write(
+        "coverage: matched=" +
+          String(overview.coverage.matchedSampleCount) +
+          "/total=" +
+          String(overview.coverage.totalSampleCount) +
+          (overview.coverage.discardedLineCount === 0
+            ? ""
+            : " discarded=" + String(overview.coverage.discardedLineCount)) +
+          "\n" +
+          "window: " +
+          String(overview.coverage.windowStartIso ?? "-") +
+          " .. " +
+          String(overview.coverage.windowEndIso ?? "-") +
+          "\n" +
+          "sample: " +
+          String(metrics.sampleSize) +
+          " (success=" +
+          String(metrics.denominators.successCount) +
+          " failure=" +
+          String(metrics.denominators.failureCount) +
+          ")\n" +
+          "duration-ms: mean=" +
+          String(metrics.durationMilliseconds.mean ?? "-") +
+          " p95=" +
+          String(metrics.durationMilliseconds.p95 ?? "-") +
+          " min=" +
+          String(metrics.durationMilliseconds.minimum ?? "-") +
+          " max=" +
+          String(metrics.durationMilliseconds.maximum ?? "-") +
+          "\n" +
+          (metrics.isReportable
+            ? ""
+            : "unreportable: " + String(metrics.unreportableReason ?? "样本不足") + "\n") +
+          "alerts: " +
+          overview.alerts.map((alert) => alert.alertKind).join(",") +
+          "\n" +
+          (overview.page === null
+            ? ""
+            : "page: " +
+              String(overview.page.samples.length) +
+              " next-cursor=" +
+              String(overview.page.nextCursor ?? "-") +
+              "\n"),
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr("性能概览查询失败（观测故障不得阻塞业务）: " + (error as Error).message);
+    return EXIT_CODES.FAILURE;
+  }
+}
+
 export async function executeContextMetricsCommand(
   options: ContextMetricsCommandOptions,
 ): Promise<number> {

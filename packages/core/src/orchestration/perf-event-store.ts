@@ -142,6 +142,14 @@ export class PerfEventStore {
       droppedSampleCount: this.droppedSampleCount,
     };
   }
+
+  /**
+   * 内存中保留的样本数（长会话内存有界的可观测证据）。
+   * 该值**永远不超过** `maximumPendingSampleCount`，与落盘总量无关。
+   */
+  getRetainedInMemorySampleCount(): number {
+    return this.inMemorySamples.length;
+  }
 }
 
 /**
@@ -297,6 +305,124 @@ export function paginatePerfSamples(input: {
   return {
     samples: pageSamples,
     nextCursor: nextIndex < input.samples.length ? String(nextIndex) : null,
+  };
+}
+
+export interface PerfOverviewQuery {
+  /** 可见范围（按 mission 过滤）；null/未给出表示不过滤。 */
+  missionIdentifier?: string | null;
+  /** 时间窗下界（ISO，含）；null/未给出表示不限。 */
+  windowStartIso?: string | null;
+  /** 时间窗上界（ISO，含）；null/未给出表示不限。 */
+  windowEndIso?: string | null;
+  /** 摘要或明细：摘要只给聚合，明细给分页样本。 */
+  detailLevel?: "summary" | "detail";
+  pageSize?: number;
+  cursor?: string;
+}
+
+export interface PerfOverviewResult {
+  /** 数据来源与覆盖范围必须显式给出（卡内：样本窗口与覆盖范围必须显示）。 */
+  coverage: {
+    /** 过滤前总样本数。 */
+    totalSampleCount: number;
+    /** 命中时间窗与范围的样本数。 */
+    matchedSampleCount: number;
+    windowStartIso: string | null;
+    windowEndIso: string | null;
+    missionIdentifier: string | null;
+    /** 因无法解析而被丢弃的行数（不静默当零）。 */
+    discardedLineCount: number;
+  };
+  metrics: PerfAggregateMetrics;
+  /** 摘要模式为 null；明细模式为分页结果。 */
+  page: PerfSamplePage | null;
+  alerts: PerfAlert[];
+  /** 内存保留有界性的可观测证据：内存中保留的样本数。 */
+  retainedInMemorySampleCount: number;
+}
+
+/**
+ * 受控只读概览查询（PERF-01-03，卡内 §2："查询性能…支持范围、时间窗口、分页和摘要/详情"）。
+ *
+ * 纪律：
+ *  - **只读**：只读取已落盘样本并做纯函数复算，**不发起任何 Provider/业务请求**；
+ *  - 范围与时间窗必须真实生效，且覆盖范围必须回显（不得让调用方误以为看的是全量）；
+ *  - **无法测量不报零**：无样本时 metrics.mean 为 null 并给出不可报告原因；
+ *  - 长会话内存有界：只读文件、不把全量样本堆进内存（分页切片即可）。
+ */
+export async function queryPerfOverview(input: {
+  store: PerfEventStore;
+  query?: PerfOverviewQuery;
+}): Promise<PerfOverviewResult> {
+  const query = input.query ?? {};
+  const integrity = await input.store.readWithIntegrity();
+
+  const matchWindowStartMilliseconds =
+    query.windowStartIso === undefined || query.windowStartIso === null
+      ? null
+      : Date.parse(query.windowStartIso);
+  const matchWindowEndMilliseconds =
+    query.windowEndIso === undefined || query.windowEndIso === null
+      ? null
+      : Date.parse(query.windowEndIso);
+
+  const matchedSamples = integrity.samples.filter((sample) => {
+    if (
+      query.missionIdentifier !== undefined &&
+      query.missionIdentifier !== null &&
+      sample.missionIdentifier !== query.missionIdentifier
+    ) {
+      return false;
+    }
+    const recordedAtMilliseconds = Date.parse(sample.recordedAtIso);
+    if (Number.isNaN(recordedAtMilliseconds)) {
+      return false;
+    }
+    if (
+      matchWindowStartMilliseconds !== null &&
+      !Number.isNaN(matchWindowStartMilliseconds) &&
+      recordedAtMilliseconds < matchWindowStartMilliseconds
+    ) {
+      return false;
+    }
+    if (
+      matchWindowEndMilliseconds !== null &&
+      !Number.isNaN(matchWindowEndMilliseconds) &&
+      recordedAtMilliseconds > matchWindowEndMilliseconds
+    ) {
+      return false;
+    }
+    return true;
+  });
+
+  const metrics = aggregatePerfSamples(matchedSamples);
+  const detailLevel = query.detailLevel ?? "summary";
+  const page =
+    detailLevel === "detail"
+      ? paginatePerfSamples({
+          samples: matchedSamples,
+          pageSize: query.pageSize ?? 20,
+          ...(query.cursor === undefined ? {} : { cursor: query.cursor }),
+        })
+      : null;
+
+  return {
+    coverage: {
+      totalSampleCount: integrity.samples.length,
+      matchedSampleCount: matchedSamples.length,
+      windowStartIso: metrics.windowStartIso,
+      windowEndIso: metrics.windowEndIso,
+      missionIdentifier: query.missionIdentifier ?? null,
+      discardedLineCount: integrity.discardedLineCount,
+    },
+    metrics,
+    page,
+    alerts: derivePerfAlerts({
+      metrics,
+      overflowReport: input.store.getOverflowReport(),
+    }),
+    retainedInMemorySampleCount: input.store.getRetainedInMemorySampleCount(),
   };
 }
 

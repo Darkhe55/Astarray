@@ -56,6 +56,7 @@ import {
   executeSummaryShowCommand,
   executeStatusCommand,
   executeWorkflowScenarioCommand,
+  executePerfOverviewCommand,
 } from "./cli/commands.js";
 
 const program = new Command();
@@ -171,6 +172,43 @@ program
       stateDirectory: defaultStateDirectory(),
     });
   });
+
+/**
+ * PERF-01-03：性能最小概览（只读；由已落盘样本复算；不发起任何 Provider/业务请求）。
+ */
+const perfCommand = program.command("perf").description("性能概览（只读；由已落盘样本复算）");
+perfCommand
+  .command("overview")
+  .description("性能最小概览：范围/时间窗口/分页/摘要（无法测量时报不可报告，不报零）")
+  .option("--mission <mission-id>", "限定可见范围（mission）")
+  .option("--since <iso>", "时间窗下界（ISO 8601，含）")
+  .option("--until <iso>", "时间窗上界（ISO 8601，含）")
+  .option("--detail <level>", "summary | detail（缺省 summary）")
+  .option("--page-size <count>", "detail 模式每页条数（缺省 20）")
+  .option("--cursor <cursor>", "detail 模式分页游标（上一页 nextCursor）")
+  .option("--json", "JSON 输出")
+  .action(
+    async (options: {
+      mission?: string;
+      since?: string;
+      until?: string;
+      detail?: string;
+      pageSize?: string;
+      cursor?: string;
+      json?: boolean;
+    }) => {
+      process.exitCode = await executePerfOverviewCommand({
+        stateDirectory: defaultStateDirectory(),
+        isJsonOutput: options.json === true,
+        ...(options.mission === undefined ? {} : { missionIdentifier: options.mission }),
+        ...(options.since === undefined ? {} : { windowStartIso: options.since }),
+        ...(options.until === undefined ? {} : { windowEndIso: options.until }),
+        ...(options.detail === undefined ? {} : { detailLevel: options.detail }),
+        ...(options.pageSize === undefined ? {} : { pageSize: options.pageSize }),
+        ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      });
+    },
+  );
 
 const contextCommand = program.command("context").description("上下文生命周期");
 contextCommand
