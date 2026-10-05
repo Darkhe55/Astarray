@@ -46,6 +46,16 @@ export interface ToolLoopOptions {
   guidanceSafePointPort?: GuidanceSafePointPort;
   /** 指导应用回执（用于写工作存档/审计；不改变控制流）。 */
   onGuidanceApplied?: (application: AppliedGuidance) => void;
+  /**
+   * PERF-01-02 进程/任务测量端口（可选，2026-10-02）：
+   * 每次真实工具执行后上报一个耗时样本；**观测失败不得阻塞业务**。
+   */
+  perfSampleSink?: (sample: {
+    operationKind: string;
+    durationMilliseconds: number;
+    outcome: "success" | "failure" | "cancelled" | "unknown";
+    toolName: string;
+  }) => Promise<void> | void;
 }
 
 /**
@@ -281,6 +291,7 @@ export async function runToolLoop(
         (application) =>
           application.behaviorTier === "gate-and-request-pause",
       );
+      const toolExecutionStartedAtMilliseconds = Date.now();
       const toolResult: ToolCallResult = isGated
         ? {
             kind: "error",
@@ -296,6 +307,29 @@ export async function runToolLoop(
             toolCall.callId,
             options.cancellationSignal,
           );
+      /**
+       * PERF-01-02 进程/任务测量（2026-10-02）：在**真实工具执行路径**上采集耗时样本，
+       * 交给可选 sink 持久化（JSONL）供复算/分页/告警。测量失败不得影响业务。
+       */
+      if (options.perfSampleSink !== undefined) {
+        try {
+          await options.perfSampleSink({
+            operationKind: "tool-call:" + toolCall.toolName,
+            durationMilliseconds: Date.now() - toolExecutionStartedAtMilliseconds,
+            outcome:
+              toolResult.kind === "success"
+                ? "success"
+                : toolResult.errorCode === "provider-cancelled"
+                  ? "cancelled"
+                  : toolResult.isIdempotencyConfirmed === false
+                    ? "unknown"
+                    : "failure",
+            toolName: toolCall.toolName,
+          });
+        } catch {
+          // 观测失败不得阻塞业务（卡内：普通观测故障不得阻塞业务）。
+        }
+      }
       push({
         kind: "toolCallFinished",
         callId: toolCall.callId,
