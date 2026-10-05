@@ -40,6 +40,7 @@
     "verify:t07d-r2-04-dry": "node scripts/verify-t07d-r2-04-live-dry-run.mjs",
     "verify:t07d-r2-04-tarball-dry": "node scripts/verify-t07d-r2-04-tarball-live.mjs --dry-run",
     "verify:t07d-r2-04-tarball-live": "node scripts/verify-t07d-r2-04-tarball-live.mjs --allow-live-request",
+    "verify:observability-entry-package": "node scripts/verify-observability-entry-package.mjs",
     "test:scripts": "node --test \"scripts/lib/*.test.mjs\""
   },
   "dependencies": {
