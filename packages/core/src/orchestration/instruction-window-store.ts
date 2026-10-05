@@ -129,6 +129,23 @@ export class InstructionWindowStore {
   private readonly instructionIdentifierByIdempotencyKey = new Map<string, string>();
   private pendingWritePromise: Promise<void> = Promise.resolve();
   private isLoaded = false;
+  /**
+   * 已加载/已写入状态的**内容指纹**（用于乐观并发守卫）。
+   *
+   * 背景（反例⑤实测）：同一状态目录被两个实例并存访问时，各自持有内存快照并整体覆盖落盘，
+   * 会造成**静默丢指令**。本仓既有约定是"同一状态目录由单一本地控制面访问"，
+   * 但静默覆盖不可接受，故此处改为：写入前复核磁盘指纹，发现外部写入即**响亮失败**。
+   *
+   * 这是"检测并拒绝"，不是分布式共识——它消除静默覆盖，但不承诺"最后写入者胜"的并发正确性。
+   */
+  private lastKnownStateFingerprint: string | null = null;
+  /**
+   * 我方是否已向该目录提交过状态。
+   *
+   * 用途：首次落盘时磁盘上可能已有"前一次会话"的合法内容（我方尚未读过），
+   * 这属于正常接管，不算冲突；只有在**我方已经提交过**之后再发现外部变化，才是真正的并发冲突。
+   */
+  private hasCommittedState = false;
 
   constructor(options: { baseDirectory: string; windowCapacity?: number }) {
     this.filePath = path.join(options.baseDirectory, "instruction-window", WINDOW_FILE_NAME);
@@ -172,19 +189,99 @@ export class InstructionWindowStore {
       for (const receiptKey of parsed.processedReceiptKeys ?? []) {
         this.processedReceiptKeys.add(receiptKey);
       }
+      this.lastKnownStateFingerprint = this.computeStateFingerprint();
     } catch {
       // 损坏窗口：按空窗口继续（不伪造历史）
     }
   }
 
+  /** 当前内存状态的指纹（不含易变的时间戳字段之外的排序依赖，故先规范化排序）。 */
+  private computeStateFingerprint(): string {
+    const instructions = [...this.instructionsByIdentifier.values()]
+      .map((instruction) => instruction.instructionIdentifier)
+      .sort();
+    const queued = [...this.queuedOrder];
+    const receipts = [...this.processedReceiptKeys].sort();
+    return createHash("sha256")
+      .update(JSON.stringify({ capacity: this.windowCapacity, instructions, queued, receipts }))
+      .digest("hex");
+  }
+
+  /** 磁盘文档的状态指纹（缺文件视为 null）。 */
+  private async readDiskStateFingerprint(): Promise<string | null> {
+    let rawContent: string;
+    try {
+      rawContent = await fs.readFile(this.filePath, "utf8");
+    } catch {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(rawContent) as PersistedWindowDocument;
+      const instructions = (parsed.instructions ?? [])
+        .map((instruction) => instruction.instructionIdentifier)
+        .sort();
+      const queued = [...(parsed.queuedOrder ?? [])];
+      const receipts = [...(parsed.processedReceiptKeys ?? [])].sort();
+      return createHash("sha256")
+        .update(
+          JSON.stringify({ capacity: parsed.windowCapacity, instructions, queued, receipts }),
+        )
+        .digest("hex");
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 乐观并发守卫：若磁盘状态与"我方已知状态"不一致，说明有其它实例写入，
+   * 此时**拒绝覆盖**并响亮失败（避免静默丢指令）。
+   */
+  private async assertForeignWriteBeforeCommit(): Promise<void> {
+    const diskFingerprint = await this.readDiskStateFingerprint();
+    // 判定口径：
+    //  · 我方"已接管过内容"（known 非空）时，磁盘必须仍是同一已知状态；
+    //    否则说明有外部实例写入 → 拒绝提交（响亮失败）。
+    //  · 我方从未读到内容（known 为空）且我方也从未提交过 → 首次落盘，允许。
+    //  · 我方从未读到内容但**我方已提交过** → 磁盘消失，拒绝。
+    if (this.lastKnownStateFingerprint !== null) {
+      if (diskFingerprint !== this.lastKnownStateFingerprint) {
+        throw new Error(
+          "指令窗口并发冲突：检测到外部实例已写入（另一进程正在使用同一状态目录）。" +
+            "本仓约定同一状态目录由单一本地控制面访问；已拒绝覆盖以避免静默丢指令。" +
+            "请确保同一状态目录不被并发访问后重试。",
+        );
+      }
+      return;
+    }
+    if (this.hasCommittedState && diskFingerprint === null) {
+      throw new Error(
+        "指令窗口并发冲突：已提交过状态，但磁盘状态文件消失或不可读；" +
+          "拒绝覆盖以规避静默丢指令。",
+      );
+    }
+  }
+
   private async persist(): Promise<void> {
-    await writeAtomicJson(this.filePath, {
-      schemaVersion: 1,
-      windowCapacity: this.windowCapacity,
-      instructions: [...this.instructionsByIdentifier.values()],
-      queuedOrder: [...this.queuedOrder],
-      processedReceiptKeys: [...this.processedReceiptKeys],
-    } satisfies PersistedWindowDocument);
+    await writeAtomicJson(
+      this.filePath,
+      {
+        schemaVersion: 1,
+        windowCapacity: this.windowCapacity,
+        instructions: [...this.instructionsByIdentifier.values()],
+        queuedOrder: [...this.queuedOrder],
+        processedReceiptKeys: [...this.processedReceiptKeys],
+      } satisfies PersistedWindowDocument,
+      {
+        // 守卫放在 rename 紧前面：检测到外部写入即抛错，本次写入不提交。
+        beforeCommit: async () => {
+          await this.assertForeignWriteBeforeCommit();
+        },
+      },
+    );
+    // 写入成功后复核并记录**磁盘实际状态**指纹（而非当前内存指纹）：
+    // 并发写链下内存在提交后可能已继续变化，用内存指纹会导致下一次守卫误判为"外部写入"。
+    this.lastKnownStateFingerprint = await this.readDiskStateFingerprint();
+    this.hasCommittedState = true;
   }
 
   private enqueuePersist(): Promise<void> {

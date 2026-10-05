@@ -15,9 +15,21 @@ export interface JsonReadRecoveryResult {
   recoveredFromBackup: boolean;
 }
 
+export interface WriteAtomicJsonOptions {
+  /**
+   * 提交前守卫（可选）：在临时文件已写入并 fsync 之后、**rename 提交之前**调用。
+   *
+   * 用途：乐观并发控制——调用方在此复核目标文件是否仍是自己已知的状态；
+   * 若已变化则抛错，本次写入不会提交（临时文件会被清理）。
+   * 注意：这消除"先检查后写入"之间的窗口，但不构成分布式共识。
+   */
+  beforeCommit?: () => Promise<void>;
+}
+
 export async function writeAtomicJson(
   filePath: string,
   content: unknown,
+  options: WriteAtomicJsonOptions = {},
 ): Promise<void> {
   const directoryPath = path.dirname(filePath);
   await fs.mkdir(directoryPath, { recursive: true });
@@ -34,6 +46,10 @@ export async function writeAtomicJson(
     await fileHandle.close();
   }
   try {
+    // 提交前守卫：把"复核磁盘状态"放在 rename 紧前面，最小化检查与提交之间的窗口。
+    if (options.beforeCommit !== undefined) {
+      await options.beforeCommit();
+    }
     await renameWithRetryOnWindowsContention(tempFilePath, filePath);
   } catch (error) {
     await fs.rm(tempFilePath, { force: true }).catch(() => {});
