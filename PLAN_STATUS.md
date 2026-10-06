@@ -263,6 +263,36 @@
 剩余唯一未通过项是"并行第二条指令必失败"的真实缺陷，**根因未定位**，
 故仍**不主张 SMART-01-04 完全通过**。下一步需捕获并发下模型的工具调用参数以定位。
 
+### 2026-10-02 — u2-flash 实测定位并修复两处跨 Agent 共享状态（提交 `c4ffe06`）
+
+门禁：`npm run check` **真实退出码 0** —— 283 文件通过 + 1 跳过；2138 用例通过 + 2 跳过。
+
+**根因证据（用临时诊断探针捕获，探针已移除、未进入提交）**：
+
+```
+[DIAG-REQ] agent=worker:mission-A:T-001:1 tool=readFile args={"filePath":"package.json"}
+[DIAG-RES] agent=worker:mission-A:T-001:1 tool=readFile result=success
+[DIAG-REQ] agent=worker:mission-B:T-001:1 tool=readFile args={"filePath":"package.json"}
+[DIAG-RES] agent=worker:mission-B:T-001:1 tool=readFile result=error errorCode=auth-scope-replay-rejected
+```
+
+**缺陷一：只读操作也占用"单次授权/重放保护"**（`scope-authorization-gate.ts`）
+预留表键是**逻辑操作指纹**（操作种类 + 目标路径 + 规范化参数），**不含 Agent 身份**，且门禁是
+运行时级单例、**跨 mission 共享**。后果：同会话中不同任务以相同参数读同一文件，第一条结算成功后，
+第二条命中"已结算"分支 → `auth-scope-replay-rejected`。预留/重放保护本意是防**重复副作用**，
+只读操作无副作用 → 改为**只读不建立预留**（范围裁决照常，不弱化授权）。
+**这正是此前长期未解的"授权后仍被 replay-rejected"之谜的根因。**
+
+**缺陷二：工具连续失败计数器键只有 `taskId`**（`mission-orchestrator.ts`）
+两个并行 mission 各有一条 `T-001` → **共用同一计数器**，A 的失败累加到 B 上，
+造成"readFile 连续失败达到阈值"误判。已改为键 `agentInstanceId + "|" + taskId`。
+
+**验证**：修复前后真实实测结果发生可解释的变化（此前第二条 `replay-rejected`；此后不再出现），
+且全量门禁 0。
+
+**仍未解决**：真实实测仍为"**恰好一条 done、另一条 blocked**"（本次 A=done、B=blocked），
+说明还存在**第三种跨 mission 共享状态**，根因未定位，故仍**不主张 SMART-01-04 完全通过**。
+
 ## 历史设计与验收记录
 
 > 2026-08-12 设计增补：反馈消息契约新增必填结构化 `source`。用户、Agent、系统来源均可追踪；转发保留原始来源。T00 契约、Schema、测试和架构文档已同步更新。
