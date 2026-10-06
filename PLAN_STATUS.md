@@ -327,6 +327,36 @@
 Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭合**。
 凭据只就地注入，未写入任何文档/日志/提交。
 
+### 2026-10-02 — 凭据状态变更与后续计划（离线工作可继续）
+
+门禁：`npm run check` **真实退出码 0** —— 284 文件通过 + 1 跳过；2142 用例通过 + 2 跳过。
+
+**凭据状态（用户告知）**：`prov-unisound-1`（unisound / u2-flash）的 API key **已由用户作废**；
+需要再次进行真实 Provider 验证时，**由用户重新提供切换方式**。因此当前：
+
+| 工作类型 | 状态 |
+|---|---|
+| 离线实现 / 反例 / 门禁 / 包级验收 | **可继续** |
+| 真实 Provider 实测（u2-flash 等） | **暂停**，等待用户提供新凭据方式 |
+
+**已为恢复真实验证做好铺垫**（无需用户再说明跑法）：
+- `scripts/verify-u2-flash-continuous-reception.mjs`：真实"在途接收"实测，支持
+  `--credential-source state`（读既有受保护凭据文件）或 `env`（读 `ASTARRAY_PROVIDER_API_KEY`）；
+- `scripts/verify-observability-entry-package.mjs`：tarball 隔离安装 + 四入口实跑（离线）；
+- 端点/模型/协议已固化：`https://maas-api.unisound.com/anthropic/v1/messages`、`u2-flash`、
+  `anthropic-messages`。
+
+**下一步待推进（按依赖）**：
+1. `E2E-01-03`（真实服务与并行中断）——**需要真实凭据**，是当前唯一因凭据被挡的检查点
+   （工作内容：真实 Provider 上执行同场景 + 人工工作树制造并发变化 + 工具调用边界中断恢复）；
+2. `T07D-R2-04` 的状态需与既有真实运行证据（stepfun / unisound openai-compatible /
+   unisound anthropic-messages）重新对账后更新；
+3. 离线可继续项：BRIDGE-01 / GUI-01-R / WB-00 等卡中不依赖真实服务的检查点。
+
+**本目标期间新增的离线回归守卫**（提交 `b123659`）：
+`tests/core/integration/cross-mission-isolation-regression.test.ts`（4 条）钉住三处
+"共享状态键漏掉具体 Agent 身份"缺陷，确保修复不退化；并保留"修复前缺陷形态"作为对照反例。
+
 ## 历史设计与验收记录
 
 > 2026-08-12 设计增补：反馈消息契约新增必填结构化 `source`。用户、Agent、系统来源均可追踪；转发保留原始来源。T00 契约、Schema、测试和架构文档已同步更新。
