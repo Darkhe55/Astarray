@@ -712,6 +712,20 @@ export class ScopeGatedToolPort implements ToolPort {
     if (operation === null) {
       return this.innerToolPort.execute(toolName, argumentsJson, callId, cancellationSignal);
     }
+    /**
+     * 只读操作**不建立预留**（2026-10-02 真实实测缺陷修复）。
+     *
+     * 预留/重放保护的目的是防止**重复副作用**；只读操作没有副作用，
+     * 而预留表键是"逻辑操作指纹"（操作种类 + 目标路径 + 规范化参数），**不含 Agent 身份**，
+     * 因此此前同一会话中不同任务以相同参数读取同一文件时，第二条会被误判为
+     * `auth-scope-replay-rejected` 并拒绝执行（真实 u2-flash 实测：并发第二条任务必然失败）。
+     *
+     * 只读操作仍需经过 `authorizeForExecution` 的范围裁决（见调用方），
+     * 此处只是不再占用"单次授权/重放保护"语义。
+     */
+    if (READ_ONLY_OPERATION_KINDS.has(operation.operationKind)) {
+      return this.innerToolPort.execute(toolName, argumentsJson, callId, cancellationSignal);
+    }
     // 执行前**原子预留**（未获授权绝不触达内层工具）。
     const reservation = await this.gate.reserveForExecution({ operation, argumentsJson });
     if (reservation.status !== "reserved") {

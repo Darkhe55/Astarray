@@ -464,7 +464,7 @@ export class MissionOrchestrator {
       contextLifecycleModeKey: this.options.contextLifecycleModeKey,
       runtime: this.options.workerFactories.runtimeFactory(agentInstanceId, task),
       toolPort: workerToolPort,
-      failureCounter: this.getFailureCounter(task.id),
+      failureCounter: this.getFailureCounter(agentInstanceId, task.id),
       feedbackTransport: await this.options.feedbackTransportFactory(),
       maxLoopIterations: this.options.maxLoopIterations,
       buildPermissionExplanation:
@@ -503,10 +503,19 @@ export class MissionOrchestrator {
     });
   }
 
-  private getFailureCounter(taskId: string): ToolFailureCounter {    let counter = this.failureCounters.get(taskId);
+  /**
+   * 工具连续失败计数器（T05，默认阈值 3，任意一次成功后清零）。
+   *
+   * 键必须是**具体 Agent 实例 + 任务**，不能只用 `taskId`（2026-10-02 真实实测缺陷）：
+   * 两个并行 mission 各自都有一条 `T-001`，若共用同一计数器，A 的失败会累加到 B 头上、
+   * 反之亦然，导致"并发第二条任务 readFile 连续失败达到阈值"的误判（u2-flash 实测稳定复现）。
+   */
+  private getFailureCounter(agentInstanceId: string, taskId: string): ToolFailureCounter {
+    const counterKey = agentInstanceId + "|" + taskId;
+    let counter = this.failureCounters.get(counterKey);
     if (counter === undefined) {
       counter = new ToolFailureCounter(this.options.failureThreshold);
-      this.failureCounters.set(taskId, counter);
+      this.failureCounters.set(counterKey, counter);
     }
     return counter;
   }
