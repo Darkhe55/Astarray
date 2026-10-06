@@ -293,6 +293,40 @@
 **仍未解决**：真实实测仍为"**恰好一条 done、另一条 blocked**"（本次 A=done、B=blocked），
 说明还存在**第三种跨 mission 共享状态**，根因未定位，故仍**不主张 SMART-01-04 完全通过**。
 
+### 2026-10-02 — SMART-01-04 真实运行实测**通过**（u2-flash，8/8，提交 `08de582`）
+
+门禁：`npm run check` **真实退出码 0** —— 283 文件通过 + 1 跳过；2138 用例通过 + 2 跳过。
+真实实测：`node scripts/verify-u2-flash-continuous-reception.mjs` → **真实退出码 0，8/8 项通过**
+（先带诊断探针跑出 8/8，随后移除探针复跑仍 8/8 —— 两次均通过）。
+
+| 判据 | 结果 |
+|---|---|
+| ① 180 秒内被受理并派发 | ✓ 18ms |
+| ② 提交后处于在途 | ✓ running |
+| ③ **在途期间仍能接收新指令** | **✓ 43ms** |
+| ④ 派发状态与成果完成可区分（派发 ≠ 完成） | ✓ |
+| ⑤ 关闭回收收敛到终态 | ✓ |
+| ⑥ 真实运行产出成果 | ✓ done 条数=2 |
+| ⑦ 两条指令都产出成果（并行下均成功） | ✓ A=done B=done |
+| ⑧ 未写入受保护凭据 | ✓ 字节一致 |
+
+**缺陷三（本次修复）：读取抑制账本的 Agent 身份按 `task.id` 合成**
+`buildWorkerToolPort` 此前只接收 `task`，于是 `agentInstanceId = "worker:" + task.id`、
+`taskExecutionId = "task-exec:" + task.id`。两个并行 mission 各有一条 `T-001` 时，二者在
+**读取抑制账本**（键含 agentInstanceId + taskExecutionId + 资源 + 视图参数）上生成**完全相同的键**，
+第二个 Agent 的合法读取被判为"同一调用源重复读取" → `resource-already-read`。
+修复：把**具体 Agent 实例身份**贯穿到工具端口（`main-controller` / `application-runtime` /
+`OrchestratorWorkerFactories.toolPortFactory` / `mission-orchestrator` 调用处与其两处透传）。
+
+**本轮合计修复三处同源缺陷（均为"键漏掉具体 Agent 身份"）**：
+1. 只读操作占用单次授权/重放保护 → `auth-scope-replay-rejected`（`c4ffe06`）；
+2. 工具失败计数器键只有 `taskId` → 失败跨 mission 累加误判（`c4ffe06`）；
+3. 读取抑制账本的身份按 `task.id` 合成 → `resource-already-read`（`08de582`）。
+
+**结论**：卡内验收（在途接收、180 秒内派发、如实状态、关闭回收、不冒充成果完成）在真实
+Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭合**。
+凭据只就地注入，未写入任何文档/日志/提交。
+
 ## 历史设计与验收记录
 
 > 2026-08-12 设计增补：反馈消息契约新增必填结构化 `source`。用户、Agent、系统来源均可追踪；转发保留原始来源。T00 契约、Schema、测试和架构文档已同步更新。
