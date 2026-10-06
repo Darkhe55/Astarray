@@ -209,4 +209,48 @@ describe("Provider 真实用量接线：逐请求落进用量账目", () => {
     expect(entries).toHaveLength(2);
     expect(new Set(entries.map((entry) => entry.requestIdentifier)).size).toBe(2);
   });
+
+  /**
+   * ⑤ 真实厂商形态（unisound `u2-flash` / anthropic-messages，2026-10-06 实测）：
+   * `message_start.message.usage.input_tokens` 为 **0**，真实输入 token 只在
+   * `message_delta.usage.input_tokens` 给出。
+   *
+   * 首版实现把 message_start 的 0 当作"已观测"而拒绝被后续值覆盖，
+   * 结果账目里 4 条记录 input 全为 0（实测踩到）。
+   * 规则必须是：`message_delta` 是**累计终值**，凡它给出的字段一律覆盖初值。
+   */
+  it("⑤ 真实厂商形态：输入 token 只在 message_delta 给出时也必须记准（不得被 message_start 的 0 钉死）", async () => {
+    const store = new UsageLedgerStore({ baseDirectory: stateDirectory });
+    const sseText =
+      anthropicSseEvent({
+        type: "message_start",
+        message: {
+          id: "msg_vendor",
+          usage: { input_tokens: 0, output_tokens: 1, cache_read_input_tokens: 0 },
+        },
+      }) +
+      anthropicSseEvent({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "完成" },
+      }) +
+      anthropicSseEvent({
+        type: "message_delta",
+        delta: { stop_reason: "end_turn" },
+        usage: { input_tokens: 1218, output_tokens: 356 },
+      }) +
+      anthropicSseEvent({ type: "message_stop" });
+
+    const runtime = createLedgerBackedRuntime({ sseText, store });
+    await drainRuntimeEvents(runtime);
+
+    const entries = await store.readAll();
+    expect(entries).toHaveLength(1);
+    const entry = entries[0];
+    if (entry === undefined) {
+      throw new Error("账目为空");
+    }
+    expect(entry.inputTokenCount).toBe(1218);
+    expect(entry.outputTokenCount).toBe(356);
+  });
 });

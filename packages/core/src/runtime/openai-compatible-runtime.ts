@@ -11,6 +11,10 @@ import type {
   AgentRuntime,
   ToolDescriptor,
 } from "../core/types.js";
+import {
+  computeProviderRequestInputHash,
+  type ProviderRequestUsageObserverPort,
+} from "../measurement/provider-request-usage-observation.js";
 
 export interface OpenAiCompatibleRuntimeOptions {
   baseUrl: string;
@@ -19,6 +23,13 @@ export interface OpenAiCompatibleRuntimeOptions {
   requestTimeoutMilliseconds: number;
   /** 可注入以便测试。 */
   fetchImpl?: typeof fetch;
+  /** Provider 运行时/协议标识（写进用量账目；缺省为 openai-compatible）。 */
+  providerIdentifier?: string;
+  /**
+   * 真实用量观测端口（2026-10-06 接线）。
+   * 缺省 = 不上报：显式表示本装配不采集用量，不冒充已采集。
+   */
+  providerRequestUsageObserver?: ProviderRequestUsageObserverPort;
 }
 
 interface OpenAiToolCallDelta {
@@ -32,12 +43,29 @@ interface OpenAiChoiceDelta {
   finish_reason?: string | null;
 }
 
+/** OpenAI 兼容流式 usage 形态（需请求 `stream_options.include_usage`）。 */
+interface OpenAiUsagePayload {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number };
+}
+
 interface OpenAiStreamChunk {
   choices?: OpenAiChoiceDelta[];
+  usage?: OpenAiUsagePayload;
+}
+
+function readNonNegativeTokenCount(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+  return Math.trunc(value);
 }
 
 export class OpenAiCompatibleRuntime implements AgentRuntime {
   private readonly fetchImpl: typeof fetch;
+  /** 每个实例对应一个具体 Agent；实例内递增即可区分该 Agent 的每次真实请求。 */
+  private requestSequence = 0;
 
   constructor(private readonly options: OpenAiCompatibleRuntimeOptions) {
     this.fetchImpl = options.fetchImpl ?? fetch;
@@ -48,6 +76,61 @@ export class OpenAiCompatibleRuntime implements AgentRuntime {
     cancellationSignal: AbortSignal,
   ): AsyncIterable<AgentEvent> {
     const requestBody = buildChatRequestBody(agentRunInput, this.options.model);
+    const serializedRequestBody = JSON.stringify(requestBody);
+    /**
+     * 用量捕获（2026-10-06）：OpenAI 兼容协议**默认不返回**流式 usage，
+     * 必须显式请求 `stream_options.include_usage`；返回的 usage 在**最后一个**
+     * 「只有 usage、没有 choices」的 chunk 上（因此读数必须发生在 choices 判空之前）。
+     */
+    let observedInputTokenCount: number | null = null;
+    let observedOutputTokenCount: number | null = null;
+    let observedCachedInputTokenCount: number | null = null;
+    let hasObservedUsagePayload = false;
+    let hasReportedUsage = false;
+    let hasStartedStream = false;
+    this.requestSequence += 1;
+    const requestIdentifier =
+      "provider-request:" +
+      agentRunInput.agentId +
+      ":" +
+      String(this.requestSequence);
+    const reportUsageOnce = async (): Promise<void> => {
+      if (!hasStartedStream || hasReportedUsage) {
+        return;
+      }
+      hasReportedUsage = true;
+      const observer = this.options.providerRequestUsageObserver;
+      if (observer === undefined) {
+        return;
+      }
+      const hasCompleteUsage =
+        observedInputTokenCount !== null && observedOutputTokenCount !== null;
+      try {
+        await observer.recordProviderRequestUsage({
+          missionIdentifier: agentRunInput.missionId,
+          taskIdentifier: null,
+          sourceAgentInstanceId: agentRunInput.agentId,
+          providerIdentifier:
+            this.options.providerIdentifier ?? "openai-compatible",
+          modelIdentifier: this.options.model,
+          requestIdentifier,
+          inputTokenCount: observedInputTokenCount,
+          outputTokenCount: observedOutputTokenCount,
+          cachedInputTokenCount: observedCachedInputTokenCount,
+          requestInputHash: computeProviderRequestInputHash(serializedRequestBody),
+          observedAtIso: new Date().toISOString(),
+          ...(hasCompleteUsage
+            ? {}
+            : {
+                missingUsageReason: hasObservedUsagePayload
+                  ? "provider-usage-incomplete"
+                  : "provider-response-did-not-include-usage",
+              }),
+        });
+      } catch {
+        // 观测失败不得阻塞业务（沿用 perfSampleSink 的既定纪律）。
+      }
+    };
     const abortController = new AbortController();
     const timeoutHandle = setTimeout(() => {
       abortController.abort();
@@ -96,6 +179,7 @@ export class OpenAiCompatibleRuntime implements AgentRuntime {
         { id: string; name: string; arguments: string }
       >();
       let finalFinishReason: string | null = null;
+      hasStartedStream = true;
       for await (const chunk of chunks) {
         if (cancellationSignal.aborted) {
           yield {
@@ -105,6 +189,25 @@ export class OpenAiCompatibleRuntime implements AgentRuntime {
             detail: "流式输出被取消",
           };
           return;
+        }
+        // usage 必须**先于** choices 判空读取：收尾 chunk 只有 usage、没有 choices。
+        const chunkUsage = chunk.usage;
+        if (chunkUsage !== undefined) {
+          hasObservedUsagePayload = true;
+          const inputTokenCount = readNonNegativeTokenCount(chunkUsage.prompt_tokens);
+          if (inputTokenCount !== null) {
+            observedInputTokenCount = inputTokenCount;
+          }
+          const outputTokenCount = readNonNegativeTokenCount(chunkUsage.completion_tokens);
+          if (outputTokenCount !== null) {
+            observedOutputTokenCount = outputTokenCount;
+          }
+          const cachedInputTokenCount = readNonNegativeTokenCount(
+            chunkUsage.prompt_tokens_details?.cached_tokens,
+          );
+          if (cachedInputTokenCount !== null) {
+            observedCachedInputTokenCount = cachedInputTokenCount;
+          }
         }
         const choice = chunk.choices?.[0];
         if (choice === undefined) {
@@ -169,6 +272,8 @@ export class OpenAiCompatibleRuntime implements AgentRuntime {
     } finally {
       clearTimeout(timeoutHandle);
       cancellationSignal.removeEventListener("abort", cancellationListener);
+      // 无论正常收尾还是取消，只要拿到过流就把用量事实交给观测端口（幂等，只报一次）。
+      await reportUsageOnce();
     }
   }
 }
@@ -180,6 +285,11 @@ function buildChatRequestBody(
   return {
     model,
     stream: true,
+    /**
+     * 流式 usage 必须显式请求（2026-10-06）。
+     * 已实测确认 unisound 的 OpenAI 兼容端点接受该字段并返回 usage（HTTP 200）。
+     */
+    stream_options: { include_usage: true },
     messages: [
       { role: "system", content: agentRunInput.systemPrompt },
       { role: "user", content: agentRunInput.userPrompt },

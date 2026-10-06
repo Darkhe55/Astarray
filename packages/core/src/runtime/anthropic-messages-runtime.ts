@@ -249,17 +249,31 @@ export class AnthropicMessagesRuntime implements AgentRuntime {
           continue;
         }
         if (event.type === "message_delta") {
-          // 输出侧 usage 在 message_delta.usage（累计终值）。
+          /**
+           * usage 在 `message_delta.usage`（累计终值）。
+           *
+           * 覆盖规则（2026-10-06 真实实测修正）：`message_delta` 是**累计终值**，
+           * 凡它给出的字段一律**覆盖** `message_start` 的初值。
+           * 首版实现只在"初值为 null"时才接受 delta，而 unisound `u2-flash` 的
+           * `message_start.message.usage.input_tokens` 是 **0**、真实输入 token 只在
+           * delta 给出，导致账目里 input 全被钉成 0（实测踩到，已有单测反例 ⑤）。
+           */
           const deltaUsage = event.usage;
           if (deltaUsage !== undefined) {
             hasObservedUsagePayload = true;
+            const deltaInputTokenCount = readNonNegativeTokenCount(deltaUsage.input_tokens);
+            if (deltaInputTokenCount !== null) {
+              observedInputTokenCount = deltaInputTokenCount;
+            }
             const deltaOutputTokenCount = readNonNegativeTokenCount(deltaUsage.output_tokens);
             if (deltaOutputTokenCount !== null) {
               observedOutputTokenCount = deltaOutputTokenCount;
             }
-            const deltaInputTokenCount = readNonNegativeTokenCount(deltaUsage.input_tokens);
-            if (deltaInputTokenCount !== null && observedInputTokenCount === null) {
-              observedInputTokenCount = deltaInputTokenCount;
+            const deltaCachedInputTokenCount = readNonNegativeTokenCount(
+              deltaUsage.cache_read_input_tokens,
+            );
+            if (deltaCachedInputTokenCount !== null) {
+              observedCachedInputTokenCount = deltaCachedInputTokenCount;
             }
           }
           if (event.delta?.stop_reason !== undefined) {
