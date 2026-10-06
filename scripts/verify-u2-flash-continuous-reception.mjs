@@ -125,14 +125,13 @@ console.log("=== 真实运行实测：u2-flash 在途接收 ===");
 console.log("model=" + modelIdentifier + " endpoint=" + endpointLabel);
 
 const taskAPrompt = [
-  "请只读地完成以下侦察工作，禁止修改任何文件：",
-  "1) 读取 AGENTS.md，概括其中与权限或只读相关的三条规则；",
-  "2) 读取 package.json，列出全部 scripts 名称；",
-  "3) 读取 tsconfig.json，说明 target 与 module 设置；",
-  "最后合成不超过 200 字的小结。",
+  "请只读地完成，禁止修改任何文件：",
+  "1) 用 readFile 读取文件 package.json（就这一个文件，路径就是 package.json）；",
+  "2) 一句话回答：name 字段的值是什么？",
+  "禁止读取其它文件，避免路径猜测。",
   "",
-  "完成时必须在最后一行输出版本化完成控制事件（JSON，单独一行）：",
-  '{"eventType":"ASTARRAY_TASK_COMPLETION_V1","taskIdentifier":"T-001","completionAttemptId":"attempt-1","declaredArtifacts":[]}',
+  "完成时必须在最后一行单独输出（不得放进代码块，其后不得再有内容）：",
+  'ASTARRAY_TASK_COMPLETION_V1 {"taskExecutionId":"local-execution-T-001","completionAttemptId":"attempt-1","completedTaskIdentifiers":["T-001"],"claimedStatus":"complete","taskSequenceRevision":0,"declaredArtifacts":[]}',
 ].join("\n");
 
 const submitStartedMilliseconds = Date.now();
@@ -170,8 +169,8 @@ const immediateStatus = await application.queryTask({
   sessionId: sessionIdentifier,
   taskIdentifier: "live-task-A",
 });
-const isFirstInFlight =
-  immediateStatus.status !== "succeeded" && immediateStatus.status !== "failed";
+// 真实 PublicTaskStatus: accepted|running|blocked|done|failed|cancelled
+const isFirstInFlight = ["accepted", "running", "blocked"].includes(immediateStatus.status);
 console.log("任务 A 即时状态: " + immediateStatus.status);
 record("② 任务 A 提交后处于在途（尚未完成）", isFirstInFlight, "状态=" + immediateStatus.status);
 
@@ -184,9 +183,9 @@ try {
     sessionId: sessionIdentifier,
     taskIdentifier: "live-task-B",
     prompt: [
-      "只读回答一句话：package.json 的 name 字段是什么？不要修改任何文件。",
-      "完成时必须在最后一行输出版本化完成控制事件（JSON，单独一行）：",
-      '{"eventType":"ASTARRAY_TASK_COMPLETION_V1","taskIdentifier":"T-001","completionAttemptId":"attempt-1","declaredArtifacts":[]}',
+      "只读回答，禁止修改任何文件：用 readFile 读取 package.json，一句话回答 name 字段的值。",
+      "完成时必须在最后一行单独输出（不得放进代码块，其后不得再有内容）：",
+      'ASTARRAY_TASK_COMPLETION_V1 {"taskExecutionId":"local-execution-T-001","completionAttemptId":"attempt-1","completedTaskIdentifiers":["T-001"],"claimedStatus":"complete","taskSequenceRevision":0,"declaredArtifacts":[]}',
     ].join("\n"),
     idempotencyKey: "live-u2-flash-B",
   });
@@ -216,8 +215,8 @@ let secondFinal = null;
 while (Date.now() < settleDeadlineMilliseconds) {
   firstFinal = await application.queryTask({ sessionId: sessionIdentifier, taskIdentifier: "live-task-A" });
   secondFinal = await application.queryTask({ sessionId: sessionIdentifier, taskIdentifier: "live-task-B" });
-  const firstSettled = firstFinal.status === "succeeded" || firstFinal.status === "failed";
-  const secondSettled = secondFinal.status === "succeeded" || secondFinal.status === "failed";
+  const firstSettled = ["done", "failed", "cancelled"].includes(firstFinal.status);
+  const secondSettled = ["done", "failed", "cancelled"].includes(secondFinal.status);
   if (firstSettled && secondSettled) {
     break;
   }
@@ -228,17 +227,13 @@ record(
   "④ 派发状态与成果完成可区分（派发 ≠ 完成）",
   // 必须同时满足：提交时确实只是 accepted，且终态里有**成功**的成果。
   // 早期版本只断言"终态不再是 accepted"，会把 failure/blocked 也算作通过（实测踩到，已修正）。
-  firstSubmission.status === "accepted" && firstFinal !== null && firstFinal.status === "succeeded",
+  firstSubmission.status === "accepted" && firstFinal !== null && firstFinal.status === "done",
   "提交时=" + firstSubmission.status + " 终态=" + String(firstFinal?.status),
 );
-const settledStatuses = new Set([
-  "succeeded",
-  "failed",
-  "blocked",
-  "cancelled",
-]);
+// 终态集合（与 PublicTaskStatus 一致）
+const settledStatuses = new Set(["done", "failed", "cancelled", "blocked"]);
 record(
-  "⑤ 两条指令均收敛到终态（关闭回收，含 blocked/failed 如实上报）",
+  "⑤ 两条指令均收敛到终态（关闭回收）",
   firstFinal !== null &&
     secondFinal !== null &&
     settledStatuses.has(firstFinal.status) &&
@@ -246,9 +241,17 @@ record(
   "A=" + String(firstFinal?.status) + " B=" + String(secondFinal?.status),
 );
 // 真实运行必须真正产出成果；若收敛到 blocked/failed，如实记为失败而不是"通过"。
+const succeededCount = [firstFinal?.status, secondFinal?.status].filter(
+  (status) => status === "done",
+).length;
 record(
-  "⑥ 真实运行确实产出了成果（未 blocked/failed）",
-  firstFinal?.status === "succeeded" && secondFinal?.status === "succeeded",
+  "⑥ 真实运行确实产出了成果（至少一条 done）",
+  succeededCount >= 1,
+  "done 条数=" + String(succeededCount) + "（A=" + String(firstFinal?.status) + " B=" + String(secondFinal?.status) + "）",
+);
+record(
+  "⑦ 两条指令都产出成果（并行下均成功）",
+  firstFinal?.status === "done" && secondFinal?.status === "done",
   "A=" + String(firstFinal?.status) + " B=" + String(secondFinal?.status),
 );
 
@@ -256,7 +259,7 @@ await application.shutdown().catch(() => {});
 
 const credentialsHashAfter = await hashFileIfExists(credentialsPath);
 record(
-  "⑦ 实测未写入受保护凭据（字节一致）",
+  "⑧ 实测未写入受保护凭据（字节一致）",
   credentialsHashAfter === credentialsHashBefore,
   credentialsHashAfter === credentialsHashBefore ? "一致" : "已变化",
 );
