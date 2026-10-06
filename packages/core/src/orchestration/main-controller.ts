@@ -108,6 +108,14 @@ export interface MainControllerOptions {
   buildWorkerToolPort: (
     task: TaskDependencyNode,
     allowedToolNames: Set<string>,
+    /**
+     * 具体 Agent 实例身份（2026-10-02 增加）。
+     *
+     * 缺省时回退为按 `task.id` 合成；**生产路径必须给出**，否则两个并行 mission 中
+     * 同名的 `T-001` 会在读取抑制账本上共享键，导致第二个 Agent 的合法读取被判为
+     * `resource-already-read`（u2-flash 真实实测缺陷）。
+     */
+    agentInstanceId?: string,
   ) => ToolPort;
   buildPermissionExplanation: (toolName: string) => string;
   /** 流式输出到 UI 的回调。 */
@@ -769,8 +777,8 @@ export class MainController {
       workerFactories: {
         runtimeFactory: this.options.workerRuntimeFactory,
         toolDescriptorFactory: this.options.resolveToolDescriptors,
-        toolPortFactory: (task) =>
-          this.options.buildWorkerToolPort(task, new Set(task.toolNames)),
+        toolPortFactory: (task, agentInstanceId) =>
+          this.options.buildWorkerToolPort(task, new Set(task.toolNames), agentInstanceId),
         buildPermissionExplanation: this.options.buildPermissionExplanation,
       },
       onReportToMain: (message) => {
@@ -822,8 +830,8 @@ export class MainController {
       workerFactories: {
         runtimeFactory: this.options.workerRuntimeFactory,
         toolDescriptorFactory: this.options.resolveToolDescriptors,
-        toolPortFactory: (task) =>
-          this.options.buildWorkerToolPort(task, new Set(task.toolNames)),
+        toolPortFactory: (task, agentInstanceId) =>
+          this.options.buildWorkerToolPort(task, new Set(task.toolNames), agentInstanceId),
         buildPermissionExplanation: this.options.buildPermissionExplanation,
       },
       onMissionFinished: (status) => {

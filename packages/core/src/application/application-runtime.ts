@@ -799,13 +799,26 @@ export async function createApplicationRuntime(
           { type: "text", text: "（mock 执行器）" },
           { type: "finish", reason: "success", detail: "任务完成" },
         ])),
-    buildWorkerToolPort: (task: TaskDependencyNode, allowedToolNames: Set<string>) =>
+    /**
+     * 工具端口工厂：**必须接收具体 Agent 实例身份**（2026-10-02 真实实测缺陷修复）。
+     *
+     * 此前只有 `task`，导致 `agentInstanceId` 与 `taskExecutionId` 都用 `task.id` 合成
+     * （`worker:T-001` / `task-exec:T-001`）。两个并行 mission 各有一条 `T-001` 时，
+     * 二者在**读取抑制账本**（键含 agentInstanceId + taskExecutionId）上生成**完全相同的键**，
+     * 于是第二个 Agent 的合法读取被误判为"同一调用源重复读取"→ `resource-already-read`
+     * （真实 u2-flash 实测稳定复现：并发第二条任务必然失败）。
+     */
+    buildWorkerToolPort: (
+      task: TaskDependencyNode,
+      allowedToolNames: Set<string>,
+      agentInstanceId?: string,
+    ) =>
       new ScopeGatedToolPort(
         createPolicyWrapperForAgent({
-          agentInstanceId: `worker:${task.id}`,
+          agentInstanceId: agentInstanceId ?? `worker:${task.id}`,
           allowedToolNames,
-          factVerificationClaimIdentifier: `task-exec:${task.id}`,
-          taskExecutionId: `task-exec:${task.id}`,
+          factVerificationClaimIdentifier: `task-exec:${agentInstanceId ?? task.id}`,
+          taskExecutionId: `task-exec:${agentInstanceId ?? task.id}`,
           useConfigurablePermissionProfileEngine: true,
         }),
         scopeAuthorizationGate,

@@ -363,7 +363,7 @@ export class WorkerAgent {
             break;
           }
           if (event.reason === "success") {
-            const completionGateFailure = this.options.requireCompletionEvent
+    const completionGateFailure = this.options.requireCompletionEvent
               ? this.verifyCompletionControlEvent()
               : null;
             const unresolvedMutatingTools = [

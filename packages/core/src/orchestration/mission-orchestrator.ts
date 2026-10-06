@@ -51,7 +51,7 @@ export interface OrchestratorWorkerFactories {
     agentInstanceId: string,
     task: TaskDependencyNode,
   ) => AgentRuntime;
-  toolPortFactory: (task: TaskDependencyNode) => ToolPort;
+  toolPortFactory: (task: TaskDependencyNode, agentInstanceId?: string) => ToolPort;
   buildPermissionExplanation: (toolName: string) => string;
   /** T07D-R2-03：实际暴露给 Provider 的工具描述符（按任务工具子集）。 */
   toolDescriptorFactory?: (task: TaskDependencyNode) => ToolDescriptor[];
@@ -405,7 +405,7 @@ export class MissionOrchestrator {
     // T05B：写入型任务分配隔离 worker 分支/worktree，工具端口指向 worktree
     const gitIntegration = this.options.gitIntegration;
     const allowedPaths = gitIntegration?.allowedPathsByTaskType[task.taskType];
-    let workerToolPort = this.options.workerFactories.toolPortFactory(task);
+    let workerToolPort = this.options.workerFactories.toolPortFactory(task, agentInstanceId);
     if (
       gitIntegration !== null &&
       gitIntegration !== undefined &&
