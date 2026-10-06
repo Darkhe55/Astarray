@@ -70,6 +70,60 @@ function record(name, passed, detail) {
 const credentialsHashBefore = await hashFileIfExists(credentialsPath);
 const resolvedCredential = await resolveApiKey();
 
+/**
+ * `--probe-only`：最便宜的连通验证（单次模型调用，约数秒）。
+ *
+ * 用途：**换 key / 换端点后先花一次调用确认可用**，避免在坏凭据上跑完整实测
+ * （完整实测消耗多次调用、数分钟）。退出码 0 = 可用；本模式不打印密钥。
+ */
+if (process.argv.includes("--probe-only")) {
+  const probeStartedAtMilliseconds = Date.now();
+  let probeResponse;
+  try {
+    probeResponse = await fetch(endpointLabel, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": resolvedCredential.apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: modelIdentifier,
+        max_tokens: 16,
+        messages: [{ role: "user", content: "只回答两个字：可用" }],
+      }),
+    });
+  } catch (error) {
+    console.error("连通验证失败（网络层）: " + error.message);
+    process.exit(1);
+  }
+  const probeResponseText = await probeResponse.text();
+  console.log("endpoint: " + endpointLabel);
+  console.log("model: " + modelIdentifier);
+  console.log("http-status: " + String(probeResponse.status));
+  console.log("elapsed-ms: " + String(Date.now() - probeStartedAtMilliseconds));
+  if (!probeResponse.ok) {
+    // 错误体可能含服务端提示，但绝不会含我方密钥；截断显示便于诊断。
+    console.error("错误响应（前 300 字符）: " + probeResponseText.slice(0, 300));
+    process.exit(1);
+  }
+  let probeParsed;
+  try {
+    probeParsed = JSON.parse(probeResponseText);
+  } catch {
+    console.error("响应不是 JSON（前 300 字符）: " + probeResponseText.slice(0, 300));
+    process.exit(1);
+  }
+  const probeTextBlocks = Array.isArray(probeParsed.content)
+    ? probeParsed.content.filter((block) => block.type === "text").map((block) => block.text)
+    : [];
+  console.log("stop-reason: " + String(probeParsed.stop_reason ?? "(无)"));
+  console.log("usage: " + JSON.stringify(probeParsed.usage ?? null));
+  console.log("text-preview: " + probeTextBlocks.join("").slice(0, 40));
+  console.log("连通验证通过（--probe-only）。完整实测请去掉该参数。");
+  process.exit(0);
+}
+
 // Windows 绝对路径必须转为 file:// URL，ESM 加载器不接受裸盘符路径。
 const publicSdkModuleUrl = pathToFileURL(
   path.join(repositoryRoot, "dist", "public-sdk.js"),

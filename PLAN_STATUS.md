@@ -357,6 +357,52 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
 `tests/core/integration/cross-mission-isolation-regression.test.ts`（4 条）钉住三处
 "共享状态键漏掉具体 Agent 身份"缺陷，确保修复不退化；并保留"修复前缺陷形态"作为对照反例。
 
+### 2026-10-06 — 凭据已更换并通过连通验证；T07D-R2-04 后续步骤交接
+
+**凭据状态（用户告知并已实测确认）**：用户已更换 unisound 的 API key。
+`.astarray/providers/provider-credentials.json` 已刷新（写入时间 `2026-10-06 16:49:30`），
+`referenceId` 仍为 **`prov-unisound-1`**（未变）→ **所有既有脚本与端点配置可直接复用，零改动**。
+
+**连通验证已通过**（命令 `npm run verify:u2-flash-probe`，单次调用）：
+
+| 项 | 值 |
+|---|---|
+| endpoint | `https://maas-api.unisound.com/anthropic/v1/messages` |
+| model | `u2-flash` |
+| http-status | 200 |
+| stop-reason | `end_turn` |
+| elapsed | **8395ms** |
+| usage | `input_tokens=110 / output_tokens=15` |
+
+> ⚠️ **Windows 退出码陷阱（新会话勿误判）**：该探针脚本内部 `process.exit(0)` 表示成功，
+> 但 PowerShell 观察到的 `$LASTEXITCODE` 可能为 `-1073740791`（`0xC0000409`）——
+> 这是 Node 在 Windows 上的 libuv 退出断言（`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`），
+> **发生于进程收尾阶段，不影响脚本自身的判定与输出**。判断探针是否成功请看 `http-status: 200`
+> 与 `连通验证通过（--probe-only）`，不要只看退出码。
+
+**新增版本化入口**（解决"`.tmp/` 未入库、新会话拿不到探针"的交接隐患）：
+
+| npm 脚本 | 作用 | 代价 |
+|---|---|---|
+| `npm run verify:u2-flash-probe` | 连通验证（`--probe-only`，单次调用） | ~1 次调用 / ~8 秒 |
+| `npm run verify:u2-flash-continuous-reception` | 真实"在途接收"完整实测（8 项判据） | ~2 次调用 / ~2–3 分钟 |
+| `npm run verify:observability-entry-package` | tarball 隔离安装 + 四入口实跑（离线） | 无额度 |
+
+**下一步执行顺序（建议；先便宜后昂贵）**：
+
+1. `npm run verify:u2-flash-continuous-reception` → 回归确认三处跨 Agent 修复在新 key 下仍成立（期望 8/8）；
+2. **补 T07D-R2-04 缺口（需用户明确授权消耗额度）**：
+   `node scripts/verify-t07d-r2-04-tarball-live.mjs --allow-live-request --vendor-identifier unisound --protocol-label anthropic-messages`
+   —— 该运行会真实联网执行一个写入任务并产出 `acceptance-verdict.json`，
+   **用于补上 `docs/reports/T07D_R2_04_STATUS_RECONCILIATION_2026-10-06.md` §2 指出的
+   "4 次 `isDryRun=false` 记录缺少判据文件"与报告时间线落差**；
+3. 用第 2 步的真实 usage 数字形成**书面费用范围声明**（对账报告 §2 条款 5 的唯一未满足项）；
+4. 更新 `T07D_R2_04_TARBALL_LIVE_CONFIRMATION_2026-10-02.md` 的状态描述；
+   对账报告结论从 `in_progress` 推进到可判定。
+
+**未变更事项**：本小节**不修改**任务卡状态（T07D-R2-04 仍由作者决定）；
+`InstructionWindowStore` 仍未装配到编排器（既有已登记缺口）。
+
 ## 历史设计与验收记录
 
 > 2026-08-12 设计增补：反馈消息契约新增必填结构化 `source`。用户、Agent、系统来源均可追踪；转发保留原始来源。T00 契约、Schema、测试和架构文档已同步更新。
