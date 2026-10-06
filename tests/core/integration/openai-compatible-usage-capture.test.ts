@@ -156,4 +156,53 @@ describe("OpenAI 兼容运行时：真实用量接线", () => {
       "provider-response-did-not-include-usage",
     );
   });
+
+  /**
+   * ④ 真实厂商形态（unisound `u2-flash` / openai-compatible，2026-10-06 实测）：
+   * 每个中间 chunk 都带 `"usage": null`，真实 usage 只在最后一个 chunk。
+   *
+   * 首版实现只判了 `!== undefined`，于是 `null.prompt_tokens` 直接抛异常，
+   * 真实任务被运行时异常终止（`status=blocked`、无产物）——已有真实运行证据。
+   * 必须显式容忍 `usage: null`，并仍然读出收尾 chunk 的真实 usage。
+   */
+  it("④ 中间 chunk 的 usage 为 null 时必须容忍，且仍要读出收尾 chunk 的真实 usage", async () => {
+    const store = new UsageLedgerStore({ baseDirectory: stateDirectory });
+    const runtime = new OpenAiCompatibleRuntime({
+      baseUrl: "https://example.invalid/v1/chat/completions",
+      apiKey: "test-key-not-a-real-secret",
+      model: "u2-flash",
+      requestTimeoutMilliseconds: 5_000,
+      fetchImpl: buildCapturingFetch(
+        openAiChunk({
+          choices: [{ delta: { content: "已完成" }, finish_reason: null }],
+          usage: null,
+        }) +
+          openAiChunk({
+            choices: [{ delta: {}, finish_reason: "stop" }],
+            usage: null,
+          }) +
+          openAiChunk({
+            choices: [],
+            usage: {
+              prompt_tokens: 907,
+              completion_tokens: 121,
+              prompt_tokens_details: null,
+            },
+          }) +
+          "data: [DONE]\n\n",
+      ),
+      providerRequestUsageObserver: createProviderUsageLedgerObserver({ store }),
+    });
+
+    // 首版实现会在这里抛 "Cannot read properties of null"。
+    const events = await drainRuntimeEvents(runtime);
+    expect(events.some((event) => event.kind === "runFinished")).toBe(true);
+
+    const entries = await store.readAll();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.inputTokenCount).toBe(907);
+    expect(entries[0]?.outputTokenCount).toBe(121);
+    // prompt_tokens_details 为 null 时缓存命中数必须记 null（不得补 0）。
+    expect(entries[0]?.cachedTokenCount).toBeNull();
+  });
 });

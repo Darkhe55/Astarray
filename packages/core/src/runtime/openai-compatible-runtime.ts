@@ -52,7 +52,11 @@ interface OpenAiUsagePayload {
 
 interface OpenAiStreamChunk {
   choices?: OpenAiChoiceDelta[];
-  usage?: OpenAiUsagePayload;
+  /**
+   * 收尾 chunk 携带真实 usage；**中间 chunk 常显式发 `null`**（unisound 实测），
+   * 因此类型必须允许 null，解析也必须容忍 null。
+   */
+  usage?: OpenAiUsagePayload | null;
 }
 
 function readNonNegativeTokenCount(value: unknown): number | null {
@@ -191,8 +195,10 @@ export class OpenAiCompatibleRuntime implements AgentRuntime {
           return;
         }
         // usage 必须**先于** choices 判空读取：收尾 chunk 只有 usage、没有 choices。
+        // 注意 `usage` 可以是显式 `null`（unisound 等厂商在中间 chunk 就这么发）：
+        // 只判 `!== undefined` 会抛 "Cannot read properties of null"——真实运行踩到过。
         const chunkUsage = chunk.usage;
-        if (chunkUsage !== undefined) {
+        if (chunkUsage !== undefined && chunkUsage !== null) {
           hasObservedUsagePayload = true;
           const inputTokenCount = readNonNegativeTokenCount(chunkUsage.prompt_tokens);
           if (inputTokenCount !== null) {

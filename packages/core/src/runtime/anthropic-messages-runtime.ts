@@ -66,8 +66,9 @@ interface AnthropicStreamEvent {
   index?: number;
   content_block?: { type?: string; id?: string; name?: string };
   delta?: { type?: string; text?: string; partial_json?: string; stop_reason?: string };
-  message?: { usage?: AnthropicUsagePayload };
-  usage?: AnthropicUsagePayload;
+  // `usage` 可为显式 null（与 OpenAI 兼容侧同一类厂商形态），故类型与判空都必须容忍。
+  message?: { usage?: AnthropicUsagePayload | null };
+  usage?: AnthropicUsagePayload | null;
 }
 
 function readNonNegativeTokenCount(value: unknown): number | null {
@@ -213,7 +214,7 @@ export class AnthropicMessagesRuntime implements AgentRuntime {
         if (event.type === "message_start") {
           // 输入侧 usage 在 message_start 的 message.usage 内（权威值，不是本地估算）。
           const startUsage = event.message?.usage;
-          if (startUsage !== undefined) {
+          if (startUsage !== undefined && startUsage !== null) {
             hasObservedUsagePayload = true;
             observedInputTokenCount = readNonNegativeTokenCount(startUsage.input_tokens);
             observedCachedInputTokenCount = readNonNegativeTokenCount(
@@ -259,7 +260,7 @@ export class AnthropicMessagesRuntime implements AgentRuntime {
            * delta 给出，导致账目里 input 全被钉成 0（实测踩到，已有单测反例 ⑤）。
            */
           const deltaUsage = event.usage;
-          if (deltaUsage !== undefined) {
+          if (deltaUsage !== undefined && deltaUsage !== null) {
             hasObservedUsagePayload = true;
             const deltaInputTokenCount = readNonNegativeTokenCount(deltaUsage.input_tokens);
             if (deltaInputTokenCount !== null) {

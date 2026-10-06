@@ -253,4 +253,34 @@ describe("Provider 真实用量接线：逐请求落进用量账目", () => {
     expect(entry.inputTokenCount).toBe(1218);
     expect(entry.outputTokenCount).toBe(356);
   });
+
+  /** ⑥ 同一类厂商形态：`usage` 显式为 `null` 时不得抛异常（另一条协议侧的真实缺陷形态）。 */
+  it("⑥ usage 显式为 null 时必须容忍，不得让运行时异常终止", async () => {
+    const store = new UsageLedgerStore({ baseDirectory: stateDirectory });
+    const sseText =
+      anthropicSseEvent({ type: "message_start", message: { usage: null } }) +
+      anthropicSseEvent({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "完成" },
+      }) +
+      anthropicSseEvent({
+        type: "message_delta",
+        delta: { stop_reason: "end_turn" },
+        usage: null,
+      }) +
+      anthropicSseEvent({ type: "message_stop" });
+
+    const runtime = createLedgerBackedRuntime({ sseText, store });
+    const events = await drainRuntimeEvents(runtime);
+    expect(events.some((event) => event.kind === "runFinished")).toBe(true);
+
+    const entries = await store.readAll();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.inputTokenCount).toBeNull();
+    expect(entries[0]?.outputTokenCount).toBeNull();
+    expect(entries[0]?.missingUsageReason).toBe(
+      "provider-response-did-not-include-usage",
+    );
+  });
 });
