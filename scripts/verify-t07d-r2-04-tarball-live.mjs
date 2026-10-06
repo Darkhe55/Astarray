@@ -14,17 +14,36 @@
  *   # 干跑（零真实额度；本地假 Provider，验证判定链路与"缺产物拒绝结案"）
  *   node scripts/verify-t07d-r2-04-tarball-live.mjs --dry-run
  *
- *   # 真实运行（需显式授权；TTY 交互裁决）
+ *   # 真实运行（需显式授权；默认要求 TTY 交互裁决）
  *   ASTARRAY_PROVIDER_API_KEY=<key> \
  *   node scripts/verify-t07d-r2-04-tarball-live.mjs \
  *     --allow-live-request --provider-endpoint https://api.stepfun.com/v1/chat/completions \
  *     --provider-model step-3.7-flash
  *
+ *   # 真实运行（非交互环境：必须显式给出一次裁决；该选择会记录进判据文件）
+ *   node scripts/verify-t07d-r2-04-tarball-live.mjs \
+ *     --allow-live-request --provider-endpoint <endpoint> \
+ *     --permission-decision allow-once
+ *
+ *   # 真实运行（凭据改从受保护凭据文件读，密钥不经过调用方环境）
+ *   node scripts/verify-t07d-r2-04-tarball-live.mjs \
+ *     --allow-live-request --provider-endpoint <endpoint> \
+ *     --permission-decision allow-once --credential-source state
+ *
  * 纪律：
  * - `--allow-live-request` 缺失时拒绝执行（除非 `--dry-run`）；
- * - 真实模式要求 TTY（管道只能喂一次裁决，已多次导致误判）；
+ * - 真实模式默认要求 TTY；非交互（管道/服务化）必须显式 `--permission-decision`，
+ *   使"谁批准了这次授权"在判据文件内可审计，而不是靠管道默默喂一行；
  * - 只发起 1 次任务，不重试；产物只写在该全新目录内；
  * - 不打印任何凭据（只报告环境变量**是否存在**）。
+ *
+ * 2026-10-06 修复（**零判据通过**缺陷）：此前真实分支从未执行任务
+ * （`rounds` 只在 `if (isDryRun)` 内被填充），真实运行会写出 `verdict: "passed"`
+ * 却一次 Provider 请求都没发。现在：
+ *   - 真实模式**真正执行一次任务**并走与干跑同一套五项判据；
+ *   - 判定逻辑移到 `scripts/lib/t07d-r2-04-acceptance-decision.mjs`，
+ *     由 `tests/core/unit/t07d-r2-04-acceptance-decision.test.ts` 钉住
+ *     "零轮次绝不通过"与"无其他改动不得缺省跳过"。
  */
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -38,6 +57,12 @@ import {
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import {
+  buildAcceptanceChecks,
+  collectUnexpectedProjectEntries,
+  readUsageObservation,
+} from "./lib/t07d-r2-04-acceptance-decision.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 /** Windows 上 npm 是 .cmd shim，execFile/spawn 不会自动补后缀。 */
@@ -105,6 +130,31 @@ const apiKeyEnvironmentVariableName = takeArgument(
 );
 const requestTimeoutSeconds = takeArgument("--request-timeout-seconds", "120");
 const taskTimeoutSeconds = takeArgument("--task-timeout-seconds", "240");
+/**
+ * 非交互裁决（2026-10-06）：服务化/管道环境无法由人输入 `allow-once`，
+ * 必须**显式**给出本次裁决。取值为 `allow-once` 或 `deny`；
+ * 该值只喂给子进程的 stdin 一次，且会写入判据文件的 `permissionDecisionSource`。
+ */
+const permissionDecision = takeArgument("--permission-decision", null);
+if (permissionDecision !== null && permissionDecision !== "allow-once" && permissionDecision !== "deny") {
+  fail(
+    `--permission-decision 必须是 allow-once 或 deny（收到: ${permissionDecision}）`,
+    2,
+  );
+}
+/**
+ * 凭据来源（2026-10-06）：
+ *  - `env`（默认，与既有文档一致）：由调用方把密钥放进 `--provider-api-key-env` 指定的环境变量；
+ *  - `state`：脚本自己读受保护凭据文件 `.astarray/providers/provider-credentials.json`
+ *    的指定引用，再以同一环境变量注入子进程——与 `verify-u2-flash-continuous-reception.mjs`
+ *    的 `--credential-source state` 语义一致。
+ * 两种方式都**不打印、不落盘**密钥，判据文件里只出现"来源"与"引用 ID"。
+ */
+const credentialSource = takeArgument("--credential-source", "env");
+if (credentialSource !== "state" && credentialSource !== "env") {
+  fail(`--credential-source 必须是 state 或 env（收到: ${credentialSource}）`, 2);
+}
+const credentialReferenceId = takeArgument("--credential-reference-id", "prov-unisound-1");
 
 const outputFileRelativePath = ".tmp/t07d-r2-04-live/LIVE-PROOF.md";
 /**
@@ -158,15 +208,61 @@ if (!isDryRun && !isLiveAllowed) {
     2,
   );
 }
-if (!isDryRun && process.stdin.isTTY !== true) {
+if (!isDryRun && process.stdin.isTTY !== true && permissionDecision === null) {
   fail(
-    "拒绝执行：真实模式要求 **TTY 交互**输入裁决（管道只能提供一次裁决）。",
+    "拒绝执行：真实模式要求 **TTY 交互**输入裁决；非交互环境必须显式给出 " +
+      "--permission-decision allow-once（该选择会记录进判据文件，供事后审计）。",
     2,
   );
 }
 if (!isDryRun && providerEndpoint === null) {
   fail("拒绝执行：真实模式必须显式给出 --provider-endpoint。", 2);
 }
+if (!isDryRun && credentialSource === "env") {
+  const providedKey = process.env[apiKeyEnvironmentVariableName];
+  if (providedKey === undefined || providedKey === "") {
+    fail(
+      "拒绝执行：--credential-source env 要求环境变量 " +
+        apiKeyEnvironmentVariableName +
+        " 已提供（或改用 --credential-source state 读受保护凭据文件）。值不会被打印。",
+      2,
+    );
+  }
+}
+
+/**
+ * 从受保护凭据文件解析密钥（只读；**不打印、不落盘、不写入判据文件**）。
+ * 与 `verify-u2-flash-continuous-reception.mjs --credential-source state` 同源同义。
+ */
+function resolveApiKeyFromStateFile() {
+  const credentialsFilePath = path.join(
+    repositoryRoot,
+    ".astarray",
+    "providers",
+    "provider-credentials.json",
+  );
+  if (!existsSync(credentialsFilePath)) {
+    fail("--credential-source state 需要受保护凭据文件存在: " + credentialsFilePath, 2);
+  }
+  let parsedCredentials;
+  try {
+    parsedCredentials = JSON.parse(readFileSync(credentialsFilePath, "utf8"));
+  } catch (error) {
+    fail("受保护凭据文件无法解析为 JSON: " + String(error?.message ?? error), 2);
+  }
+  const credentialEntry = parsedCredentials?.[credentialReferenceId];
+  if (credentialEntry === undefined || typeof credentialEntry.apiKey !== "string" || credentialEntry.apiKey === "") {
+    fail("受保护凭据文件中缺少可用条目（apiKey 必须是非空字符串）: " + credentialReferenceId, 2);
+  }
+  return credentialEntry.apiKey;
+}
+
+/**
+ * 注入子进程的环境变量值：dry-run 不需要凭据；
+ * `state` 由本脚本读文件解析，`env` 直接沿用调用方已设置的值。
+ */
+const resolvedChildApiKey =
+  isDryRun || credentialSource === "env" ? null : resolveApiKeyFromStateFile();
 
 // ---------------------------------------------------------------------------
 // 1) 固定来源提交 + 打包 + 记录 tarball sha256
@@ -255,16 +351,10 @@ if (existsSync(path.join(installRoot, ".astarray"))) {
 }
 
 // ---------------------------------------------------------------------------
-// 3) 逐轮运行（干跑覆盖成功与"缺产物拒绝结案"两条路径）
+// 3) 逐轮运行
+//    - 干跑：两条路径（成功 / 缺产物拒绝结案），由本地假 Provider 驱动；
+//    - 真实：一条路径（成功），由 --provider-endpoint 指向的真实 Provider 驱动。
 // ---------------------------------------------------------------------------
-const toComparableLines = (text) => {
-  const lines = text.split("\n").map((line) => line.replace(/\r$/, ""));
-  while (lines.length > 0 && lines[lines.length - 1] === "") {
-    lines.pop();
-  }
-  return lines;
-};
-
 function buildPrompt() {
   return [
     "只读约束与范围：本次任务只允许改动 .tmp/t07d-r2-04-live/ 目录下的内容，",
@@ -326,7 +416,14 @@ async function runOnce(input) {
       cwd: projectDirectory,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
-      env: { ...process.env, NO_COLOR: "1" },
+      env: {
+        ...process.env,
+        NO_COLOR: "1",
+        // 凭据只经环境变量传递；键名由调用方指定，值永不打印。
+        ...(resolvedChildApiKey === null
+          ? {}
+          : { [apiKeyEnvironmentVariableName]: resolvedChildApiKey }),
+      },
     },
   );
 
@@ -334,9 +431,11 @@ async function runOnce(input) {
   let stderrText = "";
   childProcess.stdout.on("data", (chunk) => (stdoutText += String(chunk)));
   childProcess.stderr.on("data", (chunk) => (stderrText += String(chunk)));
-  // 真实模式：TTY 交由其父终端；干跑：喂一次 allow-once。
+  // 真实模式：TTY 交由其父终端；干跑与显式裁决模式：喂一次裁定。
   if (isDryRun) {
     childProcess.stdin.end("allow-once\n");
+  } else if (permissionDecision !== null) {
+    childProcess.stdin.end(permissionDecision + "\n");
   } else {
     childProcess.stdin.pipe(process.stdin);
   }
@@ -398,6 +497,11 @@ async function runOnce(input) {
     actualContent,
     stderrText,
     stdoutText,
+    /** 第五项判据的事实来源：除目标产物与 CLI 状态目录外的条目。 */
+    unexpectedEntryList: collectUnexpectedProjectEntries({
+      projectDirectory,
+      outputFileRelativePath,
+    }),
   };
 }
 
@@ -577,6 +681,7 @@ if (isDryRun) {
   rounds.push({
     roundName: "干跑 A：成功路径",
     expectation: "status=done 且产物正确",
+    roundKind: "success",
     projectDirectory: successProject,
     ...successResult,
   });
@@ -649,66 +754,90 @@ if (isDryRun) {
   rounds.push({
     roundName: "干跑 B：缺产物拒绝结案",
     expectation: "status != done（门禁拒绝谎报完成）且无产物",
+    roundKind: "rejection",
     projectDirectory: rejectionProject,
     ...rejectionResult,
+  });
+} else {
+  /**
+   * 真实运行（2026-10-06 修复）：此前**没有这个分支**，真实模式下 rounds 恒为空，
+   * 判定段据此写出 `verdict: "passed"` 并在终端打印"验收通过：产物正确 + 任务 done ✓"，
+   * 而实际一次 Provider 请求都没发。这里真正执行一次任务，并复用同一套判定。
+   */
+  const liveProject = path.join(archiveRoot, "live-project");
+  mkdirSync(liveProject, { recursive: true });
+  const liveResult = await runOnce({
+    projectDirectory: liveProject,
+    endpoint: providerEndpoint,
+  });
+  rounds.push({
+    roundName: "真实运行：成功路径",
+    expectation: "status=done 且产物正确（真实 Provider）",
+    roundKind: "success",
+    projectDirectory: liveProject,
+    ...liveResult,
   });
 }
 
 // ---------------------------------------------------------------------------
-// 4) 判定
+// 4) 判定（逻辑在 scripts/lib/t07d-r2-04-acceptance-decision.mjs，由单测钉住）
 // ---------------------------------------------------------------------------
-const expectedSha256 = createHash("sha256").update(expectedContent).digest("hex");
-const checks = [];
-function record(checkName, isPassed, detail) {
-  checks.push({ checkName, isPassed: Boolean(isPassed), detail: String(detail) });
-  console.log((isPassed ? "  ✓ " : "  ✗ ") + checkName + " — " + detail);
-}
-
+const acceptanceDecision = buildAcceptanceChecks({
+  isDryRun,
+  rounds,
+  expectedContent,
+  outputFileRelativePath,
+});
+const { checks, failedCheckNames } = acceptanceDecision;
+const isCheckBelongingToRound = (check, round) =>
+  check.checkName.startsWith(round.roundName + " / ");
 for (const round of rounds) {
   console.log("\n--- " + round.roundName + "（" + round.expectation + "）---");
-  const isSuccessRound = round.roundName.includes("成功");
-  const isContentMatched =
-    round.actualContent !== null &&
-    JSON.stringify(toComparableLines(round.actualContent)) ===
-      JSON.stringify(toComparableLines(expectedContent));
-  if (isSuccessRound) {
-    record(
-      round.roundName + " / status=done",
-      round.parsedResult?.status === "done",
-      String(round.parsedResult?.status),
-    );
-    record(
-      round.roundName + " / 权限裁决 allowed-once",
-      round.parsedResult?.permissionAsk === "allowed-once",
-      String(round.parsedResult?.permissionAsk),
-    );
-    record(round.roundName + " / 产物存在", round.fileExists, outputFileRelativePath);
-    record(
-      round.roundName + " / 产物逐行精确",
-      isContentMatched,
-      "期望 sha256=" + expectedSha256,
-    );
-  } else {
-    record(
-      round.roundName + " / 不得结案为 done",
-      round.parsedResult?.status !== "done",
-      "status=" + String(round.parsedResult?.status),
-    );
-    record(round.roundName + " / 无产物", !round.fileExists, outputFileRelativePath);
+  for (const check of checks.filter((candidate) => isCheckBelongingToRound(candidate, round))) {
+    console.log((check.isPassed ? "  ✓ " : "  ✗ ") + check.checkName + " — " + check.detail);
   }
+}
+// 不属于任何轮次的兜底判据（例如"零轮次不得通过"）也要打印，不能被静默吞掉。
+for (const check of checks.filter(
+  (candidate) => !rounds.some((round) => isCheckBelongingToRound(candidate, round)),
+)) {
+  console.log((check.isPassed ? "  ✓ " : "  ✗ ") + check.checkName + " — " + check.detail);
 }
 
 console.log("\n=== 凭证来源 ===");
+console.log("凭据来源: " + credentialSource);
+if (credentialSource === "state") {
+  console.log("凭据引用 ID: " + credentialReferenceId + "（值不打印）");
+}
 console.log(
   "环境变量 " +
     apiKeyEnvironmentVariableName +
     " 是否提供: " +
     (process.env[apiKeyEnvironmentVariableName] === undefined ||
     process.env[apiKeyEnvironmentVariableName] === ""
-      ? "否"
+      ? credentialSource === "state" && resolvedChildApiKey !== null
+        ? "否（由 --credential-source state 在子进程环境内注入，值不打印）"
+        : "否"
       : "是（值不打印）"),
 );
 console.log("是否复制了仓库 .astarray: 否（全新目录自带状态目录）");
+
+/**
+ * 本次运行的裁决来源（2026-10-06）：TTY 人工输入 vs 显式开关，必须可审计，
+ * 否则"谁批准了这次授权"只能靠脚本旁注推断。
+ */
+const permissionDecisionSource = isDryRun
+  ? "dry-run-fixture"
+  : permissionDecision === null
+    ? "interactive-tty"
+    : "explicit-flag";
+/**
+ * 用量观察（2026-10-06）：从**本次运行自己的**隔离状态目录读本地账目，
+ * 使判据文件自带真实 usage（卡内条款"记录 usage/费用范围"）。
+ * 只读、不发请求；读不到即 null，不伪造。
+ */
+const usageObservation =
+  rounds.length === 0 ? null : readUsageObservation(rounds[0].projectDirectory);
 
 console.log("\n=== tarball 记录 ===");
 console.log("来源提交: " + sourceCommit);
@@ -729,6 +858,12 @@ writeFileSync(
       protocolLabel,
       isDryRun,
       endpoint: providerEndpoint,
+      credentialSource,
+      ...(credentialSource === "state"
+        ? { credentialReferenceId }
+        : { apiKeyEnvironmentVariableName }),
+      permissionDecisionSource,
+      executedRoundCount: acceptanceDecision.executedRoundCount,
     },
     null,
     2,
@@ -742,15 +877,24 @@ const failedChecks = checks.filter((check) => !check.isPassed);
  * 五项判据与结论同时写入运行目录，避免"验收是否通过"只能从终端滚动缓冲区回看
  * （实测发生过：只保留节选输出时无法复核 permissionAsk 等判据）。
  * 该文件与 tarball-record.json 同目录、同一次运行一一对应。
+ *
+ * 2026-10-06 增补：`executedRoundCount`、`isRealAcceptanceEvidence`、
+ * `permissionDecisionSource` 与 `usageObservation`——防止"零轮次通过"再次无声发生，
+ * 并让费用范围可以直接引用**本次运行**的账目。
  */
 const verdictPath = path.join(archiveRoot, "acceptance-verdict.json");
 writeFileSync(
   verdictPath,
   JSON.stringify(
     {
-      schemaVersion: 1,
-      verdict: failedChecks.length > 0 ? "failed" : "passed",
+      schemaVersion: 2,
+      verdict: acceptanceDecision.verdict,
       isDryRun,
+      isRealAcceptanceEvidence: acceptanceDecision.isRealAcceptanceEvidence,
+      executedRoundCount: acceptanceDecision.executedRoundCount,
+      permissionDecisionSource,
+      credentialSource,
+      ...(credentialSource === "state" ? { credentialReferenceId } : {}),
       sourceCommit,
       tarballSha256,
       vendorIdentifier,
@@ -759,12 +903,15 @@ writeFileSync(
       endpoint: providerEndpoint,
       recordedAtIso: new Date().toISOString(),
       checks,
-      failedCheckNames: failedChecks.map((check) => check.checkName),
+      failedCheckNames,
+      usageObservation,
       rounds: rounds.map((round) => ({
         roundName: round.roundName,
+        roundKind: round.roundKind,
         exitCode: round.exitCode,
         parsedResult: round.parsedResult,
         fileExists: round.fileExists,
+        unexpectedEntryList: round.unexpectedEntryList,
       })),
     },
     null,
@@ -789,5 +936,12 @@ if (failedChecks.length > 0) {
 }
 console.log(
   "\nT07D-R2-04 tarball 验收通过" +
-    (isDryRun ? "（**干跑模式，不代表真实验收通过**）" : "：产物正确 + 任务 done ✓"),
+    (isDryRun
+      ? "（**干跑模式，不代表真实验收通过**）"
+      : "：真实运行 " +
+        String(acceptanceDecision.executedRoundCount) +
+        " 轮，" +
+        String(checks.length) +
+        " 项判据全过（产物逐行精确 + 任务 done ✓）；裁决来源=" +
+        permissionDecisionSource),
 );
