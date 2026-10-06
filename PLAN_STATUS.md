@@ -551,6 +551,10 @@ tarball sha256 `af66e55b…a244`（1,102,785 字节）；逐请求 token 来自�
 
 #### 4. 卡状态（逐项核对后置 done）
 
+卡内 `验收` 的两半分别有直接证据：**读任务**（`verify:u2-flash-continuous-reception` 本会话
+exit 0 / 8/8，真实 `u2-flash` 上两条只读 `readFile` 任务终态均 `done`，经 `AstarrayApplicationFacade`
+即与 CLI 同一产品入口）与**小型受控改动**（三次 tarball 隔离安装真实验收各 5/5）。
+
 `docs/tasks/T07D_R2_PROVIDER_PRODUCT_WIRING_TASK_CARD.md`：`T07D-R2-04` 由 `blocked` 置 **`done`**，
 整卡置 `done`，并新增 §「T07D-R2-04 验收记录」逐项列出证据
 （读任务/受控改动、模型协议日期版本、usage 费用范围、同一配置、限制）。

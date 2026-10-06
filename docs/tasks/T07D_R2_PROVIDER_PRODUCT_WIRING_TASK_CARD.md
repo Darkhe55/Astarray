@@ -85,17 +85,23 @@
   产品侧同时补齐了卡内"记录 usage"所缺的接线（提交 `b8905a4`/`ae318f4`/`62b0d8e`）：
   Provider 真实 usage 现由产品路径逐请求落盘（`.astarray/usage/entries.json`）。
 - 逐项验收（对应卡内"工作"与"验收"原文）：
-  1. **读任务 + 小型受控改动**：三次运行各 5/5 判据通过（`status=done`、`allowed-once`、产物存在、
-     逐行精确、**无其他改动**），`isRealAcceptanceEvidence=true`，exit 0；
-  2. **模型/协议**：unisound `u2-flash`（anthropic-messages、openai-compatible）与
+  1. **读任务**：`npm run verify:u2-flash-continuous-reception`（本会话 exit 0，8/8）——
+     真实 unisound `u2-flash` 上两条**只读任务**（"只读任务，禁止修改任何文件：用 `readFile`
+     读取 `package.json` 并回答 `name`"）终态均 `done`；该运行经 `AstarrayApplicationFacade.create`，
+     与 CLI 同一产品入口；
+  2. **小型受控改动**：三次 tarball 隔离安装真实运行各 5/5 判据通过
+     （`status=done`、`allowed-once`、产物存在、逐行精确、**无其他改动**），
+     `isRealAcceptanceEvidence=true`，exit 0；
+  3. **模型/协议**：unisound `u2-flash`（anthropic-messages、openai-compatible）与
      stepfun `step-3.7-flash`（openai-compatible）；
-  3. **日期/版本**：2026-10-06；同一提交 `62b0d8e`、同一 tarball sha256
+  4. **日期/版本**：2026-10-06；同一提交 `62b0d8e`、同一 tarball sha256
      `af66e55bfcee6ca9b6bff1f2edf2894d76ddb1cdb8b78f7739b9b15498baa244`（1,102,785 字节）；
-  4. **usage/费用范围**：逐请求 token 可精确复核 —— 运行 `17-55-24.904Z` 7 请求（input 13,315/output 3,112）、
+  5. **usage/费用范围**：逐请求 token 可精确复核 —— 运行 `17-55-24.904Z` 7 请求（input 13,315/output 3,112）、
      `18-00-35.917Z` 4 请求（7,977/1,512）、`18-05-44.693Z` 6 请求（11,819/1,827），合计 **17 请求 / 33,111 / 6,451**；
      货币金额按产品侧既定口径（价格表未配置）**明确不给出**；
-  5. **CLI/TUI/SDK 同一配置**：本次真实运行走的正是 `AstarrayApplicationFacade` 这一 CLI/TUI/SDK 共用装配入口；
-  6. **限制**：全部登记在案，未用说明文字覆盖（见下"剩余风险"）。
+  6. **CLI/TUI/SDK 同一配置**：受控改动经 tarball CLI 入口、读任务经 SDK 入口，
+     两者都是 `AstarrayApplicationFacade`（同一装配入口、同一 Provider 注册）；
+  7. **限制**：全部登记在案，未用说明文字覆盖（见下"剩余风险"）。
 - 测试命令、退出码和产物哈希：`npm run typecheck` exit 0；`npm run lint` exit 0；
   `npm run check`（需更宽权限，见下）—— 历次失败文件（`e2e01-vertical-rework`、`run-command-gaps`、
   `git-defensive-branches`、`reliability-git-process-tree`、`cli-commands`、`provider-tool-loop`、

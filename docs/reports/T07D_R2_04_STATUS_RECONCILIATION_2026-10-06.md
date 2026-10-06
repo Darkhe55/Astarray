@@ -25,10 +25,10 @@
 
 | # | 条款 | 证据 | 判定 |
 |---|---|---|---|
-| 1 | 至少一个真实服务成功完成**读任务** | `docs/reports/T07D_R2_04_LIVE_ACCEPTANCE_PASSED_2026-10-02.md` §「五项判据在同一次真实运行内全部通过」；`docs/reports/T07D_R2_04_LIVE_PROVIDER_EVIDENCE_2026-10-01.md`；**新增**：`.tmp/tarball-live/2026-10-06T09-53-37.334Z/acceptance-verdict.json`（tarball 隔离安装 + 真实 unisound/`u2-flash`/anthropic-messages，5/5 且 `isRealAcceptanceEvidence: true`） | **已满足**（且本次补齐了 **tarball 产品路径**证据，见 §6） |
-| 2 | 至少一个真实服务成功完成**小型受控改动** | 同上：真实运行产出 `.tmp/t07d-r2-04-live/LIVE-PROOF.md`，逐行精确 + `status=done`；本次运行同时通过新增的第五项判据"无其他改动" | **已满足** |
-| 3 | 记录**模型、协议、日期** | stepfun `step-3.7-flash` / OpenAI 兼容；unisound `u2-flash` / OpenAI 兼容与 Anthropic Messages；端点与运行时间见 `.tmp/tarball-live/*/tarball-record.json` 与凭据目录 `verifiedAtIso`；本次新增运行记录 `2026-10-06T09-53-37.334Z` | **已满足** |
-| 4 | 记录**版本** | 各记录含 `sourceCommit`；tarball 记录含 `tarballSha256`/字节数；本次运行 `sourceCommit=1462fa5`（工作区干净）、sha256 `8533d919…7bab`、1,093,410 字节 | **已满足** |
+| 1 | 至少一个真实服务成功完成**读任务** | **读任务的直接证据**：`npm run verify:u2-flash-continuous-reception`（本会话实测，exit 0，8/8）——真实 unisound `u2-flash`，两条任务均为"只读任务，禁止修改任何文件：用 `readFile` 读取 `package.json` 并回答 `name`"，终态均 `done`（`.tmp/live-u2-flash/acceptance-verdict.json`）。该运行经 `AstarrayApplicationFacade.create`（与 CLI 同一产品入口）。旁证：`docs/reports/T07D_R2_04_LIVE_ACCEPTANCE_PASSED_2026-10-02.md`、`docs/reports/T07D_R2_04_LIVE_PROVIDER_EVIDENCE_2026-10-01.md` | **已满足** |
+| 2 | 至少一个真实服务成功完成**小型受控改动** | **受控改动的直接证据**：三次 tarball 隔离安装真实运行（§2.3/§5）各 5/5，产物 `.tmp/t07d-r2-04-live/LIVE-PROOF.md` 逐行精确 + `status=done` + 第五项"无其他改动"；另有 2026-10-02 dev-checkout 单次通过记录 | **已满足** |
+| 3 | 记录**模型、协议、日期** | unisound `u2-flash`（anthropic-messages、openai-compatible）、stepfun `step-3.7-flash`（openai-compatible）；日期 2026-10-06；运行标识见 §2.3 | **已满足** |
+| 4 | 记录**版本** | 三次最终运行同为提交 `62b0d8e`（工作区干净）+ tarball sha256 `af66e55b…a244`、1,102,785 字节 | **已满足** |
 | 5 | 记录 **usage/费用范围** | `docs/reports/T07D_R2_04_USAGE_COST_RANGE_STATEMENT_2026-10-06.md`（**修订版**）：三次最终真实运行的**逐请求 token 已可精确复核**（17 次请求 / input 33,111 / output 6,451），货币金额明确不给出 | **已满足**（Provider usage 已装配并实测落盘，见 §6.3） |
 | 6 | **CLI/TUI/SDK 用同一配置** | 已确证：SDK 与 CLI 同经 `runtime-selection` 选 Provider 并注册同一 `anthropic-messages` 注册项（本会话修复了 SDK 侧漏导出的缺口）；TUI 即 CLI 命令面；GUI 服务自身不选 Provider，由启动方配置注入 | **已满足（GUI 为宿主注入，非独立路径）** |
 | 7 | 受控在线小样本 | 已执行多次（含 u2-flash 连续接收实测 8/8；**本次新增** tarball 隔离安装下的真实受控任务，5/5 判据通过、exit 0） | **已满足** |
@@ -104,8 +104,8 @@
 
 | # | 条款 | 终态证据 |
 |---|---|---|
-| 1 | 真实服务完成**读任务** | 三次 tarball 隔离安装真实运行，各 5/5 判据、exit 0（§2、§2.3） |
-| 2 | 真实服务完成**小型受控改动** | 同上：产物 `.tmp/t07d-r2-04-live/LIVE-PROOF.md` 逐行精确 + `status=done` + **无其他改动** |
+| 1 | 真实服务完成**读任务** | `verify:u2-flash-continuous-reception`（本会话 exit 0，8/8）：真实 `u2-flash` 上两条**只读**任务（`readFile` 读 `package.json`）终态均 `done` |
+| 2 | 真实服务完成**小型受控改动** | 三次 tarball 隔离安装真实运行（§2.3/§5）各 5/5：产物逐行精确 + `status=done` + **无其他改动** |
 | 3 | 记录**模型/协议/日期** | `unisound u2-flash`（anthropic-messages、openai-compatible）、`stepfun step-3.7-flash`（openai-compatible）；2026-10-06；运行标识见 §2 |
 | 4 | 记录**版本** | 三次运行同为提交 `62b0d8e`（工作区干净）+ tarball sha256 `af66e55b…a244`、1,102,785 字节 |
 | 5 | 记录 **usage/费用范围** | 逐请求 token 可精确复核：17 次请求 / input 33,111 / output 6,451；货币金额明确不给出（费用范围声明修订版） |
@@ -144,6 +144,7 @@
 - `.tmp/tarball-live/2026-10-06T15-52-05.812Z/acceptance-verdict.json`（失败运行，用于定位 `usage: null` 缺陷）
 - 凭据目录 `.astarray/providers/provider-catalog.json`（`verifiedAtIso`，见 §7b）
 - 本会话 u2-flash 连续接收实测（`scripts/verify-u2-flash-continuous-reception.mjs`，8/8）
+  —— **读任务的直接证据**（两条只读任务终态均 `done`），判据落盘 `.tmp/live-u2-flash/acceptance-verdict.json`
 - 本会话真实探针复测（`npm run verify:u2-flash-probe`）：http-status 200、`input_tokens=110`/`output_tokens=8`
 
 ## 6. 本次发现并修复的缺陷：验收脚本 live 路径"零判据通过"（2026-10-06）
