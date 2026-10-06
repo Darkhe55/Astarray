@@ -7,6 +7,7 @@
  * - 首个产品目标（2026-09-10 记录）：openai-compatible Chat Completions 流式协议。
  */
 import type { AgentRuntime } from "../core/types.js";
+import type { ProviderRequestUsageObserverPort } from "../measurement/provider-request-usage-observation.js";
 import type { ProtectedCredentialStorePort } from "../orchestration/model-provider-catalog.js";
 
 /** Provider 运行时公开能力（用于能力协商）。 */
@@ -46,6 +47,11 @@ export interface ProviderRuntimeConfig {
   /** 仅内存流转的凭据内容；不得进入描述符、错误、日志或导出。 */
   apiKey: string;
   requestTimeoutMilliseconds: number;
+  /**
+   * 真实用量观测端口（2026-10-06 接线）。
+   * 由装配层提供（它掌握状态目录），运行时只上报事实、不认识账目与磁盘。
+   */
+  providerRequestUsageObserver?: ProviderRequestUsageObserverPort;
 }
 
 export interface ProviderRuntimeRegistration {
@@ -75,6 +81,7 @@ export interface ResolveProviderRuntimeRequest {
   baseUrl?: string | null;
   protectedCredentialReferenceId?: string | null;
   requestTimeoutMilliseconds?: number;
+  providerRequestUsageObserver?: ProviderRequestUsageObserverPort;
 }
 
 export interface ResolvedProviderRuntime {
@@ -187,6 +194,9 @@ export class ProviderRuntimeRegistry {
       protectedCredentialReferenceId: credentialReferenceId ?? "",
       apiKey,
       requestTimeoutMilliseconds: request.requestTimeoutMilliseconds ?? 30_000,
+      ...(request.providerRequestUsageObserver === undefined
+        ? {}
+        : { providerRequestUsageObserver: request.providerRequestUsageObserver }),
     };
     return {
       descriptor: {

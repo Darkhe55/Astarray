@@ -25,6 +25,10 @@ export function createAnthropicMessagesProviderRegistration(): ProviderRuntimeRe
         apiKey: config.apiKey,
         model: config.modelIdentifier,
         requestTimeoutMilliseconds: config.requestTimeoutMilliseconds,
+        providerIdentifier: config.providerId,
+        ...(config.providerRequestUsageObserver === undefined
+          ? {}
+          : { providerRequestUsageObserver: config.providerRequestUsageObserver }),
       }),
   };
 }

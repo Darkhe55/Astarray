@@ -9,6 +9,10 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
+// 装配层内部使用（不是再导出）：把真实用量观测接到账目存储上（2026-10-06 接线）。
+import { createProviderUsageLedgerObserver } from "./orchestration/provider-usage-ledger-observer.js";
+import { UsageLedgerStore } from "./orchestration/usage-ledger-store.js";
+
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
 // 否则 runtime: "provider" 在打包产物上不可用。
@@ -902,6 +906,14 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
         );
       }
       try {
+        /**
+         * 真实用量观测（2026-10-06 接线）：装配层掌握状态目录，因此由这里构造
+         * "账目观测者"并交给运行时；运行时只上报事实。
+         * 此前该端口无人提供，`usage/entries.json` 在生产路径上永远为空。
+         */
+        const providerUsageObserver = createProviderUsageLedgerObserver({
+          store: new UsageLedgerStore({ baseDirectory: options.stateDirectory }),
+        });
         const resolved = await registry.resolveRuntime({
           providerId: provider.providerId,
           modelIdentifier: provider.modelIdentifier,
@@ -911,6 +923,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
           protectedCredentialReferenceId:
             provider.protectedCredentialReferenceId ?? null,
           requestTimeoutMilliseconds: provider.requestTimeoutMilliseconds,
+          providerRequestUsageObserver: providerUsageObserver,
         });
         mainRuntimeFactory = () => resolved.createRuntime();
         workerRuntimeFactory = () => resolved.createRuntime();

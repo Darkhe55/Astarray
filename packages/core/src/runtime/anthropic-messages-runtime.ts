@@ -17,6 +17,10 @@
 import { DomainError } from "../core/errors.js";
 import type { AgentEvent } from "../core/events.js";
 import type { AgentRunInput, AgentRuntime, ToolDescriptor } from "../core/types.js";
+import {
+  computeProviderRequestInputHash,
+  type ProviderRequestUsageObserverPort,
+} from "../measurement/provider-request-usage-observation.js";
 // 复用既有适配器导出的协议标识与 API 版本，避免第二份定义漂移。
 import {
   ANTHROPIC_MESSAGES_API_VERSION,
@@ -40,6 +44,21 @@ export interface AnthropicMessagesRuntimeOptions {
   /** 覆盖 `anthropic-version` 头（默认 2023-06-01）。 */
   anthropicVersion?: string;
   maxTokens?: number;
+  /** Provider 运行时/协议标识（写进用量账目；缺省为 anthropic-messages）。 */
+  providerIdentifier?: string;
+  /**
+   * 真实用量观测端口（2026-10-06 接线）。
+   * 缺省 = `NOOP`：显式表示本装配不采集用量，不冒充已采集。
+   */
+  providerRequestUsageObserver?: ProviderRequestUsageObserverPort;
+}
+
+/** Anthropic 流事件的 usage 形态（`message_start.message.usage` / `message_delta.usage`）。 */
+interface AnthropicUsagePayload {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
 }
 
 interface AnthropicStreamEvent {
@@ -47,10 +66,21 @@ interface AnthropicStreamEvent {
   index?: number;
   content_block?: { type?: string; id?: string; name?: string };
   delta?: { type?: string; text?: string; partial_json?: string; stop_reason?: string };
+  message?: { usage?: AnthropicUsagePayload };
+  usage?: AnthropicUsagePayload;
+}
+
+function readNonNegativeTokenCount(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+  return Math.trunc(value);
 }
 
 export class AnthropicMessagesRuntime implements AgentRuntime {
   private readonly fetchImpl: typeof fetch;
+  /** 每个实例对应一个具体 Agent；实例内递增即可区分该 Agent 的每次真实请求。 */
+  private requestSequence = 0;
 
   constructor(private readonly options: AnthropicMessagesRuntimeOptions) {
     this.fetchImpl = options.fetchImpl ?? fetch;
@@ -65,6 +95,62 @@ export class AnthropicMessagesRuntime implements AgentRuntime {
       this.options.model,
       this.options.maxTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS,
     );
+    const serializedRequestBody = JSON.stringify(requestBody);
+    /**
+     * 用量捕获（2026-10-06）：Anthropic 的流里 usage 是**权威来源**——
+     * `message_start.message.usage.input_tokens` 给输入、
+     * `message_delta.usage.output_tokens` 给最终输出（累计值）。
+     * 此前这两处都被丢弃，导致产品路径永远写不出用量账目。
+     */
+    let observedInputTokenCount: number | null = null;
+    let observedOutputTokenCount: number | null = null;
+    let observedCachedInputTokenCount: number | null = null;
+    let hasObservedUsagePayload = false;
+    let hasReportedUsage = false;
+    let hasStartedStream = false;
+    this.requestSequence += 1;
+    const requestIdentifier =
+      "provider-request:" +
+      agentRunInput.agentId +
+      ":" +
+      String(this.requestSequence);
+    const reportUsageOnce = async (): Promise<void> => {
+      if (!hasStartedStream || hasReportedUsage) {
+        return;
+      }
+      hasReportedUsage = true;
+      const observer = this.options.providerRequestUsageObserver;
+      if (observer === undefined) {
+        return;
+      }
+      const hasCompleteUsage =
+        observedInputTokenCount !== null && observedOutputTokenCount !== null;
+      try {
+        await observer.recordProviderRequestUsage({
+          missionIdentifier: agentRunInput.missionId,
+          taskIdentifier: null,
+          sourceAgentInstanceId: agentRunInput.agentId,
+          providerIdentifier: this.options.providerIdentifier ?? ANTHROPIC_MESSAGES_PROTOCOL,
+          modelIdentifier: this.options.model,
+          requestIdentifier,
+          inputTokenCount: observedInputTokenCount,
+          outputTokenCount: observedOutputTokenCount,
+          cachedInputTokenCount: observedCachedInputTokenCount,
+          requestInputHash: computeProviderRequestInputHash(serializedRequestBody),
+          observedAtIso: new Date().toISOString(),
+          // 未拿到完整 usage 时给出原因：不得记 0，也不得静默当作"无用量"。
+          ...(hasCompleteUsage
+            ? {}
+            : {
+                missingUsageReason: hasObservedUsagePayload
+                  ? "provider-usage-incomplete"
+                  : "provider-response-did-not-include-usage",
+              }),
+        });
+      } catch {
+        // 观测失败不得阻塞业务（沿用 perfSampleSink 的既定纪律）。
+      }
+    };
     const abortController = new AbortController();
     const timeoutHandle = setTimeout(() => {
       abortController.abort();
@@ -112,6 +198,7 @@ export class AnthropicMessagesRuntime implements AgentRuntime {
       // 按 content block 累积：文本块直接转发；tool_use 块累积 id/name/部分 JSON。
       const toolCallsByIndex = new Map<number, { id: string; name: string; arguments: string }>();
       let finalStopReason: string | null = null;
+      hasStartedStream = true;
 
       for await (const event of readAnthropicStreamEvents(response.body)) {
         if (cancellationSignal.aborted) {
@@ -122,6 +209,22 @@ export class AnthropicMessagesRuntime implements AgentRuntime {
             detail: "流式输出被取消",
           };
           return;
+        }
+        if (event.type === "message_start") {
+          // 输入侧 usage 在 message_start 的 message.usage 内（权威值，不是本地估算）。
+          const startUsage = event.message?.usage;
+          if (startUsage !== undefined) {
+            hasObservedUsagePayload = true;
+            observedInputTokenCount = readNonNegativeTokenCount(startUsage.input_tokens);
+            observedCachedInputTokenCount = readNonNegativeTokenCount(
+              startUsage.cache_read_input_tokens,
+            );
+            const startOutputTokenCount = readNonNegativeTokenCount(startUsage.output_tokens);
+            if (startOutputTokenCount !== null) {
+              observedOutputTokenCount = startOutputTokenCount;
+            }
+          }
+          continue;
         }
         if (event.type === "content_block_start" && event.content_block?.type === "tool_use") {
           toolCallsByIndex.set(event.index ?? 0, {
@@ -145,8 +248,23 @@ export class AnthropicMessagesRuntime implements AgentRuntime {
           }
           continue;
         }
-        if (event.type === "message_delta" && event.delta?.stop_reason !== undefined) {
-          finalStopReason = event.delta.stop_reason;
+        if (event.type === "message_delta") {
+          // 输出侧 usage 在 message_delta.usage（累计终值）。
+          const deltaUsage = event.usage;
+          if (deltaUsage !== undefined) {
+            hasObservedUsagePayload = true;
+            const deltaOutputTokenCount = readNonNegativeTokenCount(deltaUsage.output_tokens);
+            if (deltaOutputTokenCount !== null) {
+              observedOutputTokenCount = deltaOutputTokenCount;
+            }
+            const deltaInputTokenCount = readNonNegativeTokenCount(deltaUsage.input_tokens);
+            if (deltaInputTokenCount !== null && observedInputTokenCount === null) {
+              observedInputTokenCount = deltaInputTokenCount;
+            }
+          }
+          if (event.delta?.stop_reason !== undefined) {
+            finalStopReason = event.delta.stop_reason;
+          }
           continue;
         }
       }
@@ -185,6 +303,8 @@ export class AnthropicMessagesRuntime implements AgentRuntime {
     } finally {
       clearTimeout(timeoutHandle);
       cancellationSignal.removeEventListener("abort", cancellationListener);
+      // 无论正常收尾还是取消，只要拿到过流就把用量事实交给观测端口（幂等，只报一次）。
+      await reportUsageOnce();
     }
   }
 }
