@@ -505,6 +505,71 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
 **"可判定"**：条款 1/2/3/4/6/7 有证据且本次补齐 **tarball 产品路径**证据；条款 5 已成文（附限制）。
 **任务卡状态仍标 blocked，本次未擅自修改**——由作者按对账报告 §4 决定。
 
+### 2026-10-06 — T07D-R2-04 完成：Provider usage 接线 + 两个 catalog 条目重跑 + 卡状态置 done
+
+**授权依据**：用户指示"继续下一步；两条目重跑不降级；完成后才按实际情况推进任务卡，
+必须逐项核对且有充分证据才能改任务卡状态"。据此先把 usage 接线做完并重跑取证，
+再逐项核对后改卡（未凭说明文字改卡）。
+
+#### 1. Provider 真实 usage 已接入产品运行路径（提交 `b8905a4` / `ae318f4` / `62b0d8e`）
+
+接线前的实况（已查证）：`usage-updated` 规范事件**只有声明、没有生产者与消费者**；
+两个产品运行时各自解析 SSE 并**丢弃**厂商 usage；`UsageLedgerStore` 在生产路径上**从未被写入**。
+
+- 新增窄端口 `measurement/provider-request-usage-observation.ts`（含显式 NOOP 与请求哈希）；
+- 新增 `orchestration/provider-usage-ledger-observer.ts`（映射为 `UsageLedgerEntry`；
+  缺 usage 记 `null` + `missingUsageReason`，**不补 0**；观测失败不阻塞业务）；
+- `AnthropicMessagesRuntime` 解析 `message_start.message.usage` 与 `message_delta.usage`；
+- `OpenAiCompatibleRuntime` 请求 `stream_options.include_usage` 并解析收尾 chunk 的 `usage`；
+- `AstarrayApplicationFacade.create`（CLI/TUI/SDK 共用装配入口）按状态目录构造账目观测者；
+- 注册表两侧透传观测端口。
+
+**由真实运行（不是推理）发现并修复的两个缺陷**：
+1. 覆盖规则把 input 钉成 0（`message_delta` 是累计终值却未被覆盖）→ `ae318f4`；
+2. 厂商显式发 `"usage": null`，只判 `!== undefined` → `Cannot read properties of null
+   (reading 'prompt_tokens')`，真实任务 `status=blocked`、无产物、exit 1 → `62b0d8e`。
+
+两者均先补行为反例再修复。新增/修改用例：`tests/core/integration/provider-request-usage-capture.test.ts`（6 例）、
+`tests/core/integration/openai-compatible-usage-capture.test.ts`（4 例），**10/10 通过**。
+
+#### 2. 三次最终真实验收（同一提交 `62b0d8e`、同一 tarball、工作区干净）
+
+| 运行标识（UTC） | 厂商 / 模型 / 协议 | 请求数 | input / output | 耗时 | 判据 |
+|---|---|---|---|---|---|
+| `2026-10-06T17-55-24.904Z` | unisound / `u2-flash` / anthropic-messages | 7 | 13,315 / 3,112 | 146.84s | **5/5，exit 0** |
+| `2026-10-06T18-00-35.917Z` | unisound / `u2-flash` / openai-compatible | 4 | 7,977 / 1,512 | 147.51s | **5/5，exit 0** |
+| `2026-10-06T18-05-44.693Z` | stepfun / `step-3.7-flash` / openai-compatible | 6 | 11,819 / 1,827 | 132.15s | **5/5，exit 0** |
+
+tarball sha256 `af66e55b…a244`（1,102,785 字节）；逐请求 token 来自运行目录内
+`.astarray/usage/entries.json` 并经 `acceptance-verdict.json.usageObservation` 复核。
+
+#### 3. 两个 catalog 条目按"重跑不降级"重新取证
+
+`provider-catalog.json` 的 `verifiedAtIso` 已刷新为上述真实运行时间
+（`live-provider-1` → `18:05:44.693Z`；`unisound-u2-flash` → `18:00:35.917Z`）；
+`supportLevel` 保持 `product-path-verified`，**未降级**。
+
+#### 4. 卡状态（逐项核对后置 done）
+
+`docs/tasks/T07D_R2_PROVIDER_PRODUCT_WIRING_TASK_CARD.md`：`T07D-R2-04` 由 `blocked` 置 **`done`**，
+整卡置 `done`，并新增 §「T07D-R2-04 验收记录」逐项列出证据
+（读任务/受控改动、模型协议日期版本、usage 费用范围、同一配置、限制）。
+
+#### 5. 仍未闭合（登记，不伪称闭合）
+
+- 账目 `taskIdentifier` 恒为 `null`；`providerProfileId` 取**运行时标识**而非 catalog profile id；
+- 仅 `anthropic-messages` 与 `openai-compatible` 接入 usage，其余适配器（responses/gemini/bedrock/azure）未采集；
+- `context-runtime-metrics.providerCacheUsage` 仍无生产者；
+- 既有限制：`InstructionWindowStore`、读抑制账本、`local-progress-and-cycle-guard` 未装配；
+  CLI 给出结果后进程仍滞留。
+
+#### 6. 环境说明（避免新会话误判）
+
+本会话沙箱禁止 Node 创建命名管道（`spawn EPERM`），因此 `npm run check`、验收脚本与 `git push`
+均以 `danger-full-access` 逐条授权后执行；每次均记录**真实退出码**。
+历次门禁失败文件**逐个隔离复跑全部 exit 0**，判定为负载/超时抖动
+（`e2e01-vertical-rework`、`cli-commands`、`provider-tool-loop` 在既有已知抖动清单内）。
+
 ## 历史设计与验收记录
 
 > 2026-08-12 设计增补：反馈消息契约新增必填结构化 `source`。用户、Agent、系统来源均可追踪；转发保留原始来源。T00 契约、Schema、测试和架构文档已同步更新。

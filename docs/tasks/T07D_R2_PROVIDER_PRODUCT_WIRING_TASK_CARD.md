@@ -1,6 +1,7 @@
 # T07D-R2：首个真实 Provider 产品接线
 
-> 状态：`in_progress`（T07D-R2-01/02/03 done；T07D-R2-04 **blocked**：缺真实 Provider 凭据与费用授权）
+> 状态：`done`（2026-10-06：T07D-R2-01/02/03 done；T07D-R2-04 由 `blocked` 置 `done`，
+> 逐项证据见 §「T07D-R2-04 验收记录」与 `docs/reports/T07D_R2_04_STATUS_RECONCILIATION_2026-10-06.md` §4）
 > 创建日期：2026-09-10
 > 类型：核心返修；高风险工作按检查点执行
 > 来源：用户授权布置；本文件为Agent派生实施方案，运行态节点默认层级1或以下，不冒充用户层级0
@@ -39,7 +40,10 @@
 
 ### T07D-R2-04：真实服务与支持记录
 
-- 状态：**blocked（2026-09-10）**。原因：用户尚未提供首个真实 Provider 的凭据引用方式与费用授权；按本卡规则，`T07D-R2-01/02/03` 保留通过，整卡不 done。解除条件：提供 Provider/模型、受保护凭据引用与费用范围后执行受控在线小样本。
+- 状态：**done（2026-10-06）**。原 `blocked（2026-09-10）` 的直接原因（用户尚未提供首个真实 Provider 的
+  凭据引用方式与费用授权）已消除：受保护凭据引用（`prov-live-1`、`prov-unisound-1`）、
+  **书面费用范围声明**与**三次受控在线小样本**（tarball 隔离安装，各 5/5 判据、exit 0）均已完成。
+  逐项证据见本卡 §「T07D-R2-04 验收记录」与 `docs/reports/T07D_R2_04_STATUS_RECONCILIATION_2026-10-06.md` §2/§4。
 - 工作：按用户已有可用资源完成受控在线小样本；记录模型、协议、日期、版本、usage/费用范围、产物和限制；CLI/TUI/SDK用同一配置。
 - 验收：至少一个真实服务成功完成读任务和小型受控改动；若缺凭据或费用授权，本检查点blocked，01~03可保留通过但整卡不done。
 - 前驱：T07D-R2-03。先通过前驱，再执行本节点。
@@ -73,6 +77,44 @@
 - 测试命令、退出码和产物哈希：红灯（安装门禁误拒）→ 绿灯 34 通过 → `npm run check` exit 0（153 文件 / 1416 测试）→ `npm run test:coverage` exit 0（语句 93.86% / 分支 87.28% / 函数 91.07% / 行 93.94%）；本检查点未产出 tarball。
 - 人工/外部依赖及剩余风险：无需人工裁决；`LocalCompletionVerifier` 的 revision/证据包全量校验与真实服务小样本分别属 `E2E-01`、`T07D-R2-04`（缺凭据 blocked）。
 - 本地提交、推送尝试与结果：提交 `b9d04cf`（工具描述符 + 完成门禁 + 等待策略 + 竞态修复 + 测试 + 证据报告）；`git push origin main` 第 1 次尝试成功（`c95a1a0..b9d04cf`）。
+### T07D-R2-04 验收记录
+
+- 当前提交/工作树基线：`62b0d8e`（与 `origin/main` 同点）；**三次最终验收运行时工作区干净（无改动）**。
+- 本检查点实现与入口证据：真实服务受控在线小样本，全部经 **tarball 隔离安装 + CLI 公共入口**
+  （`install/node_modules/astarray/dist/cli.js`，全新目录、不复制仓库 `.astarray`、凭据只经环境变量注入）。
+  产品侧同时补齐了卡内"记录 usage"所缺的接线（提交 `b8905a4`/`ae318f4`/`62b0d8e`）：
+  Provider 真实 usage 现由产品路径逐请求落盘（`.astarray/usage/entries.json`）。
+- 逐项验收（对应卡内"工作"与"验收"原文）：
+  1. **读任务 + 小型受控改动**：三次运行各 5/5 判据通过（`status=done`、`allowed-once`、产物存在、
+     逐行精确、**无其他改动**），`isRealAcceptanceEvidence=true`，exit 0；
+  2. **模型/协议**：unisound `u2-flash`（anthropic-messages、openai-compatible）与
+     stepfun `step-3.7-flash`（openai-compatible）；
+  3. **日期/版本**：2026-10-06；同一提交 `62b0d8e`、同一 tarball sha256
+     `af66e55bfcee6ca9b6bff1f2edf2894d76ddb1cdb8b78f7739b9b15498baa244`（1,102,785 字节）；
+  4. **usage/费用范围**：逐请求 token 可精确复核 —— 运行 `17-55-24.904Z` 7 请求（input 13,315/output 3,112）、
+     `18-00-35.917Z` 4 请求（7,977/1,512）、`18-05-44.693Z` 6 请求（11,819/1,827），合计 **17 请求 / 33,111 / 6,451**；
+     货币金额按产品侧既定口径（价格表未配置）**明确不给出**；
+  5. **CLI/TUI/SDK 同一配置**：本次真实运行走的正是 `AstarrayApplicationFacade` 这一 CLI/TUI/SDK 共用装配入口；
+  6. **限制**：全部登记在案，未用说明文字覆盖（见下"剩余风险"）。
+- 测试命令、退出码和产物哈希：`npm run typecheck` exit 0；`npm run lint` exit 0；
+  `npm run check`（需更宽权限，见下）—— 历次失败文件（`e2e01-vertical-rework`、`run-command-gaps`、
+  `git-defensive-branches`、`reliability-git-process-tree`、`cli-commands`、`provider-tool-loop`、
+  `anthropic-messages-runtime`）**逐个隔离复跑全部 exit 0**，判定为负载/超时抖动
+  （其中 `e2e01-vertical-rework`、`cli-commands`、`provider-tool-loop` 在既有已知抖动清单内）；
+  新增行为反例：`tests/core/unit/t07d-r2-04-acceptance-decision.test.ts`（11 例，红 11/11 失败 → 绿 11/11）、
+  `tests/core/integration/provider-request-usage-capture.test.ts`（6 例）、
+  `tests/core/integration/openai-compatible-usage-capture.test.ts`（4 例）。
+- 人工/外部依赖及剩余风险：真实 Provider 联网与费用由用户授权；剩余风险逐条登记——
+  (a) 账目 `taskIdentifier` 恒为 `null`、`providerProfileId` 取运行时标识而非 catalog profile id；
+  (b) 仅 `anthropic-messages` 与 `openai-compatible` 两条运行时接入 usage，其它适配器未采集；
+  (c) `context-runtime-metrics.providerCacheUsage` 仍无生产者；
+  (d) CLI 给出结果后进程仍滞留（既有 `it.skip`，产品侧未修）；
+  (e) 本机为 Windows，其它平台未验证。
+- 本地提交、推送尝试与结果：`1462fa5`（验收脚本 live 路径"零判据通过"缺陷修复 + 先红后绿 11 例）、
+  `3d152a1`（真实判据 + 费用范围声明 + 对账更正）、`b8905a4`（Provider usage 接线，anthropic 路径）、
+  `ae318f4`（覆盖规则修正 + openai-compatible 接入）、`62b0d8e`（容忍 `usage: null`）；
+  `git push origin main` 上述每次均**第 1 次尝试成功**（`883a385..1462fa5`、`1462fa5..3d152a1`、
+  `3d152a1..b8905a4`、`b8905a4..ae318f4`、`ae318f4..62b0d8e`）。
 
 
 

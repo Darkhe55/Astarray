@@ -171,3 +171,30 @@ node scripts/verify-t07d-r2-04-tarball-live.mjs `
 
 > `isRealAcceptanceEvidence = true` 只在"真实运行 + 判据全过"时成立；干跑永远为 `false`。
 > 本次运行同时验证了第五项判据"无其他改动"（扫描结果为空清单）。
+
+### 8.3 最终取证：三项验收在同一提交上全部通过（2026-10-06）
+
+在同一提交 `62b0d8e`（工作区**干净**）、同一 tarball
+（sha256 `af66e55bfcee6ca9b6bff1f2edf2894d76ddb1cdb8b78f7739b9b15498baa244`，1,102,785 字节）
+上各跑一次，**全部 5/5 判据通过、exit 0**：
+
+| 运行标识（UTC） | 厂商 / 模型 / 协议 | 请求数 | input / output tokens | 耗时 |
+|---|---|---|---|---|
+| `2026-10-06T17-55-24.904Z` | unisound / `u2-flash` / anthropic-messages | 7 | 13,315 / 3,112 | 146.84 秒 |
+| `2026-10-06T18-00-35.917Z` | unisound / `u2-flash` / openai-compatible | 4 | 7,977 / 1,512 | 147.51 秒 |
+| `2026-10-06T18-05-44.693Z` | stepfun / `step-3.7-flash` / openai-compatible | 6 | 11,819 / 1,827 | 132.15 秒 |
+
+逐请求 token 来自各运行目录 `live-project/.astarray/usage/entries.json`（Provider usage 接线后
+由产品路径真实落盘），并经 `acceptance-verdict.json` 的 `usageObservation` 复核。
+该表同时构成 §6 所述两个 catalog 条目的新证据（**重跑，未降级**）。
+
+### 8.4 本次由真实运行发现并修复的两个缺陷（usage 接线相关）
+
+1. **覆盖规则缺陷**（提交 `ae318f4`）：某厂商 `message_start.message.usage.input_tokens` 为 `0`、
+   真实输入只在 `message_delta.usage` 给出；首版把 0 钉死，账目 input 全为 0
+   （`2026-10-06T13-33-17.685Z` 运行实测）。已改为"`message_delta` 为累计终值，一律覆盖初值"。
+2. **未容忍显式 `usage: null`**（提交 `62b0d8e`）：厂商在每个中间 chunk 发 `"usage": null`，
+   首版只判 `!== undefined` → `Cannot read properties of null (reading 'prompt_tokens')`，
+   真实任务被运行时异常终止（`2026-10-06T15-52-05.812Z` 运行 `status=blocked`、无产物、exit 1）。
+
+两者均先补行为反例（红）再修复（绿），两个用例文件合计 10/10 通过。
