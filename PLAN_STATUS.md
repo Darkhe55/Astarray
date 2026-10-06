@@ -359,6 +359,18 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
 
 ### 2026-10-06 — 凭据已更换并通过连通验证；T07D-R2-04 后续步骤交接
 
+> ⚠️ **本小节有三处与脚本实际不符，已由同日的"T07D-R2-04 收口"小节更正**（勿照本节的第 2/3 步直接执行）：
+> 1. **命令缺参**：本节第 2 步的 `node scripts/verify-t07d-r2-04-tarball-live.mjs --allow-live-request
+>    --vendor-identifier unisound --protocol-label anthropic-messages` **缺少 `--provider-endpoint`**，
+>    真实模式会直接 exit 2；
+> 2. **TTY 前提**：真实模式当时**要求 TTY**，非交互环境必然 exit 2（该命令实测 exit 2、额度消耗 0）；
+> 3. **"脚本默认 `--credential-source state`"不成立**：该选项当时**只存在于**
+>    `verify-u2-flash-continuous-reception.mjs`；tarball 脚本没有它（已于同日补上）。
+>
+> 另有一处更严重的判断错误：本节称该脚本"会真实联网执行一个写入任务并产出
+> `acceptance-verdict.json`"——实际当时脚本的 live 路径**从不执行任务**，会写出**零判据的
+> "通过"记录**。该缺陷已在同日修复（提交 `1462fa5`）。
+
 **凭据状态（用户告知并已实测确认）**：用户已更换 unisound 的 API key。
 `.astarray/providers/provider-credentials.json` 已刷新（写入时间 `2026-10-06 16:49:30`），
 `referenceId` 仍为 **`prov-unisound-1`**（未变）→ **所有既有脚本与端点配置可直接复用，零改动**。
@@ -402,6 +414,96 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
 
 **未变更事项**：本小节**不修改**任务卡状态（T07D-R2-04 仍由作者决定）；
 `InstructionWindowStore` 仍未装配到编排器（既有已登记缺口）。
+
+### 2026-10-06 — T07D-R2-04 收口：修复验收脚本"零判据通过"缺陷 + 真实运行取证
+
+**纪律**：一次只领一个检查点；先写行为反例（红）再实现（绿）；报告真实退出码。
+
+#### 1. 回归确认（第 2 步）：真实退出码 0，8/8 通过
+
+`npm run verify:u2-flash-continuous-reception` → `REAL_EXIT_CODE=0`，8 项判据全过
+（派发 23ms / 在途接收 15ms / A、B 均 done / 凭据文件字节一致），判据落盘
+`.tmp/live-u2-flash/acceptance-verdict.json`。新 key 下三处跨 Agent 修复仍成立。
+
+#### 2. 第 3 步被阻塞的实情（如实记录）
+
+按交接原文逐字执行，**真实退出码 2，额度消耗 0**（在 TTY 校验处以 fail-closed 退出，未发出任何请求）。
+三处不符见上一小节的更正说明。
+
+#### 3. 查证中发现的更严重缺陷：验收脚本 live 路径**从不执行任务**
+
+`scripts/verify-t07d-r2-04-tarball-live.mjs` 的判定段依赖 `rounds`，而 `rounds` **只在
+`if (isDryRun) { ... }` 内被填充**；全部 6 个提交的 `runOnce(` 调用数恒为 3（1 处定义 + 2 处干跑），
+**从来没有 live 分支**。真实模式的后果是确定性的：`rounds=[]` → `checks=[]` → `failedChecks=[]` →
+写出 `verdict: "passed"` 并打印"验收通过：产物正确 + 任务 done ✓"，**而一次 Provider 请求都没发**。
+
+> 这解释了 2026-10-05 四次 `isDryRun=false` 记录为何"只有打包与安装目录"：
+> 它们既没做任务，也无判据文件（判据落盘功能 `bde5d9b` 于当日 20:54:19 才引入，
+> 而四次运行全部早于它——详见对账报告 §2.1）。
+> 若当时直接执行交接命令，产出的将是**零判据的假验收记录**，比"缺判据文件"更糟。
+
+#### 4. 修复（提交 `1462fa5`，已推送 `origin/main`）
+
+- 真实分支**真正执行一次任务**，与干跑复用**同一套**判定；
+- 判定逻辑移入 `scripts/lib/t07d-r2-04-acceptance-decision.mjs`，成为可测不变量
+  （`tests/core/unit/t07d-r2-04-acceptance-decision.test.ts`，11 例）；
+- **fail-closed**：零轮次必定 `failed`；卡内第五项"无其他改动"未提供扫描结果即判失败
+  （不允许"漏扫"静默变成"没有其他改动"）；
+- 非交互环境新增 `--permission-decision allow-once|deny`（来源写入判据文件，可审计）；
+- 凭据新增 `--credential-source state`（读受保护凭据文件引用，密钥不打印/不落盘/不进判据）；
+- 判据文件升到 **schema v2**：`executedRoundCount` / `isRealAcceptanceEvidence` /
+  `permissionDecisionSource` / `credentialSource` / `usageObservation`。
+
+**先红后绿**（真实退出码）：红 = `npx vitest run <新测试>` → **exit 1，11/11 失败**
+（模块不存在）；绿 = 同命令 → **exit 0，11/11 通过**。
+**干跑零额度复核**：`--dry-run` → **exit 0，7/7 判据**（含新增第五项）。
+
+**门禁 `npm run check`（danger-full-access 复跑）**：`typecheck` / `lint` / `build` 全过；
+测试 `2 failed | 2151 passed | 2 skipped`（2155）。两个失败均为 `tests/gui/integration/`
+下的 ~30 秒用例（`gui-settings-recovery.test.ts`、`gui-verification-decision.test.ts`，
+后者伴 Windows `rename` EPERM 争用）。**逐个隔离复跑：exit 0，5/5 与 4/4 全过** →
+判定为**负载/超时抖动**，与本检查点改动（仅 `scripts/` + 新测试文件）无关。
+
+> 环境说明：本会话沙箱禁止 Node 创建命名管道，`vitest` 默认 forks 池与 Vite 配置打包
+> 均会 `spawn EPERM`。门禁与验收脚本因此以 `danger-full-access` 逐条授权后复跑（真实退出码已记录）。
+
+#### 5. 真实运行取证（tarball 隔离安装 + 真实 unisound/`u2-flash`/anthropic-messages）
+
+| 项 | 值 |
+|---|---|
+| 运行标识 | `2026-10-06T09-53-37.334Z` |
+| 来源提交 | `1462fa5`（运行时**工作区干净**） |
+| tarball | 1,093,410 字节，sha256 `8533d919…7bab`（与同日干跑**同哈希**，打包可复现） |
+| 凭据 / 裁决来源 | `credentialSource = state`（`prov-unisound-1`）/ `permissionDecisionSource = explicit-flag` |
+| 判据 | **5/5 通过**（`status=done`、`allowed-once`、产物存在、逐行精确、**无其他改动**） |
+| 退出码 | **0** |
+| 判据文件 | `.tmp/tarball-live/2026-10-06T09-53-37.334Z/acceptance-verdict.json`（schema v2，`isRealAcceptanceEvidence: true`） |
+
+#### 6. 条款 5「usage/费用范围」：已成文（附限制）
+
+新增 `docs/reports/T07D_R2_04_USAGE_COST_RANGE_STATEMENT_2026-10-06.md`（书面费用范围声明）：
+模型调用次数**下界 ≥2**（证据：2 条 `context-assembly` 事件；精确请求数因未落盘不可复核）、
+单次调用真实 usage 下界 **`input 110` / `output 8`**（同日探针复测 `http-status 200`；
+早先一次为 110/15）、时间护栏 120s/240s 与**实测 165.43 秒**、货币金额**明确不给出**
+（产品侧 `costEstimate.unavailableReason = "价格表未配置…"`）。
+
+#### 7. 本次未闭合（登记，不伪称闭合）
+
+- **Provider usage 捕获未装配到产品运行路径**：`createJsonlProviderUsageCapture`
+  （`packages/core/src/measurement/provider-usage-capture.ts`）在仓库内**只**被
+  `scripts/verify-measurement-package.mjs` 与其单测引用；本次运行的隔离状态目录内不存在
+  `usage/entries.json`。故条款 5 只能给"范围 + 依据"，**不是该次运行的账单级精确值**。
+- **`provider-catalog.json` 两个条目的 `supportLevel` 支撑不足**：`live-provider-1` 与
+  `unisound-u2-flash` 的 `verifiedAtIso` 等于那些"未做任何 Provider 工作"的运行时间。
+  **用户已明确本次不修改该文件**，仅登记；重跑或降级由作者决定。
+- 既有限制（未变化）：`InstructionWindowStore`、读抑制账本、`local-progress-and-cycle-guard`
+  仍未装配；CLI 给出结果后进程仍滞留（既有 `it.skip`）。
+
+#### 8. 对账结论
+
+`docs/reports/T07D_R2_04_STATUS_RECONCILIATION_2026-10-06.md` 已从 `in_progress` 推进到
+**"可判定"**：条款 1/2/3/4/6/7 有证据且本次补齐 **tarball 产品路径**证据；条款 5 已成文（附限制）。
+**任务卡状态仍标 blocked，本次未擅自修改**——由作者按对账报告 §4 决定。
 
 ## 历史设计与验收记录
 
