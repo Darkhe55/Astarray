@@ -125,11 +125,7 @@ console.log("=== 真实运行实测：u2-flash 在途接收 ===");
 console.log("model=" + modelIdentifier + " endpoint=" + endpointLabel);
 
 const taskAPrompt = [
-  "请只读地完成，禁止修改任何文件：",
-  "1) 用 readFile 读取文件 package.json（就这一个文件，路径就是 package.json）；",
-  "2) 一句话回答：name 字段的值是什么？",
-  "禁止读取其它文件，避免路径猜测。",
-  "",
+  "只读任务，禁止修改任何文件：用 readFile 读取文件 package.json，然后一句话回答 name 字段的值。",
   "完成时必须在最后一行单独输出（不得放进代码块，其后不得再有内容）：",
   'ASTARRAY_TASK_COMPLETION_V1 {"taskExecutionId":"local-execution-T-001","completionAttemptId":"attempt-1","completedTaskIdentifiers":["T-001"],"claimedStatus":"complete","taskSequenceRevision":0,"declaredArtifacts":[]}',
 ].join("\n");
