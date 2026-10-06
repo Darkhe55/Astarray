@@ -15,7 +15,7 @@ import type {
   ToolDescriptor,
   ToolPort,
 } from "../core/types.js";
-import { CompletionControlParser } from "../core/completion-protocol.js";
+import { CompletionControlParser, TASK_COMPLETION_MARKER } from "../core/completion-protocol.js";
 import {
   extractArtifactPathFromToolCall,
   verifyArtifactExistence,
@@ -217,6 +217,38 @@ export class WorkerAgent {
       this.options.task,
       this.options.archiveAttachments ?? [],
     );
+    /**
+     * T07D-R2-03 完成控制协议的**提示侧**（2026-10-02 实测补齐）。
+     *
+     * 此前 `requireCompletionEvent` 只用于**本地门禁**（见本文件 `缺少 ASTARRAY_TASK_COMPLETION_V1…`），
+     * 协议格式从未告知模型 —— 真实 Provider 实测下模型无论答得对不对都会被门禁拦下，
+     * 表现为任务必然 blocked。现按 `completion-protocol.ts` 的冻结格式注入末行要求。
+     */
+    if (this.options.requireCompletionEvent === true) {
+      /**
+       * 载荷必须**逐字段符合** `taskCompletionEventV1Schema`，否则解析器返回 none、门禁拒绝
+       * （早期版本注入了字段名不符的示例，模型照做也会被拒 —— 真实实测踩到）。
+       * 门禁实际只使用 `completedTaskIdentifiers` 与 `declaredArtifacts`，
+       * 但 schema 要求其余字段存在，故一并给出可解析的占位值。
+       */
+      const completionEventPayload = {
+        taskExecutionId: "local-execution-" + this.options.task.id,
+        completionAttemptId: "attempt-1",
+        completedTaskIdentifiers: [this.options.task.id],
+        claimedStatus: "complete",
+        taskSequenceRevision: 0,
+        declaredArtifacts: [],
+      };
+      systemPrompt +=
+        "\n\n【完成控制事件】本任务必须以版本化完成控制事件收口，否则本地完成门禁会拒绝结案。" +
+        "请在**最终回复的最后一行**单独输出下面这一行（前缀 + 空格 + JSON，不得放进代码块，其后不得再有内容）：" +
+        "\n" +
+        TASK_COMPLETION_MARKER +
+        " " +
+        JSON.stringify(completionEventPayload) +
+        "\n若任务实际写入过产物，请把真实产物相对路径填入 declaredArtifacts（只读任务保持空数组）。" +
+        "未完成任务时**不要**输出该事件，应如实说明阻塞原因。";
+    }
     /**
      * 跨运行必需操作契约的**提示侧**（2026-10-02 T07D-R2-04）：
      * 让重跑知道"上次因权限被打断、本次必须真正执行这些工具"，

@@ -106,7 +106,10 @@ const application = await AstarrayApplicationFacade.create({
     // anthropic-messages 注册声明支持 streaming / tool-calling / cancellation（无 text）。
     // 只读侦察同样需要 tool-calling（读文件即工具调用）。
     requiredCapabilities: ["tool-calling"],
-    baseUrl: null,
+    // 运行时把 baseUrl 当作**完整端点**（与 CLI 的 --provider-endpoint 同约定）。
+    // 凭据里存的 baseUrl 是 OpenAI 兼容的完整端点（…/v1），对 Anthropic 协议不适用，
+    // 故此处显式给出 Anthropic Messages 的完整端点。
+    baseUrl: endpointLabel,
     protectedCredentialReferenceId: credentialReferenceId,
     requestTimeoutMilliseconds: 120_000,
   },
@@ -127,6 +130,9 @@ const taskAPrompt = [
   "2) 读取 package.json，列出全部 scripts 名称；",
   "3) 读取 tsconfig.json，说明 target 与 module 设置；",
   "最后合成不超过 200 字的小结。",
+  "",
+  "完成时必须在最后一行输出版本化完成控制事件（JSON，单独一行）：",
+  '{"eventType":"ASTARRAY_TASK_COMPLETION_V1","taskIdentifier":"T-001","completionAttemptId":"attempt-1","declaredArtifacts":[]}',
 ].join("\n");
 
 const submitStartedMilliseconds = Date.now();
@@ -177,7 +183,11 @@ try {
   secondSubmission = await application.submitTask({
     sessionId: sessionIdentifier,
     taskIdentifier: "live-task-B",
-    prompt: "只读回答一句话：package.json 的 name 字段是什么？不要修改任何文件。",
+    prompt: [
+      "只读回答一句话：package.json 的 name 字段是什么？不要修改任何文件。",
+      "完成时必须在最后一行输出版本化完成控制事件（JSON，单独一行）：",
+      '{"eventType":"ASTARRAY_TASK_COMPLETION_V1","taskIdentifier":"T-001","completionAttemptId":"attempt-1","declaredArtifacts":[]}',
+    ].join("\n"),
     idempotencyKey: "live-u2-flash-B",
   });
 } catch (error) {
@@ -200,7 +210,7 @@ record(
 );
 
 // 关闭回收：等待两条任务收敛
-const settleDeadlineMilliseconds = Date.now() + 240_000;
+const settleDeadlineMilliseconds = Date.now() + 420_000;
 let firstFinal = null;
 let secondFinal = null;
 while (Date.now() < settleDeadlineMilliseconds) {
