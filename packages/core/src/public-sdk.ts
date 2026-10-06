@@ -114,6 +114,22 @@ export {
   OPENAI_COMPATIBLE_PROTOCOL_VERSION,
   createOpenAiCompatibleProviderRegistration,
 } from "./runtime/openai-compatible-provider-registration.js";
+// 多协议装配（2026-10-02）：Anthropic 兼容协议同样必须能从公开 exports 构造，
+// 否则 SDK 消费者无法只用公开入口装配 anthropic-messages 运行时
+// （此前只有 CLI 侧注册，SDK 入口漏导出 —— 真实实测时暴露）。
+export {
+  ANTHROPIC_MESSAGES_PROVIDER_ID,
+  createAnthropicMessagesProviderRegistration,
+} from "./runtime/anthropic-messages-provider-registration.js";
+export {
+  ANTHROPIC_API_VERSION_HEADER_VALUE,
+  ANTHROPIC_DEFAULT_MAX_TOKENS,
+  ANTHROPIC_MESSAGES_PROTOCOL,
+  ANTHROPIC_MESSAGES_RUNTIME_PROTOCOL_VERSION,
+  AnthropicMessagesRuntime,
+  buildMessagesRequestBody,
+  convertPriorMessagesToAnthropicMessages,
+} from "./runtime/anthropic-messages-runtime.js";
 
 import type { AgentMode, AgentRuntime, TaskDependencyNode } from "./core/types.js";
 import type { MainController } from "./orchestration/main-controller.js";
