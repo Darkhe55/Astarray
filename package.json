@@ -31,6 +31,7 @@
     "prepack": "npm run check",
     "verify:sdk-consumer": "node scripts/verify-sdk-consumer.mjs",
     "verify:e2e01": "node scripts/e2e01-acceptance.mjs fixture",
+    "verify:e2e01-03-harness": "node scripts/verify-e2e01-03-concurrency-harness.mjs --allow-live-request --permission-decision allow-once --mode devolve",
     "verify:security-coverage": "node scripts/verify-security-coverage.mjs",
     "verify:read-format-package": "node scripts/verify-read-format-package.mjs",
     "verify:entry-runtime-selection": "node scripts/verify-entry-runtime-selection.mjs",

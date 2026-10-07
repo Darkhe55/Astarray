@@ -557,6 +557,25 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
    验收①，把 S1 的"工具层已强制"升级为"**安装包产品路径已强制**"；S3 再把同一 harness
    指向真实 Provider 并由用户现场编辑。
 
+**S1b 完成（本轮）**：新增 `scripts/verify-e2e01-03-concurrency-harness.mjs`
+（npm 别名 `verify:e2e01-03-harness`）——自带进程内 OpenAI 兼容假 Provider，
+**确定性地**把人工编辑插在"Agent 已读、尚未写"窗口（请求 #2 回放 `replaceFileContent` **之前**
+先落盘人工内容），经 **tarball 隔离安装的 CLI** 运行并产出 `acceptance-verdict.json`。
+
+**真实退出码 0，6/6 判据通过**（来源提交 `402697c` 的脏工作区，tarball sha256 `dfac7205…c7fd7`）：
+① 两步（read→replace）确实执行；② 人工修改落在窗口内；**③ 陈旧写入被拒绝并回填给 Provider**
+（证据原文：`错误(stale-human-change): replaceFileContent 拒绝陈旧写入：目标内容指纹变化
+（stale-human-change）：基线 sha256:e2345d42… ≠ 当前 sha256:3c9d6a28…`）；
+④ 人工修改逐字节保留；⑤ Agent 待写内容未落盘；⑥ 未结案为 done（`status=blocked`）。
+
+> ⚠️ **本轮抓到一个假通过并已修正（值得记住）**：首轮用 `--mode assist` 跑时，判据④"人工修改被保留"
+> **表面通过**，但诊断落盘的原始证据显示回填文本是
+> `错误(tool-permission-denied): 权限策略拒绝工具调用: replaceFileContent`——
+> 即写入在**权限门禁**就被拒了，**根本没走到陈旧写入守卫**，"人工修改被保留"是因为**压根没写**。
+> 改用 `--mode devolve`（E2E-01-02 切片 5 也用该模式做写操作）后才真正打到守卫。
+> 教训：这类判据必须同时断言"**拒绝来源**"，否则"没写"会被误读成"守卫生效"。
+> harness 因此固化了 `provider-requests.jsonl` / `cli-stdout.txt` / `cli-stderr.txt` 原始证据落盘。
+
 
 **授权依据**：用户指示"继续下一步；两条目重跑不降级；完成后才按实际情况推进任务卡，
 必须逐项核对且有充分证据才能改任务卡状态"。据此先把 usage 接线做完并重跑取证，
