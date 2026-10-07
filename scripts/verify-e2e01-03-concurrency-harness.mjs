@@ -318,6 +318,90 @@ fakeProvider.close();
 console.log("\nCLI 退出码: " + String(exitCode));
 console.log("假 Provider 收到的请求数: " + String(requestCount));
 
+/** 再跑一次安装包 CLI 的只读子命令（判据⑦⑧ 用）。 */
+async function runInstalledCliReadonly(cliArguments, workingDirectory) {
+  const readonlyProcess = spawn(process.execPath, [installedCliPath, ...cliArguments], {
+    cwd: workingDirectory,
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+    env: { ...process.env, NO_COLOR: "1" },
+  });
+  let readonlyStdout = "";
+  let readonlyStderr = "";
+  readonlyProcess.stdout.on("data", (chunk) => (readonlyStdout += String(chunk)));
+  readonlyProcess.stderr.on("data", (chunk) => (readonlyStderr += String(chunk)));
+  const readonlyExitCode = await new Promise((resolve) => {
+    let isSettled = false;
+    const settle = (code) => {
+      if (isSettled) return;
+      isSettled = true;
+      resolve(code);
+    };
+    readonlyProcess.on("close", (code) => settle(code ?? 1));
+    setTimeout(() => {
+      if (!isSettled) {
+        readonlyProcess.kill();
+        settle(124);
+      }
+    }, 120_000);
+  });
+  return { exitCode: readonlyExitCode, stdout: readonlyStdout, stderr: readonlyStderr };
+}
+
+/** 直接跑一个 `node <script> <args...>`（不是安装包 CLI 的子命令）。 */
+async function runNodeScript(scriptPath, scriptArguments, workingDirectory) {
+  const scriptProcess = spawn(process.execPath, [scriptPath, ...scriptArguments], {
+    cwd: workingDirectory,
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+    env: { ...process.env, NO_COLOR: "1" },
+  });
+  let scriptStdout = "";
+  let scriptStderr = "";
+  scriptProcess.stdout.on("data", (chunk) => (scriptStdout += String(chunk)));
+  scriptProcess.stderr.on("data", (chunk) => (scriptStderr += String(chunk)));
+  const scriptExitCode = await new Promise((resolve) => {
+    let isSettled = false;
+    const settle = (code) => {
+      if (isSettled) return;
+      isSettled = true;
+      resolve(code);
+    };
+    scriptProcess.on("close", (code) => settle(code ?? 1));
+    setTimeout(() => {
+      if (!isSettled) {
+        scriptProcess.kill();
+        settle(124);
+      }
+    }, 120_000);
+  });
+  return { exitCode: scriptExitCode, stdout: scriptStdout, stderr: scriptStderr };
+}
+
+function extractCliJson(text) {
+  const startIndex = text.indexOf("{");
+  if (startIndex < 0) return null;
+  let depth = 0;
+  let isInsideString = false;
+  let isEscaped = false;
+  for (let index = startIndex; index < text.length; index += 1) {
+    const character = text[index];
+    if (isInsideString) {
+      if (isEscaped) isEscaped = false;
+      else if (character === "\\") isEscaped = true;
+      else if (character === '"') isInsideString = false;
+      continue;
+    }
+    if (character === '"') isInsideString = true;
+    else if (character === "{") depth += 1;
+    else if (character === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(startIndex, index + 1);
+    }
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // 4) 判据
 // ---------------------------------------------------------------------------
@@ -412,6 +496,154 @@ record("④ 人工修改逐字节保留", finalContent === humanContent, JSON.st
 record("⑤ Agent 待写内容未落盘", !finalContent.includes(agentContent.trim()), "目标文件未被覆盖为 Agent 内容");
 record("⑥ 未在人工改动后仍结案为 done", parsedCliResult?.status !== "done", "status=" + String(parsedCliResult?.status));
 
+/**
+ * ⑦ 上下文预算/回访**实际执行**：产品路径在每次 Worker 装配 prompt 时会写
+ * `<state>/context-runtime/events.jsonl` 的 `context-assembly` 事件（含
+ * `effectiveBudgetTokens` 与 `budgetPolicyRevision`）。这里断言"确有事件"且"预算字段是真实数值"，
+ * 而不是只看 CLI 有没有打印一句话。
+ */
+const contextEventsPath = path.join(projectDirectory, ".astarray", "context-runtime", "events.jsonl");
+const contextAssemblyEvents = (() => {
+  if (!existsSync(contextEventsPath)) return [];
+  return readFileSync(contextEventsPath, "utf8")
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    })
+    .filter((event) => event !== null && event.eventType === "context-assembly");
+})();
+record(
+  "⑦ 上下文预算实际执行（context-assembly 事件含有效预算）",
+  contextAssemblyEvents.length >= 1 &&
+    contextAssemblyEvents.every(
+      (event) =>
+        typeof event.effectiveBudgetTokens === "number" &&
+        event.effectiveBudgetTokens > 0 &&
+        typeof event.budgetPolicyRevision === "number" &&
+        event.budgetPolicyRevision >= 1 &&
+        typeof event.estimatedInjectedTokenCount === "number",
+    ),
+  "事件数=" +
+    String(contextAssemblyEvents.length) +
+    "，effectiveBudgetTokens=" +
+    JSON.stringify([...new Set(contextAssemblyEvents.map((event) => event.effectiveBudgetTokens))]) +
+    "，budgetPolicyRevision=" +
+    JSON.stringify([...new Set(contextAssemblyEvents.map((event) => event.budgetPolicyRevision))]),
+);
+
+// CLI 持久化状态视图 + SDK 查询（验收④ 的两侧）。
+const statusCommandResult = await runInstalledCliReadonly(
+  ["status", String(parsedCliResult?.missionId ?? ""), "--json"],
+  projectDirectory,
+);
+const statusCommandJson = extractCliJson(statusCommandResult.stdout);
+let parsedStatusCommand = null;
+try {
+  parsedStatusCommand = statusCommandJson === null ? null : JSON.parse(statusCommandJson);
+} catch {
+  parsedStatusCommand = null;
+}
+
+// SDK 侧：用**安装包自己的**公开 SDK 查询（脚本放在 install 根目录，故 bare specifier 可解析）。
+const sdkQueryScriptPath = path.join(installRoot, "query-mission-state.mjs");
+writeFileSync(
+  sdkQueryScriptPath,
+  [
+    'import { AstarrayApplicationFacade } from "astarray";',
+    "const [stateDirectory, missionIdentifier] = process.argv.slice(2);",
+    'const application = await AstarrayApplicationFacade.create({ stateDirectory, runtime: "mock", mode: "devolve" });',
+    "const mission = await application.queryMission(missionIdentifier);",
+    "console.log(JSON.stringify(mission));",
+    "process.exit(0);",
+  ].join("\n") + "\n",
+  "utf8",
+);
+const sdkQueryResult = await runNodeScript(
+  sdkQueryScriptPath,
+  [path.join(projectDirectory, ".astarray"), String(parsedCliResult?.missionId ?? "")],
+  installRoot,
+);
+let parsedSdkMission = null;
+try {
+  parsedSdkMission =
+    sdkQueryResult.stdout.trim() === ""
+      ? null
+      : JSON.parse(sdkQueryResult.stdout.trim().split("\n").at(-1));
+} catch {
+  parsedSdkMission = null;
+}
+
+/**
+ * ⑧ 卡内验收④："CLI/SDK 最终状态一致"。
+ *
+ * 口径必须是**同一件事**：CLI 的**持久化 mission 状态视图**（`status <mission> --json`）
+ * 对 SDK 的 `queryMission(...)`。二者当前一致（见下）。
+ *
+ * ⚠️ 与之**不同**的一件事（另列为 finding，不作为本判据失败）：`run --json` 的 `status`
+ * 字段报的是**本次运行的等待结果**（此处 `blocked`），而持久化 mission 状态是 `cancelled`
+ * （CLI 进程收尾时取消未完成 mission）。这是 `run` 命令的状态语义问题，不是 CLI↔SDK 分歧。
+ */
+const cliAndSdkAgree =
+  parsedStatusCommand?.status !== undefined &&
+  parsedSdkMission?.status === parsedStatusCommand.status &&
+  parsedSdkMission?.missionIdentifier === parsedStatusCommand?.missionId;
+record(
+  "⑧ CLI 持久化状态视图与 SDK 查询一致（验收④）",
+  cliAndSdkAgree,
+  "status=" +
+    String(parsedStatusCommand?.status) +
+    " / sdk=" +
+    String(parsedSdkMission?.status) +
+    "（missionId " +
+    String(parsedStatusCommand?.missionId) +
+    "）",
+);
+
+/** ⑨ 登记项（不门控本 harness）：`run --json` 的 status 与持久化 mission 状态是否同值。 */
+const runStatusMatchesPersisted =
+  parsedCliResult?.status !== undefined && parsedCliResult.status === parsedStatusCommand?.status;
+const registeredFindings = runStatusMatchesPersisted
+  ? []
+  : [
+      {
+        findingIdentifier: "e2e01-03-run-status-vs-persisted-mission-status",
+        description:
+          "`run --json` 的 status 与持久化 mission 状态不同值：前者报本次运行等待结果，后者是 mission 终态。需产品裁定是否为有意语义。",
+        runReportedStatus: parsedCliResult?.status ?? null,
+        persistedMissionStatus: parsedStatusCommand?.status ?? null,
+        sdkReportedStatus: parsedSdkMission?.status ?? null,
+        persistedTaskStatus:
+          Array.isArray(parsedStatusCommand?.tasks) && parsedStatusCommand.tasks.length > 0
+            ? (parsedStatusCommand.tasks[0]?.status ?? null)
+            : null,
+      },
+    ];
+console.log(
+  "\n--- 登记项（不门控）---\n  · " +
+    (registeredFindings.length === 0
+      ? "无"
+      : "run 报 " +
+        String(parsedCliResult?.status) +
+        "，持久化 mission 报 " +
+        String(parsedStatusCommand?.status) +
+        "，任务节点报 " +
+        String(registeredFindings[0]?.persistedTaskStatus)),
+);
+
+writeFileSync(
+  path.join(archiveRoot, "cli-status-command.json"),
+  JSON.stringify({ exitCode: statusCommandResult.exitCode, stderr: statusCommandResult.stderr, parsed: parsedStatusCommand }, null, 2) + "\n",
+);
+writeFileSync(
+  path.join(archiveRoot, "sdk-query-mission.json"),
+  JSON.stringify({ exitCode: sdkQueryResult.exitCode, stderr: sdkQueryResult.stderr, parsed: parsedSdkMission }, null, 2) + "\n",
+);
+
 const failedChecks = checks.filter((check) => !check.isPassed);
 const verdict = {
   schemaVersion: 1,
@@ -431,6 +663,9 @@ const verdict = {
   cliExitCode: exitCode,
   fakeProviderRequestCount: requestCount,
   cliReportedStatus: parsedCliResult?.status ?? null,
+  persistedMissionStatus: parsedStatusCommand?.status ?? null,
+  sdkReportedMissionStatus: parsedSdkMission?.status ?? null,
+  registeredFindings,
   checks,
   failedCheckNames: failedChecks.map((check) => check.checkName),
 };

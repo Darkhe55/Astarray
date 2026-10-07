@@ -576,6 +576,26 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
 > 教训：这类判据必须同时断言"**拒绝来源**"，否则"没写"会被误读成"守卫生效"。
 > harness 因此固化了 `provider-requests.jsonl` / `cli-stdout.txt` / `cli-stderr.txt` 原始证据落盘。
 
+**S1b 扩展（本轮）：判据 ⑦⑧ 覆盖验收③④，并登记一处产品状态口径分歧**
+
+- **⑦ 验收③"上下文预算/回访实际执行"→ 已有可复核证据**：断言运行目录内
+  `project/.astarray/context-runtime/events.jsonl` 存在 `context-assembly` 事件且
+  `effectiveBudgetTokens` 为真实正数、`budgetPolicyRevision ≥ 1`、`estimatedInjectedTokenCount` 存在。
+  实测：事件数=1、`effectiveBudgetTokens=4096`、`budgetPolicyRevision=1`。
+- **⑧ 验收④"CLI/SDK 最终状态一致"→ 满足**（口径同为一件事）：CLI 持久化视图
+  `status <mission> --json` 与 SDK `queryMission(...)` 同值，实测 `status=cancelled` / `sdk=cancelled`。
+- **⑨ 登记项（不门控）**：`run --json` 的 `status` 与持久化 mission 状态**不同值**——
+  实测 `run=blocked`、持久化 `mission=cancelled`、任务节点 `failed`。
+  这是 `run` 命令"等待结果"与"mission 终态"的**语义口径分歧**，属独立问题，
+  已写入判据文件 `registeredFindings`，**未**混同为验收④失败；是否修正由作者裁定。
+- **真实退出码 0，8/8 判据通过**（判据文件含 `registeredFindings`）。
+  说明：⑦⑧ 是**证据断言**而非新实现（二者早已接线），因此**不存在"红"**——
+  它们首次运行即通过，这里如实标注，不冒充红→绿。
+
+**剩余**：验收②（工具调用边界中断后恢复无重复副作用）需 S2 的 mission 级检查点记录器；
+验收①③④ 的**真实验收**（真实 Provider + 用户现场编辑）属 S3——当前判据文件明确标
+`isFakeProvider: true` / `isRealAcceptanceEvidence: false`。
+
 
 **授权依据**：用户指示"继续下一步；两条目重跑不降级；完成后才按实际情况推进任务卡，
 必须逐项核对且有充分证据才能改任务卡状态"。据此先把 usage 接线做完并重跑取证，
