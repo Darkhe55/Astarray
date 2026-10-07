@@ -596,6 +596,38 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
 验收①③④ 的**真实验收**（真实 Provider + 用户现场编辑）属 S3——当前判据文件明确标
 `isFakeProvider: true` / `isRealAcceptanceEvidence: false`。
 
+**S2 设计核查（本轮只读，未改代码）——检查点哈希链的真实语义（非显然，写错会直接抛错）**：
+1. `RecoveryCheckpointStore.computeCheckpointHash` **是 private**，且对**落盘后的整份 JSON**
+   （含 `contentHash` 字段自身）重算：`sha256(canonical(JSON, null, 2) + "\n")`。
+   因此 `contentHash` 是**自指字段**——schema 只校验其格式 `^sha256:[a-f0-9]{64}$`，
+   **校验侧不会**把它与重算值比对；**链键一律用存储层重算值**。
+   写入方只需给出格式合法的 `contentHash`（建议按"去掉 `contentHash` 后的规范 JSON"计算，
+   保持确定性且可解释），不要指望它被校验。
+2. `writeCheckpoint` 的链校验（:82-93）要求：当 `previousCheckpointHash !== null` 时，它必须等于
+   `selectLatestTrustedCheckpoint().checkpointHash`（**存储层重算值**，不是文件里那个字段）。
+   故记录器必须用上一次 `writeCheckpoint` **返回值里的 `checkpointHash`** 作为下一次的
+   `previousCheckpointHash`；首次写入用 `null`。
+3. `isCheckpointChainValid`（:180-194）**刻意宽松**：`previousCheckpointHash !== null` 时，
+   若前序文件不存在（被清理）即视为可信起点，其余情况直接 `return true`。
+   ⇒ 不能把"链校验通过"当作"历史完整"的证据，恢复结论必须依赖对账分类而非链校验。
+4. 写入方**必须在 mission 层**提供 `sessionIdentifier`/`missionIdentifier`/`taskChainIdentifier`、
+   `agentIdentities`、`taskNodes`、`providerRequests`、`feedbackCursor`、`permissionRecovery`、
+   `workingSetFileCountsByAgent`、`taskChainCumulativeSourceCount`、`gateStates`——
+   这些在工具层都拿不到（已在上文第 2 点确认）。
+5. **接线位置已确定且不需要改 `buildWorkerToolPort` 的签名**：`main-controller.ts:781` 的
+   `toolPortFactory` 闭包内**已经能拿到 `missionId`**（同处 :792/:795 就在用）。
+   因此 S2 的做法是在 `MainControllerOptions` 增加一个
+   `buildRecoveryCheckpointingToolPort({missionId, task, agentInstanceId, innerToolPort})` 钩子，
+   由 `application-runtime`（掌握状态目录与 mission 快照）实现并把装饰器**套在最外层**
+   （这样范围门禁的拒绝也能被记录）。
+
+**S2 实施计划（下一步）**：① `recovery-checkpoint-recorder.ts`（装配 + 哈希链 + 工具调用状态合并，
+并向 store 暴露内容哈希以便复用同一规范化）；② `RecoveryCheckpointingToolPort` 装饰器
+（`started` → 成功 `confirmed-success`；抛错且该工具可能改状态 → `result-unknown`，只读 → `confirmed-failure`）；
+③ 上述 `MainControllerOptions` 钩子 + `application-runtime` 实现；
+④ 红→绿：记录器单测 + **与已接线的恢复中心对账联测**（`result-unknown` 且非幂等 →
+`blocked-uncertain-side-effect`，即"禁止自动二次执行"；`confirmed-success` 不得被重复执行）。
+
 
 **授权依据**：用户指示"继续下一步；两条目重跑不降级；完成后才按实际情况推进任务卡，
 必须逐项核对且有充分证据才能改任务卡状态"。据此先把 usage 接线做完并重跑取证，
