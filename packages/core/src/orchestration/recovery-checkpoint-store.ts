@@ -62,6 +62,19 @@ export class RecoveryCheckpointStore {
   }
 
   /**
+   * 公开的内容哈希计算（2026-10-07 新增）：供**检查点写入方**复用同一套规范化，
+   * 避免出现第二份实现漂移。
+   *
+   * 注意语义（易误解，已在模块注释与文档中说明）：`contentHash` 是**自指字段**——
+   * 本方法对传入对象（含其 `contentHash`）整体重算，而 `selectLatestTrustedCheckpoint`
+   * 返回的 `checkpointHash` 也是对**落盘内容**重算的结果。链键一律取后者；
+   * schema 只校验 `contentHash` 的格式，**不**把它与重算值比对。
+   */
+  computeContentHashFor(checkpoint: RecoveryCheckpoint): string {
+    return this.computeCheckpointHash(checkpoint);
+  }
+
+  /**
    * 原子写入检查点：schema 校验 → 前一检查点哈希校验 → 临时文件 +
    * flush + 原子替换 → journal 追加。写入中断/磁盘满时旧版本保留。
    */

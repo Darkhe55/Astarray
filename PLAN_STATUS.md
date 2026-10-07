@@ -621,12 +621,26 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
    由 `application-runtime`（掌握状态目录与 mission 快照）实现并把装饰器**套在最外层**
    （这样范围门禁的拒绝也能被记录）。
 
-**S2 实施计划（下一步）**：① `recovery-checkpoint-recorder.ts`（装配 + 哈希链 + 工具调用状态合并，
-并向 store 暴露内容哈希以便复用同一规范化）；② `RecoveryCheckpointingToolPort` 装饰器
-（`started` → 成功 `confirmed-success`；抛错且该工具可能改状态 → `result-unknown`，只读 → `confirmed-failure`）；
-③ 上述 `MainControllerOptions` 钩子 + `application-runtime` 实现；
-④ 红→绿：记录器单测 + **与已接线的恢复中心对账联测**（`result-unknown` 且非幂等 →
-`blocked-uncertain-side-effect`，即"禁止自动二次执行"；`confirmed-success` 不得被重复执行）。
+**S2 实施进度（本轮）**：
+- **S2a 完成**：新增 `orchestration/recovery-checkpoint-recorder.ts`——
+  `RecoveryCheckpointRecorder`（检查点装配 + 哈希链 + 工具调用状态合并 + 写链串行化）
+  与 `RecoveryCheckpointingToolPort`（工具边界装饰器）；
+  并在 `RecoveryCheckpointStore` 上新增公开的 `computeContentHashFor`（复用同一套规范化，
+  避免第二份哈希实现漂移）。
+- 状态规则（与已接线的分类服务对齐，已联测）：成功 → `confirmed-success`；
+  错误结果且 `sideEffectStatus !== "none"` → `result-unknown`；错误结果且确定为 `none` → `confirmed-failure`；
+  抛异常且该工具有可能改状态 → `result-unknown`（保守）。`started` 在执行**前**落盘，
+  且写失败即 **fail-closed**（此时尚无副作用）。
+- **先红后绿（真实退出码）**：红 = 移走新模块后 `Cannot find module ... recovery-checkpoint-recorder.js`，exit 1；
+  绿 = 9/9 通过、exit 0。含与 `RecoveryClassificationService` 的联测：
+  非幂等 `confirmed-success` → `reuse-confirmed-result`（**不重复执行**）；
+  非幂等 `result-unknown` → `blocked-uncertain-side-effect` 且 `hasBlockingItems=true`；
+  幂等 `started` → 不制造阻塞项。
+- 门禁：`typecheck` exit 0、`lint` exit 0、`npm run check` **exit 0 且无抖动**
+  （290 文件 / 2185 用例通过、2 skipped）。
+- ⚠️ **尚未接线（S2b，下一步）**：装饰器还没接到 `MainController` 的工具端口上——
+  即"运行期间真的写检查点"这一环仍未打通（计划见上文第 5 点的
+  `buildRecoveryCheckpointingToolPort` 钩子）。**不得据此宣称验收②已达成。**
 
 
 **授权依据**：用户指示"继续下一步；两条目重跑不降级；完成后才按实际情况推进任务卡，
