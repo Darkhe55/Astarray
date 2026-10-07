@@ -621,7 +621,30 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
    由 `application-runtime`（掌握状态目录与 mission 快照）实现并把装饰器**套在最外层**
    （这样范围门禁的拒绝也能被记录）。
 
-**S2 实施进度（本轮）**：
+**S2b 尝试与**回退**（本轮，**未提交**，代码已备份）**：
+- **做了什么**：在 `MainControllerOptions` 增 `buildRecoveryCheckpointingToolPort` 钩子，
+  两处 `toolPortFactory`（assist/devolve）统一改走新私有方法 `buildWorkerToolPortWithRecoveryCheckpointing`，
+  并在 `application-runtime` 实现该钩子（`RecoveryCheckpointStore` + 按
+  `missionId::agentInstanceId` 复用 `RecoveryCheckpointRecorder` + 保守 `snapshotProvider`）。
+- **功能上确实通了**：harness 新增判据⑩ 实测 **检查点数=4**，
+  `readFile=confirmed-success`、`replaceFileContent=result-unknown`（`isIdempotent=false`）——
+  正是恢复分类服务判为 `blocked-uncertain-side-effect`（禁止自动二次执行）的输入。
+- **但它造成真实回归**：`tests/tui/integration/authorization-retry-closure.test.ts`
+  「一次 allow-once 之后工具必须真正执行并产出文件，任务 done」——
+  **带 S2b：失败（30.7s，`status=blocked`）；stash 掉 S2b 并重建后：通过（689ms，exit 0）**。
+  因此**本轮不提交该接线**，已 `git checkout --` 回退三处改动（备份在
+  `.tmp/session-r2-04/s2b-reverted/`：`main-controller.ts`、`application-runtime.ts`、`harness.mjs`）。
+- **下一轮必须先判定的两个竞争假设**（不得凭猜修改）：
+  (a) **每次工具调用的持久化写**（临时文件 + fsync + `.bak` 复制 + rename + journal append）
+      带来的延迟把该用例的等待窗口顶爆（30.7s vs 0.689s 的 40 倍差距更支持"等待超时"而非逻辑错误）；
+  (b) 首次被权限阻断的尝试会被记成非幂等 `result-unknown`，进而影响完成/恢复路径。
+  判定手段：对每次检查点写入打点计时并统计工具调用次数；或先把执行后的状态写入改异步再复跑对照。
+- **教训（重要，避免再次误判）**：**经 tarball 安装的 harness 验证的是 `dist/`**，
+  改完 `packages/core/src` 后**必须先 `npm run build`** 再跑 harness，否则会拿旧构建得出假结论——
+  本轮最初得到的"检查点数=0"就是 `dist` 陈旧造成的**假阴性**（源码其实是对的）。
+  凡新增/修改此类 harness 断言，先构建再跑。
+
+**S2a 实施进度（上一轮，已提交 `dcc446b`）**：
 - **S2a 完成**：新增 `orchestration/recovery-checkpoint-recorder.ts`——
   `RecoveryCheckpointRecorder`（检查点装配 + 哈希链 + 工具调用状态合并 + 写链串行化）
   与 `RecoveryCheckpointingToolPort`（工具边界装饰器）；
