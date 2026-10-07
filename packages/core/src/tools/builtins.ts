@@ -11,7 +11,13 @@ import path from "node:path";
 import { isAbsoluteOnAllPlatforms } from "./cross-platform-path-canonicalization.js";
 
 import type { ToolDescriptor } from "../core/types.js";
-import { SideEffectNoneError } from "../core/errors.js";
+import { DomainError, SideEffectNoneError } from "../core/errors.js";
+import type {
+  AgentEditIntentGuardPort,
+} from "../orchestration/agent-edit-intent-guard.js";
+import {
+  computeContentFingerprint,
+} from "../orchestration/agent-edit-intent-guard.js";
 import type { ToolBackupServicePort } from "../core/types.js";
 import type { WorkspaceBoundary } from "./workspace-boundary.js";
 import type { BackupDeletionAuthorizationController } from "./backup-vault.js";
@@ -62,6 +68,12 @@ export interface BuiltinToolExecutionContext {
   readSuppressionLedger?: ReadSuppressionLedger | null;
   /** T07B：任务执行标识（与 agentInstanceId 共同构成读取来源键）。 */
   taskExecutionId?: string | null;
+  /**
+   * E2E-01-03 S1 / T05D-03：Agent 编辑意图与陈旧写入强制。
+   * 未装配时 `replaceFileContent` 退回既有防护（备份 + TOCTOU 复检），
+   * **不假装**已做人工基线校验。
+   */
+  agentEditIntentGuard?: AgentEditIntentGuardPort | null;
   /**
    * T06D：专用资料搜索代理（factVerification 注入；结构化查询，
    * 不开放任意网络执行）。
@@ -325,6 +337,20 @@ export async function executeBuiltinTool(
         content,
         readViewParameterHash,
       );
+      /**
+       * E2E-01-03 S1：把**读取时**的内容指纹登记为编辑意图基线。
+       * 这样"读取之后、写入之前"发生的人工修改才能在写入前被检出（既有 TOCTOU 复检
+       * 的基线取自备份那一刻，覆盖不到这段窗口）。
+       */
+      const agentEditIntentGuard = executionContext.agentEditIntentGuard ?? null;
+      if (agentEditIntentGuard !== null) {
+        await agentEditIntentGuard.recordReadBaseline({
+          agentInstanceId: executionContext.requestingAgentInstanceId,
+          taskExecutionIdentifier: executionContext.taskExecutionId ?? null,
+          targetPath: resolvedPath,
+          contentFingerprint: computeContentFingerprint(content),
+        });
+      }
       return {
         outputText: formatReadFileViewOutput(readView),
         isSideEffectFree: true,
@@ -439,6 +465,31 @@ export async function executeBuiltinTool(
       if (executionContext.backupServicePort === null) {
         throw new Error("replaceFileContent 缺少自动备份端口，拒绝执行破坏性变更");
       }
+      /**
+       * E2E-01-03 S1 / T05D-03：写入前做**人工基线**比对。
+       * 与下面的 TOCTOU 复检互补：TOCTOU 只覆盖"备份之后、写入之前"，
+       * 这里覆盖"**读取之后**、备份之前"——人工在该窗口改了同一文件时拒绝写入，
+       * 人工字节保持不变，Agent 待写内容由守卫保全为可追溯 patch。
+       */
+      const agentEditIntentGuard = executionContext.agentEditIntentGuard ?? null;
+      if (agentEditIntentGuard !== null) {
+        const guardOutcome = await agentEditIntentGuard.guardOverwrite({
+          agentInstanceId: executionContext.requestingAgentInstanceId,
+          taskExecutionIdentifier: executionContext.taskExecutionId ?? null,
+          targetPath: resolvedPath,
+          pendingWriteContent: content,
+        });
+        if (guardOutcome.kind === "stale-rejected") {
+          throw new DomainError(
+            "stale-human-change",
+            "replaceFileContent 拒绝陈旧写入：" +
+              guardOutcome.staleReason +
+              "（待写内容已保全为 patch: " +
+              guardOutcome.preservedPatchPath +
+              "）",
+          );
+        }
+      }
       // 变更前由工具自身自动保存完整 pre-image（不经过模型；备份 ID 不外泄给模型）
       const receipt = await executionContext.backupServicePort.createPreMutationBackup({
         toolName: "replaceFileContent",
@@ -458,6 +509,18 @@ export async function executeBuiltinTool(
       }
       const { writeFile } = await import("node:fs/promises");
       await writeFile(resolvedPath, content, "utf8");
+      /**
+       * 自身写入成功 → 基线前移；否则该 Agent 下一次合法写入会被人工基线误判为陈旧。
+       * （此处用待写内容算指纹，避免再读一次磁盘引入新的 TOCTOU 窗口。）
+       */
+      if (agentEditIntentGuard !== null) {
+        await agentEditIntentGuard.recordOwnWrite({
+          agentInstanceId: executionContext.requestingAgentInstanceId,
+          taskExecutionIdentifier: executionContext.taskExecutionId ?? null,
+          targetPath: resolvedPath,
+          contentFingerprint: computeContentFingerprint(content),
+        });
+      }
       return {
         outputText: `已覆盖 ${filePath}（变更前已自动备份，可经 backupVault 恢复）`,
         isSideEffectFree: false,

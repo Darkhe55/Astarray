@@ -505,7 +505,40 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
 **"可判定"**：条款 1/2/3/4/6/7 有证据且本次补齐 **tarball 产品路径**证据；条款 5 已成文（附限制）。
 **任务卡状态仍标 blocked，本次未擅自修改**——由作者按对账报告 §4 决定。
 
-### 2026-10-06 — T07D-R2-04 完成：Provider usage 接线 + 两个 catalog 条目重跑 + 卡状态置 done
+### 2026-10-06 — E2E-01-03 开工：查证三项阻塞 + 完成切片 S1（陈旧写入强制接入产品路径）
+
+**授权依据**：用户指示"继续推进"并选定 E2E-01-03；对"人工并发变化"选定"先建 harness、到点由用户现场编辑"。
+
+**只读侦察结论（三项产品路径阻塞，均有 file:line 证据）**：
+1. **陈旧写入守卫未接入产品路径**：`StaleWriteGuard.guardWrite` 只被单测调用；唯一非测试引用
+   （`tui/src/cli/commands.ts:2435-2450`）只是恒真能力标志位；`AgentEditIntent` **没有产品侧生产者**；
+   `replaceFileContent` 原有 TOCTOU 复检的基线取自**备份那一刻**，覆盖不到"已读、未备份"窗口。
+   附带：`concurrent status/decide` 两个命令**未注册到 CLI**，其状态视图为硬编码假数据。
+2. **恢复检查点在生产路径从未被写入**：读侧（`recover list/show/resume`、租约、对账）已接线，
+   但 `RecoveryCheckpointStore.writeCheckpoint` 调用点全在测试 → 真实项目上 `recover resume`
+   只会返回 `checkpoint-not-found`。验收②需要产品侧边界检查点写入者（切片 S2）。
+3. **人工/Agent 工作树拓扑未接线**：`GitWorktreeAllocator` 由 `mission-orchestrator` 的
+   `gitIntegration` 选项门控，而**无任何产品 bootstrap 提供**；无人工工作树注册 API、
+   无 `reconcile/` 分支、无绕过防护。
+   （验收③已有可断言目标：`<state>/context-runtime/events.jsonl` 的 `context-assembly`
+   + `effectiveBudgetTokens`，`context metrics --json` 可汇出；验收④可复用
+   `tests/tui/unit/cli-sdk-parity.test.ts` 的比对方式。**无任何既有 E2E-01-03 产物**。）
+
+**切片 S1 完成（本次，提交见下方记录）**：按用户选择 B+A 实现——
+- 新增 `packages/core/src/orchestration/agent-edit-intent-guard.ts`：产品侧 `AgentEditIntent`
+  持久化（`<state>/agent-edit-intents/<agent>.json`，用 `writeAtomicJson`/`readJsonWithBackupRecovery`，
+  无需破坏性 API 白名单）+ 交给既有 `StaleWriteGuard` 比对；规则：基线**首次读取**记录、
+  **再读不刷新**、**自身写入后前移**、**盲覆盖返回 baseline-missing 退回既有防护**（残余边界，显式钉住）；
+- `tools/builtins.ts`：`readFile` 记录读时基线；`replaceFileContent` 写入前比对，
+  不一致抛 `DomainError("stale-human-change")`（待写内容由守卫保全为 patch，人工字节不动）；
+- `tools/policy-wrapper.ts` + `application/application-runtime.ts`：按状态目录构造并注入。
+- **先红后绿**（真实退出码）：守卫模块 8 例 → 红（模块缺失，exit 1）→ 绿 8/8；
+  工具路径 5 例 → **仅 `① 读后人工修改被拒` 失败**（说明拒绝确来自新接线）→ 绿 5/5。
+- **门禁 `npm run check` exit 0 且无抖动**：289 文件 / 2176 用例通过、2 skipped。
+
+**未闭合（登记）**：盲覆盖不受人工基线保护；验收①的真实端到端（真实 Provider + 人工现场编辑 +
+同步点）属 S3；验收②需 S2；验收③④尚无 E2E-01-03 层证据。
+
 
 **授权依据**：用户指示"继续下一步；两条目重跑不降级；完成后才按实际情况推进任务卡，
 必须逐项核对且有充分证据才能改任务卡状态"。据此先把 usage 接线做完并重跑取证，

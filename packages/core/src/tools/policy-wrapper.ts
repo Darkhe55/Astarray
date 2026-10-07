@@ -23,6 +23,7 @@ import type { EvidenceSearchAgentPort } from "./evidence-search-agent-port.js";
 import type { EvidenceQueryGuard } from "./evidence-search-agent-port.js";
 import type { EvidenceBundleBuilder } from "./evidence-bundle-builder.js";
 import type { TaskSequenceStatusController } from "../orchestration/task-sequence-controllers.js";
+import type { AgentEditIntentGuardPort } from "../orchestration/agent-edit-intent-guard.js";
 import type { LocalToolPolicyEngine } from "./local-tool-policy-engine.js";
 import { InstallationGateGuard } from "./installation-gate-guard.js";
 import { LocalSensitiveOperationClassifier } from "./local-sensitive-operation-classifier.js";
@@ -93,6 +94,8 @@ export interface PolicyWrapperOptions {
   installationGateGuard?: InstallationGateGuard | null;
   /** B6R-02：任务执行标识（安装门禁绑定用）。 */
   taskExecutionId?: string | null;
+  /** E2E-01-03 S1：Agent 编辑意图与陈旧写入强制（未装配时退回既有防护）。 */
+  agentEditIntentGuard?: AgentEditIntentGuardPort | null;
   /**
    * B6R-03：可配置权限策略引擎（装配后实际执行前按当前 profile 快照裁决；
    * profile revision/映射/参数变化使旧 ask 授权失效；未装配时回退旧
@@ -355,6 +358,7 @@ export class PolicyWrapper implements ToolPort {
           localToolPolicyEngine: this.options.localToolPolicyEngine ?? null,
           ponderGitRepositoryPath: this.options.ponderGitRepositoryPath ?? null,
           taskExecutionId: this.options.taskExecutionId ?? null,
+          agentEditIntentGuard: this.options.agentEditIntentGuard ?? null,
           evidenceBundleBuilder: this.options.evidenceBundleBuilder ?? null,
           evidenceSearchAgent: this.options.evidenceSearchAgent ?? null,
           evidenceQueryGuard: this.options.evidenceQueryGuard ?? null,

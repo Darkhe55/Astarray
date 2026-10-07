@@ -106,6 +106,7 @@ import {
   FileAccuracyVerificationAuditLog,
 } from "../orchestration/accuracy-policy-store.js";
 import { LocalPreservationService } from "../orchestration/local-preservation-service.js";
+import { AgentEditIntentGuard } from "../orchestration/agent-edit-intent-guard.js";
 import { LocalContextGraphStore } from "../orchestration/local-context-graph-store.js";
 import {
   createContextPromptProvider,
@@ -703,6 +704,11 @@ export async function createApplicationRuntime(
     baseDirectory: stateDirectory,
   });
 
+  // E2E-01-03 S1 / T05D-03：Agent 编辑意图与陈旧写入强制（按状态目录持久化基线）。
+  const agentEditIntentGuard = new AgentEditIntentGuard({
+    baseDirectory: stateDirectory,
+  });
+
   // T06B/ADR-0014：策略包装器（worker 任务端口与思索模式只读端口共用同一套安全端口）。
   const createPolicyWrapperForAgent = (input: {
     agentInstanceId: string;
@@ -734,6 +740,11 @@ export async function createApplicationRuntime(
       factVerificationClaimIdentifier: input.factVerificationClaimIdentifier,
       installationGateGuard,
       taskExecutionId: input.taskExecutionId,
+      /**
+       * E2E-01-03 S1：把"读取时基线 → 写入前比对"接进产品工具路径。
+       * 状态目录由装配层掌握，故在此构造（与 readSuppressionLedger 同一注入方式）。
+       */
+      agentEditIntentGuard,
       configurablePermissionPolicyEngine: input.useConfigurablePermissionProfileEngine
         ? configurablePermissionPolicyEngine
         : null,
