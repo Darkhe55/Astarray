@@ -539,6 +539,24 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
 **未闭合（登记）**：盲覆盖不受人工基线保护；验收①的真实端到端（真实 Provider + 人工现场编辑 +
 同步点）属 S3；验收②需 S2；验收③④尚无 E2E-01-03 层证据。
 
+**S1 之后的可行性核查（本轮只读，未改代码）**：
+1. **S1 的守卫在安装包 CLI 路径上可达**（harness 的前提已具备，无需改工具子集）：
+   `main-controller.ts:885-896` 的 `decomposePromptForScriptedRun` 给单任务
+   `toolNames = registry.getFullDescriptors()`（**全部已注册工具**），
+   `main-controller.ts:781/:834` 再以 `new Set(task.toolNames)` 构造 worker 端口——
+   因此 `readFile` 与 `replaceFileContent` 在验收式单 prompt 运行里都已可用。
+2. **S2 的检查点写入者必须在 mission 层装配**（不能在工具层就地拼装）：
+   `recoveryCheckpointSchema` 要求 `sessionIdentifier`/`missionIdentifier`/`taskChainIdentifier`、
+   `agentIdentities`、`taskNodes`、`toolCalls`、`providerRequests`、`feedbackCursor`、
+   `permissionRecovery`、`workingSetFileCountsByAgent`、`taskChainCumulativeSourceCount`、
+   `gateStates`，以及 `contentHash` + `previousCheckpointHash` 哈希链——
+   工具层没有这些状态。故 S2 应实现"**mission 级检查点记录器**（负责装配与哈希链）+
+   工具调用边界作为触发点"，而不是在 `ScopeGatedToolPort` 内直接写检查点。
+3. **下一步切片改为 S1b（离线、不需额度、不需用户）**：用**进程内假 Provider**（可确定性地在
+   "已读、未写"窗口内插入人工编辑并回放第二次工具调用）经**tarball 隔离安装的 CLI** 复现
+   验收①，把 S1 的"工具层已强制"升级为"**安装包产品路径已强制**"；S3 再把同一 harness
+   指向真实 Provider 并由用户现场编辑。
+
 
 **授权依据**：用户指示"继续下一步；两条目重跑不降级；完成后才按实际情况推进任务卡，
 必须逐项核对且有充分证据才能改任务卡状态"。据此先把 usage 接线做完并重跑取证，
