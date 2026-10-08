@@ -117,6 +117,14 @@ const humanEditDeadlineSeconds = Number.parseInt(
 );
 const liveCredentialSource = takeArgument("--credential-source", "state");
 const liveCredentialReferenceId = takeArgument("--credential-reference-id", "prov-unisound-1");
+/**
+ * 协议标签：真实端点下的必填信息——`anthropic-messages` 与 `openai-compatible` 的
+ * 请求/响应形态不同（system 顶层、tool_result 走 user 消息等），必须显式传给 CLI。
+ */
+const protocolLabel = takeArgument("--protocol-label", "openai-compatible");
+if (protocolLabel !== "openai-compatible" && protocolLabel !== "anthropic-messages") {
+  fail(`--protocol-label 必须是 openai-compatible 或 anthropic-messages（收到: ${protocolLabel}）`, 2);
+}
 const liveApiKeyEnvironmentVariableName = "ASTARRAY_PROVIDER_API_KEY";
 let detectedHumanContent = null;
 
@@ -368,6 +376,8 @@ const childProcess = spawn(
     providerEndpoint,
     "--provider-model",
     modelIdentifier,
+    // 协议非默认时必须显式传给 CLI（默认是 openai-compatible）。
+    ...(protocolLabel === "openai-compatible" ? [] : ["--provider-protocol", protocolLabel]),
     "--provider-api-key-env",
     isLiveProviderRun ? liveApiKeyEnvironmentVariableName : fakeApiKeyEnvironmentVariableName,
     "--provider-request-timeout-seconds",
