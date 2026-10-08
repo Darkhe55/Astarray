@@ -237,12 +237,15 @@ while (Date.now() - killStartedAt < 20_000) {
 if (observedToolCallState === null) {
   childProcess.kill();
 }
-fakeProvider.close();
 console.log(
   "强杀时机: " +
     (killedAfterMilliseconds === null ? "未在窗口内观察到边界记录" : String(killedAfterMilliseconds) + " ms") +
     "；观察到的工具调用状态: " + String(observedToolCallState),
 );
+/**
+ * 注意：假 Provider **保持监听**直到恢复尝试结束。
+ * 否则"恢复没有重放"可能只是因为 Provider 不在、重放必然失败——那是假证据。
+ */
 
 // ---------------------------------------------------------------------------
 // 用**安装包自己的公开 SDK**查询恢复视图：崩溃后是否仍有可信检查点、是否需要裁决。
@@ -338,6 +341,76 @@ record(
   "requiresDecisionMissions=" + JSON.stringify(requiresDecisionMissions),
 );
 
+/**
+ * ⑯⑰ 真正驱动**产品恢复路径**：`recover resume [--execute]`。
+ *
+ * 关键：此刻假 Provider **仍在监听**。若恢复真的重放了那个非幂等写，它必然打到
+ * Provider（请求数上升）并可能改写目标文件。因此"请求数不变 + 文件内容不变"
+ * 是"恢复没有重复副作用"的决定性证据，而不是"因为没有 Provider 所以跑不动"的假象。
+ */
+const missionIdentifier = missionWithTrustedCheckpoint?.missionIdentifier ?? null;
+const requestsBeforeResume = requestCount;
+const contentBeforeResume = readFileSync(targetAbsolutePath, "utf8");
+
+async function runInstalledCliResume(cliArguments) {
+  const resumeProcess = spawn(process.execPath, [installedCliPath, ...cliArguments], {
+    cwd: projectDirectory,
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+    env: { ...process.env, NO_COLOR: "1" },
+  });
+  let resumeStdout = "";
+  let resumeStderr = "";
+  resumeProcess.stdout.on("data", (chunk) => (resumeStdout += String(chunk)));
+  resumeProcess.stderr.on("data", (chunk) => (resumeStderr += String(chunk)));
+  const resumeExitCode = await new Promise((resolve) => {
+    let isSettled = false;
+    const settle = (code) => {
+      if (isSettled) return;
+      isSettled = true;
+      resolve(code);
+    };
+    resumeProcess.on("close", (code) => settle(code ?? 1));
+    setTimeout(() => {
+      if (!isSettled) {
+        resumeProcess.kill();
+        settle(124);
+      }
+    }, 90_000);
+  });
+  return { exitCode: resumeExitCode, stdout: resumeStdout, stderr: resumeStderr };
+}
+
+const resumeInspectResult =
+  missionIdentifier === null
+    ? null
+    : await runInstalledCliResume(["recover", "resume", missionIdentifier, "--json"]);
+const resumeExecuteResult =
+  missionIdentifier === null
+    ? null
+    : await runInstalledCliResume(["recover", "resume", missionIdentifier, "--execute", "--json"]);
+
+const contentAfterResume = readFileSync(targetAbsolutePath, "utf8");
+const resumeOutputText = [resumeInspectResult?.stdout, resumeExecuteResult?.stdout]
+  .filter((text) => typeof text === "string")
+  .join("\n");
+record(
+  "⑯ 恢复尝试未产生新的 Provider 请求（未重放非幂等写）",
+  requestCount === requestsBeforeResume,
+  "恢复前请求数=" + String(requestsBeforeResume) + "，恢复后=" + String(requestCount),
+);
+record(
+  "⑰ 恢复尝试未改变目标文件（无重复副作用）",
+  contentAfterResume === contentBeforeResume,
+  JSON.stringify(contentAfterResume),
+);
+console.log(
+  "\n--- 恢复路径原始输出（供人工核对判定语义）---\n" +
+    (resumeOutputText.trim() === "" ? "(空)" : resumeOutputText.trim().slice(0, 1200)),
+);
+
+fakeProvider.close();
+
 writeFileSync(
   path.join(archiveRoot, "boundary-interrupt-verdict.json"),
   JSON.stringify(
@@ -354,6 +427,13 @@ writeFileSync(
       recordedAtIso: new Date().toISOString(),
       observedToolCallState,
       killedAfterMilliseconds,
+      missionIdentifier,
+      requestsBeforeResume,
+      requestsAfterResume: requestCount,
+      resumeInspectOutput: resumeInspectResult?.stdout ?? null,
+      resumeInspectExitCode: resumeInspectResult?.exitCode ?? null,
+      resumeExecuteOutput: resumeExecuteResult?.stdout ?? null,
+      resumeExecuteExitCode: resumeExecuteResult?.exitCode ?? null,
       requestCount,
       sdkExitCode,
       sdkStderr,

@@ -621,7 +621,24 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
    由 `application-runtime`（掌握状态目录与 mission 快照）实现并把装饰器**套在最外层**
    （这样范围门禁的拒绝也能被记录）。
 
-**S2c：边界中断场景（本轮新增，验收②的端到端前提证据）**
+**S2d：真正驱动恢复路径（本轮，验收②闭环）**
+- 扩展 `scripts/verify-e2e01-03-boundary-interrupt.mjs`：崩溃后**在假 Provider 仍监听的前提下**
+  运行安装包 CLI 的 `recover resume <mission> [--execute] --json`。
+  （Provider 必须保持监听——否则"没有重放"可能只是"Provider 不在、重放必然失败"的假象。）
+- **真实退出码 0，7/7 判据**（新增 ⑯⑰）：
+  ⑯ 恢复尝试**未产生新的 Provider 请求**（1 → 1）；⑰ 目标文件**未被改变**（无重复副作用）。
+- **产品面判定原文（可复核）**：
+  `{"resumed":false,"executed":false,"requiresUserDecision":true,
+    "blockedDecisionItems":[{"item":"tc-interrupt-1","decision":"blocked-uncertain-side-effect",
+      "reason":"工具副作用未知，需用户裁决，禁止自动二次执行"}]}`
+  即该 mission 的非幂等边界调用被判为**禁止自动二次执行**，恢复未执行任何节点。
+- 另观察到**第二道独立防线**：`recover resume --execute` 返回
+  `mission-locked: mission 正在其他进程运行（属主 …），拒绝续接以避免双跑`——
+  被强杀的进程仍持有 mission 租约，未过期前拒绝接管。**如实区分**：这次 `--execute` 的拒绝
+  来自**租约门禁**，而"禁止自动重放"的判定依据在 `resume`（只读）输出的 `blockedDecisionItems`。
+- 结论：验收②在**产品路径**上已闭环（边界落检查点 → 崩溃后仍可信 → 标为需要裁决 →
+  恢复 `resumed:false` 且无新请求/无文件变化）。仍未做的是**真实 Provider**版本（S3）。
+
 - 新增 `scripts/verify-e2e01-03-boundary-interrupt.mjs`：假 Provider 回放一次写类工具调用后
   **不再响应**，harness 轮询检查点目录，一旦看到该工具调用的记录就**立即强杀 CLI**，
   再用**安装包自己的公开 SDK** `queryRecoveryOverview()` 查恢复视图。断言不依赖竞态：
