@@ -621,7 +621,22 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
    由 `application-runtime`（掌握状态目录与 mission 快照）实现并把装饰器**套在最外层**
    （这样范围门禁的拒绝也能被记录）。
 
-**S2b 已修复并落地（本轮，见下一个提交）**：
+**S2c：边界中断场景（本轮新增，验收②的端到端前提证据）**
+- 新增 `scripts/verify-e2e01-03-boundary-interrupt.mjs`：假 Provider 回放一次写类工具调用后
+  **不再响应**，harness 轮询检查点目录，一旦看到该工具调用的记录就**立即强杀 CLI**，
+  再用**安装包自己的公开 SDK** `queryRecoveryOverview()` 查恢复视图。断言不依赖竞态：
+  无论杀掉时状态是 `started` 还是 `confirmed-success`，都要求"不得重复副作用"。
+- **真实退出码 0，5/5 判据**（两次运行）：
+  ⑪ 边界确实落下检查点（观察状态 `started`，强杀时机 371/379 ms）；
+  ⑫ 状态语义正确；**⑬ 崩溃后产品仍能看到 `hasTrustedCheckpoint=true`**
+  （本会话之前产品路径从不写检查点，这一步根本不可能）；
+  ⑭ 目标文件无重复副作用；**⑮ 产品把该 mission 列入 `requiresDecisionMissions`**
+  （即"非幂等、结果未知 → 禁止自动二次执行"的**产品面**表达，而不是只靠单测）。
+- 定位说明：这是 `isFakeProvider: true` / `isRealAcceptanceEvidence: false` 的离线证据。
+  验收②目前已有三层证据：① 记录器+分类服务联测（`result-unknown`/`started` 非幂等 →
+  `blocked-uncertain-side-effect`、`confirmed-success` → `reuse-confirmed-result`）；
+  ② 产品接线（harness 判据⑩：真实运行写出检查点）；③ 崩溃边界（本脚本 ⑪–⑮）。
+
 - **根因确认**：`RecoveryCheckpointRecorder` 的链状态是**每实例私有**（缓存 `lastCheckpointHash` +
   标识自增序号各自从 `0001` 起），而**同一 store 被多个记录器共用**（键 `missionId::agentInstanceId`）。
   第二个记录器于是复用相同 `checkpointIdentifier`（互相覆盖）并/或提出与
