@@ -9,7 +9,7 @@
  * 本文件在实现之前必须失败；并**与已接线的恢复分类服务联测**，证明"已确认成功不重复执行、
  * 非幂等且结果未知必须转人工裁决"这条语义在产品数据上成立。
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { RecoveryClassificationService } from "../../../packages/core/src/orchestration/recovery-classification-service.js";
 import {
   RecoveryCheckpointRecorder,
+  RecoveryCheckpointWriteQueue,
   RecoveryCheckpointingToolPort,
 } from "../../../packages/core/src/orchestration/recovery-checkpoint-recorder.js";
 import { RecoveryCheckpointStore } from "../../../packages/core/src/orchestration/recovery-checkpoint-store.js";
@@ -153,6 +154,75 @@ describe("E2E-01-03 S2：检查点写入者", () => {
     const latest = await store.selectLatestTrustedCheckpoint();
     expect(latest?.checkpoint.toolCalls).toHaveLength(1);
     expect(latest?.checkpoint.toolCalls[0]?.state).toBe("confirmed-success");
+  });
+
+  /**
+   * ④ 真实回归反例（2026-10-07）：**两个记录器共用同一 store**。
+   *
+   * 产品路径上一个 mission 会有多个 worker 实例（键 `missionId::agentInstanceId`），
+   * 因此同一 store 会被多个记录器共用。首版实现的链状态（上次哈希 + 自增标识）是
+   * **每实例私有**、标识都从 0001 起 → 第二个记录器覆盖同名前缀文件、并提出过期的
+   * `previousCheckpointHash` → `writeCheckpoint` 抛"检查点哈希链断裂" → 装饰器在
+   * `started` 阶段 fail-closed，工具不执行、任务重试到 blocked
+   * （实测：`authorization-retry-closure` 由 0.689s 通过变成 30.7s 失败）。
+   *
+   * 本用例在**没有共享写队列**时应当失败；修复（无状态链 + 全局唯一时间单调标识 +
+   * 共享写队列）后必须通过。
+   */
+  it("④ 两个记录器共用同一 store 时不得互相破坏哈希链（并发写入）", async () => {
+    const store = new RecoveryCheckpointStore({ baseDirectory });
+    const sharedWriteQueue = new RecoveryCheckpointWriteQueue();
+    const buildSharedRecorder = (taskChainIdentifier: string) =>
+      new RecoveryCheckpointRecorder({
+        store,
+        sessionIdentifier: "session-s2",
+        missionIdentifier: "mission-s2",
+        taskChainIdentifier,
+        writingProcessInstanceIdentifier: "process-test-shared",
+        snapshotProvider: buildSnapshot,
+        nowIso: () => "2026-10-07T00:00:00.000Z",
+        sharedWriteQueue,
+      });
+    const recorderA = buildSharedRecorder("T-001");
+    const recorderB = buildSharedRecorder("T-002");
+
+    // 交错 + 并发写入：不得有任何一次抛错。
+    await recorderA.recordToolCallState({
+      toolCallIdentifier: "a-1",
+      toolName: "replaceFileContent",
+      state: "started",
+      isIdempotent: false,
+      completionAttemptIdentifier: null,
+    });
+    await Promise.all([
+      recorderA.recordToolCallState({
+        toolCallIdentifier: "a-2",
+        toolName: "replaceFileContent",
+        state: "result-unknown",
+        isIdempotent: false,
+        completionAttemptIdentifier: null,
+      }),
+      recorderB.recordToolCallState({
+        toolCallIdentifier: "b-1",
+        toolName: "replaceFileContent",
+        state: "started",
+        isIdempotent: false,
+        completionAttemptIdentifier: null,
+      }),
+    ]);
+
+    // 每个记录器各自的状态都被保留（互不覆盖）。
+    expect(recorderA.getToolCallStates()).toHaveLength(2);
+    expect(recorderB.getToolCallStates()).toHaveLength(1);
+
+    // 链仍然可信，且标识全局唯一（否则同名文件会互相覆盖）。
+    const latest = await store.selectLatestTrustedCheckpoint();
+    expect(latest).not.toBeNull();
+    expect(latest?.checkpoint.previousCheckpointHash).not.toBeNull();
+    const checkpointFileNames = readdirSync(
+      path.join(baseDirectory, "recovery-checkpoints"),
+    ).filter((name) => name.endsWith(".json"));
+    expect(checkpointFileNames.length).toBe(3);
   });
 });
 

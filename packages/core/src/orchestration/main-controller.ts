@@ -117,6 +117,19 @@ export interface MainControllerOptions {
      */
     agentInstanceId?: string,
   ) => ToolPort;
+  /**
+   * E2E-01-03 S2b：把**恢复检查点装饰器**套在 worker 工具端口**最外层**。
+   *
+   * 为什么在这里套：本闭包内已能拿到 `missionId`（见两处 `toolPortFactory` 调用点），
+   * 而装饰器需要 mission 上下文；套在最外层才能把范围/权限门禁的拒绝也记成一次工具调用状态。
+   * **未装配时行为完全不变**（不写检查点）。
+   */
+  buildRecoveryCheckpointingToolPort?: (input: {
+    missionId: string;
+    task: TaskDependencyNode;
+    agentInstanceId: string;
+    innerToolPort: ToolPort;
+  }) => ToolPort;
   buildPermissionExplanation: (toolName: string) => string;
   /** 流式输出到 UI 的回调。 */
   streamOutput: (missionId: string | null, text: string) => void;
@@ -778,7 +791,11 @@ export class MainController {
         runtimeFactory: this.options.workerRuntimeFactory,
         toolDescriptorFactory: this.options.resolveToolDescriptors,
         toolPortFactory: (task, agentInstanceId) =>
-          this.options.buildWorkerToolPort(task, new Set(task.toolNames), agentInstanceId),
+          this.buildWorkerToolPortWithRecoveryCheckpointing(
+            missionId,
+            task,
+            agentInstanceId,
+          ),
         buildPermissionExplanation: this.options.buildPermissionExplanation,
       },
       onReportToMain: (message) => {
@@ -831,7 +848,11 @@ export class MainController {
         runtimeFactory: this.options.workerRuntimeFactory,
         toolDescriptorFactory: this.options.resolveToolDescriptors,
         toolPortFactory: (task, agentInstanceId) =>
-          this.options.buildWorkerToolPort(task, new Set(task.toolNames), agentInstanceId),
+          this.buildWorkerToolPortWithRecoveryCheckpointing(
+            missionId,
+            task,
+            agentInstanceId,
+          ),
         buildPermissionExplanation: this.options.buildPermissionExplanation,
       },
       onMissionFinished: (status) => {
@@ -882,10 +903,35 @@ export class MainController {
    * 任务分解：v0.1 使用确定性分解（单任务）。
    * 真实 LLM 分解由次级 Agent 的运行时在 T14 演进中替换。
    */
+  /**
+   * 组装 worker 工具端口，并在装配了恢复检查点钩子时把装饰器套在**最外层**
+   * （E2E-01-03 S2b；未装配时与既有行为逐字一致）。
+   */
+  private buildWorkerToolPortWithRecoveryCheckpointing(
+    missionId: string,
+    task: TaskDependencyNode,
+    agentInstanceId: string | undefined,
+  ): ToolPort {
+    const innerToolPort = this.options.buildWorkerToolPort(
+      task,
+      new Set(task.toolNames),
+      agentInstanceId,
+    );
+    const buildCheckpointingPort = this.options.buildRecoveryCheckpointingToolPort;
+    if (buildCheckpointingPort === undefined) {
+      return innerToolPort;
+    }
+    return buildCheckpointingPort({
+      missionId,
+      task,
+      agentInstanceId: agentInstanceId ?? `worker:${task.id}`,
+      innerToolPort,
+    });
+  }
+
   private decomposePromptForScriptedRun(
     prompt: string,
-  ): TaskDependencyNode[] {
-    return [
+  ): TaskDependencyNode[] {    return [
       {
         id: "T-001",
         description: prompt,

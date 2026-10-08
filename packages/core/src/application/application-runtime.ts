@@ -26,6 +26,7 @@ import type {
   AgentRuntime,
   TaskDependencyNode,
   ToolDescriptor,
+  ToolPort,
 } from "../core/types.js";
 import type { BackupDeletionAuthorizationControlPort } from "../core/types.js";
 import type { InstallationGateUserPort } from "../tools/installation-gate-guard.js";
@@ -107,6 +108,13 @@ import {
 } from "../orchestration/accuracy-policy-store.js";
 import { LocalPreservationService } from "../orchestration/local-preservation-service.js";
 import { AgentEditIntentGuard } from "../orchestration/agent-edit-intent-guard.js";
+import {
+  RecoveryCheckpointRecorder,
+  RecoveryCheckpointWriteQueue,
+  RecoveryCheckpointingToolPort,
+  buildWritingProcessInstanceIdentifier,
+} from "../orchestration/recovery-checkpoint-recorder.js";
+import { RecoveryCheckpointStore } from "../orchestration/recovery-checkpoint-store.js";
 import { LocalContextGraphStore } from "../orchestration/local-context-graph-store.js";
 import {
   createContextPromptProvider,
@@ -699,6 +707,101 @@ export async function createApplicationRuntime(
     baseDirectory: stateDirectory,
   });
 
+  // E2E-01-03 S2b：恢复检查点写入者（按 mission+agent 复用同一记录器以维持哈希链）。
+  const recoveryCheckpointStore = new RecoveryCheckpointStore({
+    baseDirectory: stateDirectory,
+  });
+  const recoveryCheckpointRecorderByKey = new Map<string, RecoveryCheckpointRecorder>();
+  /**
+   * **跨记录器共享写队列**（2026-10-07 真实回归修复）：同一 store 被多个记录器共用
+   * （键为 `missionId::agentInstanceId`）；不串行化会让"读最新 → 写入"互相插入，
+   * `writeCheckpoint` 抛"检查点哈希链断裂"，装饰器在 `started` 阶段 fail-closed。
+   */
+  const recoveryCheckpointWriteQueue = new RecoveryCheckpointWriteQueue();
+  const recoveryProcessInstanceIdentifier = buildWritingProcessInstanceIdentifier({
+    processId: process.pid,
+    startedAtIso: new Date().toISOString(),
+  });
+  const mutatingToolNamesForRecovery = new Set([
+    "createProjectFile",
+    "replaceFileContent",
+    "writeFileTemporary",
+    "backupVault",
+    "deleteBackup",
+  ]);
+  const buildRecoveryCheckpointingToolPort = (input: {
+    missionId: string;
+    task: TaskDependencyNode;
+    agentInstanceId: string;
+    innerToolPort: ToolPort;
+  }): ToolPort => {
+    const recorderKey = `${input.missionId}::${input.agentInstanceId}`;
+    let recorder = recoveryCheckpointRecorderByKey.get(recorderKey);
+    if (recorder === undefined) {
+      recorder = new RecoveryCheckpointRecorder({
+        store: recoveryCheckpointStore,
+        sessionIdentifier: input.missionId,
+        missionIdentifier: input.missionId,
+        taskChainIdentifier: input.task.id,
+        writingProcessInstanceIdentifier: recoveryProcessInstanceIdentifier,
+        sharedWriteQueue: recoveryCheckpointWriteQueue,
+        /**
+         * 快照只提供**当前确知**的部分；其余字段取保守值并在此如实说明
+         * （不得让未接线的字段冒充已对账状态）：
+         *  - `taskNodes`：用本次实际派发的任务节点（状态 `running`）；
+         *  - `agentIdentities`：用本次实际的 agentInstanceId（三级执行者）；
+         *  - `providerRequests`：留空——Provider 停止确认状态尚未接入检查点；
+         *  - `permissionRecovery`：留空——权限公开引用尚未接入，分类侧会因此要求重新授权
+         *    （保守方向：宁可要求重新授权，也不假装授权仍然有效）；
+         *  - `feedbackCursor` / `workingSetFileCountsByAgent` / `taskChainCumulativeSourceCount`：
+         *    取 0——这些游标尚未接入检查点。
+         */
+        snapshotProvider: () => ({
+          agentIdentities: [
+            {
+              agentInstanceId: input.agentInstanceId,
+              agentRole: "tertiary",
+              lifecycleState: "active",
+              handoffReference: null,
+              parentAgentInstanceId: null,
+            },
+          ],
+          taskNodes: [
+            {
+              taskNodeIdentifier: input.task.id,
+              status: "running",
+              predecessorTaskNodeIdentifiers: [...input.task.dependsOn],
+              priorityTier: 0,
+              assignedAgentInstanceId: input.agentInstanceId,
+              checkpointIdentifier: null,
+              completionAttemptIdentifier: null,
+            },
+          ],
+          humanChangeObservationRevision: 0,
+          pendingConflictIdentifiers: [],
+          providerRequests: [],
+          feedbackCursor: { enqueueCursor: 0, deliveryCursor: 0, ackCursor: 0 },
+          permissionRecovery: [],
+          workingSetFileCountsByAgent: {},
+          taskChainCumulativeSourceCount: 0,
+          gateStates: {
+            testingGate: "pending",
+            acceptanceGate: "pending",
+            humanReviewGate: "pending",
+            installationGate: "pending",
+            backupDeletionGate: "pending",
+          },
+        }),
+      });
+      recoveryCheckpointRecorderByKey.set(recorderKey, recorder);
+    }
+    return new RecoveryCheckpointingToolPort({
+      innerToolPort: input.innerToolPort,
+      recorder,
+      isMutatingTool: (toolName) => mutatingToolNamesForRecovery.has(toolName),
+    });
+  };
+
   // GIT-PRESERVE-02：远端同步失败后的本地保全服务（网络失败立即保全，不等待重试耗尽）。
   const localPreservationService = new LocalPreservationService({
     baseDirectory: stateDirectory,
@@ -834,7 +937,8 @@ export async function createApplicationRuntime(
         }),
         scopeAuthorizationGate,
       ),
-    // T06B/ADR-0014：思索模式本地只读白名单（查看项目文件、检索文本、查询只读任务状态）。
+    buildRecoveryCheckpointingToolPort,
+    // T06B/ADR-0014：思索模式本地只读白名单（查看项目文件、检索文本和查询只读任务状态）。
     // 只暴露白名单工具描述符；权限裁决与策略引擎在派发与真实执行两个时点 fail-closed。
     ponderReadonlyToolingFactory: (agentInstanceId: string) => {
       const allowedToolNames = new Set(

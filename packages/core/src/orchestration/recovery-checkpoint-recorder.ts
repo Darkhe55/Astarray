@@ -36,6 +36,7 @@ import {
   type ToolCallRecoveryStateRecord,
 } from "./recovery-checkpoint-schemas.js";
 import type { RecoveryCheckpointStore } from "./recovery-checkpoint-store.js";
+import { sanitizePathSegment } from "./work-archive-store.js";
 
 /** mission 层快照：由装配层（掌握任务链/身份/门禁/游标）提供，工具层拿不到这些。 */
 export interface RecoveryCheckpointSnapshot {
@@ -64,6 +65,27 @@ export interface RecoveryCheckpointRecorderOptions {
   checkpointIdentifierPrefix?: string;
   /** 检查点写入失败时上报（工具已执行后的状态记录失败不应吞掉）。 */
   onCheckpointWriteError?: (error: unknown) => void;
+  /**
+   * **跨记录器共享写队列**（可选但强烈建议）。
+   *
+   * 同一进程内同一个 store 会被多个记录器共用（键为 `missionId::agentInstanceId`）。
+   * 若不串行化，"读最新可信检查点 → 写入"之间会互相插入：第二个写入者拿到过期的
+   * `previousCheckpointHash`，`writeCheckpoint` 抛**"检查点哈希链断裂"**
+   * （2026-10-07 真实回归实测：多 worker 实例的用例因此在 `started` 阶段 fail-closed，
+   * 工具不执行、任务重试到 `blocked`）。
+   */
+  sharedWriteQueue?: RecoveryCheckpointWriteQueue;
+}
+
+/** 共享写队列：把同一 store 的所有检查点写入排成一条链（同进程内）。 */
+export class RecoveryCheckpointWriteQueue {
+  private tail: Promise<unknown> = Promise.resolve();
+
+  runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.tail.then(operation, operation);
+    this.tail = next.catch(() => undefined);
+    return next;
+  }
 }
 
 export interface RecordToolCallStateInput {
@@ -79,10 +101,13 @@ const CONTENT_HASH_PLACEHOLDER = "sha256:" + "0".repeat(64);
 export class RecoveryCheckpointRecorder {
   private readonly store: RecoveryCheckpointStore;
   private readonly toolCallStatesByIdentifier = new Map<string, ToolCallRecoveryStateRecord>();
-  private lastCheckpointHash: string | null = null;
-  private checkpointSequence = 0;
-  /** 串行化写链：并发工具调用不得交错写检查点。 */
-  private pendingWriteChain: Promise<unknown> = Promise.resolve();
+  /**
+   * 链状态**不缓存**（2026-10-07 修正）：同一 store 被多个记录器共用时，
+   * 任何"上次写入的哈希"缓存都会导致 `previousCheckpointHash` 与
+   * `selectLatestTrustedCheckpoint()` 不符 → "检查点哈希链断裂"。
+   * 每次写入都以 store 的最新可信检查点为唯一依据。
+   */
+  private identifierSequence = 0;
 
   constructor(private readonly options: RecoveryCheckpointRecorderOptions) {
     this.store = options.store;
@@ -106,7 +131,11 @@ export class RecoveryCheckpointRecorder {
       isIdempotent: input.isIdempotent,
       completionAttemptIdentifier: input.completionAttemptIdentifier,
     });
-    await this.enqueueCheckpointWrite();
+    await this.enqueueCheckpointWrite().catch((error: unknown) => {
+      // 上报后**继续外抛**：`started` 阶段必须 fail-closed（此时尚无副作用）。
+      this.options.onCheckpointWriteError?.(error);
+      throw error;
+    });
   }
 
   /** 立即按当前状态落一个检查点（返回本次写入的标识与存储层重算的哈希）。 */
@@ -115,15 +144,26 @@ export class RecoveryCheckpointRecorder {
     checkpointHash: string;
   }> {
     const snapshot = await this.options.snapshotProvider();
-    this.checkpointSequence += 1;
+    this.identifierSequence += 1;
     const prefix =
       this.options.checkpointIdentifierPrefix ??
       `recovery-${this.options.missionIdentifier}`;
-    const checkpointIdentifier = `${prefix}-${String(this.checkpointSequence).padStart(4, "0")}`;
+    /**
+     * 标识必须**全局唯一且按时间单调**（`selectLatestTrustedCheckpoint` 按文件名排序取最后）：
+     * 此前用自增序号（每个记录器都从 0001 起）→ 多记录器共用同一 store 时会**互相覆盖**
+     * 并造成链断裂（2026-10-07 真实回归）。这里改为"毫秒时间戳 + 记录器后缀 + 本地序号"。
+     */
+    const nowMilliseconds = (this.options.nowIso === undefined
+      ? Date.now()
+      : new Date(this.options.nowIso()).getTime()) || Date.now();
+    const checkpointIdentifier =
+      `${prefix}-${String(nowMilliseconds).padStart(13, "0")}-` +
+      `${sanitizePathSegment(this.options.writingProcessInstanceIdentifier)}-` +
+      `${sanitizePathSegment(this.options.taskChainIdentifier)}-` +
+      `${String(this.identifierSequence).padStart(4, "0")}`;
+    // 链键唯一依据 = store 的最新可信检查点（**不缓存**，见类字段注释）。
     const previousCheckpointHash =
-      this.lastCheckpointHash ??
-      (await this.store.selectLatestTrustedCheckpoint())?.checkpointHash ??
-      null;
+      (await this.store.selectLatestTrustedCheckpoint())?.checkpointHash ?? null;
     const candidate: RecoveryCheckpoint = {
       schemaVersion: RECOVERY_CHECKPOINT_SCHEMA_VERSION,
       checkpointIdentifier,
@@ -155,7 +195,6 @@ export class RecoveryCheckpointRecorder {
       checkpoint: { ...candidate, contentHash },
       writingProcessInstanceIdentifier: this.options.writingProcessInstanceIdentifier,
     });
-    this.lastCheckpointHash = writeResult.checkpointHash;
     return {
       checkpointIdentifier: writeResult.checkpoint.checkpointIdentifier,
       checkpointHash: writeResult.checkpointHash,
@@ -163,13 +202,14 @@ export class RecoveryCheckpointRecorder {
   }
 
   private enqueueCheckpointWrite(): Promise<void> {
-    const nextWrite = this.pendingWriteChain.then(
-      () => this.writeCheckpointNow().then(() => undefined),
-      () => this.writeCheckpointNow().then(() => undefined),
+    // 有共享队列时走共享队列（跨记录器串行，避免链断裂）；否则退回实例内串行。
+    const runExclusive = this.options.sharedWriteQueue?.runExclusive.bind(
+      this.options.sharedWriteQueue,
     );
-    this.pendingWriteChain = nextWrite.catch((error: unknown) => {
-      this.options.onCheckpointWriteError?.(error);
-    });
+    const nextWrite =
+      runExclusive === undefined
+        ? this.writeCheckpointNow().then(() => undefined)
+        : runExclusive(() => this.writeCheckpointNow().then(() => undefined));
     return nextWrite;
   }
 }

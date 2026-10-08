@@ -621,7 +621,26 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
    由 `application-runtime`（掌握状态目录与 mission 快照）实现并把装饰器**套在最外层**
    （这样范围门禁的拒绝也能被记录）。
 
-**S2b 回归根因判定（本轮，仍未改产品代码）**：
+**S2b 已修复并落地（本轮，见下一个提交）**：
+- **根因确认**：`RecoveryCheckpointRecorder` 的链状态是**每实例私有**（缓存 `lastCheckpointHash` +
+  标识自增序号各自从 `0001` 起），而**同一 store 被多个记录器共用**（键 `missionId::agentInstanceId`）。
+  第二个记录器于是复用相同 `checkpointIdentifier`（互相覆盖）并/或提出与
+  `selectLatestTrustedCheckpoint()` 不符的 `previousCheckpointHash`
+  → `writeCheckpoint` 抛**"检查点哈希链断裂"** → 装饰器在 `started` 阶段 **fail-closed**
+  → 工具不执行、任务重试到 `blocked`。这与该用例"最终文件存在但 `status=blocked`、耗时 30.7 s"完全吻合。
+- **修复**：① 链状态**不缓存**，每次写入以 store 的最新可信检查点为唯一依据（无状态链）；
+  ② `checkpointIdentifier` 改为**全局唯一且按时间单调**（13 位毫秒 + 进程 + 任务链 + 序号）；
+  ③ 新增可选 `RecoveryCheckpointWriteQueue` **跨记录器共享写队列**。
+- **验证（真实退出码）**：`authorization-retry-closure` 由 **30.7 s 失败 → 713 ms 通过**；
+  记录器用例 **10/10**（新增反例④：两个记录器共用同一 store、交错+并发写入，
+  断言各自状态互不覆盖、链仍可信、检查点文件数=3）；
+  harness 判据⑩ **通过**（检查点数=4，`readFile=confirmed-success`、
+  `replaceFileContent=result-unknown`，`isIdempotent=false`）；
+  `npm run check` **exit 0**（290 文件 / 2186 用例通过、2 skipped）。
+- **如实说明（不夸大）**：把共享写队列**停用**后反例④**仍然通过**——即本次真正修掉回归的是
+  "无状态链 + 唯一时间单调标识"，**共享写队列只是纵深防御**，本用例未能证明其必要性；
+  不要宣称"队列修好了回归"。
+
 - **度量排除"写盘延迟"假设**：真实 `RecoveryCheckpointStore.writeCheckpoint` 实测
   **3–9 ms**（连续 5 次共 24 ms），`selectLatestTrustedCheckpoint` **1 ms**。
   即使 50 次写入也只有约 0.25 秒，**不可能**把 0.689 秒的用例拖成 30.7 秒 ⇒ 假设 (a) 排除。

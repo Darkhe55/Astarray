@@ -20,7 +20,7 @@
  */
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -642,6 +642,59 @@ writeFileSync(
 writeFileSync(
   path.join(archiveRoot, "sdk-query-mission.json"),
   JSON.stringify({ exitCode: sdkQueryResult.exitCode, stderr: sdkQueryResult.stderr, parsed: parsedSdkMission }, null, 2) + "\n",
+);
+
+/**
+ * ⑩ 验收②的**前提**：工具调用边界真的写出了恢复检查点（S2b 接线验证）。
+ *
+ * 此前 `RecoveryCheckpointStore.writeCheckpoint` 只被测试调用——产品路径从不写检查点。
+ * 这里断言**运行结束后磁盘上确有检查点**，且其中的工具调用状态符合边界语义：
+ * 只读 `readFile` 成功 → `confirmed-success`；写类 `replaceFileContent` 被拒 →
+ * `result-unknown`（保守，非幂等，禁止自动二次执行）。
+ */
+const recoveryCheckpointDirectory = path.join(
+  projectDirectory,
+  ".astarray",
+  "recovery-checkpoints",
+);
+const recoveryCheckpointFiles = existsSync(recoveryCheckpointDirectory)
+  ? readdirSync(recoveryCheckpointDirectory)
+      .filter((name) => name.endsWith(".json"))
+      .sort()
+      .map((name) => path.join(recoveryCheckpointDirectory, name))
+  : [];
+const recoveryCheckpoints = recoveryCheckpointFiles
+  .map((filePath) => {
+    try {
+      return JSON.parse(readFileSync(filePath, "utf8"));
+    } catch {
+      return null;
+    }
+  })
+  .filter((checkpoint) => checkpoint !== null);
+const latestCheckpoint = recoveryCheckpoints.at(-1) ?? null;
+const checkpointToolCalls = Array.isArray(latestCheckpoint?.toolCalls)
+  ? latestCheckpoint.toolCalls
+  : [];
+const readToolCall = checkpointToolCalls.find((call) => call.toolName === "readFile");
+const writeToolCall = checkpointToolCalls.find(
+  (call) => call.toolName === "replaceFileContent",
+);
+record(
+  "⑩ 工具调用边界真的写出了恢复检查点（验收②前提）",
+  recoveryCheckpoints.length >= 1 &&
+    readToolCall?.state === "confirmed-success" &&
+    (writeToolCall?.state === "result-unknown" || writeToolCall?.state === "confirmed-failure") &&
+    writeToolCall?.isIdempotent === false,
+  "检查点数=" +
+    String(recoveryCheckpoints.length) +
+    "，readFile=" +
+    String(readToolCall?.state) +
+    "，replaceFileContent=" +
+    String(writeToolCall?.state) +
+    "（isIdempotent=" +
+    String(writeToolCall?.isIdempotent) +
+    "）",
 );
 
 const failedChecks = checks.filter((check) => !check.isPassed);
