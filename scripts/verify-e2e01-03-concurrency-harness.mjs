@@ -25,6 +25,8 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { startHumanEditWindowProxy } from "./lib/human-edit-window-proxy.mjs";
+
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const npmExecutableName = process.platform === "win32" ? "npm.cmd" : "npm";
 
@@ -99,6 +101,63 @@ const initialContent = "初始内容（Agent 读到的是这份）\n";
 const humanContent = "人工修改（必须逐字节保留）\n";
 const agentContent = "Agent 想写入的内容（不得落盘）\n";
 
+/**
+ * 真实 Provider 模式（2026-10-08）：给出 `--live-provider-endpoint` 即启用。
+ *
+ * 真实端点下无法拦截响应，而模型"读完立刻写"的窗口只有 1 秒级——故改用
+ * `scripts/lib/human-edit-window-proxy.mjs` 做**纯透传代理**：扣住含
+ * `replaceFileContent` 的那次响应，直到检测到目标文件被人工编辑才放行。
+ * 默认（不给该参数）时行为与既有假 Provider 路径完全一致。
+ */
+const liveProviderEndpoint = takeArgument("--live-provider-endpoint", null);
+const isLiveProviderRun = liveProviderEndpoint !== null;
+const humanEditDeadlineSeconds = Number.parseInt(
+  takeArgument("--human-edit-deadline-seconds", "300"),
+  10,
+);
+const liveCredentialSource = takeArgument("--credential-source", "state");
+const liveCredentialReferenceId = takeArgument("--credential-reference-id", "prov-unisound-1");
+const liveApiKeyEnvironmentVariableName = "ASTARRAY_PROVIDER_API_KEY";
+let detectedHumanContent = null;
+
+/**
+ * 真实模式下的密钥解析（只读；**不打印、不落盘**）。
+ * `env` 表示由调用方自己把密钥放进 `ASTARRAY_PROVIDER_API_KEY`。
+ */
+function resolveLiveApiKey() {
+  if (liveCredentialSource === "env") {
+    const providedKey = process.env[liveApiKeyEnvironmentVariableName];
+    if (providedKey === undefined || providedKey === "") {
+      fail("--credential-source env 要求环境变量 " + liveApiKeyEnvironmentVariableName + " 已设置", 2);
+    }
+    return providedKey;
+  }
+  const credentialsFilePath = path.join(
+    repositoryRoot,
+    ".astarray",
+    "providers",
+    "provider-credentials.json",
+  );
+  if (!existsSync(credentialsFilePath)) {
+    fail("--credential-source state 需要受保护凭据文件存在: " + credentialsFilePath, 2);
+  }
+  let parsedCredentials;
+  try {
+    parsedCredentials = JSON.parse(readFileSync(credentialsFilePath, "utf8"));
+  } catch (error) {
+    fail("受保护凭据文件无法解析: " + String(error?.message ?? error), 2);
+  }
+  const credentialEntry = parsedCredentials?.[liveCredentialReferenceId];
+  if (
+    credentialEntry === undefined ||
+    typeof credentialEntry.apiKey !== "string" ||
+    credentialEntry.apiKey === ""
+  ) {
+    fail("受保护凭据文件中缺少可用条目: " + liveCredentialReferenceId, 2);
+  }
+  return credentialEntry.apiKey;
+}
+
 const checks = [];
 function record(checkName, isPassed, detail) {
   checks.push({ checkName, isPassed: Boolean(isPassed), detail: String(detail) });
@@ -158,6 +217,7 @@ writeFileSync(targetAbsolutePath, initialContent, "utf8");
 
 let requestCount = 0;
 let humanEditAppliedAtIso = null;
+let humanEditInstructionAtIso = null;
 let firstRequestAtIso = null;
 const requestBodyTexts = [];
 
@@ -247,8 +307,40 @@ const fakeProvider = http.createServer((request, response) => {
 
 await new Promise((resolve) => fakeProvider.listen(0, "127.0.0.1", resolve));
 const fakeProviderPort = fakeProvider.address().port;
-const providerEndpoint = "http://127.0.0.1:" + String(fakeProviderPort) + "/v1/chat/completions";
-console.log("假 Provider 端点: " + providerEndpoint);
+let providerEndpoint = "http://127.0.0.1:" + String(fakeProviderPort) + "/v1/chat/completions";
+let humanEditWindowProxy = null;
+if (isLiveProviderRun) {
+  /**
+   * 真实 Provider 模式：CLI 指向本地透传代理，代理再转发到真实端点。
+   * 代理会在含 `replaceFileContent` 的响应上扣留，等待人工编辑目标文件。
+   */
+  humanEditWindowProxy = await startHumanEditWindowProxy({
+    upstreamEndpoint: liveProviderEndpoint,
+    targetFilePath: targetAbsolutePath,
+    initialTargetContent: initialContent,
+    humanEditDeadlineMilliseconds: humanEditDeadlineSeconds * 1_000,
+    onHumanEditInstruction: (detail) => {
+      humanEditInstructionAtIso = new Date().toISOString();
+      console.log(
+        "\n>>> 需要人工编辑（窗口 " +
+          String(detail.deadlineMilliseconds / 1_000) +
+          " 秒）：请修改 " +
+          detail.targetFilePath +
+          "\n",
+      );
+    },
+    onHumanEditDetected: (detail) => {
+      humanEditAppliedAtIso = new Date().toISOString();
+      detectedHumanContent = detail.detectedContent;
+      console.log(">>> 已检测到人工编辑，放行被扣留的响应\n");
+    },
+  });
+  providerEndpoint = humanEditWindowProxy.endpoint;
+  console.log("真实端点: " + liveProviderEndpoint);
+  console.log("透传代理端点: " + providerEndpoint + "（真实密钥由 harness 注入 CLI 环境变量）");
+} else {
+  console.log("假 Provider 端点: " + providerEndpoint);
+}
 
 // ---------------------------------------------------------------------------
 // 3) 经安装包 CLI 运行（assist 模式；非交互裁决经 stdin 喂一次）
@@ -277,7 +369,7 @@ const childProcess = spawn(
     "--provider-model",
     modelIdentifier,
     "--provider-api-key-env",
-    fakeApiKeyEnvironmentVariableName,
+    isLiveProviderRun ? liveApiKeyEnvironmentVariableName : fakeApiKeyEnvironmentVariableName,
     "--provider-request-timeout-seconds",
     "60",
     "--timeout-seconds",
@@ -288,7 +380,14 @@ const childProcess = spawn(
     cwd: projectDirectory,
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
-    env: { ...process.env, NO_COLOR: "1", [fakeApiKeyEnvironmentVariableName]: "offline-no-auth-required" },
+    env: {
+      ...process.env,
+      NO_COLOR: "1",
+      ...(isLiveProviderRun
+        ? // 真实密钥只经环境变量注入子进程；**不打印、不落盘**。
+          { [liveApiKeyEnvironmentVariableName]: resolveLiveApiKey() }
+        : { [fakeApiKeyEnvironmentVariableName]: "offline-no-auth-required" }),
+    },
   },
 );
 
@@ -477,22 +576,52 @@ if (toolResultSnippets.length > 0) {
 }
 
 console.log("\n--- 判据 ---");
+/**
+ * 真实 Provider 模式下：请求体与请求数由**透传代理**采集（模型可能发多于 3 次请求），
+ * 且"人工编辑内容"由用户决定 → 相关判据改为对**全部请求体**与**检测到的内容**断言。
+ */
+const allRequestBodyText = requestBodyTexts.join("\n");
+const hasStaleRejectionAnywhere = allRequestBodyText.includes("stale-human-change");
+const hasReadFileAnywhere = allRequestBodyText.includes("readFile");
+const expectedHumanContent = isLiveProviderRun ? detectedHumanContent : humanContent;
 record(
   "① Agent 确实执行了两步（read 之后才有 replace）",
-  requestCount >= 3 && secondRequestBody.includes("readFile"),
-  "请求数=" + String(requestCount) + "，请求 #2 含 readFile=" + String(secondRequestBody.includes("readFile")),
+  isLiveProviderRun
+    ? requestCount >= 2 && hasReadFileAnywhere
+    : requestCount >= 3 && secondRequestBody.includes("readFile"),
+  "请求数=" + String(requestCount) + "，含 readFile=" + String(hasReadFileAnywhere),
 );
 record(
   "② 人工修改落在「已读、尚未写」窗口内",
-  humanEditAppliedAtIso !== null && firstRequestAtIso !== null && humanEditAppliedAtIso > firstRequestAtIso,
-  "首次请求=" + String(firstRequestAtIso) + "，人工修改=" + String(humanEditAppliedAtIso),
+  isLiveProviderRun
+    ? humanEditAppliedAtIso !== null &&
+      humanEditInstructionAtIso !== null &&
+      humanEditAppliedAtIso > humanEditInstructionAtIso &&
+      (humanEditWindowProxy?.getHeldResponseCount() ?? 0) >= 1
+    : humanEditAppliedAtIso !== null &&
+      firstRequestAtIso !== null &&
+      humanEditAppliedAtIso > firstRequestAtIso,
+  isLiveProviderRun
+    ? "扣留次数=" +
+      String(humanEditWindowProxy?.getHeldResponseCount() ?? 0) +
+      "，提示=" +
+      String(humanEditInstructionAtIso) +
+      "，编辑=" +
+      String(humanEditAppliedAtIso)
+    : "首次请求=" + String(firstRequestAtIso) + "，人工修改=" + String(humanEditAppliedAtIso),
 );
 record(
   "③ 陈旧写入被拒绝（错误回填给 Provider）",
-  thirdRequestBody.includes("stale-human-change"),
-  "请求 #3 含 stale-human-change=" + String(thirdRequestBody.includes("stale-human-change")),
+  isLiveProviderRun ? hasStaleRejectionAnywhere : thirdRequestBody.includes("stale-human-change"),
+  isLiveProviderRun
+    ? "全部请求体中含 stale-human-change=" + String(hasStaleRejectionAnywhere)
+    : "请求 #3 含 stale-human-change=" + String(thirdRequestBody.includes("stale-human-change")),
 );
-record("④ 人工修改逐字节保留", finalContent === humanContent, JSON.stringify(finalContent));
+record(
+  "④ 人工修改逐字节保留",
+  expectedHumanContent !== null && finalContent === expectedHumanContent,
+  JSON.stringify(finalContent),
+);
 record("⑤ Agent 待写内容未落盘", !finalContent.includes(agentContent.trim()), "目标文件未被覆盖为 Agent 内容");
 record("⑥ 未在人工改动后仍结案为 done", parsedCliResult?.status !== "done", "status=" + String(parsedCliResult?.status));
 
@@ -698,11 +827,18 @@ record(
 );
 
 const failedChecks = checks.filter((check) => !check.isPassed);
+if (humanEditWindowProxy !== null) {
+  await humanEditWindowProxy.close();
+}
 const verdict = {
   schemaVersion: 1,
   checkIdentifier: "e2e01-03-stale-write-preserves-human-edit",
   verdict: failedChecks.length > 0 ? "failed" : "passed",
-  isFakeProvider: true,
+  isFakeProvider: !isLiveProviderRun,
+  isRealAcceptanceEvidence:
+    isLiveProviderRun &&
+    failedChecks.length === 0 &&
+    (humanEditWindowProxy?.wasHumanEditDetected() ?? false),
   isRealAcceptanceEvidence: false,
   sourceCommit,
   sourceStatus,
@@ -715,6 +851,11 @@ const verdict = {
   recordedAtIso: new Date().toISOString(),
   cliExitCode: exitCode,
   fakeProviderRequestCount: requestCount,
+  liveProviderEndpoint: isLiveProviderRun ? liveProviderEndpoint : null,
+  credentialReferenceId: isLiveProviderRun ? liveCredentialReferenceId : null,
+  humanEditDetected: humanEditWindowProxy?.wasHumanEditDetected() ?? false,
+  heldResponseCount: humanEditWindowProxy?.getHeldResponseCount() ?? 0,
+  detectedHumanContent,
   cliReportedStatus: parsedCliResult?.status ?? null,
   persistedMissionStatus: parsedStatusCommand?.status ?? null,
   sdkReportedMissionStatus: parsedSdkMission?.status ?? null,
