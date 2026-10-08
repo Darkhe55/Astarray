@@ -621,7 +621,30 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
    由 `application-runtime`（掌握状态目录与 mission 快照）实现并把装饰器**套在最外层**
    （这样范围门禁的拒绝也能被记录）。
 
-**S2b 尝试与**回退**（本轮，**未提交**，代码已备份）**：
+**S2b 回归根因判定（本轮，仍未改产品代码）**：
+- **度量排除"写盘延迟"假设**：真实 `RecoveryCheckpointStore.writeCheckpoint` 实测
+  **3–9 ms**（连续 5 次共 24 ms），`selectLatestTrustedCheckpoint` **1 ms**。
+  即使 50 次写入也只有约 0.25 秒，**不可能**把 0.689 秒的用例拖成 30.7 秒 ⇒ 假设 (a) 排除。
+- **二分实验定位到"写入"而非"包装"**：把 S2b 接线恢复，但把
+  `RecoveryCheckpointingToolPort.execute` 改成**纯透传（不写任何检查点）** →
+  `authorization-retry-closure` **通过（830 ms，exit 0）**；带真实写入 → 失败（30.7 s，`status=blocked`）。
+  ⇒ **装饰器的包装位置无辜**，问题出在**检查点写入本身**（逻辑性，不是性能）。
+- **最强候选根因（待下轮取直接证据确认，不得凭猜修改）**：
+  `RecoveryCheckpointRecorder` 的**链状态是每实例私有**（`lastCheckpointHash` + 自增
+  `checkpointSequence`），而**同一个 store 会被多个记录器共用**（键为 `missionId::agentInstanceId`）。
+  第二个记录器可能：① 复用相同 `checkpointIdentifier`（各自都从 0001 起）；
+  ② 提出与 `selectLatestTrustedCheckpoint()` 不符的 `previousCheckpointHash`
+  → `writeCheckpoint` 抛"检查点哈希链断裂" → 装饰器在 `started` 阶段 **fail-closed**
+  → 工具不执行、任务重试直到 `blocked`（与该用例"文件最终存在但 status=blocked、耗时 30.7 s"吻合）。
+  旁证：我的 harness 只涉及**单个** agent（单记录器），链始终正常（4 个检查点、判据⑩ 通过）——
+  正好解释"harness 过、该用例挂"的分裂。
+- **下轮修法（顺序不可颠倒）**：先给 `application-runtime` 传 `onCheckpointWriteError` 把写失败落到文件
+  （该用例会丢弃 stderr），复现一次拿到"哈希链断裂"原文作为直接证据；再改为**无状态链**
+  （每次写入以 store 的最新可信检查点为唯一依据）+ **全局唯一且按时间单调的 `checkpointIdentifier`**
+  + **同进程跨记录器共享写队列**（串行化）。
+- 回滚状态：S2b 代码仍在 `.tmp/session-r2-04/s2b-reverted/`；工作区干净，`dist` 已重建为已提交状态。
+
+**S2b 尝试与回退（上一轮，未提交，代码已备份）**：
 - **做了什么**：在 `MainControllerOptions` 增 `buildRecoveryCheckpointingToolPort` 钩子，
   两处 `toolPortFactory`（assist/devolve）统一改走新私有方法 `buildWorkerToolPortWithRecoveryCheckpointing`，
   并在 `application-runtime` 实现该钩子（`RecoveryCheckpointStore` + 按
