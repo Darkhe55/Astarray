@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "checkIdentifier": "e2e01-03-boundary-interrupt",
+  "verdict": "passed",
+  "isFakeProvider": false,
+  "isRealAcceptanceEvidence": true,
+  "liveProviderEndpoint": "https://api.stepfun.com/v1/chat/completions",
+  "credentialReferenceId": "prov-live-1",
+  "sourceCommit": "0b712b1db0c57d9fea5a731a83df706e3adb83df",
+  "sourceStatus": "",
+  "tarballSha256": "8b175e316893089a42cec781d1abb87ee8827d71b2c2465422a60e287e4ccb4e",
+  "tarballSizeBytes": 1124541,
+  "recordedAtIso": "2026-10-09T13:06:34.407Z",
+  "observedToolCallState": "started",
+  "killedAfterMilliseconds": 4351,
+  "missionIdentifier": "mission-e3f20ea4",
+  "requestsBeforeResume": 0,
+  "requestsAfterResume": 0,
+  "resumeInspectOutput": "{\"missionIdentifier\":\"mission-e3f20ea4\",\"resumed\":false,\"recoveredSafeNodes\":[\"chatcmpl-tool-8216639c5ee205f9\"],\"readySetTaskNodeIdentifiers\":[],\"requiresHandoffIdentity\":false,\"identityRecoveries\":[{\"agentInstanceId\":\"worker:mission-e3f20ea4:T-001:1\",\"isReusingOriginalIdentity\":true,\"handoffReference\":null}],\"blockedDecisionItems\":[{\"item\":\"chatcmpl-tool-8b139a355f62101a\",\"decision\":\"blocked-uncertain-side-effect\",\"reason\":\"工具副作用未知，需用户裁决，禁止自动二次执行\"}],\"reauthorizationRequiredTypes\":[\"session-elevation\",\"installation-allow-once\",\"backup-deletion\",\"session-authorization\"],\"reconciliation\":{\"required\":false,\"gitStateAvailable\":false,\"isReadonlyConfirmed\":false,\"isSafeToProceed\":true,\"requiresHumanChangeReconciliation\":false,\"discrepancies\":[]},\"feedbackReplayEnqueueRange\":null,\"lostTimeWindowDescription\":null,\"requiresUserDecision\":true,\"executed\":false,\"status\":null,\"leaseTakeoverPerformed\":false,\"completedTaskCount\":0}\n",
+  "resumeInspectExitCode": 1,
+  "resumeExecuteOutput": "{\"missionIdentifier\":\"mission-e3f20ea4\",\"error\":\"mission-locked: mission 正在其他进程运行（属主 process-a6c1fd00-82c2-45cb-bb98-3ab6f133b580），拒绝续接以避免双跑: mission-e3f20ea4\",\"status\":\"mission-locked\"}\n",
+  "resumeExecuteExitCode": 1,
+  "requestCount": 0,
+  "sdkExitCode": 0,
+  "sdkStderr": "",
+  "recoveryOverview": {
+    "missions": [
+      {
+        "missionIdentifier": "mission-e3f20ea4",
+        "exists": true,
+        "reconciliationRequired": false,
+        "status": "running",
+        "isCorrupted": false,
+        "pendingTaskCount": 1,
+        "hasTrustedCheckpoint": true,
+        "isLeaseActive": true
+      }
+    ],
+    "requiresDecisionMissions": [
+      "mission-e3f20ea4"
+    ]
+  },
+  "finalTargetContent": "原始内容（中断前）\n",
+  "checks": [
+    {
+      "checkName": "⑪ 工具边界确实落下了检查点（中断前已可观察）",
+      "isPassed": true,
+      "detail": "观察到的状态=started"
+    },
+    {
+      "checkName": "⑫ 边界状态语义正确：非幂等写类工具要么未确认（started/result-unknown）要么已确认成功",
+      "isPassed": true,
+      "detail": "状态=started"
+    },
+    {
+      "checkName": "⑬ 崩溃后产品仍能看到**可信检查点**（此前产品路径从不写检查点）",
+      "isPassed": true,
+      "detail": "missions=1，hasTrustedCheckpoint=true，status=running"
+    },
+    {
+      "checkName": "⑭ 目标文件未出现重复副作用（内容为原始内容或单次写入）",
+      "isPassed": true,
+      "detail": "\"原始内容（中断前）\\n\""
+    },
+    {
+      "checkName": "⑮ 产品将边界中断的 mission 标为需要裁决（不自动重放）",
+      "isPassed": true,
+      "detail": "requiresDecisionMissions=[\"mission-e3f20ea4\"]"
+    },
+    {
+      "checkName": "⑯ 恢复未重放非幂等写（真实模式按恢复判定原文断言；离线按请求计数）",
+      "isPassed": true,
+      "detail": "resumed=false，executed=false，blockedDecisionItems=[{\"item\":\"chatcmpl-tool-8b139a355f62101a\",\"decision\":\"blocked-uncertain-side-effect\",\"reason\":\"工具副作用未知，需用户裁决，禁止自动二次执行\"}]"
+    },
+    {
+      "checkName": "⑰ 恢复尝试未改变目标文件（无重复副作用）",
+      "isPassed": true,
+      "detail": "\"原始内容（中断前）\\n\""
+    }
+  ]
+}

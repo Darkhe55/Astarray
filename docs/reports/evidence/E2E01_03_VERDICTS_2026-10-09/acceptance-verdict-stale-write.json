@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "checkIdentifier": "e2e01-03-stale-write-preserves-human-edit",
+  "verdict": "passed",
+  "isFakeProvider": false,
+  "isRealAcceptanceEvidence": true,
+  "sourceCommit": "0b712b1db0c57d9fea5a731a83df706e3adb83df",
+  "sourceStatus": "",
+  "tarballSha256": "8b175e316893089a42cec781d1abb87ee8827d71b2c2465422a60e287e4ccb4e",
+  "tarballSizeBytes": 1124541,
+  "installedCliPath": "C:\\Users\\MerchRev\\Documents\\astarray\\.tmp\\e2e01-03\\2026-10-09T13-08-12.367Z\\install\\node_modules\\astarray\\dist\\cli.js",
+  "modelIdentifier": "step-3.7-flash",
+  "providerEndpoint": "http://127.0.0.1:9646/v1/chat/completions",
+  "permissionDecisionSource": "explicit-flag",
+  "recordedAtIso": "2026-10-09T13:09:23.686Z",
+  "cliExitCode": 1,
+  "fakeProviderRequestCount": 3,
+  "liveProviderEndpoint": "https://api.stepfun.com/v1/chat/completions",
+  "credentialReferenceId": "prov-live-1",
+  "humanEditDetected": true,
+  "heldResponseCount": 1,
+  "detectedHumanContent": "初始内容（Agent 读到的是这份）\n修改过",
+  "cliReportedStatus": "blocked",
+  "persistedMissionStatus": "cancelled",
+  "sdkReportedMissionStatus": "cancelled",
+  "registeredFindings": [
+    {
+      "findingIdentifier": "e2e01-03-run-status-vs-persisted-mission-status",
+      "description": "`run --json` 的 status 与持久化 mission 状态不同值：前者报本次运行等待结果，后者是 mission 终态。需产品裁定是否为有意语义。",
+      "runReportedStatus": "blocked",
+      "persistedMissionStatus": "cancelled",
+      "sdkReportedStatus": "cancelled",
+      "persistedTaskStatus": "failed"
+    }
+  ],
+  "checks": [
+    {
+      "checkName": "① Agent 确实执行了两步（read 之后才有 replace）",
+      "isPassed": true,
+      "detail": "请求数=3，含 readFile=true"
+    },
+    {
+      "checkName": "② 人工修改落在「已读、尚未写」窗口内",
+      "isPassed": true,
+      "detail": "扣留次数=1，提示=2026-10-09T13:08:26.648Z，编辑=2026-10-09T13:08:45.379Z"
+    },
+    {
+      "checkName": "③ 陈旧写入被拒绝（错误回填给 Provider）",
+      "isPassed": true,
+      "detail": "全部请求体中含 stale-human-change=true"
+    },
+    {
+      "checkName": "④ 人工修改逐字节保留",
+      "isPassed": true,
+      "detail": "\"初始内容（Agent 读到的是这份）\\n修改过\""
+    },
+    {
+      "checkName": "⑤ Agent 待写内容未落盘",
+      "isPassed": true,
+      "detail": "目标文件未被覆盖为 Agent 内容"
+    },
+    {
+      "checkName": "⑥ 未在人工改动后仍结案为 done",
+      "isPassed": true,
+      "detail": "status=blocked"
+    },
+    {
+      "checkName": "⑦ 上下文预算实际执行（context-assembly 事件含有效预算）",
+      "isPassed": true,
+      "detail": "事件数=1，effectiveBudgetTokens=[4096]，budgetPolicyRevision=[1]"
+    },
+    {
+      "checkName": "⑧ CLI 持久化状态视图与 SDK 查询一致（验收④）",
+      "isPassed": true,
+      "detail": "status=cancelled / sdk=cancelled（missionId mission-dc364ff0）"
+    },
+    {
+      "checkName": "⑩ 工具调用边界真的写出了恢复检查点（验收②前提）",
+      "isPassed": true,
+      "detail": "检查点数=4，readFile=confirmed-success，replaceFileContent=result-unknown（isIdempotent=false）"
+    }
+  ],
+  "failedCheckNames": []
+}
