@@ -386,9 +386,15 @@ if (isLiveProviderRun) {
 const taskPrompt = [
   "只读约束与范围：本次任务只允许改动 " + targetFileName + " 一个文件，不要执行 shell 命令。",
   "",
-  "请按两步完成：",
+  "请按两步完成，两步都**必须真正调用工具**（不要只在回答里描述）：",
   "1. 先用内置工具 readFile 读取 " + targetFileName + "（参数 filePath）；",
-  "2. 再用内置工具 replaceFileContent 把它的内容覆盖为指定文本（参数 filePath 与 content）。",
+  "2. 再用内置工具 replaceFileContent 覆盖它（参数 filePath 与 content）。",
+  "   content 参数就**逐字**使用下面这段文本，不要改写、不要省略：",
+  "",
+  "----- 替换文本开始 -----",
+  agentContent.trimEnd(),
+  "----- 替换文本结束 -----",
+  "",
   "以工具返回结果为准：返回失败就如实说明失败原因，不得声称写入成功。",
 ].join("\n");
 
