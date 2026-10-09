@@ -62,7 +62,42 @@
   并发语义；**产品侧独立人工工作树分配（`GitWorktreeAllocator` 接线）不构成本节点的必过门禁**，
   归入另一个待办节点。故条款 2 的并发语义按本次实现取证，不再标记该口径为缺口。
 
-### 6.1 下一片（回访取证）的目标机制
+### 6.2 节点关闭与回访的机制落点（2026-10-09 查证）
+
+用户对"节点关闭"的定义：**节点被认定为已完成且后续大概率不会再使用**的上下文部分；
+关闭后**被视作记忆**，只有后续认定需要回溯时才翻看。代码事实与之一致：
+
+| 环节 | 落点 |
+|---|---|
+| 关闭触发 | `orchestration/context-node-lifecycle.ts:134`「任务完成的**产品级收口**」；Devolve 默认策略 `continue-with-deferred-review` |
+| 关闭产物 | 节点状态置 `deferred-review-closed`，生成**真实关闭胶囊**（＝"记忆"）与层级 ≤1 的**延迟人工核验待办** |
+| 回访入口 | 契约 `ASTARRAY_CONTEXT_RECALL_REQUEST_V1`；产品 CLI `context recall`（注册于 `packages/tui/src/cli.tsx:303`） |
+| 回访实现 | `orchestration/context-recall-controller.ts`：请求须绑定 `contextNodeIdentifier`／`nodeRevision`／`reasonCode`（六选一）／`requiredInformation`／`maximumTokenCount`；含**回访次数上界**（活锁保护）、**回执冷却**、敏感内容 fail-closed |
+| 发起者 | **harness 注入调用者身份**（`--agent`）——`ContextRecallController` **未接入 Agent 运行路径**，模型无法自行发起 |
+| 证据面 | **`recall-ledger`（按 `callerAgentInstanceId` 隔离）＋命令返回体**；**不写 `context-runtime/events.jsonl`**（实测：回访成功前后该文件均只有 1 条 `context-assembly`） |
+
+### 6.3 红／绿实测（同一安装包 CLI，产品路径）
+
+- **红（无记忆则拒绝）**：空状态目录上执行
+  `context recall --agent worker:red:T-001:1 --graph graph-red --request {合法 JSON}`
+  → `{"status":"not-found"}`，退出码 0，**state 目录零产物**。
+- **绿（有记忆则执行）**：
+  1. 真实 Provider（stepfun `step-3.7-flash`）跑一个**能完成**的只读任务 → 运行 `status=done`，
+     产出关闭胶囊 `…/agent-memory/<agent>/closure-capsules/capsule-node-T-001-4.json`、
+     上下文图 `…/context-graphs/mission-f640e7cc/context-graph.json`（节点 `node-T-001`、
+     状态 `deferred-review-closed`、图 revision 4）、
+     延迟核验待办 `…/deferred-verification-tasks/verify-T-001.json`（用户已批准产生）；
+  2. 对该状态目录执行 `context recall --agent worker:mission-f640e7cc:T-001:1 --graph mission-f640e7cc
+     --request {nodeRevision:4, reasonCode:"capsule-insufficient", maximumTokenCount:512}`
+     → `{"status":"ok","tier":"closure-capsule", … "estimatedTokenCount":354,"remainingTokenCount":158}`
+     并落盘 `…/agent-memory/<agent>/recall-ledger.json`。
+
+**结论**：条款 3 的"上下文预算/回访实际执行"两部分均已取得**产品路径**证据（预算：装配事件
+`effectiveBudgetTokens=4096` ＋ 回访按 `maximumTokenCount` 计费；回访：红例拒绝、绿例执行并落账本）。
+
+**尚未完成的形式化**：上述红/绿目前是**手工实测**（命令与输出已如实记录在本节），
+还需落成可重复运行的脚本与断言（先红后绿、单独提交推送），才算交付完整。
+
 
 "回访"在产品内指**分级上下文回访**：
 
