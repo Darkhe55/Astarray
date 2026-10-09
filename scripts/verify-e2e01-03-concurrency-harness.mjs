@@ -358,6 +358,20 @@ if (isLiveProviderRun) {
       detectedHumanContent = detail.detectedContent;
       console.log(">>> 已检测到人工编辑，放行被扣留的响应\n");
     },
+    /**
+     * 记录**上游原始响应**：这是上次失败无法诊断的关键缺口——
+     * 只看请求体无法判断"模型到底发起了哪个工具调用"。
+     */
+    onUpstreamResponse: (detail) => {
+      console.log(
+        ">>> 上游响应 #" +
+          String(detail.requestIndex) +
+          "：发起工具=" +
+          JSON.stringify(detail.requestedToolNames) +
+          "，扣留=" +
+          String(detail.wasHeld),
+      );
+    },
   });
   providerEndpoint = humanEditWindowProxy.endpoint;
   console.log("真实端点: " + liveProviderEndpoint);
@@ -592,6 +606,24 @@ writeFileSync(
 );
 writeFileSync(path.join(archiveRoot, "cli-stdout.txt"), stdoutText, "utf8");
 writeFileSync(path.join(archiveRoot, "cli-stderr.txt"), stderrText, "utf8");
+if (humanEditWindowProxy !== null) {
+  // 上游原始响应 + 每次请求实际发起的工具名：真实模式下唯一的"模型到底做了什么"证据。
+  writeFileSync(
+    path.join(archiveRoot, "upstream-responses.jsonl"),
+    humanEditWindowProxy
+      .getUpstreamResponseTexts()
+      .map((responseText, index) =>
+        JSON.stringify({
+          requestIndex: index + 1,
+          requestedToolNames: humanEditWindowProxy.getRequestedToolNamesByRequest()[index] ?? [],
+          responseText,
+        }),
+      )
+      .join("\n") + "\n",
+    "utf8",
+  );
+  console.log("上游响应证据: upstream-responses.jsonl");
+}
 console.log("原始证据: provider-requests.jsonl / cli-stdout.txt / cli-stderr.txt");
 
 // 诊断：把回填给 Provider 的工具结果文本摘出来（判定拒绝来源）。

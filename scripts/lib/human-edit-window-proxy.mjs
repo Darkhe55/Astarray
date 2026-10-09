@@ -16,6 +16,47 @@ import http from "node:http";
 import { readFileSync } from "node:fs";
 
 /**
+ * 从 SSE 响应体里解析出**真实发起**的工具名（不是文字里提到的）。
+ * 兼容 openai-compatible（`choices[].delta|message.tool_calls[].function.name`）
+ * 与 anthropic-messages（`content_block_start.content_block.name`）。
+ * @param {string} responseBody
+ * @returns {string[]}
+ */
+export function extractRequestedToolNames(responseBody) {
+  const toolNames = [];
+  for (const rawLine of responseBody.split(/\r?\n/)) {
+    const trimmedLine = rawLine.trim();
+    if (!trimmedLine.startsWith("data:")) continue;
+    const payloadText = trimmedLine.slice("data:".length).trim();
+    if (payloadText === "" || payloadText === "[DONE]") continue;
+    let parsedPayload;
+    try {
+      parsedPayload = JSON.parse(payloadText);
+    } catch {
+      continue;
+    }
+    const choices = Array.isArray(parsedPayload?.choices) ? parsedPayload.choices : [];
+    for (const choice of choices) {
+      for (const container of [choice?.delta, choice?.message]) {
+        const toolCalls = Array.isArray(container?.tool_calls) ? container.tool_calls : [];
+        for (const toolCall of toolCalls) {
+          const toolName = toolCall?.function?.name;
+          if (typeof toolName === "string" && toolName !== "") toolNames.push(toolName);
+        }
+      }
+    }
+    if (
+      parsedPayload?.type === "content_block_start" &&
+      parsedPayload?.content_block?.type === "tool_use" &&
+      typeof parsedPayload.content_block.name === "string"
+    ) {
+      toolNames.push(parsedPayload.content_block.name);
+    }
+  }
+  return toolNames;
+}
+
+/**
  * @param {{
  *   upstreamEndpoint: string,
  *   targetFilePath: string,
@@ -34,6 +75,8 @@ export async function startHumanEditWindowProxy(options) {
   let isHumanEditDetected = false;
   let detectedHumanContent = null;
   const requestBodyTexts = [];
+  const upstreamResponseTexts = [];
+  const requestedToolNamesByRequest = [];
 
   const readTargetContent = () => {
     try {
@@ -74,6 +117,7 @@ export async function startHumanEditWindowProxy(options) {
     incomingRequest.on("end", () => {
       void (async () => {
         requestCount += 1;
+        const currentRequestIndex = requestCount;
         requestBodyTexts.push(requestBody);
         // 透传请求头（去掉 host/content-length；其余原样，含 CLI 自己带的鉴权头）。
         const forwardedHeaders = {};
@@ -97,8 +141,28 @@ export async function startHumanEditWindowProxy(options) {
           upstreamBody = JSON.stringify({ error: "proxy-upstream-failure: " + String(error) });
         }
         // 只在"含目标工具调用"且"尚未检测到人工编辑"时扣留响应。
-        if (upstreamBody.includes(holdMarker) && !isHumanEditDetected) {
+        /**
+         * 只在"**真实发起**了目标工具调用"且"尚未检测到人工编辑"时扣留响应。
+         *
+         * 2026-10-09 实测教训：此前用 `upstreamBody.includes(holdMarker)` 子串匹配，
+         * 会把"模型只是在文字里提到该工具名"或"模型改调了别的工具"的响应也扣住，
+         * 结果扣错了响应（该次运行写入从未发生，最终 status=blocked /
+         * permissionAsk=requires-human-resubmission）。必须解析 tool_calls。
+         */
+        const requestedToolNames = extractRequestedToolNames(upstreamBody);
+        requestedToolNamesByRequest.push(requestedToolNames);
+        upstreamResponseTexts.push(upstreamBody);
+        const shouldHold = requestedToolNames.includes(holdMarker) && !isHumanEditDetected;
+        if (shouldHold) {
           heldResponseCount += 1;
+        }
+        options.onUpstreamResponse?.({
+          requestIndex: currentRequestIndex,
+          requestedToolNames,
+          wasHeld: shouldHold,
+          responseBody: upstreamBody,
+        });
+        if (shouldHold) {
           await waitForHumanEdit();
         }
         outgoingResponse.writeHead(upstreamStatus, {
@@ -121,6 +185,8 @@ export async function startHumanEditWindowProxy(options) {
       }),
     getRequestCount: () => requestCount,
     getRequestBodyTexts: () => [...requestBodyTexts],
+    getUpstreamResponseTexts: () => [...upstreamResponseTexts],
+    getRequestedToolNamesByRequest: () => requestedToolNamesByRequest.map((names) => [...names]),
     wasHumanEditDetected: () => isHumanEditDetected,
     getDetectedHumanContent: () => detectedHumanContent,
     getHeldResponseCount: () => heldResponseCount,

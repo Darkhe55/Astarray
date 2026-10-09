@@ -14,7 +14,29 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { startHumanEditWindowProxy } from "./human-edit-window-proxy.mjs";
+import { startHumanEditWindowProxy, extractRequestedToolNames } from "./human-edit-window-proxy.mjs";
+
+test("工具调用判定必须解析 tool_calls，而不是子串匹配（2026-10-09 真实失败教训）", () => {
+  // 只是文字里提到工具名（任务提示词/模型解释）→ 不得判为发起调用。
+  const textOnlyResponse =
+    "data: {\"choices\":[{\"delta\":{\"content\":\"我将使用 replaceFileContent 覆盖该文件\"}}]}\n\n" +
+    "data: [DONE]\n\n";
+  assert.deepEqual(extractRequestedToolNames(textOnlyResponse), []);
+  // 真正发起调用（openai-compatible）。
+  const openAiToolCall =
+    "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"replaceFileContent\",\"arguments\":\"{}\"}}]}}]}\n\n";
+  assert.deepEqual(extractRequestedToolNames(openAiToolCall), ["replaceFileContent"]);
+  // 改了别的工具 → 不得判为目标工具。
+  const otherToolCall =
+    "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"readFile\",\"arguments\":\"{}\"}}]}}]}\n\n";
+  assert.deepEqual(extractRequestedToolNames(otherToolCall), ["readFile"]);
+  // anthropic-messages 形态。
+  const anthropicToolCall =
+    "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"tool_use\",\"name\":\"replaceFileContent\"}}\n\n";
+  assert.deepEqual(extractRequestedToolNames(anthropicToolCall), ["replaceFileContent"]);
+  // 非 JSON / [DONE] 行不得抛错。
+  assert.deepEqual(extractRequestedToolNames("data: not-json\n\ndata: [DONE]\n\n"), []);
+});
 
 function buildFakeUpstream(responseBodies) {
   let callIndex = 0;
@@ -114,7 +136,9 @@ test("超时未编辑：放行且如实标记未检测到人工编辑（不伪�
   const temporaryDirectory = mkdtempSync(path.join(tmpdir(), "astarray-proxy-"));
   const targetFilePath = path.join(temporaryDirectory, "TARGET.txt");
   writeFileSync(targetFilePath, "原始\n", "utf8");
-  const upstreamBody = "data: {\"choices\":[],\"usage\":{}}\n\nreplaceFileContent\n";
+  // 必须是**真实发起的工具调用**（子串匹配时代这里放的是纯文本，现已按设计不再扣留）。
+  const upstreamBody =
+    "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"replaceFileContent\",\"arguments\":\"{}\"}}]}}]}\n\n";
   const upstream = buildFakeUpstream([upstreamBody]);
   const upstreamEndpoint = await listen(upstream);
   const proxy = await startHumanEditWindowProxy({
