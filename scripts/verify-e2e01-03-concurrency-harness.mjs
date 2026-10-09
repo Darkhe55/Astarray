@@ -404,7 +404,12 @@ const childProcess = spawn(
      */
     String(isLiveProviderRun ? humanEditDeadlineSeconds + 180 : 60),
     "--timeout-seconds",
-    "240",
+    /**
+     * CLI 自身的任务等待上限也必须**大于人工编辑窗口**（2026-10-09 实测：
+     * 硬编码 240s + harness 看门狗 300s 双双短于 900s 窗口 → CLI 在 300s 被强杀，
+     * exit 124、②③④⑩ 失败，一次真实调用被浪费）。
+     */
+    String(isLiveProviderRun ? humanEditDeadlineSeconds + 180 : 240),
     "--json",
   ],
   {
@@ -441,7 +446,7 @@ const exitCode = await new Promise((resolve) => {
       childProcess.kill();
       settle(124);
     }
-  }, 300_000);
+  }, isLiveProviderRun ? (humanEditDeadlineSeconds + 300) * 1_000 : 300_000);
 });
 fakeProvider.close();
 
