@@ -33,7 +33,7 @@
 
 ### E2E-01-03：真实服务与并行中断
 
-- 状态：pending（**未通过全部条款，故不标 done**）。进度（2026-10-09，代码 `0b712b1`，真实服务 `stepfun/step-3.7-flash`，tarball 隔离安装，用户在同一工作树内亲手并发修改一次）：条款 1「陈旧写入被拒绝且人工修改保留」、条款 2「恢复无重复副作用」、条款 4「CLI/SDK 最终状态一致」均已取得**真实 Provider**证据（判据③④⑤ / ⑪–⑰ / ⑧；判定文件 `isRealAcceptanceEvidence=true`）；**条款 3「上下文预算/回访实际执行」仅预算通过**（`context-assembly`，`effectiveBudgetTokens=4096`），**"回访"（分级上下文回访）实际执行无证据**，已按用户裁决另开一片取证。用户裁决"人工工作树"口径＝接受同工作树并发，不构成本节点门禁。证据：docs/reports/E2E01_03_REAL_SERVICE_AND_PARALLEL_INTERRUPT_EVIDENCE.md。
+- 状态：done（2026-10-09；四条验收均有**真实 Provider + tarball 隔离安装**证据：条款 1/2/4 见 `.tmp/e2e01-03/2026-10-09T13-08-12.367Z/acceptance-verdict.json` 与 `.tmp/e2e01-03-interrupt/<最新>/boundary-interrupt-verdict.json`（提交 `0b712b1`，均 `isRealAcceptanceEvidence=true`）；条款 3 的「上下文预算/回访实际执行」见 `.tmp/e2e01-03-recall/2026-10-09T13-59-08.716Z/context-recall-verdict.json`（提交 `0918a77`，8/8 判据、`sourceStatus=''`）。用户裁决：条款 3 的"回访"＝必修（已由**节点关闭→关闭胶囊（＝记忆）→回访真正执行并落账本**取证，脚本 `scripts/verify-e2e01-03-context-recall.mjs`）；"人工工作树"口径＝接受"同一工作树内用户亲手并发修改"，独立人工工作树接线不构成本节点门禁。汇总证据：docs/reports/E2E01_03_REAL_SERVICE_AND_PARALLEL_INTERRUPT_EVIDENCE.md）。
 - 工作：在获授权真实Provider上执行同场景，用户在人工工作树制造一次并发变化；再在工具调用边界中断恢复。（用户裁决：本次"同一工作树内亲手并发修改"已满足并发语义，独立人工工作树接线不构成本节点门禁。）
 - 验收：陈旧写入被拒绝且人工修改保留；恢复无重复副作用；上下文预算/回访实际执行；CLI/SDK最终状态一致。
 - 前驱：E2E-01-02。先通过前驱，再执行本节点。

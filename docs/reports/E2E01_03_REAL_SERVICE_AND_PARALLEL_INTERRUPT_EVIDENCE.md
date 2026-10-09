@@ -95,8 +95,24 @@
 **结论**：条款 3 的"上下文预算/回访实际执行"两部分均已取得**产品路径**证据（预算：装配事件
 `effectiveBudgetTokens=4096` ＋ 回访按 `maximumTokenCount` 计费；回访：红例拒绝、绿例执行并落账本）。
 
-**尚未完成的形式化**：上述红/绿目前是**手工实测**（命令与输出已如实记录在本节），
-还需落成可重复运行的脚本与断言（先红后绿、单独提交推送），才算交付完整。
+**形式化已完成**：上述红/绿已固化为可重复运行的脚本与断言
+`scripts/verify-e2e01-03-context-recall.mjs`（先红后绿 8 条判据；含 `--reuse-completed-state-directory`
+复用模式，可在不花额度的前提下对已有"已完成运行"的 state 目录复验绿例，该模式下会**清掉自己产生的
+回访账本**以避免回执冷却让 ⑥ 失真，并且**不**标记为真实验收证据）。
+
+### 6.4 条款 3 的最终真实证据（2026-10-09）
+
+- 完整运行（真实 Provider + tarball 隔离安装）：**8/8 判据通过、exit 0**
+  - 判定文件：`.tmp/e2e01-03-recall/2026-10-09T13-59-08.716Z/context-recall-verdict.json`
+  - `verdict=passed`、`isFakeProvider=false`、**`isRealAcceptanceEvidence=true`**、
+    `sourceCommit=0918a77`、`sourceStatus=''`（干净工作区）、`failedCheckNames=[]`
+  - `redRecallStatus=not-found`（红）／`greenRecallStatus=ok`＋`tier=closure-capsule`（绿）
+  - `contextNodeState=deferred-review-closed`、`capsuleIdentifier=capsule-node-T-001-4`、
+    延迟核验待办 `verify-T-001`（`priorityTier=1`）
+  - 回访计费：`estimatedTokenCount=347`（上限 512）、`remaining=165`
+- 复用模式自检（不花额度）：`.tmp/session-r2-04/recall-reuse-run1.log` —— 7/7、exit 0（③按设计跳过）。
+- **修正一处自身缺陷**：复用模式跳过判据③，故该模式下 `isRealAcceptanceEvidence` 必须为 `false`
+  （与 `667ae1f` 的"字段夸大"同类问题），已修。
 
 
 "回访"在产品内指**分级上下文回访**：
