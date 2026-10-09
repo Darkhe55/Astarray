@@ -621,6 +621,34 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
    由 `application-runtime`（掌握状态目录与 mission 快照）实现并把装饰器**套在最外层**
    （这样范围门禁的拒绝也能被记录）。
 
+**E2E-01-04 分支覆盖率冲刺（2026-10-09，进行中）**
+
+- 缺口起点：全局分支 **7848/9422 = 83.29%**，需补 **161 条**（阈值 85%）。
+  L0（无位置信息）223 条**无法定向补测**；可定位池 1351 条，缺口只能从这池补。
+- 工具与作战图：`scripts/report-uncovered-branches.mjs`（行级定位）、
+  `docs/reports/E2E01_04_BRANCH_COVERAGE_GAP_PLAN_2026-10-09.md`。
+  拿行级数据必须**复制 vitest 配置加 `json` reporter**（CLI `--coverage.reporter=json` 不生效）。
+- **方法（已被三轮验证）**：先取未覆盖行号 → **查该行所属函数的调用点确认可达** → 写用例 →
+  前后对照量化（同一测试集，只增测试文件）。已因此避免两类白工：registry 不走自有扫描器、
+  C 系路径不走 `buildImportWithInlineCodeMatch`。
+- 逐轮实测新增分支（`+41`）：
+
+| 轮 | 目标 | 新增 |
+|---|---|---|
+| 3 | `read-format-strategies.ts` C 系扩展名/无尾换行 | +11 |
+| 4 | `read-format-other-languages.ts` Go 段（经 registry） | +4 |
+| 5 | 同上改**直接调用**三个扫描器 | +6 |
+| 6 | `read-format-strategies.ts` C#/Java 同行导入 | +6 |
+| 7 | `diagnostic-event-store.ts` `aggregateDiagnosticEvents` | +6 |
+| 8 | `perf-event-store.ts` `isPerfSampleEvent`/空样本 | +8 |
+
+- 已提交推送：`c6b4903`、`4644392`、`4c4bffb`、`bd962c4`、`dcffadd`（每轮单独提交）。
+- **仍未动**：`smoke-install` 内部 `prepack → npm run check` 的负载型抖动（两次 exit 1，
+  失败用例隔离复跑 5/5、3/3、6/6 全通过）。
+- 下一批目标：`cross-project-authorization-store.ts`(23)、`instruction-window-store.ts`(15)、
+  `read-format` 家族余项、`local-preservation-service.ts`(44)、`public-sdk.ts`(51)、`commands.ts`(320，最后)。
+
+
 **S3 真实验收：①③④ 与 ② 均已取得真实 Provider 证据（2026-10-09）**
 
 两份判定文件，均为 `isFakeProvider=false` / `isRealAcceptanceEvidence=true` / 干净工作区：
