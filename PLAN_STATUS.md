@@ -631,16 +631,23 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
 - **方法（已被三轮验证）**：先取未覆盖行号 → **查该行所属函数的调用点确认可达** → 写用例 →
   前后对照量化（同一测试集，只增测试文件）。已因此避免两类白工：registry 不走自有扫描器、
   C 系路径不走 `buildImportWithInlineCodeMatch`。
-- 逐轮实测新增分支（`+41`）：
+- 逐轮实测新增分支（**累计 +50**）；全局实测：round 9 时为 **7895/9422 = 83.79%**（需 114 条）：
 
 | 轮 | 目标 | 新增 |
 |---|---|---|
 | 3 | `read-format-strategies.ts` C 系扩展名/无尾换行 | +11 |
-| 4 | `read-format-other-languages.ts` Go 段（经 registry） | +4 |
+| 4 | `read-format-other-languages.ts` Go 段（经 registry，**未打到**） | +4 |
 | 5 | 同上改**直接调用**三个扫描器 | +6 |
 | 6 | `read-format-strategies.ts` C#/Java 同行导入 | +6 |
 | 7 | `diagnostic-event-store.ts` `aggregateDiagnosticEvents` | +6 |
 | 8 | `perf-event-store.ts` `isPerfSampleEvent`/空样本 | +8 |
+| 9 | （全量重测：83.79%、需 114 条；无新增用例） | — |
+| 10 | `anthropic-messages-runtime.ts` 错误路径/选项透传 | +3 |
+| 11 | `instruction-window-store.ts` 持久化容错/并发守卫 | +6 |
+
+- **补充教训（第 4 次踩到）**：仅仅"查调用点"还不够。round 10 按未覆盖行号外推分支归属，
+  6 个用例只换来 +3 条——**未覆盖行号只能当候选定位，必须读该行代码确认分支归属**才能写有效用例。
+  round 11 改为先逐行读实现再写用例，6 个用例即 +6 条。
 
 - 已提交推送：`c6b4903`、`4644392`、`4c4bffb`、`bd962c4`、`dcffadd`（每轮单独提交）。
 - **仍未动**：`smoke-install` 内部 `prepack → npm run check` 的负载型抖动（两次 exit 1，
