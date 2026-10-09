@@ -174,6 +174,19 @@ export async function startHumanEditWindowProxy(options) {
     });
   });
 
+  /**
+   * **必须关闭 Node http.Server 的默认超时**（2026-10-09 实测踩到）：
+   * Node 默认 `requestTimeout = 300000ms`（5 分钟），而本代理要按人工编辑窗口
+   * （可长达 30 分钟）扣住响应——超时一到 Node 会**直接销毁 socket**，
+   * CLI 侧表现为 `Provider 请求失败或超时`，窗口白开。
+   * 证据：窗口 12:21:48 开启，CLI 于 12:27:25（≈5 分钟后）报请求失败，
+   * 而用户恰在该秒完成编辑 → `humanEditDetected=false`。
+   */
+  server.requestTimeout = 0;
+  server.headersTimeout = 0;
+  server.timeout = 0;
+  server.keepAliveTimeout = 0;
+
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   const port = typeof address === "object" && address !== null ? address.port : 0;
@@ -190,5 +203,12 @@ export async function startHumanEditWindowProxy(options) {
     wasHumanEditDetected: () => isHumanEditDetected,
     getDetectedHumanContent: () => detectedHumanContent,
     getHeldResponseCount: () => heldResponseCount,
+    /** 供自测断言"默认 5 分钟 requestTimeout 确已关闭"（否则长窗口必被销毁）。 */
+    getServerTimeoutMilliseconds: () => ({
+      requestTimeout: server.requestTimeout,
+      headersTimeout: server.headersTimeout,
+      timeout: server.timeout,
+      keepAliveTimeout: server.keepAliveTimeout,
+    }),
   };
 }

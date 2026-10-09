@@ -58,6 +58,31 @@ async function listen(server) {
   return "http://127.0.0.1:" + String(typeof address === "object" ? address.port : 0) + "/v1/chat/completions";
 }
 
+test("默认 5 分钟 requestTimeout 必须关闭（否则长窗口会被 Node 销毁 socket）", async () => {
+  const temporaryDirectory = mkdtempSync(path.join(tmpdir(), "astarray-proxy-"));
+  const targetFilePath = path.join(temporaryDirectory, "TARGET.txt");
+  writeFileSync(targetFilePath, "原始\n", "utf8");
+  const upstream = buildFakeUpstream(["data: [DONE]\n\n"]);
+  const upstreamEndpoint = await listen(upstream);
+  const proxy = await startHumanEditWindowProxy({
+    upstreamEndpoint,
+    targetFilePath,
+    initialTargetContent: "原始\n",
+  });
+  try {
+    assert.deepEqual(proxy.getServerTimeoutMilliseconds(), {
+      requestTimeout: 0,
+      headersTimeout: 0,
+      timeout: 0,
+      keepAliveTimeout: 0,
+    });
+  } finally {
+    await proxy.close();
+    upstream.close();
+    rmSync(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
 test("不含目标工具调用的响应必须立即放行", async () => {
   const temporaryDirectory = mkdtempSync(path.join(tmpdir(), "astarray-proxy-"));
   const targetFilePath = path.join(temporaryDirectory, "TARGET.txt");
