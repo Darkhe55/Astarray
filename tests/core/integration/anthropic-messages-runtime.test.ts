@@ -246,3 +246,161 @@ describe("Anthropic Messages runtime：工具与结果形态转换", () => {
     await expect(collectEvents(runtime, buildAgentRunInput())).rejects.toThrow(/stop_reason=max_tokens/);
   });
 });
+
+/**
+ * 用量捕获分支（2026-10-06 真实实测修正，2026-10-09 补测）。
+ *
+ * 这些分支来自真实厂商形态踩出来的缺陷，必须逐条固定：
+ *  - `message_delta.usage` 是**累计终值**，给出的字段一律**覆盖** `message_start` 初值
+ *    （真实厂商把 `message_start.message.usage.input_tokens` 发成 0，真实输入只在 delta 里）；
+ *  - `usage` 可为**显式 null**（与 OpenAI 兼容侧同类形态），判空必须容忍；
+ *  - 未拿到完整用量时**不得记 0**，必须带出可解释原因；
+ *  - 观测失败不得阻塞业务。
+ */
+describe("Anthropic Messages runtime：用量捕获分支", () => {
+  type CapturedUsageRecord = Record<string, unknown>;
+
+  function buildUsageObserver(
+    capturedRecords: CapturedUsageRecord[],
+    shouldThrow = false,
+  ): { recordProviderRequestUsage: (input: CapturedUsageRecord) => Promise<void> } {
+    return {
+      recordProviderRequestUsage: async (input: CapturedUsageRecord): Promise<void> => {
+        if (shouldThrow) throw new Error("observer-down");
+        capturedRecords.push(input);
+      },
+    };
+  }
+
+  function buildRuntime(
+    baseUrl: string,
+    providerRequestUsageObserver?: { recordProviderRequestUsage: (input: CapturedUsageRecord) => Promise<void> },
+  ): AnthropicMessagesRuntime {
+    return new AnthropicMessagesRuntime({
+      baseUrl,
+      apiKey: "test-key",
+      model: "u2-flash",
+      requestTimeoutMilliseconds: 5_000,
+      ...(providerRequestUsageObserver === undefined ? {} : { providerRequestUsageObserver }),
+    });
+  }
+
+  it("⑤ 完整用量：message_start 给输入与缓存读，message_delta 给输出，且不带缺失原因", async () => {
+    const { baseUrl } = await startFakeAnthropicServer(
+      sse({
+        type: "message_start",
+        message: { usage: { input_tokens: 100, cache_read_input_tokens: 40 } },
+      }) +
+        sse({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "好" } }) +
+        sse({ type: "message_delta", usage: { output_tokens: 20 }, delta: { stop_reason: "end_turn" } }),
+    );
+    const capturedRecords: CapturedUsageRecord[] = [];
+    const runtime = buildRuntime(baseUrl, buildUsageObserver(capturedRecords));
+
+    await collectEvents(runtime, buildAgentRunInput());
+
+    expect(capturedRecords).toHaveLength(1);
+    expect(capturedRecords[0]).toMatchObject({
+      missionIdentifier: "mission-1",
+      sourceAgentInstanceId: "agent-1",
+      modelIdentifier: "u2-flash",
+      inputTokenCount: 100,
+      outputTokenCount: 20,
+      cachedInputTokenCount: 40,
+    });
+    // 完整用量不得携带缺失原因
+    expect(capturedRecords[0]?.["missingUsageReason"]).toBeUndefined();
+  });
+
+  it("⑥ message_delta 覆盖 message_start（真实厂商把 start 的输入发成 0）", async () => {
+    const { baseUrl } = await startFakeAnthropicServer(
+      sse({ type: "message_start", message: { usage: { input_tokens: 0 } } }) +
+        sse({
+          type: "message_delta",
+          usage: { input_tokens: 137, output_tokens: 9 },
+          delta: { stop_reason: "end_turn" },
+        }),
+    );
+    const capturedRecords: CapturedUsageRecord[] = [];
+    const runtime = buildRuntime(baseUrl, buildUsageObserver(capturedRecords));
+
+    await collectEvents(runtime, buildAgentRunInput());
+
+    expect(capturedRecords).toHaveLength(1);
+    // 若未实现覆盖规则，这里会是 0——真实运行曾因此统计错误
+    expect(capturedRecords[0]?.["inputTokenCount"]).toBe(137);
+    expect(capturedRecords[0]?.["outputTokenCount"]).toBe(9);
+  });
+
+  it("⑦ usage 显式为 null：容忍并报告响应未包含用量（不得记 0）", async () => {
+    const { baseUrl } = await startFakeAnthropicServer(
+      sse({ type: "message_start", message: { usage: null } }) +
+        sse({ type: "message_delta", usage: null, delta: { stop_reason: "end_turn" } }),
+    );
+    const capturedRecords: CapturedUsageRecord[] = [];
+    const runtime = buildRuntime(baseUrl, buildUsageObserver(capturedRecords));
+
+    await collectEvents(runtime, buildAgentRunInput());
+
+    expect(capturedRecords).toHaveLength(1);
+    expect(capturedRecords[0]?.["inputTokenCount"]).toBeNull();
+    expect(capturedRecords[0]?.["outputTokenCount"]).toBeNull();
+    expect(capturedRecords[0]?.["missingUsageReason"]).toBe(
+      "provider-response-did-not-include-usage",
+    );
+  });
+
+  it("⑧ 只拿到部分用量：报告 provider-usage-incomplete（与'完全没带'区分）", async () => {
+    const { baseUrl } = await startFakeAnthropicServer(
+      sse({ type: "message_start", message: { usage: { input_tokens: 55 } } }) +
+        sse({ type: "message_delta", delta: { stop_reason: "end_turn" } }),
+    );
+    const capturedRecords: CapturedUsageRecord[] = [];
+    const runtime = buildRuntime(baseUrl, buildUsageObserver(capturedRecords));
+
+    await collectEvents(runtime, buildAgentRunInput());
+
+    expect(capturedRecords).toHaveLength(1);
+    expect(capturedRecords[0]?.["inputTokenCount"]).toBe(55);
+    expect(capturedRecords[0]?.["outputTokenCount"]).toBeNull();
+    expect(capturedRecords[0]?.["missingUsageReason"]).toBe("provider-usage-incomplete");
+  });
+
+  it("⑨ 多次 delta 只上报一次（不得重复记账）", async () => {
+    const { baseUrl } = await startFakeAnthropicServer(
+      sse({ type: "message_start", message: { usage: { input_tokens: 10 } } }) +
+        sse({ type: "message_delta", usage: { output_tokens: 3 }, delta: { stop_reason: null } }) +
+        sse({ type: "message_delta", usage: { output_tokens: 7 }, delta: { stop_reason: null } }) +
+        sse({ type: "message_delta", usage: { output_tokens: 11 }, delta: { stop_reason: "end_turn" } }),
+    );
+    const capturedRecords: CapturedUsageRecord[] = [];
+    const runtime = buildRuntime(baseUrl, buildUsageObserver(capturedRecords));
+
+    await collectEvents(runtime, buildAgentRunInput());
+
+    expect(capturedRecords).toHaveLength(1);
+    expect(capturedRecords[0]?.["outputTokenCount"]).toBe(11);
+  });
+
+  it("⑩ 观测器抛错不得阻塞业务（沿用既定纪律）", async () => {
+    const { baseUrl } = await startFakeAnthropicServer(
+      sse({ type: "message_start", message: { usage: { input_tokens: 1 } } }) +
+        sse({ type: "message_delta", usage: { output_tokens: 1 }, delta: { stop_reason: "end_turn" } }),
+    );
+    const runtime = buildRuntime(baseUrl, buildUsageObserver([], true));
+
+    const events = await collectEvents(runtime, buildAgentRunInput());
+    expect(events.at(-1)).toMatchObject({ kind: "runFinished", reason: "success" });
+  });
+
+  it("⑪ 未装配观测器时不影响运行", async () => {
+    const { baseUrl } = await startFakeAnthropicServer(
+      sse({ type: "message_start", message: { usage: { input_tokens: 1 } } }) +
+        sse({ type: "message_delta", usage: { output_tokens: 1 }, delta: { stop_reason: "end_turn" } }),
+    );
+    const runtime = buildRuntime(baseUrl);
+
+    const events = await collectEvents(runtime, buildAgentRunInput());
+    expect(events.at(-1)).toMatchObject({ kind: "runFinished", reason: "success" });
+  });
+});
