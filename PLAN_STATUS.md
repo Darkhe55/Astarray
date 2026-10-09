@@ -621,7 +621,33 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
    由 `application-runtime`（掌握状态目录与 mission 快照）实现并把装饰器**套在最外层**
    （这样范围门禁的拒绝也能被记录）。
 
-**S3 真实验收：两次尝试失败与修复（2026-10-08 / 10-09，均为我方参数错，额度已如实登记）**
+**S3 真实验收：**通过**（2026-10-09，stepfun / step-3.7-flash / openai-compatible）**
+
+- **运行条件**：提交 `e70d950`、工作区**干净**（`sourceStatus: ''`）、tarball 隔离安装、
+  真实端点 `https://api.stepfun.com/v1/chat/completions`、凭据引用 `prov-live-1`
+  （密钥只经环境变量注入 CLI，**全程未打印、未落盘**）；**用户在"已读未写"窗口亲手编辑**。
+- **全部 9 条判据通过**（`verdict: passed`、`failedCheckNames: []`）：
+  ① 两步执行（请求数=3）；② 编辑落在读→写窗口（扣留 `12:29:36` → 编辑 `12:34:10`）；
+  ③ **陈旧写入被拒**（`stale-human-change` 回填 Provider）；④ **人工字节逐字节保留**（`…\n修改`）；
+  ⑤ Agent 内容未落盘；⑥ 未结案 `done`（`status=blocked`）；
+  ⑦ 上下文预算实际执行（`effectiveBudgetTokens=4096`、`budgetPolicyRevision=1`）；
+  ⑧ CLI 持久化视图与 SDK 一致（`cancelled / cancelled`）；
+  ⑩ 工具边界写出恢复检查点（4 个，`replaceFileContent=result-unknown`、非幂等）。
+- 原始证据在运行目录：`provider-requests.jsonl`、`upstream-responses.jsonl`（新增：上游原始响应
+  与实际发起的工具名）、`cli-stdout/stderr.txt`、`cli-status-command.json`、`sdk-query-mission.json`、
+  `acceptance-verdict.json`。代理日志逐次记录"发起工具=[...]、扣留=?"。
+- **诚实标注的两点**：
+  1. `acceptance-verdict.json` 里的 `isRealAcceptanceEvidence` 仍写着 `false`——
+     根因是 verdict 对象**残留一行重复键**覆盖了条件判定（已在 `667ae1f` 修掉，离线复验仍为 `False`
+     未误报）。**该文件中的判据、`isFakeProvider:false`、`humanEditDetected:true` 都是真实的**，
+     只有这一个字段因代码缺陷而错。
+  2. 该次 harness 进程因**子进程句柄未释放**而没退出（已知残留问题），
+     因此**没有干净的进程退出码**；结论以判定文件与日志的结论行为准。
+- **验收②的真实 Provider 覆盖度**：⑩（边界写检查点）已在真实运行中取证；
+  但**崩溃+恢复**那一段（⑪–⑰：强杀、`requiresDecisionMissions`、`recover resume`
+  返回 `resumed:false`/`blocked-uncertain-side-effect`、无新请求无文件变化）目前**仍是离线（假 Provider）证据**。
+- **额度**：本轮真实调用共 3 次（读 + 被扣留的写入 + 被拒后的收尾）。
+
 
 目标组合：`unisound / u2-flash / anthropic-messages`（凭据引用 `prov-unisound-1`）。
 机制：本地**透传代理**（`scripts/lib/human-edit-window-proxy.mjs`）扣住含 `replaceFileContent`
