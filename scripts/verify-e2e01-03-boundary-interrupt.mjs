@@ -403,9 +403,12 @@ record(
 /**
  * ⑯⑰ 真正驱动**产品恢复路径**：`recover resume [--execute]`。
  *
- * 关键：此刻假 Provider **仍在监听**。若恢复真的重放了那个非幂等写，它必然打到
- * Provider（请求数上升）并可能改写目标文件。因此"请求数不变 + 文件内容不变"
- * 是"恢复没有重复副作用"的决定性证据，而不是"因为没有 Provider 所以跑不动"的假象。
+ * - 离线（假 Provider 仍监听）：若恢复真的重放了那个非幂等写，必然打到 Provider
+ *   （请求数上升）并可能改写目标文件 → "请求数不变 + 文件内容不变"是决定性证据。
+ * - **真实模式**：请求计数器结构上恒为 0（无假 Provider），故改按**恢复判定的原文**断言
+ *   （2026-10-09 实测发现原实现的 ⑯ 在真实模式下是**空判据**，已修）：
+ *   要求 `resumed=false`、`executed=false`，且 `blockedDecisionItems` 中确有
+ *   `blocked-uncertain-side-effect`（"禁止自动二次执行"）。
  */
 const missionIdentifier = missionWithTrustedCheckpoint?.missionIdentifier ?? null;
 const requestsBeforeResume = requestCount;
@@ -453,10 +456,37 @@ const contentAfterResume = readFileSync(targetAbsolutePath, "utf8");
 const resumeOutputText = [resumeInspectResult?.stdout, resumeExecuteResult?.stdout]
   .filter((text) => typeof text === "string")
   .join("\n");
+/** 解析只读 resume 的 JSON（取末个完整对象行）。 */
+const parsedResumeInspect = (() => {
+  const rawText = (resumeInspectResult?.stdout ?? "").trim();
+  if (rawText === "") return null;
+  try {
+    return JSON.parse(rawText.split("\n").at(-1));
+  } catch {
+    return null;
+  }
+})();
+const blockedDecisionItems = Array.isArray(parsedResumeInspect?.blockedDecisionItems)
+  ? parsedResumeInspect.blockedDecisionItems
+  : [];
+const hasBlockedUncertainSideEffect = blockedDecisionItems.some(
+  (decisionItem) => decisionItem?.decision === "blocked-uncertain-side-effect",
+);
 record(
-  "⑯ 恢复尝试未产生新的 Provider 请求（未重放非幂等写）",
-  requestCount === requestsBeforeResume,
-  "恢复前请求数=" + String(requestsBeforeResume) + "，恢复后=" + String(requestCount),
+  "⑯ 恢复未重放非幂等写（真实模式按恢复判定原文断言；离线按请求计数）",
+  isLiveProviderRun
+    ? parsedResumeInspect?.resumed === false &&
+      parsedResumeInspect?.executed === false &&
+      hasBlockedUncertainSideEffect
+    : requestCount === requestsBeforeResume,
+  isLiveProviderRun
+    ? "resumed=" +
+      String(parsedResumeInspect?.resumed) +
+      "，executed=" +
+      String(parsedResumeInspect?.executed) +
+      "，blockedDecisionItems=" +
+      JSON.stringify(blockedDecisionItems)
+    : "恢复前请求数=" + String(requestsBeforeResume) + "，恢复后=" + String(requestCount),
 );
 record(
   "⑰ 恢复尝试未改变目标文件（无重复副作用）",
@@ -517,4 +547,9 @@ if (failedChecks.length > 0) {
   console.error("\n边界中断场景未通过（" + String(failedChecks.length) + " 项失败）");
   process.exit(1);
 }
-console.log("\nE2E-01-03 边界中断场景通过：崩溃后仍有可信检查点（假 Provider，非真实验收）");
+console.log(
+  "\nE2E-01-03 边界中断场景通过：崩溃后仍有可信检查点" +
+    (isLiveProviderRun && checks.every((check) => check.isPassed)
+      ? "（**真实 Provider**：真实验收证据）"
+      : "（假 Provider，非真实验收）"),
+);
