@@ -917,11 +917,15 @@ const verdict = {
   checkIdentifier: "e2e01-03-stale-write-preserves-human-edit",
   verdict: failedChecks.length > 0 ? "failed" : "passed",
   isFakeProvider: !isLiveProviderRun,
+  /**
+   * **只有**"真实端点 + 全部判据通过 + 代理确认检测到人工编辑"三者同时成立才算真实验收证据。
+   * （2026-10-09 教训：此处曾残留一行重复的 `isRealAcceptanceEvidence: false` 覆盖本判定，
+   * 导致真实运行通过却仍被标记为非真实验收——对象字面量后写的键会覆盖前面的。）
+   */
   isRealAcceptanceEvidence:
     isLiveProviderRun &&
     failedChecks.length === 0 &&
     (humanEditWindowProxy?.wasHumanEditDetected() ?? false),
-  isRealAcceptanceEvidence: false,
   sourceCommit,
   sourceStatus,
   tarballSha256,
@@ -959,4 +963,9 @@ if (failedChecks.length > 0) {
   }
   process.exit(1);
 }
-console.log("\nE2E-01-03 S1b：安装包路径下陈旧写入被拒绝且人工修改保留 ✓（假 Provider，非真实验收）");
+console.log(
+  "\nE2E-01-03：安装包路径下陈旧写入被拒绝且人工修改保留 ✓" +
+    (verdict.isRealAcceptanceEvidence
+      ? "（**真实 Provider + 真实人工编辑**：真实验收证据）"
+      : "（假 Provider / 未检测到人工编辑：**非**真实验收）"),
+);
