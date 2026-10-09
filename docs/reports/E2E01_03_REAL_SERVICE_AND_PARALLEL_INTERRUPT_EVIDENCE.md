@@ -55,7 +55,31 @@
 | `e70d950` | **Node `http.Server` 默认 `requestTimeout`=5 分钟** | 扣留到 5 分钟被销毁 socket，用户编辑恰在那一秒 |
 | `667ae1f` / `0b712b1` | verdict 残留重复键覆盖判定；真实模式下 ⑯ 读假 Provider 计数器（空判据） | 判据标注错误 / 空过 |
 
-## 5. 额度与遗留
+## 6. 用户裁决与下一片（2026-10-09）
+
+- **条款 3 的"回访"＝必修**：用户裁决另开一片取证，本节点在此之前保持 `pending`。
+- **"人工工作树"口径＝接受同工作树并发**：用户裁决"本次同一工作树内用户亲手并发修改"已满足
+  并发语义；**产品侧独立人工工作树分配（`GitWorktreeAllocator` 接线）不构成本节点的必过门禁**，
+  归入另一个待办节点。故条款 2 的并发语义按本次实现取证，不再标记该口径为缺口。
+
+### 6.1 下一片（回访取证）的目标机制
+
+"回访"在产品内指**分级上下文回访**：
+
+- 入口契约：`ASTARRAY_CONTEXT_RECALL_REQUEST_V1`（`orchestration/context-closure-schemas.ts`）
+- 控制器：`orchestration/context-recall-controller.ts`（分级上下文回访；每次任务执行**回访次数有界**、
+  敏感内容 fail-closed 丢弃整个结果）
+- 账本：`orchestration/context-recall-ledger-store.ts`（回执冷却与任务级回访预算持久化）
+- **证据面**：`orchestration/context-runtime-metrics.ts` 明确"原始事件来自真实装配与回访路径
+  （**JSONL 持久化**）" —— 即回访实际执行应体现为 `context-runtime/events.jsonl` 中
+  `context-assembly` 之外的**回访类事件**；本次真实运行只有 1 条 `context-assembly`，故无证据。
+
+**下一片要做的事**（尚未开始）：
+
+1. 侦察回访的实际触发条件（需要哪些前置：存在可回访的关闭/嵌套节点？模型如何发起？事件名与字段？）；
+2. 构造能在**真实 Provider + tarball 隔离安装**下真正触发一次回访的场景；
+3. 以持久化事件为证据，逐条记录（含回访次数上界、DLP 与预算是否参与），再回填本报告与卡内条款 3。
+
 
 - 真实调用：失败尝试若干 + ①③④ 两次成功运行各 3 次 + ② 两次各约 2–3 次；均已如实登记。
 - harness 进程在写出判定文件后**不退出**（子进程句柄未释放，已知残留问题），
