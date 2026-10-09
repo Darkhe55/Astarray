@@ -75,6 +75,49 @@ const modelIdentifier = takeArgument("--model", "e2e01-03-interrupt-model");
 const fakeApiKeyEnvironmentVariableName = "ASTARRAY_E2E01_03_INTERRUPT_KEY";
 const targetFileName = "TARGET.txt";
 
+/**
+ * 真实 Provider 模式（2026-10-09）：给出 `--live-provider-endpoint` 即启用。
+ *
+ * 与 concurrency harness 不同，**本场景不需要人工编辑窗口**（它要的是"在工具边界强杀"），
+ * 因此**不使用扣留代理**——直接指向真实端点纯透传，靠轮询检查点决定强杀时机。
+ * 默认（不给该参数）仍走进程内假 Provider。
+ */
+const liveProviderEndpoint = takeArgument("--live-provider-endpoint", null);
+const isLiveProviderRun = liveProviderEndpoint !== null;
+const liveCredentialSource = takeArgument("--credential-source", "state");
+const liveCredentialReferenceId = takeArgument("--credential-reference-id", "prov-live-1");
+const liveApiKeyEnvironmentVariableName = "ASTARRAY_PROVIDER_API_KEY";
+const protocolLabel = takeArgument("--protocol-label", "openai-compatible");
+
+function resolveLiveApiKey() {
+  if (liveCredentialSource === "env") {
+    const providedKey = process.env[liveApiKeyEnvironmentVariableName];
+    if (providedKey === undefined || providedKey === "") {
+      fail("--credential-source env 要求环境变量 " + liveApiKeyEnvironmentVariableName + " 已设置", 2);
+    }
+    return providedKey;
+  }
+  const credentialsFilePath = path.join(
+    repositoryRoot,
+    ".astarray",
+    "providers",
+    "provider-credentials.json",
+  );
+  if (!existsSync(credentialsFilePath)) {
+    fail("--credential-source state 需要受保护凭据文件存在: " + credentialsFilePath, 2);
+  }
+  const parsedCredentials = JSON.parse(readFileSync(credentialsFilePath, "utf8"));
+  const credentialEntry = parsedCredentials?.[liveCredentialReferenceId];
+  if (
+    credentialEntry === undefined ||
+    typeof credentialEntry.apiKey !== "string" ||
+    credentialEntry.apiKey === ""
+  ) {
+    fail("受保护凭据文件中缺少可用条目: " + liveCredentialReferenceId, 2);
+  }
+  return credentialEntry.apiKey;
+}
+
 const checks = [];
 function record(checkName, isPassed, detail) {
   checks.push({ checkName, isPassed: Boolean(isPassed), detail: String(detail) });
@@ -158,12 +201,20 @@ const fakeProvider = http.createServer((request, response) => {
   });
 });
 await new Promise((resolve) => fakeProvider.listen(0, "127.0.0.1", resolve));
-const providerEndpoint =
-  "http://127.0.0.1:" + String(fakeProvider.address().port) + "/v1/chat/completions";
+const providerEndpoint = isLiveProviderRun
+  ? liveProviderEndpoint
+  : "http://127.0.0.1:" + String(fakeProvider.address().port) + "/v1/chat/completions";
 
+/** 待写入内容必须**逐字**给出：真实模型不会自行编造 content（否则拒绝执行）。 */
+const agentInterruptContent = "Agent 写入（中断场景）\n";
 const taskPrompt = [
-  "只读约束与范围：本次任务只允许改动 " + targetFileName + "。",
-  "请用内置工具 replaceFileContent 把 " + targetFileName + " 的内容覆盖为指定文本。",
+  "只读约束与范围：本次任务只允许改动 " + targetFileName + " 一个文件，不要执行 shell 命令。",
+  "请**真正调用**内置工具 replaceFileContent 覆盖 " + targetFileName + "（参数 filePath 与 content）。",
+  "content 参数逐字使用下面这段文本，不要改写：",
+  "",
+  "----- 替换文本开始 -----",
+  agentInterruptContent.trimEnd(),
+  "----- 替换文本结束 -----",
 ].join("\n");
 
 const childProcess = spawn(
@@ -175,24 +226,32 @@ const childProcess = spawn(
     "--mode",
     runMode,
     "--runtime",
-    "openai-compatible",
+    protocolLabel,
     "--provider-endpoint",
     providerEndpoint,
     "--provider-model",
     modelIdentifier,
+    ...(protocolLabel === "openai-compatible" ? [] : ["--provider-protocol", protocolLabel]),
     "--provider-api-key-env",
-    fakeApiKeyEnvironmentVariableName,
+    isLiveProviderRun ? liveApiKeyEnvironmentVariableName : fakeApiKeyEnvironmentVariableName,
     "--provider-request-timeout-seconds",
-    "30",
+    "60",
     "--timeout-seconds",
-    "120",
+    "180",
     "--json",
   ],
   {
     cwd: projectDirectory,
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
-    env: { ...process.env, NO_COLOR: "1", [fakeApiKeyEnvironmentVariableName]: "offline-no-auth-required" },
+    env: {
+      ...process.env,
+      NO_COLOR: "1",
+      ...(isLiveProviderRun
+        ? // 真实密钥只经环境变量注入子进程；**不打印、不落盘**。
+          { [liveApiKeyEnvironmentVariableName]: resolveLiveApiKey() }
+        : { [fakeApiKeyEnvironmentVariableName]: "offline-no-auth-required" }),
+    },
   },
 );
 childProcess.stdout.resume();
@@ -418,8 +477,14 @@ writeFileSync(
       schemaVersion: 1,
       checkIdentifier: "e2e01-03-boundary-interrupt",
       verdict: checks.every((check) => check.isPassed) ? "passed" : "failed",
-      isFakeProvider: true,
-      isRealAcceptanceEvidence: false,
+      isFakeProvider: !isLiveProviderRun,
+      /**
+       * 真实验收证据需：真实端点 + 全部判据通过。
+       * 注意：本场景**不需要**人工编辑窗口（目标是边界强杀），故不以"检测到人工编辑"为条件。
+       */
+      isRealAcceptanceEvidence: isLiveProviderRun && checks.every((check) => check.isPassed),
+      liveProviderEndpoint: isLiveProviderRun ? liveProviderEndpoint : null,
+      credentialReferenceId: isLiveProviderRun ? liveCredentialReferenceId : null,
       sourceCommit,
       sourceStatus,
       tarballSha256,
