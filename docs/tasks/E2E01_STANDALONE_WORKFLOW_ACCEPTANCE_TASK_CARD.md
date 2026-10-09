@@ -40,7 +40,7 @@
 
 ### E2E-01-04：质量与交付声明
 
-- 状态：in_progress（本地可证项已在 `6461690` 刷新复核：**228 文件/1854 用例**、全局 **93.09/85.24/93.13/93.11**、关键安全模块 **22/22 ≥95%**、tarball 回归 exit 0（215 文件，sha256 `a45ae4da…d1f`）、E2E-01-01 fixture 复现一致；证据 docs/reports/E2E01_04_LOCAL_REFRESH_2026-09-19.md，历史口径见 docs/reports/E2E01_04_QUALITY_STATEMENT.md。未决必选项：人工体验结论、Linux/macOS 平台、真实 Provider 场景）。
+- 状态：in_progress（**2026-10-09 于 `728875f`/`713d842` 刷新：分支覆盖率 83.26% < 85% 阈值——未达标，故不得 done**；`npm run check` exit 0（**290 文件/2186 用例**）、安全关键模块 **22/22 ≥95%**、fixture 指纹 `6512b2a6…c7c` 与历史一致、`npm pack`+`verify-package` exit 0（**239 文件**，sha256 `8b175e31…` 与 E2E-01-03 判定文件记录的 tarball 一致）；**`smoke-install` 两次 exit 1，均为其内部 `prepack → check` 命中负载型抖动用例（隔离复跑全部通过）**，属真实待办。另：真实 Provider 场景已由 E2E-01-03 取得证据。证据 docs/reports/E2E01_04_LOCAL_REFRESH_2026-10-09.md；历史口径见 docs/reports/E2E01_04_LOCAL_REFRESH_2026-09-19.md 与 docs/reports/E2E01_04_QUALITY_STATEMENT.md。未决必选项：人工体验结论、Linux/macOS 平台）。
 - 工作：运行check、coverage、安全关键模块专项及tarball回归；绑定平台结果和人工体验结论，纠正支持矩阵。
 - 验收：总体分支≥85%，适用安全关键模块≥95%；未跑平台明确未验证；mock/fake/真实及正式/待人工追认状态区分；未决必选项不得done。
 - 前驱：E2E-01-03。先通过前驱，再执行本节点。
