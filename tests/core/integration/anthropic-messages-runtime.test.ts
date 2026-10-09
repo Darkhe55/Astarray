@@ -404,3 +404,136 @@ describe("Anthropic Messages runtime：用量捕获分支", () => {
     expect(events.at(-1)).toMatchObject({ kind: "runFinished", reason: "success" });
   });
 });
+
+/**
+ * 错误路径与选项透传（E2E-01-04 覆盖率冲刺，2026-10-09）。
+ *
+ * 覆盖 `anthropic-messages-runtime.ts` 中未被触发的分支：HTTP 非 2xx、空响应体、
+ * 非法 SSE 行、缺失 stop_reason、一次响应内多个 tool_use、以及 `providerIdentifier`
+ * 选项透传给用量观测器（`?? ANTHROPIC_MESSAGES_PROTOCOL` 的另一条分支）。
+ *
+ * 断言原则：错误路径断言**必须报错**（不得静默成功）；容错路径断言**不得抛错**且结束事件合法。
+ */
+describe("Anthropic Messages runtime：错误路径与选项分支", () => {
+  /** 本 block 自用的运行构造（上一块的 buildRuntime 是其 describe 内的局部函数，作用域外不可见）。 */
+  function buildRuntime(baseUrl: string): AnthropicMessagesRuntime {
+    return new AnthropicMessagesRuntime({
+      baseUrl,
+      apiKey: "test-key",
+      model: "u2-flash",
+      requestTimeoutMilliseconds: 5_000,
+    });
+  }
+
+  async function startCustomStatusServer(
+    statusCode: number,
+    bodyText: string,
+  ): Promise<{ baseUrl: string }> {
+    server = http.createServer((request, response) => {
+      request.resume();
+      request.on("end", () => {
+        response.writeHead(statusCode, { "content-type": "text/plain; charset=utf-8" });
+        response.end(bodyText);
+      });
+    });
+    await new Promise<void>((resolve) => {
+      (server as http.Server).listen(0, "127.0.0.1", () => resolve());
+    });
+    const port = (server.address() as { port: number }).port;
+    return { baseUrl: "http://127.0.0.1:" + String(port) + "/anthropic/v1/messages" };
+  }
+
+  it("⑫ HTTP 502：必须报错，不得当成成功", async () => {
+    const { baseUrl } = await startCustomStatusServer(502, "bad gateway");
+    const runtime = buildRuntime(baseUrl);
+    await expect(collectEvents(runtime, buildAgentRunInput())).rejects.toThrow();
+  });
+
+  it("⑬ HTTP 200 但响应体为空：必须报错（无有效事件不得静默成功）", async () => {
+    const { baseUrl } = await startFakeAnthropicServer("");
+    const runtime = buildRuntime(baseUrl);
+    await expect(collectEvents(runtime, buildAgentRunInput())).rejects.toThrow();
+  });
+
+  it("⑭ 非法 SSE 行：必须跳过而不是抛错，正常事件仍可产出", async () => {
+    const { baseUrl } = await startFakeAnthropicServer(
+      "event: message\ndata: 这不是 JSON\n\n" +
+        sse({ type: "message_start", message: { usage: { input_tokens: 1 } } }) +
+        sse({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "好" } }) +
+        sse({ type: "message_delta", usage: { output_tokens: 1 }, delta: { stop_reason: "end_turn" } }),
+    );
+    const runtime = buildRuntime(baseUrl);
+    const events = await collectEvents(runtime, buildAgentRunInput());
+    expect(events).toContainEqual({ kind: "textDelta", deltaText: "好" });
+    expect(events.at(-1)).toMatchObject({ kind: "runFinished", reason: "success" });
+  });
+
+  it("⑮ 缺少 stop_reason：必须报错（不得当成正常结束）", async () => {
+    const { baseUrl } = await startFakeAnthropicServer(
+      sse({ type: "message_start" }) +
+        sse({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "好" } }),
+    );
+    const runtime = buildRuntime(baseUrl);
+    await expect(collectEvents(runtime, buildAgentRunInput())).rejects.toThrow();
+  });
+
+  it("⑯ 一次响应内两个 tool_use：必须产出两个 toolCallRequested", async () => {
+    const { baseUrl } = await startFakeAnthropicServer(
+      sse({ type: "message_start" }) +
+        sse({
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: "toolu_a", name: "createProjectFile" },
+        }) +
+        sse({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "input_json_delta", partial_json: '{"filePath":".tmp/A.md","content":"A"}' },
+        }) +
+        sse({ type: "content_block_stop", index: 0 }) +
+        sse({
+          type: "content_block_start",
+          index: 1,
+          content_block: { type: "tool_use", id: "toolu_b", name: "createProjectFile" },
+        }) +
+        sse({
+          type: "content_block_delta",
+          index: 1,
+          delta: { type: "input_json_delta", partial_json: '{"filePath":".tmp/B.md","content":"B"}' },
+        }) +
+        sse({ type: "content_block_stop", index: 1 }) +
+        sse({ type: "message_delta", delta: { stop_reason: "tool_use" } }),
+    );
+    const runtime = buildRuntime(baseUrl);
+    const events = await collectEvents(runtime, buildAgentRunInput());
+    const requestedCallIds = events
+      .filter((event) => event["kind"] === "toolCallRequested")
+      .map((event) => event["callId"]);
+    expect(requestedCallIds).toEqual(["toolu_a", "toolu_b"]);
+    expect(events.at(-1)).toMatchObject({ kind: "runFinished", reason: "tool-calls" });
+  });
+
+  it("⑰ providerIdentifier 透传：观测器收到显式标识（覆盖 ?? 的另一分支）", async () => {
+    const { baseUrl } = await startFakeAnthropicServer(
+      sse({ type: "message_start", message: { usage: { input_tokens: 7 } } }) +
+        sse({ type: "message_delta", usage: { output_tokens: 3 }, delta: { stop_reason: "end_turn" } }),
+    );
+    const capturedRecords: Record<string, unknown>[] = [];
+    const runtime = new AnthropicMessagesRuntime({
+      baseUrl,
+      apiKey: "test-key",
+      model: "u2-flash",
+      requestTimeoutMilliseconds: 5_000,
+      providerIdentifier: "custom-provider-label",
+      providerRequestUsageObserver: {
+        recordProviderRequestUsage: async (input: Record<string, unknown>): Promise<void> => {
+          capturedRecords.push(input);
+        },
+      },
+    });
+
+    await collectEvents(runtime, buildAgentRunInput());
+    expect(capturedRecords).toHaveLength(1);
+    expect(capturedRecords[0]?.["providerIdentifier"]).toBe("custom-provider-label");
+  });
+});
