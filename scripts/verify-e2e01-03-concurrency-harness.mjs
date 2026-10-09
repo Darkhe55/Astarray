@@ -329,11 +329,27 @@ if (isLiveProviderRun) {
     humanEditDeadlineMilliseconds: humanEditDeadlineSeconds * 1_000,
     onHumanEditInstruction: (detail) => {
       humanEditInstructionAtIso = new Date().toISOString();
+      /**
+       * 除日志外再写一份**固定路径**的提示文件：协调时可只盯这一个路径，
+       * 不必去猜带时间戳的运行目录。
+       */
+      const instructionFilePath = path.join(repositoryRoot, ".tmp", "e2e01-03", "HUMAN-EDIT-NOW.txt");
+      writeFileSync(
+        instructionFilePath,
+        "请立即编辑（窗口 " +
+          String(detail.deadlineMilliseconds / 1_000) +
+          " 秒）：\n" +
+          detail.targetFilePath +
+          "\n",
+        "utf8",
+      );
       console.log(
         "\n>>> 需要人工编辑（窗口 " +
           String(detail.deadlineMilliseconds / 1_000) +
           " 秒）：请修改 " +
           detail.targetFilePath +
+          "\n>>> 提示文件: " +
+          instructionFilePath +
           "\n",
       );
     },
@@ -381,7 +397,12 @@ const childProcess = spawn(
     "--provider-api-key-env",
     isLiveProviderRun ? liveApiKeyEnvironmentVariableName : fakeApiKeyEnvironmentVariableName,
     "--provider-request-timeout-seconds",
-    "60",
+    /**
+     * 真实模式下必须**大于人工编辑窗口**：否则 CLI 会在用户编辑完成前自行超时中止，
+     * 窗口白开（2026-10-08 实测：窗口 600s、请求超时 60s → 60s 后任务以
+     * "Provider 请求失败或超时（60000ms）" 失败，一次真实调用被浪费）。
+     */
+    String(isLiveProviderRun ? humanEditDeadlineSeconds + 180 : 60),
     "--timeout-seconds",
     "240",
     "--json",
@@ -425,7 +446,15 @@ const exitCode = await new Promise((resolve) => {
 fakeProvider.close();
 
 console.log("\nCLI 退出码: " + String(exitCode));
-console.log("假 Provider 收到的请求数: " + String(requestCount));
+if (isLiveProviderRun && humanEditWindowProxy !== null) {
+  /**
+   * 真实模式下请求证据来自**透传代理**（假 Provider 未被使用，其计数器恒为 0）。
+   * 不修正这一点会让判据①③永远看空数组——2026-10-08 实测踩到。
+   */
+  requestBodyTexts.push(...humanEditWindowProxy.getRequestBodyTexts());
+  requestCount = humanEditWindowProxy.getRequestCount();
+}
+console.log("Provider 收到的请求数: " + String(requestCount));
 
 /** 再跑一次安装包 CLI 的只读子命令（判据⑦⑧ 用）。 */
 async function runInstalledCliReadonly(cliArguments, workingDirectory) {
