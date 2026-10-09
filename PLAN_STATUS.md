@@ -621,7 +621,25 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
    由 `application-runtime`（掌握状态目录与 mission 快照）实现并把装饰器**套在最外层**
    （这样范围门禁的拒绝也能被记录）。
 
-**S3 真实验收：**通过**（2026-10-09，stepfun / step-3.7-flash / openai-compatible）**
+**S3 真实验收：①③④ 与 ② 均已取得真实 Provider 证据（2026-10-09）**
+
+两份判定文件，均为 `isFakeProvider=false` / `isRealAcceptanceEvidence=true` / 干净工作区：
+
+1. **①③④ + ⑩**：`.tmp/e2e01-03/2026-10-09T13-08-12.367Z/acceptance-verdict.json`
+   （提交 `0b712b1`、`sourceStatus=''`、`failedCheckNames=[]`、9/9 判据、`humanEditDetected=true`）
+   —— 这是**修正判定标注后重跑**的干净产物（上一次 `e70d950` 因残留重复键导致该字段错写 false）。
+2. **②（崩溃+恢复）**：`.tmp/e2e01-03-interrupt/<最新>/boundary-interrupt-verdict.json`
+   （提交 `0b712b1`、7/7 判据、`observedToolCallState=started`、强杀 4351ms）
+   —— ⑯ 断言**恢复判定原文**：`resumed=false`、`executed=false`、
+   `blockedDecisionItems=[{decision:"blocked-uncertain-side-effect",
+   reason:"工具副作用未知，需用户裁决，禁止自动二次执行"}]`。
+
+- **本阶段又修掉 2 处我方缺陷**（均已提交推送）：
+  `d1aa8de` 边界中断场景支持真实 Provider（不需要人工编辑窗口，直连+轮询强杀）；
+  `0b712b1` **真实模式下 ⑯ 原为空判据**（读的是未使用的假 Provider 计数器，恒为 0）→
+  改为断言恢复判定原文；结论行改为按模式标注。
+- **额度**：本轮真实调用 ①③④ 重跑 3 次 + ② 两次各约 2–3 次；**全程未打印/未落盘密钥**。
+
 
 - **运行条件**：提交 `e70d950`、工作区**干净**（`sourceStatus: ''`）、tarball 隔离安装、
   真实端点 `https://api.stepfun.com/v1/chat/completions`、凭据引用 `prov-live-1`
