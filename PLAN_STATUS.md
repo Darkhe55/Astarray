@@ -631,7 +631,7 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
 - **方法（已被三轮验证）**：先取未覆盖行号 → **查该行所属函数的调用点确认可达** → 写用例 →
   前后对照量化（同一测试集，只增测试文件）。已因此避免两类白工：registry 不走自有扫描器、
   C 系路径不走 `buildImportWithInlineCodeMatch`。
-- 逐轮实测新增分支（**累计 +74**）；全局实测：round 9 时为 **7895/9422 = 83.79%**（需 114 条）：
+- 逐轮实测新增分支（**累计 +77**）；全局实测：round 9 时为 **7895/9422 = 83.79%**（需 114 条）：
 - **round 16 的定位教训（第 5 次踩到，重要）**：`read-format-frontend-markup.ts` 的
   `countLines`/`identityLineMap` 只在 **L358/L376** 被调用，而那两处在 **`scanSectionedView`** 内——
   我按"文件内 helper 一定被同文件导出用到"的假设调 `scanMarkupView`，结果 6 个用例只 +1 条。
@@ -653,6 +653,8 @@ Provider 上**全部通过**，SMART-01-04 的真实运行实测缺口**已闭�
 | 13 | （判断 local-preservation 需伪造 6-8 种 git 调用、成本超预算，未动手） | — |
 | 14 | `read-format-latex.ts` 直接调用扫描器（空源/无尾换行/命令尾文本/非连续省略行） | **+14** |
 | 15 | `read-format-frontend-styles.ts` 直接调用扫描器（url 前导字符/转义/未闭合/无尾换行/行内代码） | +8 |
+| 16 | `read-format-frontend-markup.ts` 调错导出（`scanMarkupView` 而非 `scanSectionedView`） | +1 |
+| 17 | 同文件改调 **`scanSectionedView`**（无区段委托/无尾换行/子视图状态合并） | +3 |
 
 - **补充教训（第 4 次踩到）**：仅仅"查调用点"还不够。round 10 按未覆盖行号外推分支归属，
   6 个用例只换来 +3 条——**未覆盖行号只能当候选定位，必须读该行代码确认分支归属**才能写有效用例。
