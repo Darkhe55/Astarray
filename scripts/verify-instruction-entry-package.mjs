@@ -299,6 +299,92 @@ for (const check of crossProjectChecks) {
   console.log(`${check.passed ? "✓" : "✗"} ${check.name} — ${check.detail}`);
 }
 
+// ─── PROJECT-01-04：多项目隔离（A/B → C）与可追溯 ───
+// A、B 两个来源项目各自有授权；用 A 的授权去读 B 的绝对路径必须被拒（不串数据）。
+const projectBSourcePath = path.join(crossProjectRoot, "project-b", "docs", "spec.md");
+const projectBContent = "# 项目 B 内容\n";
+mkdirSync(path.dirname(projectBSourcePath), { recursive: true });
+writeFileSync(projectBSourcePath, projectBContent, "utf8");
+try {
+  const installedSdk = await import(installedSdkUrl);
+  const store = new installedSdk.CrossProjectAuthorizationStore({
+    baseDirectory: path.join(installRoot, ".astarray"),
+  });
+  await store.grantAuthorization({
+    authorizationIdentifier: "pkg-auth-b-import",
+    sourceProjectIdentifier: "project-b",
+    sourceProjectRevision: 3,
+    targetProjectIdentifier: "project-b-target",
+    targetProjectRevision: 1,
+    operationKind: "import-copy",
+    resourceScope: { pathPrefixes: ["docs/"], realPaths: [], isDynamicSharedDirectory: false },
+    argumentsHash: "pkg-hash-b-import",
+    expiresAtIso: "2030-01-01T00:00:00.000Z",
+    grantedByUserId: "package-acceptance-user",
+    taskIdentifier: "T-PKG-B",
+  });
+} catch (error) {
+  console.log("✗ 多项目授权准备失败 — " + String(error?.message ?? error));
+}
+
+const crossProjectIsolation = runInstalled([
+  "cross-project",
+  "read",
+  "--authorization",
+  "pkg-auth-read",
+  "--source-project",
+  "project-b",
+  "--target-project",
+  "project-b-target",
+  "--resource",
+  "docs/spec.md",
+  "--absolute-resource",
+  projectBSourcePath,
+  "--arguments-hash",
+  "pkg-hash-read",
+  "--json",
+]);
+
+// 授权列表必须能区分两个来源项目（可追溯、不串数据）
+const crossProjectList = runInstalled(["cross-project", "list", "--json"]);
+const listPayload = (() => {
+  const text = crossProjectList.stdoutText ?? "";
+  const startIndex = text.indexOf("{");
+  if (startIndex < 0) {
+    return null;
+  }
+  try {
+    return JSON.parse(text.slice(startIndex));
+  } catch {
+    return null;
+  }
+})();
+const authorizationSourceProjects = Array.isArray(listPayload?.authorizations)
+  ? listPayload.authorizations.map((record) => String(record?.sourceProjectIdentifier))
+  : null;
+
+const multiProjectChecks = [
+  {
+    name: "多项目隔离：用 A 的授权去读 B 的来源必须被拒（非 0，不串数据）",
+    passed: crossProjectIsolation.exitCode !== 0,
+    detail: `exit=${String(crossProjectIsolation.exitCode)}`,
+  },
+  {
+    name: "可追溯：授权列表必须同时可见 project-a 与 project-b 两个来源",
+    passed:
+      authorizationSourceProjects !== null &&
+      authorizationSourceProjects.includes("project-a") &&
+      authorizationSourceProjects.includes("project-b"),
+    detail:
+      authorizationSourceProjects === null
+        ? "授权列表不可解析"
+        : "sources=" + authorizationSourceProjects.join(","),
+  },
+];
+for (const check of multiProjectChecks) {
+  console.log(`${check.passed ? "✓" : "✗"} ${check.name} — ${check.detail}`);
+}
+
 // 真实文件断言：导入的副本必须真的存在且内容等于来源；被占目标必须原样保留。
 const importedCopyText = existsSync(targetAbsolutePath)
   ? readFileSync(targetAbsolutePath, "utf8")
@@ -326,7 +412,7 @@ for (const check of fileChecks) {
   console.log(`${check.passed ? "✓" : "✗"} ${check.name} — ${check.detail}`);
 }
 
-checks.push(...crossProjectChecks, ...fileChecks);
+checks.push(...crossProjectChecks, ...multiProjectChecks, ...fileChecks);
 
 const failedCheckNames = checks.filter((check) => !check.passed).map((check) => check.name);
 const verdict = {
