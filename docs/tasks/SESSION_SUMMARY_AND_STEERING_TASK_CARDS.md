@@ -1,6 +1,6 @@
 # 长会话摘要与运行中引导：四组任务卡
 
-> 日期：2026-09-13；状态：全部pending，仅完成任务布置。
+> 日期：2026-09-13；2026-10-10 对账：SUM-01/SUM-02/GUIDE-01 为 re-verifying（已有实现与后续入口报告，非未开始），EVENT-01 为 pending（未取得完成证据）。计划状态修改：必须，继承 IMPLEMENTATION_PLAN §8.4 用户授权。摘要是非破坏性辅助索引，不得替代或删除源历史；新上下文政策见 NODECTX-01。
 > 依据：[用户已选方案](../LONG_SESSION_AND_RUNTIME_STEERING_PROPOSAL.md)。Agent派生检查点运行态保留层级1+及原始用户指导引用。
 
 ## 共同规则和实施顺序

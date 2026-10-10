@@ -1,8 +1,66 @@
 # PLAN_STATUS — Astarray 实施状态
 
+## 2026-10-10 当前有效状态（覆盖下方历史快照）
+
+核对基线：`22be8f5`，修改文档前工作树干净。本轮仅静态核查与计划纠偏，未重跑全量测试。历史提交和报告保留，但不能代替当前版本门禁。
+
+| 任务/范围 | 当前状态 | 已证范围与尚缺内容 |
+|---|---|---|
+| INT-00 / T07D-R1 / T09A-R1 / T12A-R1 | done（各卡既定历史验收范围） | 保留接线成果；不表示所有后续可靠性变更已经通过 |
+| T07D-R2 | done（2026-10-06） | 真实 tarball 读写工作流及范围对账见 `docs/reports/T07D_R2_04_STATUS_RECONCILIATION_2026-10-06.md`；不推广为全部厂商/入口通过 |
+| SUM-01 / SUM-02 / GUIDE-01 | re-verifying | 已有实现、入口和包/计量报告，非未开始；逐条核对卡内剩余验收，再收口；见 SUM01_04B、SUM02_04、GUIDE01_04 报告 |
+| EVENT-01 | pending | 本轮未取得完成证据，不凭 GUIDE 完成推断 |
+| OBS（PERF/USAGE/DIAG） | re-verifying | 存储、查询、部分采集及包级概览成立；需要逐组核对全部生产采集与入口范围，非整体未实施 |
+| SMART-01 | in_progress | 02/03 组件证据保留；04 窗口到模型运行/四入口完整接线与包级场景待验收，公开 re-export 和概览查询不替代执行闭环 |
+| PROJECT-01 | in_progress | 授权/回执/查询组件成立；readResource/importCopy 尚无真实资源 I/O，不能把回执当借阅/导入完成；需接线及来源零写入动态证据 |
+| RELIABILITY-01 | in_progress | 已有修复保留；R4 SDK 幂等账目损坏处理、并发落盘、提前拒绝结算与备份需返修；故障矩阵未齐 |
+| E2E-01-03 | done（卡内明确验收范围） | 2026-10-09 真实 Provider、隔离包与入库判定；人工并发口径按该卡记录，不扩大为所有并发情形 |
+| E2E-01-04 / 整体 E2E-01 | in_progress（**本地可证项已全部通过**，仅剩人工与平台） | **HEAD 最新实测**：`npm run check` exit 0；`npm run test:coverage`（仓库配置、默认并发、阈值 85）**exit 0**，**307 文件 / 2346 用例**，行/分支/函数/语句 = **92.66 / 85.05 / 92.62 / 92.7**（分支达标）；安全关键模块 22/22；fixture 指纹 `6512b2a6…c7c` 一致；`npm pack`+`verify-package` exit 0（239 文件）；**`smoke-install` exit 0（冒烟全部通过）**。仍缺：**人工体验结论**、**Linux/macOS 平台证据**（只能由用户/平台提供），CLI 退出反例仍 skip。证据链见下方「E2E-01-04 证据链」小节 |
+| BRIDGE-01 / GUI-01-R | in_progress | 保留自动/包证据；真实客户端、人工体验和平台剩余范围按各卡逐项确认 |
+| COMM-01 / WB-00 | pending | 通信新拓扑与原型未取得完整实施证据 |
+| MERGE-01 / NODECTX-01 | pending | 本轮新增指令合并/参数授权、禁用压缩/节点关闭任务；见 `docs/tasks/MERGE01_NODECTX01_TASK_CARDS.md` |
+| TOOLKIT-01 | pending | 项目工具孵化、用户级复用与通用包；六检查点，先配方复用后推广，权限/版本/隔离/包验收见 `docs/tasks/TOOLKIT01_PROJECT_TO_GENERAL_TOOL_LIFECYCLE_TASK_CARD.md`；仅布置未实施 |
+
+下一步优先：修正可靠性和 CLI 收口 → SMART/PROJECT 产品接线 → 同一冻结提交发布门禁；新卡按依赖切入，不以容易补中的分支数量替代行为验收。`done` 表示绑定证据的范围，历史 done 不证明当前 HEAD 全面通过。
+
+**计划状态修改：必须（用户已授权）**。受托实施者须同步自己的检查点、任务卡和本表；权限与冲突处理遵循 `IMPLEMENTATION_PLAN.md` §8.4。下方历史“已补做”“全部完成”只保留原范围；若与本节冲突，以本节纠偏为准。
+
+### E2E-01-04 证据链（2026-10-09/10，HEAD 最新实测）
+
+**结论**：本节点**本地可证项已全部通过**；仍缺"人工体验结论"与"Linux/macOS 平台证据"（只能由用户或平台提供），故保持 `in_progress`。
+
+| 本地可证项 | 结果 | 证据位置 |
+| --- | --- | --- |
+| `npm run check`（typecheck+lint+build+test） | **exit 0** | 由 `smoke-install` 的 `prepack` 路径实测（`.tmp/session-r2-04/smoke-final.log`） |
+| `npm run test:coverage`（仓库配置、默认并发、阈值 85） | **exit 0**；**307 文件 / 2346 用例**；行/分支/函数/语句 **92.66 / 85.05 / 92.62 / 92.7** | `.tmp/session-r2-04/coverage-after-fix.log` |
+| 分支覆盖率**起点与净增** | 83.29%（需 161 条）→ **85.05%**（净增约 166 条） | `docs/reports/E2E01_04_LOCAL_REFRESH_2026-10-09.md` §2 |
+| 安全关键模块专项 | **22/22 ≥95%** | `.tmp/session-r2-04/security-coverage-2026-10-09.log` |
+| E2E-01-01 fixture 复现 | 指纹 `sha256:6512b2a6…c7c` 与 2026-09-10/09-19 冻结值**一致** | `.tmp/session-r2-04/fixture-2026-10-09.log` |
+| `npm pack` + `verify-package` | exit 0，**239 文件**，sha256 `8b175e31…` | `.tmp/session-r2-04/verify-package-2026-10-09.log` |
+| `smoke-install.mjs` | **exit 0**（"冒烟测试全部通过 ✓"、全局 shim 验证通过） | `.tmp/session-r2-04/smoke-final.log` |
+| 缺口定位工具与作战图 | 行级定位 + L0/可定位拆分 | `scripts/report-uncovered-branches.mjs`、`docs/reports/E2E01_04_BRANCH_COVERAGE_GAP_PLAN_2026-10-09.md` |
+| 抖动根因修复（三层） | 见下 | `docs/reports/STATUS_UPDATE_E2E01_04_2026-10-09.md`（已并入本表） |
+
+**抖动/门禁失败的三层真实根因与修复**（均非"玄学抖动"，各有实测证据与确定性回归测试）：
+
+1. **Windows `rename` 瞬时锁 EPERM**——原重试预算仅 3 次×50ms（约 150ms），默认并发下耗尽即抛
+   （真实抓到 `…\.summary.json.<pid>.<uuid>.tmp -> …\summary.json` EPERM）。修复：有界指数退避
+   7 次 / 25→800ms，非可重试错误码立即抛（`packages/core/src/infra/atomic-json.ts`，提交 `e664e4b`）；
+   确定性回归测试 `tests/core/unit/atomic-json-rename-retry.test.ts`（3/3）。
+2. **测试文件类型缺陷（本次实施者埋下）**——为先前的用例自造 `Record<string, unknown>` 形参，
+   vitest 不做类型检查故全绿，但 `tsc` 报 `TS2345`/`TS2322`，使 `check`/`prepack`/`smoke-install`
+   持续失败。修复：入参类型从 `ProviderRequestUsageObserverPort` 端口签名派生（提交 `e890214`）。
+   **流程教训**：改 `tests/**` 或 `packages/**` 的 TS 必须跑 `npm run typecheck`（或 `npm run check`）。
+3. **`smoke-install.mjs` 解析 `npm pack --json` 过于脆弱**——`prepack` 输出混入 stdout，取首个 `[`
+   落在 check 输出里（`SyntaxError: Unexpected non-whitespace character after JSON at position 2`）。
+   修复：从后往前逐候选起点尝试解析（提交 `c24a26c`）。
+
+**尚未处理（如实登记）**：超时型抖动与上述三者**不同源**——`tests/tui/unit/run-command-gaps.test.ts`
+曾在默认并发下以 `Test timed out in 60000ms` 失败（隔离复跑 5.4s 通过）；需单独评估其超时预算或竞态。
+
 ## 2026-09-13 摘要与运行引导任务布置
 
-用户已确认推荐方案，摘要采用动态长度且无固定总长上限。[四组任务卡](docs/tasks/SESSION_SUMMARY_AND_STEERING_TASK_CARDS.md)均为pending，实施未开始，不改变原任务验收结论。
+本节保留 2026-09-13 布置历史；四组的原始 pending 表不是当前领取依据。SUM/GUIDE 已有后续实现证据，当前状态见顶部 2026-10-10 对账。
 
 | 任务 | 状态 | 前驱 |
 |---|---|---|
@@ -14,7 +72,7 @@
 > 更新规则见 `IMPLEMENTATION_PLAN.md` §8.4：开始任务标记 `in_progress`，全部验收通过才标记 `done`。
 > 会话中断后从第一个 `in_progress` 或依赖已满足的 `pending` 任务恢复。
 
-## 2026-09-10 产品接线增补任务（均未执行）
+## 2026-09-10 产品接线增补任务（历史布置快照，非当前状态）
 
 共同规则和独立任务卡链接见 [PRODUCT_INTEGRATION_ROLLOUT.md](docs/tasks/PRODUCT_INTEGRATION_ROLLOUT.md)。原卡done记录不代表新增接线验证已通过；INT-00核实原验收缺口后纠正相关旧状态，保留历史证据。
 
@@ -32,7 +90,7 @@
 
 ## Batch OBS/SMART/PROJECT（OBS-01、SMART-01、PROJECT-01 三卡）检查点记录
 
-### 2026-10-02 — 12 个检查点实现完成（用户授权记录核验结构）
+### 2026-10-02 — 12 个检查点历史交付记录（完成范围以顶部纠偏为准）
 
 验收命令与实际结果（每条均为**当轮实测的真实退出码**，非替代性说明）：
 

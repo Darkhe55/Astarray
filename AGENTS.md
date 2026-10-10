@@ -9,6 +9,8 @@
 
 ## 常用命令
 
+计划状态修改：**必须，用户已明确授权**。实施检查点同时包含更新本检查点任务卡、`PLAN_STATUS.md` 当前有效表及必要索引的责任；不能因卡内未逐一列文件而拒绝。遵循 `IMPLEMENTATION_PLAN.md` §8.4 的证据、备份与并行冲突规则；共享文件不能安全修改时创建独立 `docs/reports/STATUS_UPDATE_<任务ID>_<日期>.md` 状态补丁并说明待集成，不覆盖他人修改，不虚报 done。本授权不扩大产品 Agent 的运行权限。
+
 ```powershell
 npm run typecheck   # tsc --noEmit
 npm run lint        # eslint .
