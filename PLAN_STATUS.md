@@ -91,6 +91,18 @@
        故首选核对：**裁决读取时 stdin 是否已被消费或已 `end`**（例如先被别处读取/关闭），
        以及 L309-346 行读取器在"管道已给完数据但尚未 end / 已 end"两种时序下的返回值。
      - 复核纪律不变：该用例 spawn `dist/cli.js`，改 `src` 后必须 `npm run build`；单次复跑约 31s，一次只验一个假设。
+     - **2026-10-10 再进一步（读了行读取器本体后）**：`createStdinLineReader()`（L315-348）**实现是稳的**——
+       跨 chunk 缓存半行、`end` 时 flush 余量、`pendingLines`/`pendingResolvers` 配对，且注释明确记录了
+       "按 chunk 读会把多行裁决误判为拒绝"这一 2026-10-02 真实复现。**故问题不在读取器健壮性**，
+       而在**是否有别的组件先消费/关闭了 stdin**（或读取时机早于数据到达）。
+     - **下轮唯一要做的实验（一次只验一个假设）**：在 `createStdinLineReader()` 创建处与每次 `data`/`end`
+       各打一条**临时 stderr 痕迹**（如 `[STDIN-TRACE] created` / `data len=…` / `end`），`npm run build` 后
+       单跑该用例一次，用 31s 的退出码与痕迹判断：
+       ① 若从未出现 `data` ⇒ stdin 已被别处读走或本路径未创建读取器（查候选消费者：
+       `install-decision-port.ts` L39-44 的 `process.stdin.once("data")`、
+       `commands.ts` L2080-2113 的凭据负载读取、以及反馈子进程的 stdin 处理）；
+       ② 若出现 `data` 但 `readDecision` 仍返回 `null`/`deny` ⇒ 时序/判定问题（`isEnded` 或 trim 比较）。
+       痕迹只用于定位，验证完即删，**不留进提交**。
      - `packages/tui/src/cli/run-command.ts` L268：`isInteractive: decisionPort.isInteractive()` 的接线段；
        L28-46 另有"等待新一轮 permission-ask 文本到达"与"`allow-once` 后等待重跑窗口"的时间窗逻辑。
      - **关键矛盾（下轮先证伪/证实）**：stderr 已打印"已按精确参数 allow-once 授权（作用域授权: granted）"，
