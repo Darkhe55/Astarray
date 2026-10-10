@@ -75,6 +75,30 @@
 - **仍未完成**：设置入口（§1.3 第 4 项）与权限引擎/production 接线、两个工具适配样本、
   执行组到原指令映射与合并开关、NODECTX-01 全部内容 ⇒ **不主张 MERGE-01 或 NODECTX-01 通过**。
 
+### MERGE-01-01 进展（2026-10-10 续）：能力族 + action 统一（纵向样本）
+
+卡内 §1.2 要求"以能力族和 action 枚举复用现有工具""先适配两个现有相近入口作纵向样本，
+保留旧名称兼容别名并路由同一实现""含写动作的工具不能整体伪装成 readonly"
+"不认识的 action/参数拒绝""只读视图仅暴露允许的读取动作"。
+
+- 新增 `packages/core/src/tools/tool-action-registry.ts`（**纯数据 + 纯函数**，无 I/O、不调用模型）：
+  - 纵向样本 `projectFileRead` 把既有两条相近只读入口统一为一族：
+    `readFile` → action `read`（必需参数 `filePath`）、
+    `searchProjectText` → action `search`（必需参数 `pattern`）；
+    **旧名称保留为兼容别名并路由同一实现**；
+  - `resolveToolAction()`：支持"统一族名 + action"与"旧别名"两种解析；
+    未知族名 / 未知 action / **旧别名 + 任意 action** 一律返回 null（**不得退化为任意方法调用入口**）；
+  - 副作用、备份、幂等由**每个 action 自身**判定（`isReadOnly`/`mutationKind`/
+    `requiresPreMutationBackup`/`isIdempotent`）；含写动作的族不会被整体伪装成只读；
+  - `projectReadOnlyActionProjection()`：**只**返回 `isReadOnly===true` 的 action
+    （构造含写动作的混合族验证写动作确实被过滤）；
+  - `validateActionArguments()`：按 action 的必需参数做**可校验 schema 分支**；
+    参数不可解析 / 缺必需参数 ⇒ 拒绝 —— 动作切换（如 read→search）沿用旧参数会被明确拒绝。
+- 反例（先红后绿）：`tests/core/unit/merge01-tool-action-registry.test.ts` 8 条
+  （实现前模块不存在即失败）。
+- **仍未完成**：把该族接到工具描述符/执行派发与设置入口、`format/view` 参数化、
+  执行组到原指令映射与合并开关、NODECTX-01 全部内容 ⇒ **不主张 MERGE-01 通过**。
+
 测试重点：上限 3 不因分组越窗；A 写 X/B 写 Y 不误合并；重复读减少 I/O 但各回执可追踪；参数 read→write、路径逃逸、批次夹带动作被拒；总开关×单工具细分×基线三态×规则冲突矩阵；同键不同值重新授权，单纯键序变化不重复询问；取消和崩溃不重做已成功写入。指标记录请求/工具次数、token、延迟、误合并/漏合并与返修次数，不预设虚假节省百分比。
 
 ## 2. NODECTX-01：禁止有损压缩，以节点关闭与暂存管理上下文
