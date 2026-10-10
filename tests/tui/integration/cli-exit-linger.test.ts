@@ -160,7 +160,7 @@ describe("provider 路径：CLI 结果后必须及时退出（不依赖外部 ki
    * 本用例保留为待通过反例：不让门禁长期变红，也**不删除**（删除等于假装已修）。
    * 修复后应改回 `it`。
    */
-  it.skip("② 权限询问 + allow-once 后：给出结果即应自然退出", async () => {
+  it("② 权限询问 + allow-once 后：给出结果即应自然退出", async () => {
     const relativePath = ".tmp/LINGER.md";
     const argumentsJson = JSON.stringify({ filePath: relativePath, content: "# LINGER\n" });
     const toolCallSse =

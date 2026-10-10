@@ -1400,3 +1400,29 @@ program
   });
 
 await program.parseAsync(process.argv);
+
+/**
+ * 收敛退出（2026-10-10，修 CLI 滞留缺陷）。
+ *
+ * 问题：一次性命令产出结果后，本进程仍可能被**残留句柄**（反馈子进程等）拉住而不退出
+ * ——实测 provider + 权限询问路径 >60s，只能外部 kill
+ * （见 `tests/tui/integration/cli-exit-linger.test.ts` 的 ②，此前以 `it.skip` 保留为待通过反例；
+ * 同一现象也让验收 harness 拿不到干净退出码）。
+ *
+ * 为什么放在**引导层**而不是 `executeRunCommand`：后者会被单测**在进程内**直接调用，
+ * 在其中 `process.exit()` 会杀死 vitest worker（实测连带 10 个既有用例失败，已回退）。
+ * 本文件只在真实 CLI 进程里执行，故这里是安全收敛点。
+ *
+ * 为什么不会误杀常驻服务：`gui serve` / `mcp serve` 的动作 promise 在服务运行期间不会 resolve，
+ * 因此 `parseAsync` 在服务期间不会返回，本段不可达。
+ *
+ * 退出前等 stdout 排空，避免管道输出被截断；并留一个不阻止事件循环的兜底定时器。
+ */
+const convergenceExitCode = process.exitCode ?? 0;
+process.exitCode = convergenceExitCode;
+process.stdout.write("", () => {
+  process.exit(convergenceExitCode);
+});
+setTimeout(() => {
+  process.exit(convergenceExitCode);
+}, 1_000).unref();

@@ -15,7 +15,7 @@
 | PROJECT-01 | in_progress | 授权/回执/查询组件成立；readResource/importCopy 尚无真实资源 I/O，不能把回执当借阅/导入完成；需接线及来源零写入动态证据 |
 | RELIABILITY-01 | in_progress | 已有修复保留；R4 SDK 幂等账目损坏处理、并发落盘、提前拒绝结算与备份需返修；故障矩阵未齐 |
 | E2E-01-03 | done（卡内明确验收范围） | 2026-10-09 真实 Provider、隔离包与入库判定；人工并发口径按该卡记录，不扩大为所有并发情形 |
-| E2E-01-04 / 整体 E2E-01 | in_progress（**本地可证项已全部通过**，仅剩人工与平台） | **HEAD 最新实测**：`npm run check` exit 0；`npm run test:coverage`（仓库配置、默认并发、阈值 85）**exit 0**，**307 文件 / 2346 用例**，行/分支/函数/语句 = **92.66 / 85.05 / 92.62 / 92.7**（分支达标）；安全关键模块 22/22；fixture 指纹 `6512b2a6…c7c` 一致；`npm pack`+`verify-package` exit 0（239 文件）；**`smoke-install` exit 0（冒烟全部通过）**。仍缺：**人工体验结论**、**Linux/macOS 平台证据**（只能由用户/平台提供），CLI 退出反例仍 skip。证据链见下方「E2E-01-04 证据链」小节 |
+| E2E-01-04 / 整体 E2E-01 | in_progress（**本地可证项已全部通过**，仅剩人工与平台） | **HEAD 最新实测**：`npm run check` exit 0；`npm run test:coverage`（仓库配置、默认并发、阈值 85）**exit 0**，**307 文件 / 2346 用例**，行/分支/函数/语句 = **92.66 / 85.05 / 92.62 / 92.7**（分支达标）；安全关键模块 22/22；fixture 指纹 `6512b2a6…c7c` 一致；`npm pack`+`verify-package` exit 0（239 文件）；**`smoke-install` exit 0（冒烟全部通过）**。仍缺：**人工体验结论**、**Linux/macOS 平台证据**（只能由用户/平台提供）。~~CLI 退出反例仍 skip~~ → **已于 2026-10-10 修复并转绿**（`cli-exit-linger` ② 从">60s 滞留失败"变为"36s 自然退出通过"，2/2；见下方证据链）。证据链见下方「E2E-01-04 证据链」小节 |
 | BRIDGE-01 / GUI-01-R | in_progress | 保留自动/包证据；真实客户端、人工体验和平台剩余范围按各卡逐项确认 |
 | COMM-01 / WB-00 | pending | 通信新拓扑与原型未取得完整实施证据 |
 | MERGE-01 / NODECTX-01 | pending | 本轮新增指令合并/参数授权、禁用压缩/节点关闭任务；见 `docs/tasks/MERGE01_NODECTX01_TASK_CARDS.md` |
@@ -57,6 +57,31 @@
 
 **尚未处理（如实登记）**：超时型抖动与上述三者**不同源**——`tests/tui/unit/run-command-gaps.test.ts`
 曾在默认并发下以 `Test timed out in 60000ms` 失败（隔离复跑 5.4s 通过）；需单独评估其超时预算或竞态。
+
+### E2E-01-04 追加：CLI 滞留缺陷已修并转绿（2026-10-10）
+
+**缺陷**（`tests/tui/integration/cli-exit-linger.test.ts` ②，此前以 `it.skip` 保留为待通过反例）：
+provider + 权限询问路径下，CLI 打印结果后**不自然退出**（实测 >60s，只能外部 kill）。
+本会话的多轮真实验收 harness 也反复受其拖累（进程不退出 ⇒ **拿不到干净退出码**，只能外部 kill）。
+
+**修复位置与其原因**（文档已指明，我按此执行）：收敛放在 **CLI 引导层** `packages/tui/src/cli.tsx`
+（`await program.parseAsync(...)` 之后）——**不能**放进 `executeRunCommand`：后者会被单测**在进程内**
+直接调用，在其中 `process.exit()` 会杀死 vitest worker（历史实测连带 10 个既有用例失败，故曾被回退）。
+实现：动作完成后等 stdout 排空再 `process.exit(process.exitCode ?? 0)`，并留一个
+**不阻止事件循环的 1 秒兜底定时器**；常驻服务（`gui serve` / `mcp serve`）的动作 promise
+在服务期间不会 resolve，故该段不可达、不会误杀。
+
+**实测（真实退出码）**：
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run typecheck` | exit 0 |
+| `cli-exit-linger.test.ts`（② 已由 `it.skip` 改回 `it`） | **2/2 通过、exit 0**；② 由 ">60s 滞留失败" 变为 **36.177s 自然退出通过**；① 8.4s |
+| 回归：`gui-command`、`runtime-selection-diagnostics-report`、`cli-commands`、`run-command-gaps`、`cli-sdk-parity`、`run-provider-entry`、`summary-cli`、`headless-cli` | **8 文件 / 50 用例全通过、exit 0**（含两个常驻服务测试 ⇒ 收敛未误杀服务） |
+
+**踩到的坑（已避免误判）**：该用例 spawn 的是 **`dist/cli.js`**，而我只改了 `src`——首次复跑仍报 `linger`，
+误以为修复无效；**重建 `dist` 后**才真实生效。教训：凡由构建产物驱动的测试/harness，
+改完 `src` 必须 `npm run build` 再验。
 
 ## 2026-09-13 摘要与运行引导任务布置
 
