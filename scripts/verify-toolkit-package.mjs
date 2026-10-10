@@ -94,6 +94,9 @@ for (const name of [
   "evaluateProgramToolEnablement",
   "DETERMINISTIC_CSV_TO_JSON_CONVERTER",
   "runDeterministicProgramTool",
+  // NODECTX-01（与 MERGE-01 同卡）：无损上下文与可见性展示必须同样可达。
+  "createLosslessContextManager",
+  "buildContextVisibilityDisplayRows",
 ]) {
   observation.publicEntryExports[name] = typeof sdk[name] !== "undefined";
 }
@@ -402,6 +405,104 @@ try {
       versionController.listCallHistory({ projectIdentifier: "project-alpha" }).length > 0,
   };
 
+
+  /* ── NODECTX-01：无损上下文与"不把不在上下文显示成删除" ── */
+  const losslessManager = sdk.createLosslessContextManager({
+    stagingDirectory: path.join(stateDirectory, "nodectx-staging"),
+    maximumMigrationsPerRound: 4,
+  });
+  let diskFailureKeepsStateUnchanged = false;
+  try {
+    losslessManager.setStagingWriterForTesting(async () => {
+      throw new Error("模拟磁盘已满");
+    });
+    const failedStage = await losslessManager.stageNode({
+      nodeIdentifier: "probe-node-disk-fail",
+      revision: 1,
+      sourceKind: "agent",
+      priorityTier: 1,
+      contentText: "原文",
+      isUrgent: false,
+      isImportant: false,
+      isNeededForCurrentExecution: false,
+      toolCallIdentifier: null,
+      dependencyNodeIdentifiers: [],
+    });
+    diskFailureKeepsStateUnchanged =
+      failedStage.isStaged === false &&
+      losslessManager.getVisibilityState("probe-node-disk-fail") === "active" &&
+      losslessManager.listStagedNodeIdentifiers().length === 0;
+  } catch {
+    diskFailureKeepsStateUnchanged = false;
+  }
+
+  /** 配对保护：登记调用/结果两侧后，单独暂存调用侧必须被拒。 */
+  let toolPairIsAtomic = false;
+  try {
+    const pairManager = sdk.createLosslessContextManager({
+      stagingDirectory: path.join(stateDirectory, "nodectx-pair"),
+      maximumMigrationsPerRound: 4,
+    });
+    const callNode = {
+      nodeIdentifier: "probe-call",
+      revision: 1,
+      sourceKind: "tool",
+      priorityTier: 1,
+      contentText: "调用",
+      isUrgent: false,
+      isImportant: false,
+      isNeededForCurrentExecution: false,
+      toolCallIdentifier: "probe-call-id",
+      dependencyNodeIdentifiers: [],
+    };
+    const resultNode = { ...callNode, nodeIdentifier: "probe-result", toolCallIdentifier: null };
+    pairManager.registerNode(callNode);
+    pairManager.registerNode(resultNode);
+    pairManager.registerToolPair({
+      toolCallIdentifier: "probe-call-id",
+      toolCallNodeIdentifier: "probe-call",
+      toolResultNodeIdentifier: "probe-result",
+    });
+    const partial = await pairManager.stageNode(callNode);
+    const paired = await pairManager.stageNodePair({ toolCallIdentifier: "probe-call-id" });
+    toolPairIsAtomic =
+      partial.isStaged === false &&
+      paired.isStaged === true &&
+      pairManager.getVisibilityState("probe-call") === "temporarily-closed" &&
+      pairManager.getVisibilityState("probe-result") === "temporarily-closed";
+  } catch {
+    toolPairIsAtomic = false;
+  }
+
+  const displayRows = sdk.buildContextVisibilityDisplayRows([
+    {
+      nodeIdentifier: "probe-staged",
+      visibilityState: "temporarily-closed",
+      businessStatus: "pending",
+      stagingReason: "当前不需要",
+      isPendingRatification: false,
+    },
+    {
+      nodeIdentifier: "probe-pending",
+      visibilityState: "temporarily-closed",
+      businessStatus: "completed",
+      stagingReason: "等待核验",
+      isPendingRatification: true,
+    },
+  ]);
+  const deletionWords = ["删除", "已移除", "丢弃", "清除", "销毁"];
+  observation.losslessContext = {
+    isPromptAbsenceShownAsDeletion: displayRows.some((row) => row.isShownAsDeleted),
+    isTextFreeOfDeletionWording: !displayRows.some((row) =>
+      deletionWords.some((word) => row.displayText.includes(word)),
+    ),
+    isContentRetainedOnDisk: displayRows.every((row) => row.isContentRetainedOnDisk === true),
+    diskFailureKeepsStateUnchanged,
+    toolPairIsAtomic,
+    pendingRatificationIsNotShownCompleted:
+      displayRows.find((row) => row.nodeIdentifier === "probe-pending")?.isShownAsCompleted ===
+      false,
+  };
   /* ── 隔离边界 ── */
   const basePlatform = {
     platformIdentifier: "probe-platform",

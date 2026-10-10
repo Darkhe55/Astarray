@@ -48,6 +48,9 @@ export function buildToolkitPackageChecks(observation) {
     ["evaluateProgramToolEnablement", "程序工具隔离门禁"],
     ["DETERMINISTIC_CSV_TO_JSON_CONVERTER", "确定性转换器声明"],
     ["runDeterministicProgramTool", "受控执行入口"],
+    // NODECTX-01（MERGE-01/NODECTX-01 同卡）：无损上下文与可见性展示必须同样可达。
+    ["createLosslessContextManager", "无损上下文管理器"],
+    ["buildContextVisibilityDisplayRows", "上下文可见性展示"],
   ];
   for (const [exportName, displayName] of entryNames) {
     const isPresent =
@@ -209,9 +212,36 @@ export function buildToolkitPackageChecks(observation) {
     "两次同输入必须逐字节相同",
   );
 
+
+  /* ── NODECTX-01：无损上下文与"不把不在上下文显示成删除" ── */
+  record(
+    "NODECTX-01：可见性展示不得把「不在上下文」显示成删除",
+    readObservation(observation, "losslessContext", "isPromptAbsenceShownAsDeletion") ===
+      false &&
+      readObservation(observation, "losslessContext", "isTextFreeOfDeletionWording") ===
+        true &&
+      readObservation(observation, "losslessContext", "isContentRetainedOnDisk") === true,
+    "暂存/永久关闭的文案与字段都必须表明原文保留、可回访",
+  );
+  record(
+    "NODECTX-01：无损暂存先写盘成功再改可见性（磁盘失败状态不变）",
+    readObservation(observation, "losslessContext", "diskFailureKeepsStateUnchanged") === true,
+    "写入失败时不得移出上下文、不得假报成功",
+  );
+  record(
+    "NODECTX-01：工具调用与结果不拆散（配对同进同出）",
+    readObservation(observation, "losslessContext", "toolPairIsAtomic") === true,
+    "配对节点必须同进同出，单个暂存带调用标识即拒绝",
+  );
+  record(
+    "NODECTX-01：待追认不被显示为已完成成果",
+    readObservation(observation, "losslessContext", "pendingRatificationIsNotShownCompleted") ===
+      true,
+    "待追认必须带不确定标记（即便业务状态为 completed）",
+  );
+
   return checks;
 }
-
 /** 汇总判定结果（`isPassed` 要求**至少一条判据**且全部通过）。 */
 export function summarizeToolkitPackageChecks(checks) {
   const list = Array.isArray(checks) ? checks : [];

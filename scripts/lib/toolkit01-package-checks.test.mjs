@@ -33,6 +33,9 @@ function buildPassingObservation() {
       evaluateProgramToolEnablement: true,
       DETERMINISTIC_CSV_TO_JSON_CONVERTER: true,
       runDeterministicProgramTool: true,
+      // NODECTX-01（与 MERGE-01 同卡）
+      createLosslessContextManager: true,
+      buildContextVisibilityDisplayRows: true,
       buildGuiToolPackageView: false,
     },
     recipe: {
@@ -76,6 +79,15 @@ function buildPassingObservation() {
       outputIsExpected: true,
       badRowRejected: true,
       determinismVerified: true,
+    },
+    /** NODECTX-01（与 MERGE-01 同卡）：无损上下文与可见性展示。 */
+    losslessContext: {
+      isPromptAbsenceShownAsDeletion: false,
+      isTextFreeOfDeletionWording: true,
+      isContentRetainedOnDisk: true,
+      diskFailureKeepsStateUnchanged: true,
+      toolPairIsAtomic: true,
+      pendingRatificationIsNotShownCompleted: true,
     },
   };
 }

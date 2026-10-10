@@ -5,6 +5,7 @@
  * 输出为脱敏 JSON（无凭据、无内部路径、无 .env）。
  */
 import type { AgentMode } from "../../../core/src/core/types.js";
+import { buildContextVisibilityDisplayRows } from "../../../core/src/toolkit/context-visibility-view.js";
 
 export interface GuiTaskView {
   taskIdentifier: string;
@@ -37,6 +38,13 @@ export interface GuiSnapshot {
   crossProject: GuiCrossProjectView;
   /** TOOLKIT-01-04：工具包版本与升级差异（**始终存在**，缺省为空视图）。 */
   toolPackages: GuiToolPackageView;
+  /**
+   * NODECTX-01-03：上下文可见性四态（**始终存在**，缺省为空视图）。
+   *
+   * 卡内纪律："**不把"不在上下文"显示成删除**" ⇒ 视图行必须携带
+   * `isShownAsDeleted: false` 与"原文完整保留、可回访"的文案。
+   */
+  contextVisibility: GuiContextVisibilityRowView[];
 }
 
 export interface GuiCrossProjectAuthorizationView {
@@ -253,6 +261,8 @@ export function buildGuiSnapshot(input: {
   };
   /** PROJECT-01-04：跨项目授权与副本（缺省为空列表；不伪造授权）。 */
   crossProject?: Parameters<typeof buildGuiCrossProjectView>[0];
+  /** NODECTX-01-03：上下文可见性展示输入（缺省为空列表；**不伪造行**）。 */
+  contextVisibility?: Parameters<typeof buildContextVisibilityDisplayRows>[0];
   /**
    * TOOLKIT-01-04：工具包版本与升级差异（缺省为空视图；**不伪造**条目）。
    *
@@ -281,6 +291,7 @@ export function buildGuiSnapshot(input: {
       input.toolPackages === undefined
         ? { versions: [], upgradeDifferences: [] }
         : buildGuiToolPackageView(input.toolPackages),
+    contextVisibility: buildContextVisibilityDisplayRows(input.contextVisibility ?? []),
   };
 }
 
@@ -336,6 +347,11 @@ export interface GuiToolPackageUpgradeDifferenceView
    */
   displaySummary: string;
 }
+
+/** NODECTX-01-03：上下文可见性展示行（GUI 只读）。 */
+export type GuiContextVisibilityRowView = ReturnType<
+  typeof buildContextVisibilityDisplayRows
+>[number];
 
 export interface GuiToolPackageView {
   versions: GuiToolPackageVersionView[];

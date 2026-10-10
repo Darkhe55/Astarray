@@ -393,3 +393,29 @@ summary/outline。因此上一轮枚举里的 `code`/`markup`/`data` 与 `view`�
   **未绕过**，按其要求补了**最小令牌集（仅 writeFile）+ 逐项理由**。
 - **仍未完成**：03（长会话多模型假服务、重启与包级公共入口验收；
   active/暂存/永久关闭/待追认的界面展示）⇒ **不主张 NODECTX-01 通过**。
+### NODECTX-01-03 进展（2026-10-10）：四态展示与"不把'不在上下文'显示成删除"
+
+**卡内最明确的界面纪律**是"展示 active / 暂存 / 永久关闭 / 待追认及**暂存原因**，
+**不把"不在上下文"显示成删除**"。本轮把它做成**可断言**的展示层。
+
+**本轮交付**：
+
+- `packages/core/src/toolkit/context-visibility-view.ts`（纯函数展示层）：
+  · 展示四态 `active` / `staged` / `permanently-closed` / `pending-ratification`，
+    与内部状态一一对应；**待追认优先**（不被"永久关闭"这类确定标签掩盖）；
+  · 文案由**单点生成**：凡"不在上下文"必含"**原文完整保留在磁盘存档，可显式回访**"，
+    且**不含任何删除类字样**（删除/已移除/丢弃/清除/销毁）——反例 ③ 用禁用词表断言；
+  · `isShownAsDeleted` **恒为 false**、`isContentRetainedOnDisk`/`isExplicitRecallAllowed`
+    **恒为 true**（把纪律做成字段而非仅靠文案）；
+  · **暂存原因**缺失时**不留白**：显式标注"原因未记录（须补记）"；
+  · **待追认**即便业务状态为 `completed`，`isShownAsCompleted` 仍为 **false**；
+  · 完成与否**只由业务状态决定**（反例 ⑥）。
+- 接入 `GuiSnapshot.contextVisibility`（**始终存在**，缺省为空列表）；
+- 扩展包级验收：`scripts/lib/toolkit01-package-checks.mjs` 新增 **4 条** NODECTX 判据
+  （不以删除措辞展示、磁盘失败状态不变、工具配对原子、待追认不显示为完成），
+  `verify-toolkit-package.mjs` 探针同步实测这四项。
+
+- 反例（先红后绿）：`tests/core/unit/nodectx01-context-visibility-view.test.ts` **7 条**。
+- **包级验收**：`npm run verify:toolkit-package` **exit 0、39/39**（原 33 + 新增 6）。
+- **仍未完成**：README/架构与支持范围文档更新、长会话多模型假服务的端到端演练
+  ⇒ **不主张 NODECTX-01 整卡通过**。

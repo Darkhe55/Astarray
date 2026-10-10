@@ -98,6 +98,8 @@ describe("gui-read-model", () => {
       crossProject: { authorizations: [], copyReceipts: [] },
       // TOOLKIT-01-04：快照始终携带工具包视图（未提供时为空视图；不伪造条目）。
       toolPackages: { versions: [], upgradeDifferences: [] },
+      // NODECTX-01-03：快照始终携带上下文可见性视图（未提供时为空列表；不伪造行）。
+      contextVisibility: [],
     });
     expect(JSON.stringify(snapshot)).not.toContain("stateDirectory");
   });

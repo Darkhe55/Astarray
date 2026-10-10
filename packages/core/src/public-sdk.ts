@@ -240,6 +240,15 @@ export {
   type StagingWriterPort,
 } from "./toolkit/lossless-context-manager.js";
 
+// ─── NODECTX-01-03：上下文可见性四态展示（"不把不在上下文显示成删除"） ───
+export {
+  CONTEXT_VISIBILITY_DISPLAY_STATES,
+  buildContextVisibilityDisplayRows,
+  type ContextVisibilityDisplayState,
+  type ContextVisibilityViewInput,
+  type ContextVisibilityViewRow,
+} from "./toolkit/context-visibility-view.js";
+
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
 // 否则 runtime: "provider" 在打包产物上不可用。
