@@ -72,7 +72,7 @@
 - 已由 `public-sdk.ts` 公开导出（消费者不依赖内部路径）。
 - 反例（先红后绿）：`tests/core/unit/merge01-parameter-authorization.test.ts` 9 条
   （实现前模块不存在即失败）。
-- **仍未完成**：设置入口（§1.3 第 4 项）与权限引擎/production 接线、两个工具适配样本、
+- ~~设置入口（§1.3 第 4 项）~~ **已由 MERGE-01-04 完成**（见文末）。**仍未完成**：两个工具适配样本、
   执行组到原指令映射与合并开关、NODECTX-01 全部内容 ⇒ **不主张 MERGE-01 或 NODECTX-01 通过**。
 
 ### MERGE-01-01 进展（2026-10-10 续）：能力族 + action 统一（纵向样本）
@@ -96,7 +96,7 @@
     参数不可解析 / 缺必需参数 ⇒ 拒绝 —— 动作切换（如 read→search）沿用旧参数会被明确拒绝。
 - 反例（先红后绿）：`tests/core/unit/merge01-tool-action-registry.test.ts` 8 条
   （实现前模块不存在即失败）。
-- **仍未完成**：把该族接到工具描述符/执行派发与设置入口、执行组到原指令映射与合并开关、
+- ~~设置入口~~ **已由 MERGE-01-04 完成**。**仍未完成**：把该族接到工具描述符/执行派发、执行组到原指令映射与合并开关、
   NODECTX-01 全部内容 ⇒ **不主张 MERGE-01 通过**。
 
 ### MERGE-01-02 进展（2026-10-10）：统一读取工具的 format / view 参数化
@@ -140,7 +140,7 @@ summary/outline。因此上一轮枚举里的 `code`/`markup`/`data` 与 `view`�
   避免后续按错误注释接线（本轮先按错误语义接了一次，被反例当场抓住）。
 - 反例（先红后绿）：`tests/core/integration/merge01-read-file-format-wiring.test.ts` 5 条
   （实现前 3 红）；`merge01-read-view-parameters.test.ts` 同步校准为 7/7。
-- **仍未完成**：`searchProjectText` 的同类规范化接线、设置入口、
+- **仍未完成**：`searchProjectText` 的同类规范化接线、
   执行组到原指令映射与合并开关、NODECTX-01 全部内容 ⇒ **不主张 MERGE-01 通过**。
 
 测试重点：上限 3 不因分组越窗；A 写 X/B 写 Y 不误合并；重复读减少 I/O 但各回执可追踪；参数 read→write、路径逃逸、批次夹带动作被拒；总开关×单工具细分×基线三态×规则冲突矩阵；同键不同值重新授权，单纯键序变化不重复询问；取消和崩溃不重做已成功写入。指标记录请求/工具次数、token、延迟、误合并/漏合并与返修次数，不预设虚假节省百分比。
@@ -219,7 +219,7 @@ summary/outline。因此上一轮枚举里的 `code`/`markup`/`data` 与 `view`�
   （实现前 4 红）；`merge01-tool-action-registry.test.ts` ⑧ 同步校准为
   "指出未知参数 + 独立断言缺少必需参数"，8/8。
 
-**仍未完成**：设置入口、执行组到原指令映射与合并开关、NODECTX-01 全部内容
+**仍未完成**：执行组到原指令映射与合并开关、NODECTX-01 全部内容
 ⇒ **不主张 MERGE-01 通过**。
 
 建议先 NODECTX-01-01 与 MERGE-01-01 做契约（同一实施者每轮一个）；落实 SMART 生产接线与相关可靠性返修后，再依次 NODECTX-01-02/03、MERGE-01-02/03。共享 assembler/调度/权限入口串行集成，不同时重写。
@@ -227,3 +227,38 @@ summary/outline。因此上一轮枚举里的 `code`/`markup`/`data` 与 `view`�
 每个检查点先反例后实现，变量名完整，布尔/时间量遵循命名规范，覆盖/删除前工具备份。运行定向测试、`npm run check`、覆盖率及安全专项，冻结同一提交后 `npm pack`、verify-package 与 smoke-install；包级验收必须真正驱动请求/工具而不是只 import。记录平台、命令退出码、包哈希、请求和产物关联、人工/真实服务未测范围。失败门禁或 skip 不算通过，不放宽原阈值。
 
 每轮至多一个检查点；超过三小时拆分。状态修改是交付内容；本地提交只含自己的改动，通过后依仓库规则尝试推送。完成控制事件、业务验收与文档状态三者必须一致，不凭模型声明结案。
+
+### MERGE-01-04 进展（2026-10-10）：参数授权**设置入口**（§1.3 第 4 项）
+
+**实测缺口**：`isParameterAuthorizationEnabled` / `isParameterRulesEnabled` 此前
+**只存在于权限引擎的构造函数参数里**，全仓 TUI/CLI/GUI/设置**零入口** ⇒
+「参数授权设置入口」在产品层面不成立，且 **TOOLKIT-01-04 依赖该功能**，因此它同时是别人的阻塞项。
+
+**本轮交付** `packages/core/src/tools/parameter-authorization-settings-store.ts`：
+
+- `readSettings()`：无配置文件 ⇒ 返回**默认值（两个开关都开启，卡内"默认全部开启"）**
+  且**不创建文件**（只"看一次设置"就写出配置文件，会让"用户是否显式改过"无法区分）；
+- `writeSettings()`：先校验后落盘（**非法一律不写**），经既有 `writeAtomicJson` 原子写 + 备份；
+- 校验 fail-closed：schemaVersion 不符、**开关非布尔**、`rules` 非数组、缺
+  `ruleIdentifier`/`toolName`/`action`、`decision` 非 deny/ask/allow、
+  **匹配种类未知**（明确不允许正则/脚本）、**规则 ID 重复**（避免后写静默覆盖前写）；
+- **额外补一道校验**：规则的 `action` 必须是**该工具真实存在的 action**
+  （经 `resolveToolAction` 判定）。仅靠判定器不够 —— `action:"not-an-action"` 的规则
+  只是"永不匹配"，判定器会如常返回，于是这条**永不生效**的规则会被静默保存，
+  用户以为配了策略实际什么都没发生。反例 ④ 当场证明了这一点。
+
+**顺带修掉两个真实缺陷**（都由本片反例/核对暴露）：
+
+1. **补上写能力族** `PROJECT_FILE_WRITE_FAMILY`：`createProjectFile`→`create`（幂等）、
+   `replaceFileContent`→`overwrite`（**必须备份、非幂等**），逐 action 如实声明副作用
+   —— 既落实 §1.2"含写动作不能整体伪装 readonly"，也使写工具的规则可被校验；
+2. **修掉 `resolveToolAction()` 的一个真实 bug**：此前"别名 + action"被当成非法并
+   `continue`，导致 `resolveToolAction({toolNameOrAlias:"createProjectFile", action:"create"})`
+   **恒为 null** —— 而这正是设置层"用别名校验规则合法性"的查询形态，
+   等于把**合法查询**误判为非法。已改为：别名必须命中**它自己所属**的 action
+   （仍不允许"旧名 + 任意 action"绕过枚举）。
+
+- 反例（先红后绿）：`tests/core/integration/merge01-parameter-authorization-settings.test.ts`
+  **6 条**（实现前模块不存在即失败），含"设置→引擎→裁决一致"（关闭总开关后规则不再放行）。
+- 六个 MERGE-01 套件合计 **41/41**。
+- **仍未完成**：执行组到原指令映射与合并开关、NODECTX-01 全部内容。

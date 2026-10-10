@@ -25,6 +25,14 @@ export type ParameterRuleMatch =
   | { kind: "numeric-range"; field: string; minimum: number; maximum: number };
 
 export interface ParameterAuthorizationRule {
+  /**
+   * 规则唯一标识（MERGE-01 §1.3 第 4 项"设置入口"要求）。
+   *
+   * 判定器本身不需要它（裁决只看 toolName/action/match），但**设置存储**需要：
+   * 没有稳定标识就无法删除/更新某条规则，也无法检测"规则 ID 重复导致后写静默覆盖前写"。
+   * 因此这里声明为可选，由设置层强制要求。
+   */
+  ruleIdentifier?: string;
   toolName: string;
   /** 仅在该 action 下生效；不匹配即不套用（不同 action 不得互相覆盖）。 */
   action: string;

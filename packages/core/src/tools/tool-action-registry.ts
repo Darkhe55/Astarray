@@ -107,9 +107,47 @@ export const PROJECT_FILE_READ_FAMILY: ToolCapabilityFamily = {
   ],
 };
 
+/**
+ * 第二个纵向样本：把两条既有**写**入口统一到一个能力族。
+ *
+ * MERGE-01 §1.2 要求"含写动作的工具不能整体伪装成 readonly"，因此这里
+ * **逐 action** 如实声明副作用、备份需求与幂等性（写动作必须备份、且非幂等）：
+ *  - `createProjectFile` → action `create`（仅新建，目标已存在即拒；幂等）；
+ *  - `replaceFileContent` → action `overwrite`（覆盖写；**必须备份**且**非幂等**）。
+ *
+ * 该族同时也是"参数级授权设置"能校验写工具规则的前提
+ * （否则 `createProjectFile` 的规则会因"action 不属于该工具"被拒）。
+ */
+export const PROJECT_FILE_WRITE_FAMILY: ToolCapabilityFamily = {
+  familyName: "projectFileWrite",
+  actions: [
+    {
+      action: "create",
+      aliases: ["createProjectFile"],
+      isReadOnly: false,
+      mutationKind: "create-only",
+      requiresPreMutationBackup: false,
+      isIdempotent: true,
+      requiredParameters: ["filePath", "content"],
+      allowedParameters: ["filePath", "content"],
+    },
+    {
+      action: "overwrite",
+      aliases: ["replaceFileContent"],
+      isReadOnly: false,
+      mutationKind: "overwrite",
+      requiresPreMutationBackup: true,
+      isIdempotent: false,
+      requiredParameters: ["filePath", "content"],
+      allowedParameters: ["filePath", "content"],
+    },
+  ],
+};
+
 /** 全部已登记的能力族（当前只登记纵向样本；新增族必须逐 action 判副作用）。 */
 export const REGISTERED_TOOL_CAPABILITY_FAMILIES: ToolCapabilityFamily[] = [
   PROJECT_FILE_READ_FAMILY,
+  PROJECT_FILE_WRITE_FAMILY,
 ];
 
 export interface ResolvedToolAction {
@@ -153,25 +191,43 @@ export function resolveToolAction(input: {
 }): ResolvedToolAction | null {
   const { toolNameOrAlias, action } = input;
   for (const family of REGISTERED_TOOL_CAPABILITY_FAMILIES) {
-    if (toolNameOrAlias === family.familyName) {
-      if (action === undefined) {
-        return null;
-      }
-      const matched = family.actions.find((candidate) => candidate.action === action);
-      return matched === undefined
-        ? null
-        : toResolvedToolAction(family.familyName, matched);
-    }
-    // 别名不再接受额外 action（避免"旧名 + 任意 action"绕过枚举）。
-    if (action !== undefined) {
-      continue;
-    }
-    const matchedByAlias = family.actions.find((candidate) =>
+    const isFamilyName = toolNameOrAlias === family.familyName;
+    const isAlias = family.actions.some((candidate) =>
       candidate.aliases.includes(toolNameOrAlias),
     );
-    if (matchedByAlias !== undefined) {
-      return toResolvedToolAction(family.familyName, matchedByAlias);
+    if (!isFamilyName && !isAlias) {
+      continue;
     }
+    /**
+     * 给了 `action` 时必须在该族内**精确命中**该 action。
+     *
+     * 说明（2026-10-10 修正）：此处原先写成"别名不再接受额外 action"并 `continue`，
+     * 导致 `resolveToolAction({toolNameOrAlias:"createProjectFile", action:"create"})`
+     * 恒为 null —— 而"用别名 + action 校验规则合法性"正是设置层需要的查询形态，
+     * 该写法把**合法查询**误判为非法。正确语义是：
+     *  - 别名必须命中**它自己所属**的 action，不得"旧名 + 任意 action"绕过枚举；
+     *  - 族名则只要 action 在该族内存在即可。
+     */
+    if (action === undefined) {
+      if (isFamilyName) {
+        return null;
+      }
+      const matchedByAlias = family.actions.find((candidate) =>
+        candidate.aliases.includes(toolNameOrAlias),
+      );
+      return matchedByAlias === undefined
+        ? null
+        : toResolvedToolAction(family.familyName, matchedByAlias);
+    }
+    const matched = family.actions.find((candidate) => candidate.action === action);
+    if (matched === undefined) {
+      return null;
+    }
+    // 别名 + action：action 必须正是该别名对应的 action（不得跨 action 套用）。
+    if (isAlias && !matched.aliases.includes(toolNameOrAlias)) {
+      return null;
+    }
+    return toResolvedToolAction(family.familyName, matched);
   }
   return null;
 }
