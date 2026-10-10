@@ -23,6 +23,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   READ_VIEW_FORMATS,
+  READ_VIEW_KINDS,
   normalizeReadViewParameters,
 } from "../../../packages/core/src/tools/tool-action-registry.js";
 
@@ -81,7 +82,7 @@ describe("MERGE-01：统一读取工具的 format / view 参数化", () => {
     expect(badFormat.outcome).toBe("invalid-format");
   });
 
-  it("④ 枚举内的 format/view 必须被接受并原样规范化", () => {
+  it("④ 枚举内的 format 必须被接受并原样规范化；view 因**尚无实现**必须被拒绝", () => {
     for (const format of READ_VIEW_FORMATS) {
       const outcome = normalizeReadViewParameters({
         toolNameOrAlias: "readFile",
@@ -90,12 +91,18 @@ describe("MERGE-01：统一读取工具的 format / view 参数化", () => {
       expect(outcome.outcome).toBe("normalized");
       expect(outcome.format).toBe(format);
     }
+    /**
+     * view 的诚实性（2026-10-10 实测）：`buildReadView()` 无法产出 summary/outline，
+     * 因此 `READ_VIEW_KINDS` 当前为**空**；给出 view 必须**拒绝**，
+     * 否则就是"静默无效参数"（调用方会以为视图语义生效）。
+     */
+    expect(READ_VIEW_KINDS).toHaveLength(0);
     const withView = normalizeReadViewParameters({
       toolNameOrAlias: "readFile",
       argumentsJson: JSON.stringify({ filePath: "docs/a.md", view: "summary" }),
     });
-    expect(withView.outcome).toBe("normalized");
-    expect(withView.view).toBe("summary");
+    expect(withView.outcome).toBe("invalid-view");
+    expect(withView.view).toBeNull();
   });
 
   it("⑤ 不适用于该 action 的视图参数必须拒绝（检索 action 不接受 format/view）", () => {

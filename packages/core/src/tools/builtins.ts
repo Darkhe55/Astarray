@@ -284,6 +284,33 @@ export async function executeBuiltinTool(
       if (typeof filePath !== "string") {
         throw new Error("readFile 参数 filePath 缺失或非法");
       }
+      /**
+       * MERGE-01-02：统一的读取视图参数（format/view）必须**真的影响行为或被拒绝**。
+       *
+       * 实测：`ReadFormatStrategyRegistry.resolve()` 只按扩展名选策略、**不读 format**；
+       * `buildReadView()` 无法产出 summary/outline。因此：
+       *  - `format` 仅接受确有实现的取值（`auto` 既有行为 / `text` 强制原文视图）；
+       *  - 其它 format 与任何 `view` **一律拒绝**（不得静默忽略成"逐字节原文"）；
+       *  - 校验放在**读取之前**（不产生无谓 I/O、不登记读取抑制）。
+       */
+      const rawFormat = args["format"];
+      if (
+        rawFormat !== undefined &&
+        rawFormat !== "auto" &&
+        rawFormat !== "text"
+      ) {
+        throw new Error(
+          "readFile 参数 format 非法（当前仅支持 auto | text；其它取值尚无实现，" +
+            "不得静默忽略）: " + String(rawFormat),
+        );
+      }
+      const isForcedPlainTextFormat = rawFormat === "text";
+      if (args["view"] !== undefined) {
+        throw new Error(
+          "readFile 参数 view 非法（当前无受支持的视图取值，尚未实现摘要/大纲视图；" +
+            "不得静默忽略）: " + String(args["view"]),
+        );
+      }
       const shouldIncludeComments = readOptionalBooleanArgument(
         args,
         "shouldIncludeComments",
@@ -321,12 +348,18 @@ export async function executeBuiltinTool(
       );
       const content = await readFile(resolvedPath, "utf8");
       await assertSensitiveContentAllowed(executionContext, resolvedPath, content);
-      // READ-FORMAT：敏感检查（完整原文）之后才生成视图；视图不修改源文件
+      /**
+       * READ-FORMAT：敏感检查（完整原文）之后才生成视图；视图不修改源文件。
+       * MERGE-01-02：`format: "text"` 强制**原文视图**（逐字节）。
+       * 注意这两个开关的语义是"**过滤掉**该类内容"（`true` = 去掉），因此强制原文
+       * 需要把它们置为 `true`（与"全部过滤"相反），实测确认（见
+       * tests/core/integration/merge01-read-file-format-wiring.test.ts ②）。
+       */
       const readView = defaultReadFormatStrategyRegistry.buildReadView({
         filePath: resolvedPath,
         sourceText: content,
-        shouldIncludeComments,
-        shouldIncludeImports,
+        shouldIncludeComments: isForcedPlainTextFormat ? true : shouldIncludeComments,
+        shouldIncludeImports: isForcedPlainTextFormat ? true : shouldIncludeImports,
         isSensitiveCheckApplied: true,
       });
       // 登记读取：参数哈希含视图参数；内容指纹始终基于完整原文（切换视图不刷新窗口）
@@ -957,7 +990,14 @@ async function registerReadForSuppression(
   });
 }
 
-/** READ-FORMAT-05：读取两个可选布尔视图参数；缺省 true（默认行为与既有读取一致）。 */
+/**
+ * READ-FORMAT-05：读取两个可选布尔视图参数；缺省 true（默认行为与既有读取一致）。
+ *
+ * 语义澄清（2026-10-10 实测）：这两个开关表示"**过滤掉**该类内容"——
+ * `shouldIncludeComments: true` 表示**去掉注释**（同理 imports），
+ * 因此缺省 `true` 就是既有的默认过滤行为；强制原文视图需显式传 `false`。
+ * （旧函数名 `readOptionalBooleanArgument` 保留以减小改动面，但语义以上述为准。）
+ */
 function readOptionalBooleanArgument(
   args: Record<string, unknown>,
   argumentName: string,

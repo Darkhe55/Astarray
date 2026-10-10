@@ -120,6 +120,29 @@ format/view 参数层，故同一族内"视图参数"的语义没有单一判定
 - **仍未完成**：把规范化结果接到 `readFile`/`searchProjectText` 的实际执行路径、
   设置入口、执行组到原指令映射与合并开关、NODECTX-01 全部内容。
 
+### MERGE-01-02 进展（2026-10-10 续）：readFile 的 format 接线与"拒绝静默无效参数"
+
+**实测发现的诚实性问题**：`ReadFormatStrategyRegistry.resolve()` 只按
+`fileName/extension/contentSample` 选策略、**不读 `format`**；`buildReadView()` 无法产出
+summary/outline。因此上一轮枚举里的 `code`/`markup`/`data` 与 `view`（summary/outline）
+若被"接受"，实际是**静默无效参数**——调用方会以为视图语义生效，实际逐字节返回原文。
+这违反卡内"不认识的参数拒绝"与本仓"不静默声称成功"。
+
+**本轮改为诚实契约**：
+
+- `READ_VIEW_FORMATS` 收敛为**确有实现**的取值：`auto`（按扩展名选策略的既有行为）
+  与 `text`（强制原文视图）；`code`/`markup`/`data` **移出枚举**（待真正实现策略分组后再加入）；
+- `READ_VIEW_KINDS` **当前为空**：`view` 一律 `invalid-view` 拒绝，不静默忽略；
+- `readFile` 执行路径接线：`format:"text"` 经既有构建器产出**逐字节原文**；
+  非 `auto|text` 的 format 与任何 `view` **在读取之前**即报参数错误（零 I/O、不登记读取抑制）；
+- 顺带修正一处**文档与实现不符**：`readOptionalBooleanArgument` 的注释说"缺省 true"，
+  但这些开关的语义是"**过滤掉**该类内容"（`true` = 去掉注释/导入）——已按实测语义写清，
+  避免后续按错误注释接线（本轮先按错误语义接了一次，被反例当场抓住）。
+- 反例（先红后绿）：`tests/core/integration/merge01-read-file-format-wiring.test.ts` 5 条
+  （实现前 3 红）；`merge01-read-view-parameters.test.ts` 同步校准为 7/7。
+- **仍未完成**：`searchProjectText` 的同类规范化接线、设置入口、
+  执行组到原指令映射与合并开关、NODECTX-01 全部内容 ⇒ **不主张 MERGE-01 通过**。
+
 测试重点：上限 3 不因分组越窗；A 写 X/B 写 Y 不误合并；重复读减少 I/O 但各回执可追踪；参数 read→write、路径逃逸、批次夹带动作被拒；总开关×单工具细分×基线三态×规则冲突矩阵；同键不同值重新授权，单纯键序变化不重复询问；取消和崩溃不重做已成功写入。指标记录请求/工具次数、token、延迟、误合并/漏合并与返修次数，不预设虚假节省百分比。
 
 ## 2. NODECTX-01：禁止有损压缩，以节点关闭与暂存管理上下文

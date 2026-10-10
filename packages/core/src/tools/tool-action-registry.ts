@@ -200,13 +200,30 @@ export function validateActionArguments(input: {
   return { isValid: true, reason: null };
 }
 
-/** 统一视图参数允许的 `format` 取值（枚举；不接受枚举外取值）。 */
-export const READ_VIEW_FORMATS = ["auto", "text", "code", "markup", "data"] as const;
+/**
+ * 统一视图参数允许的 `format` 取值（枚举）。
+ *
+ * **只列出确有实现**的取值（2026-10-10 实测校准）：
+ *  - `auto`：按扩展名解析策略的**既有行为**；
+ *  - `text`：强制原文视图（逐字节，不做视图过滤）。
+ *
+ * `code`/`markup`/`data` 等"按内容族分组"的取值**不在枚举内**：本仓
+ * `ReadFormatStrategyRegistry.resolve()` 只按 `fileName/extension/contentSample` 选策略，
+ * **不读 format**；把它们放进枚举会让调用方以为分组生效，实际是**静默无效参数**。
+ * 待真正的策略分组实现落地后再加入（届时必须同时补反例）。
+ */
+export const READ_VIEW_FORMATS = ["auto", "text"] as const;
 export type ReadViewFormat = (typeof READ_VIEW_FORMATS)[number];
 
-/** 统一视图参数允许的 `view` 取值（枚举）。 */
-export const READ_VIEW_KINDS = ["full", "summary", "outline"] as const;
-export type ReadViewKind = (typeof READ_VIEW_KINDS)[number];
+/**
+ * 统一视图参数允许的 `view` 取值。
+ *
+ * **当前为空**：`ReadViewReceipt` / `formatReadFileViewOutput` 只能产出原文或
+ * "已过滤"两种形态，**无法产出 summary/outline**。因此不提供任何 view 取值——
+ * 传入 `view` 将被**拒绝**（而非静默忽略）。待实现真正的摘要/大纲视图后再加入。
+ */
+export const READ_VIEW_KINDS: readonly string[] = [];
+export type ReadViewKind = string;
 
 export type NormalizeReadViewOutcome =
   | "normalized"
@@ -320,19 +337,16 @@ export function normalizeReadViewParameters(input: {
     format = rawFormat as ReadViewFormat;
   }
 
-  // view：缺省 full；必须在枚举内
+  // view：**当前无任何受支持取值** ⇒ 给出 view 即拒绝（不静默忽略）。
   const rawView = parsed["view"];
-  let view: ReadViewKind = "full";
   if (rawView !== undefined) {
-    if (typeof rawView !== "string" || !READ_VIEW_KINDS.includes(rawView as ReadViewKind)) {
-      return failure(
-        "invalid-view",
-        "view 必须是枚举值之一: " + READ_VIEW_KINDS.join(" | "),
-        resolved.action,
-      );
-    }
-    view = rawView as ReadViewKind;
+    return failure(
+      "invalid-view",
+      "view 当前无受支持取值（尚未实现摘要/大纲视图）：不得静默忽略，请省略该参数",
+      resolved.action,
+    );
   }
+  const view: ReadViewKind | null = null;
 
   // 既有布尔视图参数：缺省 true（与既有读取行为一致）；必须为布尔类型。
   const readBoolean = (
