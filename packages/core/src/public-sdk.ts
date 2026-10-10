@@ -128,6 +128,17 @@ export {
   type ToolPackageVersionStateStoreOptions,
 } from "./toolkit/tool-package-version-state-store.js";
 
+// ─── TOOLKIT-01-05：受控确定性程序工具的隔离边界门禁公开入口 ───
+// 卡内 §7：readOnly 自声明不构成信任；涉及文件/进程/网络必须沙箱+broker 双备；
+// 平台无法兑现所需隔离时明确拒绝并保留配方路径，且不提供任意脚本后备入口。
+export {
+  evaluateProgramToolEnablement,
+  type ProgramToolCapability,
+  type ProgramToolDeclaration,
+  type ProgramToolEnablementOutcome,
+  type SandboxCapabilityProfile,
+} from "./toolkit/program-tool-isolation-gate.js";
+
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
 // 否则 runtime: "provider" 在打包产物上不可用。
