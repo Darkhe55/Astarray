@@ -159,6 +159,18 @@ export {
   type ToolDiscoverySource,
 } from "./toolkit/tool-benefit-evaluation.js";
 
+// ─── TOOLKIT-01-01/02：隔离 fixture 的基线成本记录公开入口 ───
+// 结构计量（次数/字节）为 measured（可复现）；墙上时钟为 machine-specific（不可移植）；
+// 未测量项显式列出，绝不填 0 冒充。
+export {
+  buildBenefitEvidenceFromBaseline,
+  measureBaselineCost,
+  type BaselineCostRecord,
+  type BaselineManualStep,
+  type BaselinePathMeasurement,
+  type MeasurementSourceKind,
+} from "./toolkit/baseline-cost-measurement.js";
+
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
 // 否则 runtime: "provider" 在打包产物上不可用。
