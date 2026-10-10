@@ -72,6 +72,22 @@
    - **下一步最小验证**（原诊断已写明，未执行）：在授权登记点与后续 `authorizeForExecution`
      各打印**范围指纹**与 `consumedAtIso`，确认"写入的记录"与"重跑读取的记录"是否同一条；
      并查非 TTY 下 stdin 行读取路径（`isInteractive` / 裁决输入消费）。
+   - **2026-10-10 追加：已把该缺口定位到具体接缝（比原记录更精确，供下轮直接起步）**：
+     - `packages/tui/src/cli/permission-ask-adjudication.ts`
+       —— L304-305 `hasInputChannel()` 判 `process.stdin.isTTY !== true`（**管道 stdin 视为显式输入通道**，设计上正确）；
+       L309-346 为**按换行切分**的 stdin 行读取器（支持 `printf 'allow-once\nallow-once\n' | …` 多条裁决）；
+       L396 `isInteractive()` = `isInteractiveFlag() || hasInputChannelFlag()`；
+       L400-414 `readDecision()` 仅当整行 `trim().toLowerCase() === "allow-once"` 才返回授权；
+       L288 即在成功时打印"已按精确参数 allow-once 授权"。
+     - `packages/tui/src/cli/bootstrap.ts` L29：默认 `isInteractive: () => process.stdin.isTTY === true`
+       （**只看 TTY**）——与上面端口的 `isInteractive()` 口径**不同**，是首先值得核对的一处不一致。
+     - `packages/tui/src/cli/run-command.ts` L268：`isInteractive: decisionPort.isInteractive()` 的接线段；
+       L28-46 另有"等待新一轮 permission-ask 文本到达"与"`allow-once` 后等待重跑窗口"的时间窗逻辑。
+     - **关键矛盾（下轮先证伪/证实）**：stderr 已打印"已按精确参数 allow-once 授权（作用域授权: granted）"，
+       却仍报"该授权已被消费"⇒ 指向**登记的作用域指纹 / revision 与 `authorizeForExecution` 复核所用不一致**，
+       或**同一条授权被两次消费**；原诊断另注 `ASTARRAY_SCOPE_TRACE` 在离线路径未打印（该路径可能未走到登记函数）。
+     - 复核方式（与其它走构建产物的用例一致）：**改 `src` 后必须 `npm run build`**，该用例 spawn 的是 `dist/cli.js`；
+       单次复跑约 31s，故一次只验一个假设。
    - 处理约定：**不删除**该反例（删除等于假装已支持），也**不解除 skip 让门禁长期变红**；
      修复后应改回 `it`。
 2. **超时型抖动**（独立于已修的三层根因）：`tests/tui/unit/run-command-gaps.test.ts`
