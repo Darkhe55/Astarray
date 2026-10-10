@@ -40,7 +40,7 @@
 
 ### E2E-01-04：质量与交付声明
 
-- 状态：in_progress（**2026-10-09 于 `728875f`/`713d842` 刷新：分支覆盖率 83.26% < 85% 阈值——未达标，故不得 done**；`npm run check` exit 0（**290 文件/2186 用例**）、安全关键模块 **22/22 ≥95%**、fixture 指纹 `6512b2a6…c7c` 与历史一致、`npm pack`+`verify-package` exit 0（**239 文件**，sha256 `8b175e31…` 与 E2E-01-03 判定文件记录的 tarball 一致）；**`smoke-install` 两次 exit 1，均为其内部 `prepack → check` 命中负载型抖动用例（隔离复跑全部通过）**，属真实待办。另：真实 Provider 场景已由 E2E-01-03 取得证据。证据 docs/reports/E2E01_04_LOCAL_REFRESH_2026-10-09.md；历史口径见 docs/reports/E2E01_04_LOCAL_REFRESH_2026-09-19.md 与 docs/reports/E2E01_04_QUALITY_STATEMENT.md。未决必选项：人工体验结论、Linux/macOS 平台）。
+- 状态：in_progress（**2026-10-09 收口刷新（分支覆盖率已达标）**：全量 **306 文件 / 2343 用例通过、exit 0**（`--maxWorkers=6`），分支 **8014/9422 = 85.05% ≥ 阈值 85**（行 92.69 / 函数 92.62 / 语句 92.65），**起点 83.29%/需 161 条 → 本冲刺净增约 166 条**；安全关键模块 **22/22 ≥95%**；fixture 指纹 `6512b2a6…c7c` 与历史一致；`npm pack`+`verify-package` exit 0（239 文件，sha256 `8b175e31…` 与 E2E-01-03 判定文件一致）。**仍未 done 的两条硬理由**：① 卡内"未决必选项不得done"——**人工体验结论**与 **Linux/macOS 平台**证据仍缺（真实 Provider 场景已由 E2E-01-03 覆盖）；② 仓库默认并发下 **`npm run test:coverage` 仍 exit 1**，原因是 **2 个负载型抖动用例**（`e2e01-vertical-rework`、`run-command-gaps`，隔离复跑 870ms/5.4s 全通过），同一根因也使 **`smoke-install` 的 `prepack → npm run check` 失败**——这是本节点**唯一的本地可修障碍**。证据 docs/reports/E2E01_04_LOCAL_REFRESH_2026-10-09.md；历史口径见 docs/reports/E2E01_04_LOCAL_REFRESH_2026-09-19.md 与 docs/reports/E2E01_04_QUALITY_STATEMENT.md）。
 - 工作：运行check、coverage、安全关键模块专项及tarball回归；绑定平台结果和人工体验结论，纠正支持矩阵。
 - 验收：总体分支≥85%，适用安全关键模块≥95%；未跑平台明确未验证；mock/fake/真实及正式/待人工追认状态区分；未决必选项不得done。
 - 前驱：E2E-01-03。先通过前驱，再执行本节点。
