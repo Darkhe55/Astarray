@@ -204,7 +204,16 @@ import {
   type SummaryChunk,
   type SummaryDetailLevel,
 } from "./summarization/summary-manifest.js";
-import { buildLocalExtractiveNarrative, buildWorkArchiveSummaryEntries } from "./summarization/summary-source-adapters.js";
+import {
+  buildConversationSummaryEntries,
+  buildDeferredFileSummaryEntries,
+  buildLocalExtractiveNarrative,
+  buildReportSummaryEntries,
+  buildWorkArchiveSummaryEntries,
+  type ConversationSummaryTurn,
+  type DeferredFileSummaryRecord,
+  type ReportSummaryRecord,
+} from "./summarization/summary-source-adapters.js";
 
 // ─── SUM-01-04：四类摘要来源适配器公开入口 ───
 // 卡内要求摘要覆盖"会话历史、工作存档、报告和延后文件"；四类适配器均为**纯函数**，
@@ -222,6 +231,7 @@ export {
 import { measureSummaryOperation } from "./summarization/summary-resource-metrics.js";
 import { advanceSummaryGeneration } from "./summarization/summary-generation-service.js";
 import { SummaryIndexStore } from "./summarization/summary-index-store.js";
+import type { SummarySourceEntry } from "./summarization/summary-fact-extractor.js";
 import { buildRuntimeGuidanceEvent } from "./runtime-guidance/runtime-guidance.js";
 import {
   AccuracyCompletionGate,
@@ -1728,6 +1738,106 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       chunkCount: generation.manifest.chunks.length,
       coveredThroughSourceRevision:
         generation.manifest.coveredThroughSourceRevision,
+      entryCount: entries.length,
+      generatorVersion,
+    };
+  }
+
+  /**
+   * SUM-01-04：按**来源种类**发布摘要（四类来源都经此公开入口可达）。
+   *
+   * 卡内要求摘要覆盖"会话历史、工作存档、报告和延后文件"。此前公开入口只有
+   * `summarizeArchivedMission()`（仅 work-archive）⇒ 另外三类的适配器虽已实现，
+   * **产品层面不可达**。本方法按 `sourceKind` 分派到对应适配器并真实发布清单。
+   *
+   * 纪律（与既有摘要路径一致）：
+   *  - 载荷必须与 `sourceKind` 匹配，否则**拒绝**（不得按错适配器解释）；
+   *  - 空来源 ⇒ `entryCount=0` 且 `manifestRevision=0`（**不发布空清单冒充成功**）；
+   *  - 适配器负责确定性排序/哈希与"重复不双计"，本方法不重复实现该逻辑。
+   */
+  async publishSummarySource(input: {
+    sourceIdentifier: string;
+    detailLevel?: SummaryDetailLevel;
+  } & (
+    | { sourceKind: "conversation"; turns: ConversationSummaryTurn[] }
+    | { sourceKind: "report"; reports: ReportSummaryRecord[] }
+    | { sourceKind: "deferred-file"; deferredFiles: DeferredFileSummaryRecord[] }
+  )): Promise<{
+    sourceKind: PublicSummarySourceSummary["sourceKind"];
+    sourceIdentifier: string;
+    manifestRevision: number;
+    chunkCount: number;
+    coveredThroughSourceRevision: number;
+    entryCount: number;
+    generatorVersion: string;
+  }> {
+    this.assertOpen();
+    const store = await this.createSummaryIndexStore();
+    const generatorVersion = "local-extractive-1";
+    const sourceIdentifier = input.sourceIdentifier;
+    const emptyOutcome = () => ({
+      sourceKind: input.sourceKind,
+      sourceIdentifier,
+      manifestRevision: 0,
+      chunkCount: 0,
+      coveredThroughSourceRevision: 0,
+      entryCount: 0,
+      generatorVersion,
+    });
+
+    let entries: SummarySourceEntry[];
+    switch (input.sourceKind) {
+      case "conversation": {
+        entries = buildConversationSummaryEntries({
+          sessionIdentifier: sourceIdentifier,
+          turns: input.turns,
+        });
+        break;
+      }
+      case "report": {
+        entries = buildReportSummaryEntries({ reports: input.reports });
+        break;
+      }
+      case "deferred-file": {
+        entries = buildDeferredFileSummaryEntries({
+          deferredFiles: input.deferredFiles,
+        });
+        break;
+      }
+      default: {
+        // 类型系统已排除；此处 fail-closed（不猜测来源种类）。
+        throw new PublicApplicationError(
+          "unsupported-summary-source-kind",
+          "不支持的摘要来源种类：" + String((input as { sourceKind?: unknown }).sourceKind),
+        );
+      }
+    }
+
+    if (entries.length === 0) {
+      return emptyOutcome();
+    }
+
+    const generation = await advanceSummaryGeneration({
+      store,
+      agentInstanceId: this.runtime.mainAgentInstanceId,
+      sourceKind: input.sourceKind,
+      sourceIdentifier,
+      entries,
+      narrativeGenerator: {
+        generateNarrative: async (generationInput) =>
+          buildLocalExtractiveNarrative(generationInput.facts),
+      },
+      generatorVersion,
+    });
+    if (generation.manifest === null) {
+      return emptyOutcome();
+    }
+    return {
+      sourceKind: input.sourceKind,
+      sourceIdentifier,
+      manifestRevision: generation.manifest.manifestRevision,
+      chunkCount: generation.manifest.chunks.length,
+      coveredThroughSourceRevision: generation.manifest.coveredThroughSourceRevision,
       entryCount: entries.length,
       generatorVersion,
     };
