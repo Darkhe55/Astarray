@@ -115,12 +115,12 @@
 
 | ID | 状态 | 工作与必需验收 |
 |---|---|---|
-| TOOLKIT-01-01 | pending | 核查工匠、bundle、注册表和帮助回访实际接线；冻结最小包、三类产物、目录/身份、权限与推广契约；选一个真实重复流程作隔离 fixture，记录基线成本 |
-| TOOLKIT-01-02 | pending | 项目配方草案→独立验证→登记/启用→按需发现→实际调用；组合现有受控工具，完整保留来源和逐步骤回执；证明复用不是只 import |
-| TOOLKIT-01-03 | pending | 用户级推广、逻辑/适配/偏好分离、项目固定版本；第二个不同项目 fixture 可用，来源项目零修改、目标权限不继承、导出无敏感数据 |
-| TOOLKIT-01-04 | pending | 参数授权设置接线、升级差异、停用/回滚、取消/崩溃恢复与独立反馈；依赖 MERGE-01 对应权限功能，不另造规则 |
-| TOOLKIT-01-05 | pending | 受控确定性程序工具与通用包验证；先实现一个无外部副作用转换器，验证沙箱/broker边界；未支持环境明确拒绝，不自动扩大到任意程序执行 |
-| TOOLKIT-01-06 | pending | 共用 SDK 与 CLI/TUI/GUI 最小管理入口、tarball 隔离包闭环、收益评估、文档与状态同步；人工交互与平台按实测记录，不以组件绿测替代 |
+| TOOLKIT-01-01 | **done（2026-10-10）** | 已完成：隔离 fixture（两个结构不同的项目）、实测基线成本记录（来源**三态**标注，不伪造精确度）、包登记与作用域契约。见文末各节进展与 `scripts/verify-toolkit-package.mjs`。 |
+| TOOLKIT-01-02 | **done（2026-10-10）** | 已完成：项目配方草案 → 独立验证 → 登记/启用 → 按需发现 → **实际调用**；组合现有受控工具、保留来源与**逐步骤回执**；验证要求**声明工具真的全部执行过**（证明复用不是只 import）。反例见 `tests/core/unit/toolkit01-workflow-recipe-engine.test.ts`。 |
+| TOOLKIT-01-03 | **done（2026-10-10）** | 已完成：两个结构不同的 fixture 项目（`fixture-alpha`：`src/`+`tests/`+`.ts`；`fixture-beta`：`lib/`+`lib/vendor/`+`docs/`+`.py`）、来源项目**零修改**、目标项目**显式启用并固定内容哈希**、推广**只提案**（`enabledProjectIdentifiers` 恒为空）、来源项目零修改有反例。**内容哈希已改为真实 sha256**（原为自造多项式哈希）。 |
+| TOOLKIT-01-04 | **大部分完成（2026-10-10）**；**不判通过** | 已完成：设置入口、版本升级差异、停用/回滚、**取消/崩溃恢复管理入口**与**独立反馈**（`tool-package-operation-control.ts`），CLI `list/describe/status/enable/disable/upgrade/rollback/cancel/recover/feedback`，GUI/TUI 面板；**修掉"在途调用未持久化"缺陷**（取消后跨进程仍可见在途调用）。反例含**真实 `dist/cli.js` 子进程**。**仍未完成**：与 MERGE-01 权限功能的完整联测。 |
+| TOOLKIT-01-05 | **done（2026-10-10）** | 已完成：受控确定性程序工具（`DETERMINISTIC_CSV_TO_JSON_CONVERTER`）+ 隔离门禁（沙箱与 broker **两者都必需**、未支持能力**先于**沙箱检查拒绝、`fallbackPath: "recipe-only"`、**不允许任意脚本兜底**）。 |
+| TOOLKIT-01-06 | **部分完成（2026-10-10）**；**不判通过** | 已交付：tarball 隔离安装闭环（`npm run verify:toolkit-package` **39/39**）、SDK 与 CLI/TUI/GUI 最小管理入口、受益评估（**保守取区间下限**、无机械重复门槛、自动发现只提案）、**如实记录 `measuredSavingMinutes: 0` 与 `notMeasuredItems`**。**仍未完成**：卡内点名的**更大样本**复用次数/构建成本实测（当前仅单一 fixture 计量）⇒ 不主张整卡通过。 ||
 
 推荐先交付 01/02/03 的项目复用纵向切片，证明收益后做 04/05/06；第一阶段完成不把整卡标 done。01 可提前审计；实际启用受 MERGE 权限门禁及 RELIABILITY 关键缺口限制。NODECTX 未落地时不引入新的压缩方案，沿用原文按需读取。
 
