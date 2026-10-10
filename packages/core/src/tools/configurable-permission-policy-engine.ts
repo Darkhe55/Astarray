@@ -15,6 +15,10 @@ import type { PermissionCapabilityCatalog } from "./permission-capability-catalo
 import type { PermissionDecision } from "./permission-capability-catalog.js";
 import type { PermissionProfileStore } from "./permission-profile-store.js";
 import { hashToolArguments } from "../core/permission-policy.js";
+import {
+  evaluateParameterAuthorization,
+  type ParameterAuthorizationRule,
+} from "./parameter-authorization.js";
 import type {
   PermissionProfileDocument,
   PermissionProfileReference,
@@ -35,6 +39,16 @@ export interface ConfigurablePermissionPolicyEngineOptions {
   authorizations?: Map<string, ProfileBoundAuthorization>;
   nowUnixSeconds?: () => number;
   authorizationTtlSeconds?: number;
+  /**
+   * MERGE-01：参数级授权（总开关 + 该工具细分 + 声明式规则）。
+   *
+   * 未注入时行为与既有完全一致（不改变任何现存裁决路径）。
+   * 判定委托 `evaluateParameterAuthorization`（纯函数，无脚本/无正则）。
+   */
+  parameterAuthorization?: {
+    settings: { isParameterAuthorizationEnabled: boolean; isParameterRulesEnabled: boolean };
+    rules: ParameterAuthorizationRule[];
+  };
 }
 
 export type ConfigurablePermissionDecision =
@@ -52,6 +66,11 @@ export class ConfigurablePermissionPolicyEngine {
   private readonly authorizations: Map<string, ProfileBoundAuthorization>;
   private readonly nowUnixSeconds: () => number;
   private readonly authorizationTtlSeconds: number;
+  /** MERGE-01：参数级授权配置（未注入 ⇒ 行为与既有完全一致）。 */
+  private readonly parameterAuthorization: {
+    settings: { isParameterAuthorizationEnabled: boolean; isParameterRulesEnabled: boolean };
+    rules: ParameterAuthorizationRule[];
+  } | null;
 
   constructor(options: ConfigurablePermissionPolicyEngineOptions) {
     this.catalog = options.catalog;
@@ -59,6 +78,7 @@ export class ConfigurablePermissionPolicyEngine {
     this.authorizations = options.authorizations ?? new Map();
     this.nowUnixSeconds = options.nowUnixSeconds ?? (() => Math.floor(Date.now() / 1000));
     this.authorizationTtlSeconds = options.authorizationTtlSeconds ?? 600;
+    this.parameterAuthorization = options.parameterAuthorization ?? null;
   }
 
   /** 读取 profile 快照（内置动态生成；自定义读盘）。 */
@@ -91,6 +111,11 @@ export class ConfigurablePermissionPolicyEngine {
     toolName: string;
     profileReference: PermissionProfileReference;
     argumentsJson: string;
+    /**
+     * MERGE-01：该调用的 **action**（本仓已有本地确定性事实：工具描述符的 `mutationKind`）。
+     * 缺省为空串 ⇒ 参数规则不会按 action 匹配（因此不会误套用其它 action 的规则）。
+     */
+    action?: string;
   }): Promise<ConfigurablePermissionDecision> {
     if (!this.catalog.isToolMapped(input.toolName)) {
       return {
@@ -105,6 +130,32 @@ export class ConfigurablePermissionPolicyEngine {
     });
     if (baseDecision === "deny") {
       return { decision: "deny", reason: "操作不可用" };
+    }
+    /**
+     * MERGE-01：参数级授权（仅当注入配置时参与）。
+     *
+     * 语义（卡内 §1.3）：已匹配参数规则覆盖工具基线；未匹配回退基线；
+     * 基线 deny 已是总拒绝（上面已返回）；多规则冲突 deny>ask>allow 由纯函数保证。
+     * 结果仍需与会话授权等更外层上限**求交**，因此这里只把 allow/deny 定案，
+     * `ask` 继续走下面的既有会话授权路径。
+     */
+    const parameterOutcome = this.evaluateParameterAuthorizationForCall({
+      toolName: input.toolName,
+      action: input.action ?? "",
+      argumentsJson: input.argumentsJson,
+      baselineDecision: baseDecision,
+    });
+    if (parameterOutcome !== null) {
+      if (parameterOutcome.decision === "deny") {
+        return {
+          decision: "deny",
+          reason: parameterOutcome.appliedRuleExplanation ?? "参数规则拒绝",
+        };
+      }
+      if (parameterOutcome.decision === "allow") {
+        return { decision: "allow" };
+      }
+      // 参数规则判 ask ⇒ 继续走既有 ask 路径（可被会话授权细化）。
     }
     if (baseDecision === "allow") {
       return { decision: "allow" };
@@ -165,6 +216,30 @@ export class ConfigurablePermissionPolicyEngine {
 
   private authorizationKey(toolName: string, argumentsJson: string): string {
     return `${toolName}:${this.hashArguments(argumentsJson)}`;
+  }
+
+  /**
+   * MERGE-01：把参数级配置接到纯函数判定上；未注入配置时返回 null（不改变既有行为）。
+   * 会话授权细化等更外层上限由调用方在此结果之后求交。
+   */
+  private evaluateParameterAuthorizationForCall(input: {
+    toolName: string;
+    action: string;
+    argumentsJson: string;
+    baselineDecision: PermissionDecision;
+  }): ReturnType<typeof evaluateParameterAuthorization> | null {
+    const configuration = this.parameterAuthorization;
+    if (configuration === null) {
+      return null;
+    }
+    return evaluateParameterAuthorization({
+      toolName: input.toolName,
+      action: input.action,
+      argumentsJson: input.argumentsJson,
+      baselineDecision: input.baselineDecision,
+      settings: configuration.settings,
+      rules: configuration.rules,
+    });
   }
 
   private hashArguments(argumentsJson: string): string {

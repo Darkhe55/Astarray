@@ -15,12 +15,19 @@
  * 现状缺口（本文件在实现前必须失败）：`isParameterAuthorizationEnabled` /
  * `isParameterRulesEnabled` 在整个 `packages/` 内**零命中** ⇒ 该能力完全未实现。
  */
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
   evaluateParameterAuthorization,
   type ParameterAuthorizationRule,
 } from "../../../packages/core/src/tools/parameter-authorization.js";
+import { ConfigurablePermissionPolicyEngine } from "../../../packages/core/src/tools/configurable-permission-policy-engine.js";
+import { PermissionCapabilityCatalog } from "../../../packages/core/src/tools/permission-capability-catalog.js";
+import { PermissionProfileStore } from "../../../packages/core/src/tools/permission-profile-store.js";
 
 const FILE_TOOL = "createProjectFile";
 
@@ -212,5 +219,63 @@ describe("MERGE-01：参数级授权优先规则", () => {
       rules: [rule({ action: "not-an-action", decision: "allow" })],
     });
     expect(unknownAction.decision).toBe("ask");
+  });
+});
+
+/**
+ * ⑩ production 接线（MERGE-01-02 的门槛）：可配置权限引擎必须在**执行前裁决**时
+ * 应用参数级规则，而不是只在纯函数里可用。
+ *
+ * action 绑定使用工具描述符的 `mutationKind`（本仓已有的本地确定性事实），
+ * 因此调用方只需给出 baseline 与规则集；引擎不猜测 action。
+ */
+describe("MERGE-01：参数级规则在权限引擎裁决中生效", () => {
+  it("⑩ 引擎 decide：匹配的参数 allow 覆盖基线 ask；未匹配时回退 ask", async () => {
+    const baseDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "astarray-merge01-engine-"));
+    try {
+      const catalog = new PermissionCapabilityCatalog();
+      const profileStore = new PermissionProfileStore({ baseDirectory, catalog });
+      const engine = new ConfigurablePermissionPolicyEngine({
+        catalog,
+        profileStore,
+        nowUnixSeconds: () => 1_000_000,
+        // 参数级授权（总开关 + 该工具细分）由调用方注入：
+        parameterAuthorization: {
+          settings: {
+            isParameterAuthorizationEnabled: true,
+            isParameterRulesEnabled: true,
+          },
+          rules: [
+            {
+              toolName: "createProjectFile",
+              // 与描述符 mutationKind 绑定（本地确定性事实，不由模型给出）
+              action: "file-create",
+              decision: "allow",
+              explanation: "仅允许 docs/ 前缀的新建",
+              match: { kind: "path-prefix", field: "filePath", prefix: "docs/" },
+            },
+          ],
+        },
+      });
+      const profileReference = { kind: "builtin" as const, profileId: "assist" as const };
+      const allowed = await engine.decide({
+        toolName: "createProjectFile",
+        action: "file-create",
+        profileReference,
+        argumentsJson: JSON.stringify({ filePath: "docs/a.md", content: "x" }),
+      });
+      expect(allowed.decision).toBe("allow");
+
+      const fallback = await engine.decide({
+        toolName: "createProjectFile",
+        action: "file-create",
+        profileReference,
+        argumentsJson: JSON.stringify({ filePath: "outside/a.md", content: "x" }),
+      });
+      // assist 基线为 ask ⇒ 未匹配必须回退 ask（不得因存在规则就放行）
+      expect(fallback.decision).toBe("ask");
+    } finally {
+      await fs.rm(baseDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    }
   });
 });
