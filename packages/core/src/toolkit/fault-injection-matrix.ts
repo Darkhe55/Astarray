@@ -207,12 +207,16 @@ export const FAULT_INJECTION_MATRIX: readonly FaultInjectionEntry[] = [
       "尚无'派发前崩溃 + 重启'的受控反例（不拿相邻测试冒充）；父进程退出仅有反馈进程侧的既有覆盖",
   },
   {
-    entryIdentifier: "receipt-written-ack-lost",
-    timing: "receipt-written-ack-lost" as never,
-    dimension: "parent-process-exit",
-    representativeOperation: "反馈确认：回执已写但确认丢失",
-    verdict: "not-verified",
-    summary: "反馈 ack 丢失侧的注入尚未建立；需可握手假服务配合",
+    entryIdentifier: "guidance-receipt-write-interrupted",
+    timing: "receipt-written-ack-lost",
+    dimension: "corrupted-record",
+    representativeOperation: "运行指导：回执写入被崩溃/断电打断",
+    verdict: "fixed",
+    summary:
+      "先说结论（如实记录排查过程）：本仓指导的『记录与应用』在**同一个同步块**内完成，故『回执已写、确认未到』的间隙**并不存在**（原假设被跨进程注入证伪）。该时点真正的形态是『回执写入过程被打断』——磁盘留下不完整 JSON，而 `readDocument()` 此前**静默返回空日志** ⇒ `queryGuidanceStatus()` 报 0 条、用户指导**静默消失**（与已返修的幂等账目损坏同类）。已新增 `readAllWithIntegrity()`/`readAllStrict()`，并让产品默认查询路径 **fail-closed**（损坏即显式失败），合法条目仍保留供诊断",
+    evidenceFilePaths: [
+      "tests/core/unit/reliability-guidance-journal-integrity.test.ts",
+    ],
   },
 ];
 

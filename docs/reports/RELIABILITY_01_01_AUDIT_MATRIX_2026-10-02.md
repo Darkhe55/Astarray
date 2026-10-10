@@ -172,3 +172,23 @@
 released、claim 未结算 → 重启不重复执行、重启后异参拒绝、**零预算**、**损坏记录**、
 **磁盘满**（检查点存储 + 无损暂存两处）、**休息边界**、**子进程超时**（含 POSIX 限制）、
 **权限撤销**。
+## 9. 时点"回执写入但确认丢失"的落实（2026-10-10）
+
+**排查过程如实记录（原假设被证伪）**：我先按"提交与派发分离"的假设写了**真实跨进程注入**
+（子进程提交后不等确认即退出）。实测发现本仓指导的"记录与应用"在**同一个同步块**内完成
+（`submitRuntimeGuidance` 内部即完成回执回写）⇒ **"回执已写、确认未到"这个间隙并不存在**。
+
+**改为该时点真正会出现的形态**：**回执写入过程被打断**（崩溃/断电）⇒ 磁盘留下**不完整 JSON**。
+
+**实测缺陷（与已返修的幂等账目损坏同类）**：`GuidanceSubmissionJournal.readDocument()`
+对解析失败**静默返回空日志** ⇒ `queryGuidanceStatus()` 报告 **0 条**，
+用户指导**静默消失**，且调用方无法区分"从未提交"与"日志损坏"。
+
+**修复**：新增 `readAllWithIntegrity()`（暴露 `isCorrupted`/`corruptionReason`/
+`usableEntryCount`/`unusableEntryCount`；不完整 JSON、schemaVersion 不符、entries 非数组、
+**单条结构非法**均计入损坏；合法条目仍保留）与 `readAllStrict()`（损坏即抛）；
+`queryGuidanceStatus()` **默认改走严格读取**（fail-closed），"文件不存在"仍属正常全新安装。
+
+- 反例（先红后绿）：`tests/core/unit/reliability-guidance-journal-integrity.test.ts` **6 条**。
+- 矩阵该条目由 `not-verified` 改为 **fixed** 并附证据；
+  **未验证时点由 2 项降为 1 项**（仅剩 `before-dispatch-crash`）。

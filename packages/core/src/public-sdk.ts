@@ -2406,7 +2406,14 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       guidanceRevision: number;
     }): string => entry.guidanceIdentifier + "@" + String(entry.guidanceRevision);
     const merged = new Map<string, PublicGuidanceStatusEntry>();
-    for (const journalEntry of await this.runtime.guidanceSubmissionJournal.readAll()) {
+    /**
+     * RELIABILITY-01（2026-10-10）：日志损坏必须**显式失败**。
+     *
+     * 此前 `readAll()` 遇到损坏会静默返回空日志 ⇒ 这里报告 0 条，
+     * 用户指导**静默消失**且无法与"从未提交"区分。
+     * 故默认路径改用严格读取（fail-closed），把损坏暴露给调用方。
+     */
+    for (const journalEntry of await this.runtime.guidanceSubmissionJournal.readAllStrict()) {
       merged.set(keyOf(journalEntry), { ...journalEntry });
     }
     for (const memoryEntry of this.runtime.guidanceControlQueue.listGuidanceStatus()) {
