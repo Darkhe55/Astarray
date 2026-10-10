@@ -227,6 +227,19 @@ export {
   type NodeVisibilityRecord,
 } from "./toolkit/context-lossless-visibility.js";
 
+// ─── NODECTX-01-02：无损暂存 / 自动补回 / 永久关闭与显式回访 ───
+export {
+  createLosslessContextManager,
+  type ExplicitRecallOutcome,
+  type LosslessContextManager,
+  type LosslessContextManagerOptions,
+  type LosslessContextNode,
+  type PermanentClosureOutcome,
+  type ReclaimOutcome,
+  type StageOutcome,
+  type StagingWriterPort,
+} from "./toolkit/lossless-context-manager.js";
+
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
 // 否则 runtime: "provider" 在打包产物上不可用。

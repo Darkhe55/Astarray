@@ -47,6 +47,12 @@ const ALLOWED_MODULES: Record<string, { tokens: AllowedTokens; reason: string }>
       "TOOLKIT-01-03 隔离项目 fixture：只在**调用方传入的临时目录**下创建 fixture 文件，" +
       "不删除、不覆盖既有内容（仅 writeFile，无 rm/rename/copyFile）",
   },
+  "core/src/toolkit/lossless-context-manager.ts": {
+    tokens: ["writeFile"],
+    reason:
+      "NODECTX-01-02 无损暂存：只在**调用方给定的暂存目录**内按 node@revision 写出原文，" +
+      "落盘成功后才改可见性（磁盘失败状态不变）；不删除、不改写原文、无 rm/rename/copyFile",
+  },
   "core/src/tools/session-permission-elevation.ts": {
     tokens: ["rm", "writeFile"],
     reason: "会话提升记录持久化（writeFile + 失效记录清理 rm）",
