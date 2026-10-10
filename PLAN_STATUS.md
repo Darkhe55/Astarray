@@ -31,7 +31,8 @@
 
 | 本地可证项 | 结果 | 证据位置 |
 | --- | --- | --- |
-| `npm run check`（typecheck+lint+build+test） | **exit 0** | 由 `smoke-install` 的 `prepack` 路径实测（`.tmp/session-r2-04/smoke-final.log`） |
+| `npm run check`（typecheck+lint+build+test） | **exit 0**；**307 文件 / 2347 用例通过、仅 1 skipped** | 全量直跑（`.tmp/session-r2-04/check-at-2e22759.log`）；另经 `smoke-install` 的 `prepack` 路径（`.tmp/session-r2-04/smoke-final.log`） |
+| skipped 数变化 | **2 → 1** | 解除 `cli-exit-linger` ② 的 skip 后转绿（上一轮）；剩余 1 个即上面登记的 anthropic 裁决层反例 |
 | `npm run test:coverage`（仓库配置、默认并发、阈值 85） | **exit 0**；**307 文件 / 2346 用例**；行/分支/函数/语句 **92.66 / 85.05 / 92.62 / 92.7** | `.tmp/session-r2-04/coverage-after-fix.log` |
 | 分支覆盖率**起点与净增** | 83.29%（需 161 条）→ **85.05%**（净增约 166 条） | `docs/reports/E2E01_04_LOCAL_REFRESH_2026-10-09.md` §2 |
 | 安全关键模块专项 | **22/22 ≥95%** | `.tmp/session-r2-04/security-coverage-2026-10-09.log` |
