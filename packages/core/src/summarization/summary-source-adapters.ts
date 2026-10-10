@@ -14,6 +14,7 @@ import type {
   SummaryFact,
   SummarySourceEntry,
 } from "./summary-fact-extractor.js";
+import type { SummarySourceKind } from "./summary-manifest.js";
 
 export interface WorkArchiveSummarySourceInput {
   missionId: string;
@@ -95,10 +96,208 @@ export function buildWorkArchiveSummaryEntries(
 }
 
 /**
+ * SUM-01-04（2026-10-10）：卡内要求摘要覆盖"**会话历史、工作存档、报告和延后文件**"。
+ * `work-archive` 已有适配器；本段补齐另外三类，纪律完全一致：
+ *  - **确定性排序**（时间优先，同刻按稳定键）与**确定性内容哈希**；
+ *  - **重复条目不得双计**（重读/重放不得灌水）；
+ *  - `sourceRevision` 从 1 起单调重排；
+ *  - `sourceIdentifier` 保留**可回溯**的原始标识（不得退化成不透明序号）；
+ *  - **不改写来源正文**（本层只做条目化，不做摘要）；
+ *  - 结构非法项**跳过**（不猜测、不因单项非法而中断整批）；空输入 ⇒ 空结果（不伪造）。
+ */
+
+function stringField(record: Record<string, unknown>, key: string): string | null {
+  const value = record[key];
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
+function numberField(record: Record<string, unknown>, key: string): number | null {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function computeSourceContentHash(parts: Array<string | number>): string {
+  return sha256Hex(parts.map((part) => String(part)).join("|"));
+}
+
+/** 通用条目化：按 recordedAtIso 排序、按回溯标识去重、revision 从 1 重排。 */
+function buildSummaryEntries(input: {
+  sourceKind: SummarySourceKind;
+  items: Array<{
+    traceableIdentifier: string;
+    contentHashParts: Array<string | number>;
+    entryType: SummaryEntryType;
+    text: string;
+    recordedAtIso: string;
+  }>;
+}): SummarySourceEntry[] {
+  const sorted = [...input.items].sort((left, right) => {
+    if (left.recordedAtIso !== right.recordedAtIso) {
+      return left.recordedAtIso.localeCompare(right.recordedAtIso);
+    }
+    return left.traceableIdentifier.localeCompare(right.traceableIdentifier);
+  });
+  const seenIdentifiers = new Set<string>();
+  const entries: SummarySourceEntry[] = [];
+  let sourceRevision = 0;
+  for (const item of sorted) {
+    if (seenIdentifiers.has(item.traceableIdentifier)) {
+      continue;
+    }
+    seenIdentifiers.add(item.traceableIdentifier);
+    sourceRevision += 1;
+    entries.push({
+      sourceKind: input.sourceKind,
+      sourceIdentifier: item.traceableIdentifier,
+      sourceRevision,
+      contentHash: computeSourceContentHash(item.contentHashParts),
+      entryType: item.entryType,
+      text: item.text,
+      recordedAtIso: item.recordedAtIso,
+    });
+  }
+  return entries;
+}
+
+export interface ConversationSummaryTurn {
+  turnIdentifier: string;
+  speaker: string;
+  text: string;
+  recordedAtIso: string;
+}
+
+/** 会话历史 → 摘要来源条目。`sourceIdentifier` = `会话#轮次`（可回溯）。 */
+export function buildConversationSummaryEntries(input: {
+  sessionIdentifier: string;
+  turns: ConversationSummaryTurn[];
+}): SummarySourceEntry[] {
+  const collected: Parameters<typeof buildSummaryEntries>[0]["items"] = [];
+  for (const rawTurn of input.turns) {
+    if (rawTurn === null || typeof rawTurn !== "object") {
+      continue;
+    }
+    const record = rawTurn as unknown as Record<string, unknown>;
+    const turnIdentifier = stringField(record, "turnIdentifier");
+    const text = stringField(record, "text");
+    const recordedAtIso = stringField(record, "recordedAtIso");
+    if (turnIdentifier === null || text === null || recordedAtIso === null) {
+      continue;
+    }
+    collected.push({
+      traceableIdentifier: input.sessionIdentifier + "#" + turnIdentifier,
+      contentHashParts: ["conversation", input.sessionIdentifier, turnIdentifier, text],
+      entryType: "message",
+      text,
+      recordedAtIso,
+    });
+  }
+  return buildSummaryEntries({ sourceKind: "conversation", items: collected });
+}
+
+export interface ReportSummaryRecord {
+  reportIdentifier: string;
+  taskIdentifier: string;
+  summaryText: string;
+  recordedAtIso: string;
+}
+
+/** 报告 → 摘要来源条目。`sourceIdentifier` = `报告#任务`（可回溯）。 */
+export function buildReportSummaryEntries(input: {
+  reports: ReportSummaryRecord[];
+}): SummarySourceEntry[] {
+  const collected: Parameters<typeof buildSummaryEntries>[0]["items"] = [];
+  for (const rawReport of input.reports) {
+    if (rawReport === null || typeof rawReport !== "object") {
+      continue;
+    }
+    const record = rawReport as unknown as Record<string, unknown>;
+    const reportIdentifier = stringField(record, "reportIdentifier");
+    const taskIdentifier = stringField(record, "taskIdentifier");
+    const summaryText = stringField(record, "summaryText");
+    const recordedAtIso = stringField(record, "recordedAtIso");
+    if (
+      reportIdentifier === null ||
+      taskIdentifier === null ||
+      summaryText === null ||
+      recordedAtIso === null
+    ) {
+      continue;
+    }
+    collected.push({
+      traceableIdentifier: reportIdentifier + "#" + taskIdentifier,
+      contentHashParts: ["report", reportIdentifier, taskIdentifier, summaryText],
+      entryType: "report",
+      text: summaryText,
+      recordedAtIso,
+    });
+  }
+  return buildSummaryEntries({ sourceKind: "report", items: collected });
+}
+
+export interface DeferredFileSummaryRecord {
+  fileIdentifier: string;
+  filePath: string;
+  lineRangeStart: number;
+  lineRangeEnd: number;
+  excerptText: string;
+  recordedAtIso: string;
+}
+
+/**
+ * 延后文件 → 摘要来源条目。
+ *
+ * `sourceIdentifier` = `文件#起始行-结束行`：**同文件不同行区间是不同条目**
+ * （不得因文件相同就合并，否则行区间信息会丢失）。
+ */
+export function buildDeferredFileSummaryEntries(input: {
+  deferredFiles: DeferredFileSummaryRecord[];
+}): SummarySourceEntry[] {
+  const collected: Parameters<typeof buildSummaryEntries>[0]["items"] = [];
+  for (const rawRecord of input.deferredFiles) {
+    if (rawRecord === null || typeof rawRecord !== "object") {
+      continue;
+    }
+    const record = rawRecord as unknown as Record<string, unknown>;
+    const fileIdentifier = stringField(record, "fileIdentifier");
+    const excerptText = stringField(record, "excerptText");
+    const recordedAtIso = stringField(record, "recordedAtIso");
+    const lineRangeStart = numberField(record, "lineRangeStart");
+    const lineRangeEnd = numberField(record, "lineRangeEnd");
+    if (
+      fileIdentifier === null ||
+      excerptText === null ||
+      recordedAtIso === null ||
+      lineRangeStart === null ||
+      lineRangeEnd === null
+    ) {
+      continue;
+    }
+    collected.push({
+      traceableIdentifier:
+        fileIdentifier +
+        "#" +
+        String(lineRangeStart) +
+        "-" +
+        String(lineRangeEnd),
+      contentHashParts: [
+        "deferred-file",
+        fileIdentifier,
+        lineRangeStart,
+        lineRangeEnd,
+        excerptText,
+      ],
+      entryType: "note",
+      text: excerptText,
+      recordedAtIso,
+    });
+  }
+  return buildSummaryEntries({ sourceKind: "deferred-file", items: collected });
+}
+
+/**
  * 本地抽取式叙述（占位生成器，`generatorVersion = local-extractive-1`）：
  * 只做确定性统计与引用，不调用模型；SUM-02 将接入真实模型生成器并保留版本区分。
- */
-export function buildLocalExtractiveNarrative(facts: SummaryFact[]): string {
+ */export function buildLocalExtractiveNarrative(facts: SummaryFact[]): string {
   if (facts.length === 0) {
     return "（无工作记录）";
   }

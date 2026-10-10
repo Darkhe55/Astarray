@@ -205,6 +205,20 @@ import {
   type SummaryDetailLevel,
 } from "./summarization/summary-manifest.js";
 import { buildLocalExtractiveNarrative, buildWorkArchiveSummaryEntries } from "./summarization/summary-source-adapters.js";
+
+// ─── SUM-01-04：四类摘要来源适配器公开入口 ───
+// 卡内要求摘要覆盖"会话历史、工作存档、报告和延后文件"；四类适配器均为**纯函数**，
+// 消费者（含包级验收）需要在不依赖内部路径的前提下把原始来源条目化。
+export {
+  buildConversationSummaryEntries,
+  buildDeferredFileSummaryEntries,
+  buildReportSummaryEntries,
+  buildWorkArchiveSummaryEntries,
+  type ConversationSummaryTurn,
+  type DeferredFileSummaryRecord,
+  type ReportSummaryRecord,
+  type WorkArchiveSummarySourceInput,
+} from "./summarization/summary-source-adapters.js";
 import { measureSummaryOperation } from "./summarization/summary-resource-metrics.js";
 import { advanceSummaryGeneration } from "./summarization/summary-generation-service.js";
 import { SummaryIndexStore } from "./summarization/summary-index-store.js";
