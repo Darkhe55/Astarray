@@ -199,11 +199,14 @@ export {
 // ─── MERGE-01：执行组到原指令映射 与 合并开关 ───
 // 原文逐字保留、组只引用；窗口按**原始未完成意图**计数；组完成不自动关闭原指令。
 export {
+  countUnfinishedIntentionsInWindow,
   createInstructionMergeController,
   type DerivedWorkItem,
   type ExecutionGroupMappingEntry,
   type InstructionMergeController,
   type OriginalInstructionRecord,
+  type WindowIntentionCountInput,
+  type WindowIntentionCountOutcome,
 } from "./toolkit/instruction-merge-mapping.js";
 
 // ─── Provider 运行时公开入口 ───

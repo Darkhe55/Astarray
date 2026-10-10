@@ -346,3 +346,65 @@ export function createInstructionMergeController(options: {
     },
   };
 }
+
+/* ────────── 与实际 SMART 窗口的**装配桥接** ────────── */
+
+/** 窗口快照中计数所需的最小形状（避免依赖具体 store 实现）。 */
+export interface WindowIntentionCountInput {
+  windowCapacity: number;
+  activeInstructions: Array<{ instructionIdentifier: string }>;
+  queuedInstructions: Array<{ instructionIdentifier: string }>;
+}
+
+export interface WindowIntentionCountOutcome {
+  /** 窗口内（已准入 + 排队）**尚未逐项核验完成**的原指令条数。 */
+  unfinishedIntentionCount: number;
+  windowCapacity: number;
+  isCapacityExceeded: boolean;
+  /** 已逐项核验关闭、因而不占窗口的条数（便于核对扣除是否生效）。 */
+  completedIntentionCount: number;
+}
+
+/**
+ * 按**原始未完成意图**统计窗口占用（卡内 §1.2）。
+ *
+ * 为什么必须有这一层（2026-10-10 由反例暴露）：`InstructionWindowStore` 只知道自己
+ * 有哪些**记录**，不知道"某条原指令其实已被逐项核验关闭"；而合并控制器只知道
+ * 原指令的完成状态，不知道窗口里有哪些记录。两者**各自计数、互不相识**，
+ * 于是"窗口按原始未完成意图计数"这句在**真实装配路径上并不成立**。
+ *
+ * 判定规则：
+ *  - 计数对象是**原指令**：已准入 + 排队的记录各算一条；
+ *  - 已由**逐项核验**关闭的原指令**不占**窗口；
+ *  - **执行组数量完全不参与**计数（组不是意图）；
+ *  - 计数覆盖**排队**记录：未准入候选必须真的等在队列里，
+ *    不能因为"合并后窗口看起来有空位"而被提前准入。
+ */
+export function countUnfinishedIntentionsInWindow(input: {
+  windowSnapshot: WindowIntentionCountInput;
+  mergeController: Pick<InstructionMergeController, "isInstructionCompleted">;
+}): WindowIntentionCountOutcome {
+  const candidateIdentifiers = [
+    ...input.windowSnapshot.activeInstructions.map(
+      (record) => record.instructionIdentifier,
+    ),
+    ...input.windowSnapshot.queuedInstructions.map(
+      (record) => record.instructionIdentifier,
+    ),
+  ];
+  let unfinishedIntentionCount = 0;
+  let completedIntentionCount = 0;
+  for (const instructionIdentifier of candidateIdentifiers) {
+    if (input.mergeController.isInstructionCompleted(instructionIdentifier)) {
+      completedIntentionCount += 1;
+      continue;
+    }
+    unfinishedIntentionCount += 1;
+  }
+  return {
+    unfinishedIntentionCount,
+    windowCapacity: input.windowSnapshot.windowCapacity,
+    isCapacityExceeded: unfinishedIntentionCount > input.windowSnapshot.windowCapacity,
+    completedIntentionCount,
+  };
+}
