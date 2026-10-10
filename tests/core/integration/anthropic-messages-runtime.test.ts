@@ -15,6 +15,18 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { AnthropicMessagesRuntime } from "../../../packages/core/src/runtime/anthropic-messages-runtime.js";
 import type { AgentRunInput } from "../../../packages/core/src/core/types.js";
+import type { ProviderRequestUsageObserverPort } from "../../../packages/core/src/measurement/provider-request-usage-observation.js";
+
+/**
+ * 观测器回调的入参类型**直接取自端口签名**（而不是自造 `Record<string, unknown>`）。
+ *
+ * 2026-10-09 教训：本文件早期版本自造了 `Record<string, unknown>` 形参——vitest 不做类型检查
+ * 所以一直"绿"，但 `tsc --noEmit` 报 TS2345/TS2322，使 `npm run check` 与 `prepack`
+ * （进而 `smoke-install`）持续失败。用 `Parameters<...>` 派生可避免同类类型漂移。
+ */
+type CapturedUsageRecord = Parameters<
+  ProviderRequestUsageObserverPort["recordProviderRequestUsage"]
+>[0];
 
 let server: http.Server | null = null;
 
@@ -258,12 +270,10 @@ describe("Anthropic Messages runtime：工具与结果形态转换", () => {
  *  - 观测失败不得阻塞业务。
  */
 describe("Anthropic Messages runtime：用量捕获分支", () => {
-  type CapturedUsageRecord = Record<string, unknown>;
-
   function buildUsageObserver(
     capturedRecords: CapturedUsageRecord[],
     shouldThrow = false,
-  ): { recordProviderRequestUsage: (input: CapturedUsageRecord) => Promise<void> } {
+  ): ProviderRequestUsageObserverPort {
     return {
       recordProviderRequestUsage: async (input: CapturedUsageRecord): Promise<void> => {
         if (shouldThrow) throw new Error("observer-down");
@@ -274,7 +284,7 @@ describe("Anthropic Messages runtime：用量捕获分支", () => {
 
   function buildRuntime(
     baseUrl: string,
-    providerRequestUsageObserver?: { recordProviderRequestUsage: (input: CapturedUsageRecord) => Promise<void> },
+    providerRequestUsageObserver?: ProviderRequestUsageObserverPort,
   ): AnthropicMessagesRuntime {
     return new AnthropicMessagesRuntime({
       baseUrl,
@@ -518,7 +528,7 @@ describe("Anthropic Messages runtime：错误路径与选项分支", () => {
       sse({ type: "message_start", message: { usage: { input_tokens: 7 } } }) +
         sse({ type: "message_delta", usage: { output_tokens: 3 }, delta: { stop_reason: "end_turn" } }),
     );
-    const capturedRecords: Record<string, unknown>[] = [];
+    const capturedRecords: CapturedUsageRecord[] = [];
     const runtime = new AnthropicMessagesRuntime({
       baseUrl,
       apiKey: "test-key",
@@ -526,7 +536,7 @@ describe("Anthropic Messages runtime：错误路径与选项分支", () => {
       requestTimeoutMilliseconds: 5_000,
       providerIdentifier: "custom-provider-label",
       providerRequestUsageObserver: {
-        recordProviderRequestUsage: async (input: Record<string, unknown>): Promise<void> => {
+        recordProviderRequestUsage: async (input: CapturedUsageRecord): Promise<void> => {
           capturedRecords.push(input);
         },
       },
