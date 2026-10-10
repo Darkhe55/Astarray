@@ -173,11 +173,20 @@ describe("授权后必须等待重跑（正向闭环）", () => {
       },
     );
     let stdoutText = "";
+    /**
+     * 保留 stderr 尾部用于**失败诊断**（2026-10-10）：此前是 `stderr.resume()` 直接丢弃，
+     * 于是本用例在默认并发下偶发失败时只留下 `expected 'blocked' to be 'done'`，
+     * **没有任何可定位的现场**。此处只保留末尾若干字节，不改变任何断言。
+     */
+    let stderrTail = "";
     childProcess.stdout.setEncoding("utf8");
+    childProcess.stderr.setEncoding("utf8");
     childProcess.stdout.on("data", (chunk) => {
       stdoutText += chunk;
     });
-    childProcess.stderr.resume();
+    childProcess.stderr.on("data", (chunk: string) => {
+      stderrTail = (stderrTail + chunk).slice(-4_000);
+    });
     // 只提供一行裁决：若修复正确，第二次询问不应再出现。
     childProcess.stdin.end("allow-once\n");
 
@@ -230,8 +239,12 @@ describe("授权后必须等待重跑（正向闭环）", () => {
     })();
 
     // 核心断言：授权后必须真的执行并落盘。
-    expect(existsSync(absolutePath)).toBe(true);
-    expect(status).toBe("done");
+    // 失败时附带 stderr 尾部，使偶发失败**自描述**（否则只剩一句断言差异，无法定位）。
+    expect(
+      existsSync(absolutePath),
+      "产物未落盘；status=" + String(status) + "；stderr 尾部=\n" + stderrTail,
+    ).toBe(true);
+    expect(status, "stderr 尾部=\n" + stderrTail).toBe("done");
     expect(requestIndex).toBeGreaterThanOrEqual(4);
   });
 });

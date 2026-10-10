@@ -98,6 +98,24 @@
 3. **人工体验结论**、**Linux/macOS 平台证据**：只能由用户或平台提供，故 E2E-01-04 保持 `in_progress`。
    除这两项外，本节点**已无本地可修的已知阻塞**。
 
+### 间歇性门禁失败：已定位为**环境累积**（2026-10-10，重要）
+
+本轮观察到 `npm run check` **间歇性**失败，且每次失败的用例都不同：
+`cli-anthropic-protocol` ①（31.1s）、`authorization-retry-closure` ①（31.1s）、
+`e2e01-vertical-rework`（538ms）、`anthropic-messages-runtime` ②（7ms）——**单独运行全部 green**。
+
+**根因**：`%TEMP%` 下累积了 **5845 个 `astarray-*` 临时目录**（最早 2026-10-01）。
+这些目录由各测试 `afterEach` 清理，但 Windows 文件锁使**有界重试**（`maxRetries`/`retryDelay`）
+偶发失败，于是长期累积；累积压力下并发测试出现随机失败。
+**清空后连续两次完整 `npm run check` 全绿（322 文件 / 2442 用例）**，此前三次完整运行各有 ≥1 随机失败。
+
+**结论**：该抖动是**环境累积型**，非产品代码缺陷；本仓此前的"超时型抖动"疑点很可能同源
+（已与 `run-command-gaps` 的可证接缝一并登记）。**未用说明文字覆盖**：清理后未再复现，
+但不宣称"已修复"，因为未在生产代码层面做任何改动。
+
+**诊断可用性改进**：`authorization-retry-closure` 与 `cli-anthropic-protocol` 此前
+`stderr.resume()` **直接丢弃** stderr ⇒ 偶发失败无现场；现保留 stderr 末尾并附在断言消息中。
+
 ### E2E-01-04 追加：CLI 滞留缺陷已修并转绿（2026-10-10）
 
 **缺陷**（`tests/tui/integration/cli-exit-linger.test.ts` ②，此前以 `it.skip` 保留为待通过反例）：

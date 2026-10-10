@@ -180,11 +180,20 @@ describe("CLI 端到端：anthropic-messages 协议", () => {
     );
 
     let stdoutText = "";
+    /**
+     * 保留 stderr 尾部用于**失败诊断**（2026-10-10）：此前是 `stderr.resume()` 直接丢弃，
+     * 于是本用例在默认并发下偶发 `expected 'blocked' to be 'done'` 时**没有现场**。
+     * 只保留末尾若干字节，不改变任何断言。
+     */
+    let stderrTail = "";
     childProcess.stdout.setEncoding("utf8");
+    childProcess.stderr.setEncoding("utf8");
     childProcess.stdout.on("data", (chunk) => {
       stdoutText += chunk;
     });
-    childProcess.stderr.resume();
+    childProcess.stderr.on("data", (chunk: string) => {
+      stderrTail = (stderrTail + chunk).slice(-4_000);
+    });
     childProcess.stdin.end("allow-once\n");
 
     await new Promise<void>((resolve) => {
@@ -212,9 +221,12 @@ describe("CLI 端到端：anthropic-messages 协议", () => {
     });
 
     const parsedResult = JSON.parse(stdoutText.trim()) as { status?: string; permissionAsk?: string };
-    expect(parsedResult.status).toBe("done");
+    expect(
+      parsedResult.status,
+      "stderr 尾部=\n" + stderrTail,
+    ).toBe("done");
     expect(parsedResult.permissionAsk).toBe("allowed-once");
-    expect(existsSync(absolutePath)).toBe(true);
+    expect(existsSync(absolutePath), "产物未落盘；stderr 尾部=\n" + stderrTail).toBe(true);
     expect(readFileSync(absolutePath, "utf8")).toBe(fileContent);
 
     // 协议契约：x-api-key + anthropic-version；请求体含顶层 system、max_tokens、input_schema。

@@ -39,6 +39,19 @@ export {
   type ParameterAuthorizationSettings,
   type ParameterRuleMatch,
 } from "./tools/parameter-authorization.js";
+// ─── MERGE-01：能力族 + action 统一（纵向样本与只读投影）公开入口 ───
+// 只读投影由本入口导出，保证 Ponder/主 Agent 视图不会因统一族名而暴露隐藏写动作。
+export {
+  PROJECT_FILE_READ_FAMILY,
+  REGISTERED_TOOL_CAPABILITY_FAMILIES,
+  projectReadOnlyActionProjection,
+  resolveToolAction,
+  validateActionArguments,
+  type ResolvedToolAction,
+  type ToolActionDescriptor,
+  type ToolActionMutationKind,
+  type ToolCapabilityFamily,
+} from "./tools/tool-action-registry.js";
 
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
