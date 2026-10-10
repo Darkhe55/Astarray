@@ -19,6 +19,7 @@ import {
   HelpModal,
   InputBox,
   InstructionWindowPanel,
+  ToolPackagePanel,
   PermissionModal,
   PermissionProfilePanel,
   StatusLine,
@@ -151,6 +152,15 @@ export function AstarrayApp(props: AstarrayAppProps): ReactNode {
       {/* SMART-01-04：指令窗口（只读；区分"已派发"与"成果完成"，不冒充完成） */}
       {state.getInstructionWindowView().capacity > 0 ? (
         <InstructionWindowPanel window={state.getInstructionWindowView()} />
+      ) : null}
+      {/*
+        TOOLKIT-01-04：工具包版本与升级差异（只读）。
+        有数据时才显示：没有工具包时不该占屏；一旦有差异，用户必须能在界面上看到
+        "是否需要重新授权"以决定是否拒绝（卡内 §11）。
+      */}
+      {state.getToolPackageView().versions.length > 0 ||
+      state.getToolPackageView().upgradeDifferences.length > 0 ? (
+        <ToolPackagePanel view={state.getToolPackageView()} />
       ) : null}
       <InputBox
         value={state.inputText}

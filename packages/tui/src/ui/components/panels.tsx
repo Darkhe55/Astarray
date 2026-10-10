@@ -5,7 +5,10 @@
 import { Box, Text } from "ink";
 import type { ReactNode } from "react";
 
-import type { UiInstructionWindowView } from "../state/app-state.js";
+import type {
+  UiInstructionWindowView,
+  UiToolPackageView,
+} from "../state/app-state.js";
 
 /** 头栏：模式 / 权限组 / mission / agent 数 / 调用与 token 指标。 */
 export function Header({
@@ -299,6 +302,37 @@ export function HelpModal(): ReactNode {
       <Text>Ctrl+C: 取消当前任务 / 退出</Text>
       <Text>?: 帮助开关</Text>
       <Text>1/2/3/4/Esc: 权限弹窗决策</Text>
+    </Box>
+  );
+}
+
+/**
+ * TOOLKIT-01-04：工具包版本与升级差异面板（只读）。
+ *
+ * 卡内 §11 要求用户能区分草案/已验证/已启用与项目专用/用户级/通用，
+ * 并**看懂升级权限差异以决定是否拒绝** —— 因此这里把状态标签、作用域标签、
+ * 是否需要重新授权与可读摘要都直接画出，而不是只显示内部枚举。
+ */
+export function ToolPackagePanel({ view }: { view: UiToolPackageView }): ReactNode {
+  return (
+    <Box flexDirection="column" borderStyle="single" paddingX={1}>
+      <Text bold>Tool packages {view.versions.length}</Text>
+      {view.versions.map((row) => (
+        <Text key={row.toolPackageId + "@" + String(row.version)}>
+          [{row.statusDisplayLabel}] [{row.scopeDisplayLabel}] {row.toolPackageId}@v
+          {row.version} r{row.revision} {row.readableName}（来源 {row.sourceProjectIdentifier}
+          {row.enabledProjectIdentifiers.length > 0
+            ? "；已启用: " + row.enabledProjectIdentifiers.join(",")
+            : "；未在任何项目启用"}
+          ）
+        </Text>
+      ))}
+      {view.versions.length === 0 ? <Text>（暂无工具包）</Text> : null}
+      {view.upgradeDifferences.map((difference) => (
+        <Text key={difference.toolPackageId + ":" + String(difference.fromVersion)}>
+          {difference.toolPackageId} {difference.displaySummary}
+        </Text>
+      ))}
     </Box>
   );
 }

@@ -81,6 +81,115 @@ export interface UiInstructionWindowView {
   rows: UiInstructionWindowRow[];
 }
 
+/* ────────── TOOLKIT-01-04：工具包版本与升级差异（TUI 只读） ────────── */
+
+export interface UiToolPackageVersionRecord {
+  toolPackageId: string;
+  version: number;
+  contentHash: string;
+  revision: number;
+  scope: string;
+  status: string;
+  readableName: string;
+  sourceProjectIdentifier: string;
+  enabledProjectIdentifiers: string[];
+}
+
+export interface UiToolPackageVersionRow extends UiToolPackageVersionRecord {
+  /** 可渲染状态标签（草案/已验证/已启用/已拒绝/已停用/已废弃；未知值显式标未知）。 */
+  statusDisplayLabel: string;
+  /** 可渲染作用域标签（项目专用/用户级/通用；未知值显式标未知）。 */
+  scopeDisplayLabel: string;
+}
+
+export interface UiToolPackageUpgradeDifferenceRecord {
+  toolPackageId: string;
+  fromVersion: number;
+  toVersion: number;
+  addedSideEffects: string[];
+  removedSideEffects: string[];
+  dependencyDifferences: string[];
+  permissionDifferences: string[];
+  requiresReauthorization: boolean;
+}
+
+export interface UiToolPackageUpgradeDifferenceRow
+  extends UiToolPackageUpgradeDifferenceRecord {
+  /**
+   * 可读摘要（含"需要/无需重新授权"与"无差异"）。
+   *
+   * 卡内 §11 要求用户"能看懂升级权限差异并拒绝"——摘要留白会让人无法决定。
+   */
+  displaySummary: string;
+}
+
+export interface UiToolPackageView {
+  versions: UiToolPackageVersionRow[];
+  upgradeDifferences: UiToolPackageUpgradeDifferenceRow[];
+}
+
+/**
+ * 工具包状态 → 渲染标签。
+ *
+ * **未知值必须显式标为"未知"**：回落到"已启用"之类的乐观值会让用户在
+ * **未真正启用**的工具包上做决策。
+ */
+function toolPackageStatusLabel(status: string): string {
+  switch (status) {
+    case "draft":
+      return "草案";
+    case "validated":
+      return "已验证";
+    case "enabled":
+      return "已启用";
+    case "rejected":
+      return "已拒绝";
+    case "disabled":
+      return "已停用";
+    case "deprecated":
+      return "已废弃";
+    default:
+      return "未知状态(" + status + ")";
+  }
+}
+
+function toolPackageScopeLabel(scope: string): string {
+  switch (scope) {
+    case "project":
+      return "项目专用";
+    case "user":
+      return "用户级";
+    case "portable":
+      return "通用";
+    default:
+      return "未知作用域(" + scope + ")";
+  }
+}
+
+function toolPackageUpgradeSummary(
+  difference: UiToolPackageUpgradeDifferenceRecord,
+): string {
+  const added = difference.addedSideEffects.join(",");
+  const removed = difference.removedSideEffects.join(",");
+  const dependencies = difference.dependencyDifferences.join(",");
+  const permissions = difference.permissionDifferences.join(",");
+  const isIdentical =
+    added === "" && removed === "" && dependencies === "" && permissions === "";
+  return (
+    "v" +
+    String(difference.fromVersion) +
+    " → v" +
+    String(difference.toVersion) +
+    "：" +
+    (isIdentical ? "无差异" : "") +
+    (added === "" ? "" : " 新增副作用: " + added) +
+    (removed === "" ? "" : " 移除副作用: " + removed) +
+    (dependencies === "" ? "" : " 依赖差异: " + dependencies) +
+    (permissions === "" ? "" : " 权限差异: " + permissions) +
+    (difference.requiresReauthorization ? "；需要重新授权" : "；无需重新授权")
+  );
+}
+
 /** 指令状态 → 展示标签（`dispatched` 只表示"已派发"，绝不表示成果完成）。 */
 function instructionStateLabel(state: string): string {
   switch (state) {
@@ -129,6 +238,9 @@ export class AppState {
   private activeInstructions: UiInstructionWindowRecord[] = [];
   /** SMART-01-04：排队区指令（与窗口内可分辨）。 */
   private queuedInstructions: UiInstructionWindowRecord[] = [];
+  /** TOOLKIT-01-04：工具包版本与升级差异快照（未写入时为空视图）。 */
+  private toolPackageVersions: UiToolPackageVersionRecord[] = [];
+  private toolPackageUpgradeDifferences: UiToolPackageUpgradeDifferenceRecord[] = [];
   metrics: UiMetricsSnapshot = {
     toolCalls: 0,
     providerCalls: 0,
@@ -272,6 +384,45 @@ export class AppState {
       activeCount: this.activeInstructions.length,
       queuedCount: this.queuedInstructions.length,
       rows,
+    };
+  }
+
+  /**
+   * 写入工具包版本与升级差异快照（来自 SDK/注册表；TUI 只读展示）。
+   *
+   * 卡内 §11 要求用户"能看懂升级权限差异并拒绝" ⇒ 差异必须进入界面可达的状态。
+   */
+  setToolPackages(input: {
+    versions: UiToolPackageVersionRecord[];
+    upgradeDifferences: UiToolPackageUpgradeDifferenceRecord[];
+  }): void {
+    this.toolPackageVersions = [...input.versions];
+    this.toolPackageUpgradeDifferences = [...input.upgradeDifferences];
+  }
+
+  /** 清空工具包视图（不得残留上一份数据）。 */
+  clearToolPackages(): void {
+    this.toolPackageVersions = [];
+    this.toolPackageUpgradeDifferences = [];
+  }
+
+  /** 只读渲染视图：状态/作用域给出可渲染标签，差异给出可读摘要。 */
+  getToolPackageView(): UiToolPackageView {
+    return {
+      versions: this.toolPackageVersions.map((record) => ({
+        ...record,
+        enabledProjectIdentifiers: [...record.enabledProjectIdentifiers],
+        statusDisplayLabel: toolPackageStatusLabel(record.status),
+        scopeDisplayLabel: toolPackageScopeLabel(record.scope),
+      })),
+      upgradeDifferences: this.toolPackageUpgradeDifferences.map((record) => ({
+        ...record,
+        addedSideEffects: [...record.addedSideEffects],
+        removedSideEffects: [...record.removedSideEffects],
+        dependencyDifferences: [...record.dependencyDifferences],
+        permissionDifferences: [...record.permissionDifferences],
+        displaySummary: toolPackageUpgradeSummary(record),
+      })),
     };
   }
 }
