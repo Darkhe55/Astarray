@@ -44,6 +44,13 @@ export interface ToolActionDescriptor {
   /** 必需参数名（供可校验 schema 分支；缺失即拒绝该 action 的调用）。 */
   requiredParameters: string[];
   /**
+   * 该 action 对应的**具体实现工具名**（MERGE-01 §1.2"路由同一实现"）。
+   *
+   * 统一入口 `{族名, action}` 解析后即以此名派发，从而与旧名走**完全同一条**执行与校验路径
+   * （不可能出现"两套行为"）。缺省时按则该 action 无对应实现，统一入口调用会被拒绝。
+   */
+  implementationToolName?: string;
+  /**
    * 该 action **允许**出现的参数名全集（2026-10-10）。
    *
    * 卡内 §1.2 要求"不认识的 action/参数拒绝"。只校验必需参数是不够的：
@@ -85,6 +92,7 @@ export const PROJECT_FILE_READ_FAMILY: ToolCapabilityFamily = {
       requiresPreMutationBackup: false,
       isIdempotent: true,
       requiredParameters: ["filePath"],
+      implementationToolName: "readFile",
       allowedParameters: [
         "filePath",
         "format",
@@ -102,6 +110,7 @@ export const PROJECT_FILE_READ_FAMILY: ToolCapabilityFamily = {
       requiresPreMutationBackup: false,
       isIdempotent: true,
       requiredParameters: ["pattern"],
+      implementationToolName: "searchProjectText",
       allowedParameters: ["pattern"],
     },
   ],
@@ -129,6 +138,7 @@ export const PROJECT_FILE_WRITE_FAMILY: ToolCapabilityFamily = {
       requiresPreMutationBackup: false,
       isIdempotent: true,
       requiredParameters: ["filePath", "content"],
+      implementationToolName: "createProjectFile",
       allowedParameters: ["filePath", "content"],
     },
     {
@@ -139,6 +149,7 @@ export const PROJECT_FILE_WRITE_FAMILY: ToolCapabilityFamily = {
       requiresPreMutationBackup: true,
       isIdempotent: false,
       requiredParameters: ["filePath", "content"],
+      implementationToolName: "replaceFileContent",
       allowedParameters: ["filePath", "content"],
     },
   ],
@@ -514,4 +525,97 @@ export function normalizeReadViewParameters(input: {
     shouldIncludeImports: imports.value,
     reason: null,
   };
+}
+
+/**
+ * 统一入口解析（MERGE-01 §1.2）。
+ *
+ * 为什么需要它：两个能力族此前**只存在于注册表**，而派发 switch 只认旧工具名 ⇒
+ * `{族名, action}` 在真实派发路径上不可达。本函数把统一入口解析回**具体实现工具名**，
+ * 使后续执行与校验**完全复用**同一条路径（因此不可能出现两套行为）。
+ *
+ * 判定为"统一入口请求"的条件（**已修正**）：只有**已登记族**的**族名**或其**别名**
+ * 才进入统一入口判定；其余工具（例如 `backupVault` 自身就有 `action` 参数）的
+ * `action` 归其自己解释。
+ *
+ * 2026-10-10 修正记录：此前写成"任何带 `action` 字段的调用都按统一入口处理"，
+ * 结果把 `backupVault`（合法使用 `action: list/read/restore`）**误当成统一入口并拒绝** ——
+ * 那是在**破坏**既有工具而不是统一它们（由回归测试当场抓住）。
+ */
+export function resolveUnifiedEntryInvocation(
+  toolNameOrAlias: string,
+  argumentsJson: string,
+): {
+  isUnifiedEntryRequest: boolean;
+  concreteToolName: string | null;
+  reason: string | null;
+} {
+  const isRegisteredFamilyMember = REGISTERED_TOOL_CAPABILITY_FAMILIES.some(
+    (family) =>
+      family.familyName === toolNameOrAlias ||
+      family.actions.some((action) => action.aliases.includes(toolNameOrAlias)),
+  );
+  if (!isRegisteredFamilyMember) {
+    return { isUnifiedEntryRequest: false, concreteToolName: null, reason: null };
+  }
+  let parsedAction: unknown;
+  try {
+    const parsed = JSON.parse(argumentsJson) as unknown;
+    parsedAction =
+      parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)["action"]
+        : undefined;
+  } catch {
+    // 参数不是合法 JSON：交由具体工具的既有校验报错，不在这里抢先判定。
+    return { isUnifiedEntryRequest: false, concreteToolName: null, reason: null };
+  }
+  if (parsedAction === undefined) {
+    return { isUnifiedEntryRequest: false, concreteToolName: null, reason: null };
+  }
+  if (typeof parsedAction !== "string" || parsedAction === "") {
+    return {
+      isUnifiedEntryRequest: true,
+      concreteToolName: null,
+      reason: "action 必须是非空字符串",
+    };
+  }
+  const resolved = resolveToolAction({ toolNameOrAlias, action: parsedAction });
+  if (resolved === null) {
+    return {
+      isUnifiedEntryRequest: true,
+      concreteToolName: null,
+      reason: "未知的族名/别名与 action 组合: " + toolNameOrAlias + " + " + parsedAction,
+    };
+  }
+  const implementationToolName = findImplementationToolName(resolved);
+  if (implementationToolName === null) {
+    return {
+      isUnifiedEntryRequest: true,
+      concreteToolName: null,
+      reason: "该 action 未声明具体实现工具名（不可派发）: " + resolved.action,
+    };
+  }
+  return {
+    isUnifiedEntryRequest: true,
+    concreteToolName: implementationToolName,
+    reason: null,
+  };
+}
+
+/** 回查族内描述符上的实现工具名（保持单一数据源）。 */
+function findImplementationToolName(
+  resolved: ResolvedToolAction,
+): string | null {
+  for (const family of REGISTERED_TOOL_CAPABILITY_FAMILIES) {
+    if (family.familyName !== resolved.familyName) {
+      continue;
+    }
+    const descriptor = family.actions.find(
+      (candidate) => candidate.action === resolved.action,
+    );
+    if (descriptor?.implementationToolName !== undefined) {
+      return descriptor.implementationToolName;
+    }
+  }
+  return null;
 }

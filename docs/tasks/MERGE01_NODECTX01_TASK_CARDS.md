@@ -307,3 +307,28 @@ summary/outline。因此上一轮枚举里的 `code`/`markup`/`data` 与 `view`�
 - 构建产物实测：3 条合成 1 组 + 1 条排队 ⇒ `unfinished = 4`、`capacity = 3`、
   `exceeded = true`（**组数 1 不参与计数**）；逐项核验关闭 1 条后降为 3。
 - **仍未完成**：两个工具适配样本、NODECTX-01 全部内容 ⇒ **不主张 MERGE-01 通过**。
+### MERGE-01 进展（2026-10-10 三）：两个纵向样本**在派发路径上可达**
+
+**缺口（本轮实测）**：两个族（`projectFileRead` / `projectFileWrite`）**只存在于注册表**，
+`executeBuiltinTool` 的 switch **只认旧工具名** ⇒ 统一入口 `{族名, action}` 在
+**真实派发路径上不可达**，"保留旧名称兼容别名并**路由同一实现**"没有落地。
+
+**本轮交付**：
+
+- 注册表描述符新增 `implementationToolName`（每个 action 指向**具体实现工具名**），
+  保持**单一数据源**；
+- `resolveUnifiedEntryInvocation()`：把 `{族名, action}` 解析回具体工具名；
+- `executeBuiltinTool()` 在**任何 I/O 之前**解析统一入口，随后**递归复用**整条
+  校验/执行路径 ⇒ 结果与旧名**逐字节一致**（不可能出现两套行为）。
+
+**本片由回归当场抓住一个我自己引入的真实缺陷（值得记录）**：
+
+> 初版把"**任何带 `action` 字段的调用**"都当成统一入口，于是
+> `backupVault`（自身**合法使用** `action: list/read/restore`）被误判为统一入口并**拒绝** ——
+> 那不是统一工具，而是**破坏**既有工具。9 条既有测试立刻变红，已修正为
+> "**只有已登记族的族名或别名**才进入统一入口判定"。
+
+- 反例（先红后绿）：`tests/core/integration/merge01-unified-entry-dispatch.test.ts` **5 条**
+  （实现前 3 条红），覆盖：统一入口与旧名**逐字节一致**、统一入口**真的落盘**、
+  未知 action/未知族名/别名+不匹配 action **一律拒绝**、统一入口仍走同一套参数校验。
+- **仍未完成**：NODECTX-01 全部内容 ⇒ **不主张 MERGE-01 通过**。

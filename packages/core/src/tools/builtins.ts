@@ -7,7 +7,10 @@
 import { readFile } from "node:fs/promises";
 
 import type { ReadViewReceipt } from "./read-format/read-format-strategies.js";
-import { validateToolActionArguments } from "./tool-action-registry.js";
+import {
+  resolveUnifiedEntryInvocation,
+  validateToolActionArguments,
+} from "./tool-action-registry.js";
 import path from "node:path";
 import { isAbsoluteOnAllPlatforms } from "./cross-platform-path-canonicalization.js";
 
@@ -278,6 +281,39 @@ export async function executeBuiltinTool(
   argumentsJson: string,
   executionContext: BuiltinToolExecutionContext,
 ): Promise<{ outputText: string; isSideEffectFree: boolean }> {
+  /**
+   * MERGE-01 §1.2：统一入口（**族名 + action**）必须路由到与旧名**同一个实现**。
+   *
+   * 此前两个能力族只存在于注册表，派发 switch 只认旧工具名 ⇒
+   * `{ 族名, action }` 在**真实派发路径上不可达**，"保留旧名称兼容别名并路由同一实现"
+   * 没有落地。这里在任何 I/O 之前把统一入口解析回**具体旧工具名**，
+   * 随后的整条校验/执行路径完全复用（因此不可能出现"两套行为"）。
+   *
+   * 拒绝一切非法形态（**不得**变成任意方法调用入口）：
+   *  - 未知族名 + action；
+   *  - 旧别名 + 与该别名不匹配的 action；
+   *  - 族名但缺 action。
+   */
+  const resolvedUnifiedEntry = resolveUnifiedEntryInvocation(toolName, argumentsJson);
+  if (resolvedUnifiedEntry.isUnifiedEntryRequest) {
+    if (resolvedUnifiedEntry.concreteToolName === null) {
+      throw new Error(
+        "统一工具入口调用非法：" +
+          String(resolvedUnifiedEntry.reason ?? "未知的族名/action 组合"),
+      );
+    }
+    /**
+     * 交给具体工具执行，但先**去掉 action 字段**：具体实现不认识它，
+     * 且留着会被"未知参数拒绝"校验（正确）拦下 —— 那会让统一入口永远不可用。
+     */
+    const remainingArguments = JSON.parse(argumentsJson) as Record<string, unknown>;
+    delete remainingArguments["action"];
+    return executeBuiltinTool(
+      resolvedUnifiedEntry.concreteToolName,
+      JSON.stringify(remainingArguments),
+      executionContext,
+    );
+  }
   const args = JSON.parse(argumentsJson) as Record<string, unknown>;
   switch (toolName) {
     case "readFile": {

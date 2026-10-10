@@ -50,6 +50,7 @@ export {
   normalizeReadViewParameters,
   projectReadOnlyActionProjection,
   resolveToolAction,
+  resolveUnifiedEntryInvocation,
   validateActionArguments,
   type NormalizedReadViewParameters,
   type NormalizeReadViewOutcome,
