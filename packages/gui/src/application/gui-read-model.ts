@@ -35,6 +35,8 @@ export interface GuiSnapshot {
    * **始终存在**（未提供时为空列表）。
    */
   crossProject: GuiCrossProjectView;
+  /** TOOLKIT-01-04：工具包版本与升级差异（**始终存在**，缺省为空视图）。 */
+  toolPackages: GuiToolPackageView;
 }
 
 export interface GuiCrossProjectAuthorizationView {
@@ -251,6 +253,13 @@ export function buildGuiSnapshot(input: {
   };
   /** PROJECT-01-04：跨项目授权与副本（缺省为空列表；不伪造授权）。 */
   crossProject?: Parameters<typeof buildGuiCrossProjectView>[0];
+  /**
+   * TOOLKIT-01-04：工具包版本与升级差异（缺省为空视图；**不伪造**条目）。
+   *
+   * 卡内 §11 要求用户"能看懂升级权限差异并拒绝" ⇒ 该视图必须能被界面取到，
+   * 否则差异只存在于 CLI。
+   */
+  toolPackages?: Parameters<typeof buildGuiToolPackageView>[0];
 }): GuiSnapshot {
   return {
     sessionId: input.sessionId,
@@ -268,5 +277,165 @@ export function buildGuiSnapshot(input: {
       input.crossProject === undefined
         ? { authorizations: [], copyReceipts: [] }
         : buildGuiCrossProjectView(input.crossProject),
+    toolPackages:
+      input.toolPackages === undefined
+        ? { versions: [], upgradeDifferences: [] }
+        : buildGuiToolPackageView(input.toolPackages),
+  };
+}
+
+/* ────────── TOOLKIT-01-04：工具包版本与升级差异只读视图 ────────── */
+
+export interface GuiToolPackageVersionInput {
+  toolPackageId: string;
+  version: number;
+  contentHash: string;
+  /** 变更 revision（启用/停用/锁定按 revision 原子提交）。 */
+  revision: number;
+  scope: string;
+  status: string;
+  readableName: string;
+  sourceProjectIdentifier: string;
+  enabledProjectIdentifiers: string[];
+}
+
+export interface GuiToolPackageVersionView {
+  toolPackageId: string;
+  version: number;
+  contentHash: string;
+  revision: number;
+  scope: string;
+  status: string;
+  /** 人工可读状态标签（卡内要求用户能区分草案/已验证/已启用等）。 */
+  statusDisplayLabel: string;
+  /** 人工可读作用域标签（项目专用 / 用户级 / 通用）。 */
+  scopeDisplayLabel: string;
+  readableName: string;
+  sourceProjectIdentifier: string;
+  enabledProjectIdentifiers: string[];
+}
+
+export interface GuiToolPackageUpgradeDifferenceInput {
+  toolPackageId: string;
+  fromVersion: number;
+  toVersion: number;
+  addedSideEffects: string[];
+  removedSideEffects: string[];
+  dependencyDifferences: string[];
+  permissionDifferences: string[];
+  requiresReauthorization: boolean;
+}
+
+export interface GuiToolPackageUpgradeDifferenceView
+  extends GuiToolPackageUpgradeDifferenceInput {
+  /**
+   * 可读摘要：让用户**看懂差异并据此拒绝**（卡内 §11）。
+   *
+   * 必须显式写出"需要/无需重新授权"，差异为空时如实写"无差异"——
+   * 留白会让人误以为"没有变化"或"不知道有没有变化"。
+   */
+  displaySummary: string;
+}
+
+export interface GuiToolPackageView {
+  versions: GuiToolPackageVersionView[];
+  upgradeDifferences: GuiToolPackageUpgradeDifferenceView[];
+}
+
+/**
+ * 状态 → 人工可读标签（与术语表口径一致：草案/已验证/已启用/已拒绝/已停用/已废弃）。
+ *
+ * **未知状态必须显式标为未知**：默认回落到"已启用"之类的乐观值会让用户误判，
+ * 从而在未真正启用的工具包上做决策。
+ */
+function guiToolPackageStatusLabel(status: string): string {
+  switch (status) {
+    case "draft":
+      return "草案";
+    case "validated":
+      return "已验证";
+    case "enabled":
+      return "已启用";
+    case "rejected":
+      return "已拒绝";
+    case "disabled":
+      return "已停用";
+    case "deprecated":
+      return "已废弃";
+    default:
+      return "未知状态(" + status + ")";
+  }
+}
+
+/** 作用域 → 人工可读标签（项目专用 / 用户级 / 通用）。 */
+function guiToolPackageScopeLabel(scope: string): string {
+  switch (scope) {
+    case "project":
+      return "项目专用";
+    case "user":
+      return "用户级";
+    case "portable":
+      return "通用";
+    default:
+      return "未知作用域(" + scope + ")";
+  }
+}
+
+function buildUpgradeDifferenceSummary(
+  difference: GuiToolPackageUpgradeDifferenceInput,
+): string {
+  const added = difference.addedSideEffects.join(",");
+  const removed = difference.removedSideEffects.join(",");
+  const dependencies = difference.dependencyDifferences.join(",");
+  const permissions = difference.permissionDifferences.join(",");
+  const isIdentical =
+    added === "" && removed === "" && dependencies === "" && permissions === "";
+  return (
+    "v" +
+    String(difference.fromVersion) +
+    " → v" +
+    String(difference.toVersion) +
+    "：" +
+    (isIdentical ? "无差异" : "") +
+    (added === "" ? "" : " 新增副作用: " + added) +
+    (removed === "" ? "" : " 移除副作用: " + removed) +
+    (dependencies === "" ? "" : " 依赖差异: " + dependencies) +
+    (permissions === "" ? "" : " 权限差异: " + permissions) +
+    (difference.requiresReauthorization ? "；需要重新授权（新增副作用）" : "；无需重新授权")
+  );
+}
+
+/**
+ * 构造工具包只读视图（**纯函数**）。
+ *
+ * 未提供输入时返回空视图（**形状唯一、不伪造条目**），
+ * 使 GUI/TUI 渲染层无需做存在性判断。
+ */
+export function buildGuiToolPackageView(input: {
+  versions?: GuiToolPackageVersionInput[];
+  upgradeDifferences?: GuiToolPackageUpgradeDifferenceInput[];
+}): GuiToolPackageView {
+  return {
+    versions: (input.versions ?? []).map((version) => ({
+      toolPackageId: version.toolPackageId,
+      version: version.version,
+      contentHash: version.contentHash,
+      revision: version.revision,
+      scope: version.scope,
+      status: version.status,
+      statusDisplayLabel: guiToolPackageStatusLabel(version.status),
+      scopeDisplayLabel: guiToolPackageScopeLabel(version.scope),
+      readableName: version.readableName,
+      sourceProjectIdentifier: version.sourceProjectIdentifier,
+      enabledProjectIdentifiers: [...version.enabledProjectIdentifiers],
+    })),
+    upgradeDifferences: (input.upgradeDifferences ?? []).map((difference) => ({
+      ...difference,
+      addedSideEffects: [...difference.addedSideEffects],
+      removedSideEffects: [...difference.removedSideEffects],
+      dependencyDifferences: [...difference.dependencyDifferences],
+      permissionDifferences: [...difference.permissionDifferences],
+      displaySummary: buildUpgradeDifferenceSummary(difference),
+    })),
   };
 }

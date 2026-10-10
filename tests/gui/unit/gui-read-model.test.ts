@@ -96,6 +96,8 @@ describe("gui-read-model", () => {
       instructions: { capacity: 0, activeCount: 0, queuedCount: 0, rows: [] },
       // PROJECT-01-04：快照始终携带跨项目视图（未提供时为空列表；不伪造授权）。
       crossProject: { authorizations: [], copyReceipts: [] },
+      // TOOLKIT-01-04：快照始终携带工具包视图（未提供时为空视图；不伪造条目）。
+      toolPackages: { versions: [], upgradeDifferences: [] },
     });
     expect(JSON.stringify(snapshot)).not.toContain("stateDirectory");
   });

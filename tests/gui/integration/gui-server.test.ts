@@ -555,4 +555,83 @@ describe("GUI-01-R-02 按钮触发真实任务（公共应用服务）", () => {
       await application.shutdown();
     }
   });
+
+  /**
+   * TOOLKIT-01-04：工具包版本与升级差异必须进入 `/state` 只读快照。
+   *
+   * 卡内 §11 要求用户"能看懂升级权限差异并拒绝"——若该视图只在 CLI 可见，
+   * 界面上就无法做出"拒绝"的决定。能力缺失时必须回落为空视图且**不 500**。
+   */
+  it("/state 必须携带工具包版本与升级差异（含是否需重新授权），缺失时空视图不 500", async () => {
+    const handle = await startServer({
+      applicationService: {
+        ...createFakeApplicationPort(),
+        async listToolPackages() {
+          return {
+            versions: [
+              {
+                toolPackageId: "report-formatter",
+                version: 2,
+                contentHash: "sha256:" + "b".repeat(64),
+                revision: 3,
+                scope: "project",
+                status: "enabled",
+                readableName: "测试报告格式化",
+                sourceProjectIdentifier: "project-alpha",
+                enabledProjectIdentifiers: ["project-alpha"],
+              },
+            ],
+            upgradeDifferences: [
+              {
+                toolPackageId: "report-formatter",
+                fromVersion: 1,
+                toVersion: 2,
+                addedSideEffects: ["file-write"],
+                removedSideEffects: [],
+                dependencyDifferences: ["jsdom>=20"],
+                permissionDifferences: ["write-file"],
+                requiresReauthorization: true,
+              },
+            ],
+          };
+        },
+      },
+    });
+    const response = await request({ port: handle.port, method: "GET", path: "/state" });
+    expect(response.statusCode).toBe(200);
+    const payload = JSON.parse(response.body) as {
+      toolPackages?: {
+        versions: Array<{
+          toolPackageId: string;
+          version: number;
+          statusDisplayLabel: string;
+          scopeDisplayLabel: string;
+        }>;
+        upgradeDifferences: Array<{
+          requiresReauthorization: boolean;
+          displaySummary: string;
+        }>;
+      };
+    };
+    expect(payload.toolPackages?.versions).toHaveLength(1);
+    expect(payload.toolPackages?.versions[0]?.version).toBe(2);
+    // 人工可读标签必须随快照下发（用户据此区分状态与作用域）
+    expect(payload.toolPackages?.versions[0]?.statusDisplayLabel).toContain("已启用");
+    expect(payload.toolPackages?.versions[0]?.scopeDisplayLabel).toContain("项目专用");
+    // 升级差异必须带"是否需要重新授权"与可读摘要
+    expect(payload.toolPackages?.upgradeDifferences[0]?.requiresReauthorization).toBe(true);
+    expect(String(payload.toolPackages?.upgradeDifferences[0]?.displaySummary)).toContain(
+      "需要重新授权",
+    );
+
+    // 能力缺失 ⇒ 空视图且不 500
+    const bareHandle = await startServer();
+    const bareResponse = await request({ port: bareHandle.port, method: "GET", path: "/state" });
+    expect(bareResponse.statusCode).toBe(200);
+    const barePayload = JSON.parse(bareResponse.body) as {
+      toolPackages?: { versions: unknown[]; upgradeDifferences: unknown[] };
+    };
+    expect(barePayload.toolPackages?.versions).toHaveLength(0);
+    expect(barePayload.toolPackages?.upgradeDifferences).toHaveLength(0);
+  });
 });

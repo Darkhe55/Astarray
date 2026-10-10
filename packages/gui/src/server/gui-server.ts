@@ -96,6 +96,35 @@ export interface GuiApplicationPort {
       taskIdentifier: string;
     }>
   >;
+  /**
+   * TOOLKIT-01-04：工具包版本与升级差异只读快照（可选能力）。
+   *
+   * 缺失时视图回落为空（**不伪造**条目），且**不阻塞**既有 `/state` 与 SSE 快照。
+   * 卡内 §11 要求用户"能看懂升级权限差异并拒绝"，因此该能力必须可被界面取到。
+   */
+  listToolPackages?(): Promise<{
+    versions: Array<{
+      toolPackageId: string;
+      version: number;
+      contentHash: string;
+      revision: number;
+      scope: string;
+      status: string;
+      readableName: string;
+      sourceProjectIdentifier: string;
+      enabledProjectIdentifiers: string[];
+    }>;
+    upgradeDifferences: Array<{
+      toolPackageId: string;
+      fromVersion: number;
+      toVersion: number;
+      addedSideEffects: string[];
+      removedSideEffects: string[];
+      dependencyDifferences: string[];
+      permissionDifferences: string[];
+      requiresReauthorization: boolean;
+    }>;
+  }>;
   updateContextBudget?(input: {
     expectedRevision: number;
     configuredMaximumGlobalContextTokenCount: number;
@@ -695,6 +724,73 @@ export async function startGuiServer(
     return Buffer.concat(chunks).toString("utf8");
   }
 
+  /**
+   * TOOLKIT-01-04：读取工具包版本与升级差异（只读）。
+   *
+   * 与跨项目视图同口径：端口**未提供**或缺省实现缺失时返回 `{}`（视图回落为空），
+   * 绝不让 `/state` 因缺少该能力而 500 —— 否则一个可选能力会把整个界面打挂。
+   */
+  async function readToolPackagesOrDefault(): Promise<{
+    toolPackages?: {
+      versions: Array<{
+        toolPackageId: string;
+        version: number;
+        contentHash: string;
+        revision: number;
+        scope: string;
+        status: string;
+        readableName: string;
+        sourceProjectIdentifier: string;
+        enabledProjectIdentifiers: string[];
+      }>;
+      upgradeDifferences: Array<{
+        toolPackageId: string;
+        fromVersion: number;
+        toVersion: number;
+        addedSideEffects: string[];
+        removedSideEffects: string[];
+        dependencyDifferences: string[];
+        permissionDifferences: string[];
+        requiresReauthorization: boolean;
+      }>;
+    };
+  }> {
+    const listToolPackages = options.applicationService.listToolPackages;
+    if (listToolPackages === undefined) {
+      return {};
+    }
+    try {
+      const snapshot = await listToolPackages();
+      return {
+        toolPackages: {
+          versions: snapshot.versions.map((version) => ({
+            toolPackageId: version.toolPackageId,
+            version: version.version,
+            contentHash: version.contentHash,
+            revision: version.revision,
+            scope: version.scope,
+            status: version.status,
+            readableName: version.readableName,
+            sourceProjectIdentifier: version.sourceProjectIdentifier,
+            enabledProjectIdentifiers: [...version.enabledProjectIdentifiers],
+          })),
+          upgradeDifferences: snapshot.upgradeDifferences.map((difference) => ({
+            toolPackageId: difference.toolPackageId,
+            fromVersion: difference.fromVersion,
+            toVersion: difference.toVersion,
+            addedSideEffects: [...difference.addedSideEffects],
+            removedSideEffects: [...difference.removedSideEffects],
+            dependencyDifferences: [...difference.dependencyDifferences],
+            permissionDifferences: [...difference.permissionDifferences],
+            requiresReauthorization: difference.requiresReauthorization,
+          })),
+        },
+      };
+    } catch {
+      return {};
+    }
+  }
+
   function writeJsonResponse(
     response: http.ServerResponse,
     statusCode: number,
@@ -779,6 +875,7 @@ export async function startGuiServer(
             tracker,
             ...(await readInstructionWindowOrDefault()),
             ...(await readCrossProjectOrDefault()),
+        ...(await readToolPackagesOrDefault()),
           }),
         ),
       );
@@ -803,6 +900,7 @@ export async function startGuiServer(
             tracker,
             ...(await readInstructionWindowOrDefault()),
             ...(await readCrossProjectOrDefault()),
+        ...(await readToolPackagesOrDefault()),
           }),
           isReconnect: typeof lastEventId === "string",
         })}\n\n`,
