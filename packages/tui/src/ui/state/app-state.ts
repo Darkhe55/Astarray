@@ -47,6 +47,64 @@ export interface UiMetricsSnapshot {
 
 export const MAX_CONVERSATION_ENTRIES = 500;
 
+/**
+ * SMART-01-04：指令窗口在 TUI 中的展示记录（只取渲染需要的字段）。
+ *
+ * `state` 沿用指令窗口的既有六态（含 `dispatched` / `awaiting-clarification` / `completed` …），
+ * 由 `AppState.getInstructionWindowView()` 映射为**不得冒充成果完成**的标签。
+ */
+export interface UiInstructionWindowRecord {
+  instructionIdentifier: string;
+  instructionText: string;
+  state: string;
+  admittedAtIso: string;
+}
+
+export interface UiInstructionWindowRow extends UiInstructionWindowRecord {
+  /** 可渲染状态标签（已派发 / 排队 / 等待澄清 / 成果完成 / 失败 / 取消 / 拒绝 / 部分完成）。 */
+  stateLabel: string;
+  /** 是否处于排队区（与窗口内可分辨）。 */
+  isQueued: boolean;
+  /**
+   * 是否可视为"**工作成果完成**"。
+   *
+   * 卡内明文：UI 必须区分"已派发"与"工作成果完成"。因此只有 `completed` 为 true；
+   * `dispatched`（已派发）、`awaiting-clarification`（等待澄清）、排队与其余非终态一律 false。
+   */
+  isWorkCompleted: boolean;
+}
+
+export interface UiInstructionWindowView {
+  capacity: number;
+  activeCount: number;
+  queuedCount: number;
+  rows: UiInstructionWindowRow[];
+}
+
+/** 指令状态 → 展示标签（`dispatched` 只表示"已派发"，绝不表示成果完成）。 */
+function instructionStateLabel(state: string): string {
+  switch (state) {
+    case "dispatched":
+      return "已派发";
+    case "accepted":
+      return "排队";
+    case "awaiting-clarification":
+      return "等待澄清";
+    case "partially-completed":
+      return "部分完成";
+    case "completed":
+      return "成果完成";
+    case "failed":
+      return "失败";
+    case "cancelled":
+      return "取消";
+    case "rejected":
+      return "拒绝";
+    default:
+      return state;
+  }
+}
+
 export class AppState {
   mode: AgentMode = "assist";
   readonly conversation: UiConversationEntry[] = [];
@@ -65,6 +123,12 @@ export class AppState {
   permissionProfileTotal = 0;
   /** B6R-04b：权限组搜索过滤词（空 = 全部）。 */
   permissionProfileSearch = "";
+  /** SMART-01-04：指令窗口容量（0 = 未加载）。 */
+  private instructionWindowCapacity = 0;
+  /** SMART-01-04：窗口内（占用槽位）指令。 */
+  private activeInstructions: UiInstructionWindowRecord[] = [];
+  /** SMART-01-04：排队区指令（与窗口内可分辨）。 */
+  private queuedInstructions: UiInstructionWindowRecord[] = [];
   metrics: UiMetricsSnapshot = {
     toolCalls: 0,
     providerCalls: 0,
@@ -158,5 +222,56 @@ export class AppState {
     this.permissionProfilePageSize = input.pageSize;
     this.permissionProfileTotal = input.total;
     this.notify();
+  }
+
+  // ─── SMART-01-04：指令窗口（窗口内 / 排队；不冒充成果完成）────────────────
+
+  /**
+   * 写入指令窗口快照（来自 SDK `queryInstructionWindow` 或 CLI 同一落盘窗口）。
+   *
+   * 只保存渲染所需事实；`isWorkCompleted` 在读取时按状态映射，避免调用方自行"猜完成"。
+   */
+  setInstructionWindow(input: {
+    windowCapacity: number;
+    activeInstructions: UiInstructionWindowRecord[];
+    queuedInstructions: UiInstructionWindowRecord[];
+  }): void {
+    this.instructionWindowCapacity = input.windowCapacity;
+    this.activeInstructions = [...input.activeInstructions];
+    this.queuedInstructions = [...input.queuedInstructions];
+    this.notify();
+  }
+
+  /** 清空指令窗口展示（关闭会话/切换状态源时调用，避免展示过期状态）。 */
+  clearInstructionWindow(): void {
+    this.instructionWindowCapacity = 0;
+    this.activeInstructions = [];
+    this.queuedInstructions = [];
+    this.notify();
+  }
+
+  /** 只读渲染视图：排队与窗口内可分辨，且逐条给出"是否成果完成"。 */
+  getInstructionWindowView(): UiInstructionWindowView {
+    const rows: UiInstructionWindowRow[] = [
+      ...this.activeInstructions.map((record) => ({
+        ...record,
+        stateLabel: instructionStateLabel(record.state),
+        isQueued: false,
+        isWorkCompleted: record.state === "completed",
+      })),
+      ...this.queuedInstructions.map((record) => ({
+        ...record,
+        // 排队区一律显示"排队"，不沿用可能过期的内部状态。
+        stateLabel: "排队",
+        isQueued: true,
+        isWorkCompleted: false,
+      })),
+    ];
+    return {
+      capacity: this.instructionWindowCapacity,
+      activeCount: this.activeInstructions.length,
+      queuedCount: this.queuedInstructions.length,
+      rows,
+    };
   }
 }

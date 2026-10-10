@@ -5,6 +5,8 @@
 import { Box, Text } from "ink";
 import type { ReactNode } from "react";
 
+import type { UiInstructionWindowView } from "../state/app-state.js";
+
 /** 头栏：模式 / 权限组 / mission / agent 数 / 调用与 token 指标。 */
 export function Header({
   mode,
@@ -200,6 +202,35 @@ export function AgentsPanel({
         </Text>
       ))}
       {agentStatuses.size === 0 ? <Text>（暂无 Agent）</Text> : null}
+    </Box>
+  );
+}
+
+/**
+ * SMART-01-04：指令窗口面板（只读展示）。
+ *
+ * 卡内硬要求："UI 状态不冒充成果完成"，且必须区分"已派发"与"工作成果完成"。
+ * 本面板只渲染 `getInstructionWindowView()` 已判定好的标签与 `isWorkCompleted`，
+ * **不在渲染层自行猜测完成**。
+ */
+export function InstructionWindowPanel({
+  window,
+}: {
+  window: UiInstructionWindowView;
+}): ReactNode {
+  return (
+    <Box flexDirection="column" borderStyle="single" paddingX={1}>
+      <Text bold>
+        Instructions {window.activeCount}/{window.capacity}
+        {window.queuedCount > 0 ? ` queue:${window.queuedCount}` : ""}
+      </Text>
+      {window.rows.map((row) => (
+        <Text key={row.instructionIdentifier}>
+          [{row.stateLabel}]
+          {row.isQueued ? " (queued)" : ""} {row.instructionText}
+        </Text>
+      ))}
+      {window.rows.length === 0 ? <Text>（暂无指令）</Text> : null}
     </Box>
   );
 }

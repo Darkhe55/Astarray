@@ -97,10 +97,23 @@
   `isGatedByExistingGate=true` 且 `canAcceptNewInstruction=false`、未知幂等键**响亮拒绝**。
 - 反例（先红后绿）：`tests/core/integration/smart01-window-deadline-entry.test.ts` 5 条，
   实现前 `acceptUserInstruction is not a function` / 5 failed。
-- **尚未完成（如实保留，不主张 SMART-01-04 通过）**：**TUI/GUI 两个入口**的接线、
+- **尚未完成（如实保留，不主张 SMART-01-04 通过）**：**GUI 入口**的接线、
   **包级 tarball 验收**、以及"模拟慢模型/长下级任务仍能接收新指令"的**真实运行**证据（此前只用离线探针）。
 
-**SMART-01-04 CLI 入口接线（2026-10-10，本轮续）**：新增 `astarray instruction` 命令组
+**SMART-01-04 TUI 入口接线（2026-10-10，本轮续）**：卡内硬要求"UI 状态不冒充成果完成"、
+必须区分"已派发"与"工作成果完成"。此前 `AppState` **完全没有**指令窗口状态 ⇒ TUI 无处展示。
+
+- `AppState` 新增 `setInstructionWindow()` / `clearInstructionWindow()` / `getInstructionWindowView()`：
+  窗口内与排队区**可分辨**（`isQueued`）、逐条给出 `stateLabel` 与 `isWorkCompleted`；
+  `isWorkCompleted` **只有 `completed` 为真**——`dispatched`（已派发）、`awaiting-clarification`（等待澄清）、
+  排队与其余非终态一律 false；未知状态原样回显（不猜完成）。
+- 新增只读 `InstructionWindowPanel`（`packages/tui/src/ui/components/panels.tsx`）并接入 `app.tsx`：
+  仅渲染视图已判定好的标签，**渲染层不自行猜完成**；容量为 0（未加载）时不显示。
+- 反例（先红后绿）：`tests/tui/unit/smart01-instruction-tui-state.test.ts` 5 条，
+  实现前模块导入即失败；其中 ⑤ 为 **Ink 真实渲染**断言——按行核对"已派发"行**不得**含"成果完成"。
+- 既有 TUI 组件套件 21/21 无回归。
+
+**SMART-01-04 CLI 入口接线（2026-10-10）**：新增 `astarray instruction` 命令组
 （`accept <text> --idempotency-key` / `list` / `deadline --idempotency-key`，均支持 `--json` 与 `--now`），
 与 SDK 入口**共享同一状态目录的同一落盘窗口**（不是第二套计数）：
 

@@ -18,6 +18,7 @@ import {
   Header,
   HelpModal,
   InputBox,
+  InstructionWindowPanel,
   PermissionModal,
   PermissionProfilePanel,
   StatusLine,
@@ -146,6 +147,10 @@ export function AstarrayApp(props: AstarrayAppProps): ReactNode {
           search={state.permissionProfileSearch}
           focused={false}
         />
+      ) : null}
+      {/* SMART-01-04：指令窗口（只读；区分"已派发"与"成果完成"，不冒充完成） */}
+      {state.getInstructionWindowView().capacity > 0 ? (
+        <InstructionWindowPanel window={state.getInstructionWindowView()} />
       ) : null}
       <InputBox
         value={state.inputText}
