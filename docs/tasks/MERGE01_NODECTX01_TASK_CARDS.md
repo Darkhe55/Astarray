@@ -332,3 +332,35 @@ summary/outline。因此上一轮枚举里的 `code`/`markup`/`data` 与 `view`�
   （实现前 3 条红），覆盖：统一入口与旧名**逐字节一致**、统一入口**真的落盘**、
   未知 action/未知族名/别名+不匹配 action **一律拒绝**、统一入口仍走同一套参数校验。
 - **仍未完成**：NODECTX-01 全部内容 ⇒ **不主张 MERGE-01 通过**。
+### NODECTX-01-01 进展（2026-10-10 首片）：有损兜底盘点 与 可见性语义
+
+**本卡此前为 pending（仅设计布置）。** 本片按其要求做"**盘点 + 冻结语义**"，
+并交付**可核对**的判定层（不是把组件改个名字）。
+
+**本轮交付** `packages/core/src/toolkit/context-lossless-visibility.ts`：
+
+1. **可见性三态与业务状态分开**（§2.2）：
+   `active` / `temporarily-closed` / `permanently-closed`；
+   `isBusinessCompleted` **只由业务状态决定** —— 反例 ① 专门钉住
+   "**暂不入提示词 ≠ 业务 done**"；永久关闭的 `isContentRetainedOnDisk` 与
+   `isExplicitRecallAllowed` **恒为 true**（"不代表物理删除、永不查阅"）。
+2. **有损兜底盘点**（检查点"明确真正禁用点，不仅改术语"），逐处定位到代码/装配点：
+
+| 兜底 | 定位 | 处置 |
+| --- | --- | --- |
+| `global-budget-eviction` | `context-prompt-assembler.ts`（resolveContextBudget）+ `context-lifecycle-metrics.ts` | **rewrite-lossless** |
+| `provider-input-space-silent-reduction` | `context-prompt-assembler.ts`（budgetReductionReason） | **rewrite-lossless** |
+| `provider-side-auto-compaction` | Provider 内部（**不可观察**） | **declare-unsupported** |
+
+3. **审计 fail-closed**：合法处置只有"禁用并移除 / 改写为无损 / 声明不支持"三种；
+   **`rename-only` 等"只改术语"一律拒绝**（卡内明文禁止"仅改名后继续做有损截断"）；
+   **非本项目可控**的项**不得**标为已禁用（卡内"不得宣称 Provider 内部行为已禁用"）；
+   本项目可控的项**不得**以"声明不支持"回避；`isReenablable` **恒为 false**
+   （卡内"不提供重新开启该机制的开关"）。
+
+- 反例（先红后绿）：`tests/core/unit/nodectx01-lossless-visibility.test.ts` **8 条**。
+- 构建产物实测：3 条盘点项全部通过审计、`reenablable` 全为 false；
+  `temporarily-closed` 节点 `in prompt = false` 而 `business completed = false`、
+  `retained = true`。
+- **仍未完成**：02（无损暂存/自动补回/永久关闭与显式回访的实际接入）、
+  03（长会话多模型假服务与包级验收）⇒ **不主张 NODECTX-01 通过**。

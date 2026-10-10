@@ -210,6 +210,23 @@ export {
   type WindowIntentionCountOutcome,
 } from "./toolkit/instruction-merge-mapping.js";
 
+// ─── NODECTX-01-01：有损兜底盘点 与 节点可见性（与业务状态分开） ───
+// 可见性三态；"暂不入提示词"不得当 done；有损处置只能是禁用/改无损/声明不支持。
+export {
+  CONTEXT_VISIBILITY_STATES,
+  LOSSY_FALLBACK_INVENTORY,
+  auditLossyFallbackInventory,
+  createNodeVisibilityRecord,
+  isContextVisibleInPrompt,
+  type ContextVisibilityState,
+  type LossyDisposition,
+  type LossyFallbackAuditEntry,
+  type LossyFallbackInventoryEntry,
+  type LossyKind,
+  type NodeBusinessStatus,
+  type NodeVisibilityRecord,
+} from "./toolkit/context-lossless-visibility.js";
+
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
 // 否则 runtime: "provider" 在打包产物上不可用。
