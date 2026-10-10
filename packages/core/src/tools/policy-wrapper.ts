@@ -119,12 +119,18 @@ export interface PolicyWrapperOptions {
  * 确定无副作用；漏掉 `tool-not-found` 会让这类调用按 `unknown` 结算，
  * 使范围门禁的预留进入 `requires-reconciliation` ⇒ 该逻辑操作**永久**无法重试，
  * 而实际从未发生任何副作用。
+ *
+ * 2026-10-10 第三处同族返修：补上 `sensitive-content-read-denied`。
+ * 敏感内容禁读由**本地路径/内容策略**判定（打开文件前后的双检），
+ * 全程没有变更任何数据；不列入此集合同样会被按 `unknown` 结算并毒化重试，
+ * 而实际只是"该资源不被允许读取"。
  */
 function isExecutionRefusalErrorCode(errorCode: string): boolean {
   return (
     errorCode === "permission-ask-pending" ||
     errorCode === "tool-permission-denied" ||
     errorCode === "tool-not-found" ||
+    errorCode === "sensitive-content-read-denied" ||
     errorCode === "auth-scope-awaiting-user-authorization" ||
     errorCode === "auth-scope-denied"
   );
@@ -392,10 +398,14 @@ export class PolicyWrapper implements ToolPort {
            * 已存在、`replaceFileContent` 备份后 TOCTOU 中止）被**丢弃**，
            * 门禁只能按 `unknown` 结算 ⇒ 预留进入 `requires-reconciliation`，
            * 该逻辑操作永久无法重试，尽管从未写入任何字节。
-           * 现在如实透传：只有工具明确自报"确定未进入副作用通道"才报 none。
+           * 现在如实透传：工具明确自报"确定未进入副作用通道"（`SideEffectNoneError`），
+           * 或错误码属于**前置拒绝**集合（如敏感内容禁读、工具未注册）时报 none。
            */
           sideEffectStatus:
-            error instanceof SideEffectNoneError ? ("none" as const) : ("unknown" as const),
+            error instanceof SideEffectNoneError ||
+            (error instanceof DomainError && isExecutionRefusalErrorCode(error.errorCode))
+              ? ("none" as const)
+              : ("unknown" as const),
         };
       }
     }
