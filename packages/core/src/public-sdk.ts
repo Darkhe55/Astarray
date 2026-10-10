@@ -139,6 +139,16 @@ export {
   type SandboxCapabilityProfile,
 } from "./toolkit/program-tool-isolation-gate.js";
 
+// ─── TOOLKIT-01-05：真实可运行的确定性转换器与受控执行入口 ───
+// 卡内检查点 05 要求"先实现一个无外部副作用转换器"；该转换器只吃显式输入、只产出值。
+export {
+  DETERMINISTIC_CSV_TO_JSON_CONVERTER,
+  convertCsvToJsonRecords,
+  runDeterministicProgramTool,
+  type DeterministicProgramRunOutcome,
+  type DeterministicProgramToolDeclaration,
+} from "./toolkit/deterministic-program-converter.js";
+
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
 // 否则 runtime: "provider" 在打包产物上不可用。
