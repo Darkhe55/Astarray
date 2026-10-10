@@ -108,6 +108,19 @@ export {
   type ToolPackageSourceContent,
 } from "./toolkit/tool-package-promotion.js";
 
+// ─── TOOLKIT-01-04：工具包版本、更新、回滚与故障公开入口 ───
+// 卡内 §8：项目锁定版本不自动升级、新增副作用须重新授权、停用阻止新运行但不删在途、
+// 回滚只切换后续版本、崩溃恢复不得留下"已启用但哈希不符"的中间态。
+export {
+  ToolPackageVersionController,
+  type ToolPackageCallRecord,
+  type ToolPackageInFlightCall,
+  type ToolPackageUpgradeDifferences,
+  type ToolPackageVersionChangeOutcome,
+  type ToolPackageVersionLifecycleStatus,
+  type ToolPackageVersionRegistration,
+} from "./toolkit/tool-package-version-controller.js";
+
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
 // 否则 runtime: "provider" 在打包产物上不可用。

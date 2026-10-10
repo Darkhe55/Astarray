@@ -41,8 +41,9 @@ const FORBIDDEN_CANDIDATE_CONTENT_PATTERNS: Array<{
   { pattern: /(^|[\s"'(])\/(?:Users|home|root|var|etc)\//, label: "绝对路径" },
   // 项目源码片段（相对引用回到来源项目）
   { pattern: /(\.\.\/)+[A-Za-z0-9_-]+\/src\//, label: "项目源码片段" },
-  // 凭据
-  { pattern: /sk-[A-Za-z0-9]{16,}/, label: "凭据" },
+  // 凭据（`sk-` 后允许连字符：真实密钥常见 `sk-live-<payload>` 形态，
+  // 若不允许连字符会因"连字符前字母不足 16 个"而漏掉整条密钥 —— 2026-10-10 实测修正）
+  { pattern: /sk-[A-Za-z0-9-]{16,}/, label: "凭据" },
   { pattern: /(Authorization|Bearer)\s*[:=]?\s*\S{8,}/i, label: "凭据" },
   // 一次性授权
   { pattern: /nonce/i, label: "一次性授权 nonce" },

@@ -244,3 +244,46 @@ GUI/TUI 人工体验：用户能区分草案/已验证/已启用、项目专用/
 - [Agent Skills 规范](https://github.com/agentskills/agentskills/blob/main/docs/specification.mdx)：说明、脚本和参考资料分离，渐进加载；技能文字不授予执行权限。
 
 实施时冻结实际采用的规范版本；不因在线草案更新自动变更本卡权限与数据边界。
+
+### TOOLKIT-01-04 进展（2026-10-10）：版本、更新、回滚与故障
+
+新增 `packages/core/src/toolkit/tool-package-version-controller.ts`（纯本地确定性判定；
+不执行工具、不做 I/O、不联网、不读凭据），落实卡内 §8：
+
+| 卡内 §8 要求 | 实现 |
+| --- | --- |
+| 项目锁定确切版本和哈希，**不自动随用户库升级** | 注册更高版本后已锁定项目解析结果不变 |
+| 新版本展示**行为/依赖/权限差异**，标出**新增副作用** | `describeUpgradeDifferences()` 分别给出三类差异 + `addedSideEffects` |
+| **新增副作用须重新授权** | `upgradeProjectVersion()` 在 `requiresReauthorization` 为真且未授权时拒绝 |
+| 启用/停用/锁定按 **revision 原子提交** | 每次变更 revision 单调递增 |
+| **停用阻止新运行**，但**不删在途调用** | `disableForProject()` 后解析返回 null；`listInFlightCalls()` 仍可见，须经 `convergeInFlightCall()` 按安全点收敛 |
+| **回滚只切换后续版本，不撤销历史副作用** | `rollbackProjectVersion()` 只改锁定指向；`listCallHistory()` 记录保留 |
+| 包损坏/依赖缺失 ⇒ **明确失败** | 实际哈希不符返回 null 并记 `getLastFailureReason()`；`checkPreconditions()` 报缺失依赖 |
+| 调用记录含 run/步骤/版本/参数哈希/来源/产物 | `recordCompletedCall()` 返回完整记录 |
+| 记录**不输出秘密** | 命中凭据/nonce 模式即**拒绝记录**（不做部分脱敏） |
+| 支持**禁用与废弃**，被引用旧版**保留** | `deprecateVersion()` 标记；`removeVersion()` 对历史引用的版本拒绝移除 |
+| **崩溃恢复** | `recoverFromInterruptedSwitch()` 收敛到上一个可信版本，**绝不留下"已启用但哈希不符"** |
+
+**本片修掉两个真实缺陷**（均由反例暴露）：
+
+1. **升级门禁存在旁路**：早期设计允许调用方通过 `enableForProject({isReauthorized:true})`
+   完成版本切换 —— 那等于"新增副作用须重新授权"这道门禁可以被**顺手传个标志**绕过。
+   已改为：版本切换**只能**走 `upgradeProjectVersion()`（总做差异判定），
+   `enableForProject()` 遇到版本不同即拒绝并指路；反例 ③ 现在同时断言**无旁路**。
+2. **凭据正则漏检真实密钥形态**：`sk-[A-Za-z0-9]{16,}` 因 `sk-live-…` 中
+   `sk-` 与首个连字符之间只有 4 个字母而**整条漏掉**（反例 ⑧ 实测发现）。
+   已在**两个**模块（版本控制器与推广模块）统一改成 `sk-[A-Za-z0-9-]{16,}`。
+
+**另一处易错点（如实记录）**：JSDoc 里写了 `/**参数哈希**/`，其中 `*/`
+**提前关闭了注释块**，导致后续中文被当作代码解析、typecheck 报一串
+"Invalid character"。这是"文档格式错误伪装成代码语法错误"，已在全仓同批文件审计过一遍
+（仅此一处），并记录以免重犯。
+
+- 反例（先红后绿）：`tests/core/unit/toolkit01-version-controller.test.ts` **10 条**
+- **仍未完成**：01 的其余部分（隔离 fixture 与基线成本记录）、
+  02 的**真实项目 fixture 与基线成本记录**、
+  03 的真实第二项目 fixture 与导出内容检查、
+  05（受控确定性程序工具与沙箱/broker 边界）、
+  06（SDK 与 CLI/TUI/GUI 最小管理入口、tarball 隔离包闭环、收益评估）。
+  04 的**参数授权设置**所依赖的 MERGE-01 设置入口已完成（设置存储 + 默认全开 + 规则校验），
+  故 04 不再被阻塞；其余（升级差异展示入口、停用/回滚的管理入口与独立反馈）仍待后续检查点。
