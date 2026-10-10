@@ -29,6 +29,17 @@ import {
   type InstructionDeadlineEvaluation,
 } from "./orchestration/main-agent-deadline-supervisor.js";
 
+// ─── MERGE-01：参数级授权（声明式规则 + 本地确定性判定）公开入口 ───
+// 卡内要求"禁止可执行脚本、任意正则或让模型解析授权条件"：
+// 消费者拿到的是**数据规则**与纯函数判定，不引入可执行条件。
+export {
+  evaluateParameterAuthorization,
+  type ParameterAuthorizationOutcome,
+  type ParameterAuthorizationRule,
+  type ParameterAuthorizationSettings,
+  type ParameterRuleMatch,
+} from "./tools/parameter-authorization.js";
+
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
 // 否则 runtime: "provider" 在打包产物上不可用。
@@ -36,8 +47,7 @@ import {
 // SDK 消费者必须能只用公开 exports 查询性能/用量/诊断概览与跨项目授权（不得依赖内部路径）。
 export {
   MINIMUM_SAMPLE_SIZE_FOR_DURATION_REPORTING,
-  PerfEventStore,
-  aggregatePerfSamples,
+  PerfEventStore,  aggregatePerfSamples,
   derivePerfAlerts,
   isPerfSampleEvent,
   paginatePerfSamples,

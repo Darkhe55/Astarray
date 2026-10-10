@@ -50,9 +50,30 @@
 
 | ID | 状态 | 交付与验收 |
 |---|---|---|
-| MERGE-01-01 | pending | 审计 SMART 实际接线；冻结执行组到原指令映射、合并开关、权限优先规则与两个适配样本；先写重复/冲突/取消/授权反例 |
+| MERGE-01-01 | in_progress（**仅参数级授权判定已落地**；其余仍未开始） | 审计 SMART 实际接线；冻结执行组到原指令映射、合并开关、权限优先规则与两个适配样本；先写重复/冲突/取消/授权反例 |
 | MERGE-01-02 | pending | 原始指令不变、确定性合并、两工具适配、参数判权及设置入口共用控制器；同键异参、动作切换、旧别名和关闭细分放权反例通过 |
 | MERGE-01-03 | pending | 在已接通 SMART 路径上验证连续输入、部分失败/取消/重启；CLI/TUI/GUI/SDK 设置一致与包级执行证据；更新真实支持范围 |
+
+### MERGE-01-01 进展（2026-10-10）：参数级授权优先规则
+
+本轮先落地卡内**权限优先规则**这一最窄且最可判定的契约（§1.3）。实测缺口：
+`isParameterAuthorizationEnabled` / `isParameterRulesEnabled` 在整个 `packages/` 内**零命中**
+⇒ 参数级授权完全未实现。
+
+- 新增 `packages/core/src/tools/parameter-authorization.ts`：声明式
+  `ParameterAuthorizationRule`（tool + action + 三态 decision + 可读 explanation + 匹配条件）
+  与**纯函数** `evaluateParameterAuthorization()`。匹配种类仅四种（卡内允许的形态）：
+  `path-prefix` / `allowed-values` / `fixed-value` / `numeric-range` ——
+  **无可执行脚本、无正则、模型不参与判定**。
+- 固化优先级（与声明顺序无关）：工具基线 `deny` ⇒ **总拒绝**，参数 `allow` 不得覆盖；
+  总开关或该工具细分关闭 ⇒ 一律回退基线（`isRuleEvaluationSkipped=true`）；
+  均开启且**已匹配** ⇒ 规则覆盖基线；未匹配 / 参数不可解析 / action 不匹配 /
+  未知匹配种类 ⇒ 回退基线（**fail-closed，不猜测**）；多规则冲突 ⇒ **deny > ask > allow**。
+- 已由 `public-sdk.ts` 公开导出（消费者不依赖内部路径）。
+- 反例（先红后绿）：`tests/core/unit/merge01-parameter-authorization.test.ts` 9 条
+  （实现前模块不存在即失败）。
+- **仍未完成**：设置入口（§1.3 第 4 项）与权限引擎/production 接线、两个工具适配样本、
+  执行组到原指令映射与合并开关、NODECTX-01 全部内容 ⇒ **不主张 MERGE-01 或 NODECTX-01 通过**。
 
 测试重点：上限 3 不因分组越窗；A 写 X/B 写 Y 不误合并；重复读减少 I/O 但各回执可追踪；参数 read→write、路径逃逸、批次夹带动作被拒；总开关×单工具细分×基线三态×规则冲突矩阵；同键不同值重新授权，单纯键序变化不重复询问；取消和崩溃不重做已成功写入。指标记录请求/工具次数、token、延迟、误合并/漏合并与返修次数，不预设虚假节省百分比。
 
