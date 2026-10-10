@@ -44,6 +44,14 @@ export interface ToolActionDescriptor {
   /** 必需参数名（供可校验 schema 分支；缺失即拒绝该 action 的调用）。 */
   requiredParameters: string[];
   /**
+   * 该 action **允许**出现的参数名全集（2026-10-10）。
+   *
+   * 卡内 §1.2 要求"不认识的 action/参数拒绝"。只校验必需参数是不够的：
+   * 未知参数（含拼写错误）若被静默忽略，调用方会以为它生效了。
+   * 因此每个 action 显式声明允许集，集外参数一律拒绝。
+   */
+  allowedParameters: string[];
+  /**
    * 该 action 是否支持统一的 `format` / `view` 视图参数（MERGE-01 §1.2）。
    *
    * 与"必需参数"一样**逐 action** 判定：不适用的 action 收到这些参数必须**拒绝**，
@@ -77,6 +85,13 @@ export const PROJECT_FILE_READ_FAMILY: ToolCapabilityFamily = {
       requiresPreMutationBackup: false,
       isIdempotent: true,
       requiredParameters: ["filePath"],
+      allowedParameters: [
+        "filePath",
+        "format",
+        "view",
+        "shouldIncludeComments",
+        "shouldIncludeImports",
+      ],
       supportsReadViewParameters: true,
     },
     {
@@ -87,6 +102,7 @@ export const PROJECT_FILE_READ_FAMILY: ToolCapabilityFamily = {
       requiresPreMutationBackup: false,
       isIdempotent: true,
       requiredParameters: ["pattern"],
+      allowedParameters: ["pattern"],
     },
   ],
 };
@@ -192,12 +208,73 @@ export function validateActionArguments(input: {
   } catch {
     return { isValid: false, reason: "参数不是合法 JSON" };
   }
+  /**
+   * 卡内 §1.2："不认识的参数拒绝"。
+   * **先于必需参数检查**：只校验必需参数会放过未知参数（含拼写错误），
+   * 而"缺少 filePath"这种提示会掩盖真正原因（实际是把 filePath 拼成了 filepath）。
+   */
+  for (const parameterName of Object.keys(parsed)) {
+    if (!input.descriptor.allowedParameters.includes(parameterName)) {
+      return { isValid: false, reason: "未知参数: " + parameterName };
+    }
+  }
   for (const parameterName of input.descriptor.requiredParameters) {
     if (!(parameterName in parsed)) {
       return { isValid: false, reason: "缺少必需参数: " + parameterName };
     }
   }
   return { isValid: true, reason: null };
+}
+
+/**
+ * 按工具名/别名（或统一族名 + action）解析 action 并校验其参数。
+ *
+ * 供 builtins 在执行**之前**调用，使"逐 action 参数校验"只有一个判定点。
+ * 解析失败（未知工具/action）与参数非法都返回 `isValid=false`。
+ */
+export function validateToolActionArguments(input: {
+  toolNameOrAlias: string;
+  action?: string;
+  argumentsJson: string;
+}): { isValid: boolean; reason: string | null; action: string | null } {
+  const resolved =
+    input.action === undefined
+      ? resolveToolAction({ toolNameOrAlias: input.toolNameOrAlias })
+      : resolveToolAction({ toolNameOrAlias: input.toolNameOrAlias, action: input.action });
+  if (resolved === null) {
+    return {
+      isValid: false,
+      reason: "未知工具名/别名或未知 action（不得猜测）",
+      action: null,
+    };
+  }
+  const descriptor = findDescriptorForResolvedAction(resolved);
+  if (descriptor === null) {
+    return { isValid: false, reason: "未能定位 action 描述符", action: resolved.action };
+  }
+  const outcome = validateActionArguments({
+    descriptor,
+    argumentsJson: input.argumentsJson,
+  });
+  return { isValid: outcome.isValid, reason: outcome.reason, action: resolved.action };
+}
+
+/** 按解析结果回查族内描述符（保持单一数据源）。 */
+function findDescriptorForResolvedAction(
+  resolved: ResolvedToolAction,
+): ToolActionDescriptor | null {
+  for (const family of REGISTERED_TOOL_CAPABILITY_FAMILIES) {
+    if (family.familyName !== resolved.familyName) {
+      continue;
+    }
+    const descriptor = family.actions.find(
+      (candidate) => candidate.action === resolved.action,
+    );
+    if (descriptor !== undefined) {
+      return descriptor;
+    }
+  }
+  return null;
 }
 
 /**

@@ -91,6 +91,7 @@ describe("MERGE-01：能力族 + action 统一（纵向样本）", () => {
           requiresPreMutationBackup: false,
           isIdempotent: true,
           requiredParameters: ["filePath"],
+          allowedParameters: ["filePath"],
         },
         {
           action: "write",
@@ -100,6 +101,7 @@ describe("MERGE-01：能力族 + action 统一（纵向样本）", () => {
           requiresPreMutationBackup: true,
           isIdempotent: false,
           requiredParameters: ["filePath", "content"],
+          allowedParameters: ["filePath", "content"],
         },
       ],
     };
@@ -141,19 +143,31 @@ describe("MERGE-01：action 参数校验（动作切换不得被静默接受）"
     ).toBe(true);
   });
 
-  it("⑧ 动作切换（read→search）沿用旧参数时，必须因缺失必需参数被拒", () => {
+  it("⑧ 动作切换（read→search）沿用旧参数时，必须被拒且指出**未知参数**", () => {
     const searchDescriptor = PROJECT_FILE_READ_FAMILY.actions.find(
       (action) => action.action === "search",
     );
     if (searchDescriptor === undefined) {
       throw new Error("测试前提失败：search action 不存在");
     }
-    // 调用方把 read 的参数（filePath）直接用于 search：search 需要 pattern ⇒ 拒绝
-    const outcome = validateActionArguments({
+    /**
+     * 调用方把 read 的参数（filePath）直接用于 search：
+     * `filePath` 不在 search 的允许集内 ⇒ 必须报"未知参数: filePath"。
+     * （比笼统的"缺 pattern"更能指出真正原因；缺少必需参数的独立断言见下。）
+     */
+    const switchedAction = validateActionArguments({
       descriptor: searchDescriptor,
       argumentsJson: JSON.stringify({ filePath: "docs/a.md" }),
     });
-    expect(outcome.isValid).toBe(false);
-    expect(String(outcome.reason)).toContain("pattern");
+    expect(switchedAction.isValid).toBe(false);
+    expect(String(switchedAction.reason)).toContain("filePath");
+
+    // 未给未知参数、但缺必需参数 ⇒ 报缺少必需参数
+    const missingRequired = validateActionArguments({
+      descriptor: searchDescriptor,
+      argumentsJson: JSON.stringify({}),
+    });
+    expect(missingRequired.isValid).toBe(false);
+    expect(String(missingRequired.reason)).toContain("pattern");
   });
 });

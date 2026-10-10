@@ -7,6 +7,7 @@
 import { readFile } from "node:fs/promises";
 
 import type { ReadViewReceipt } from "./read-format/read-format-strategies.js";
+import { validateToolActionArguments } from "./tool-action-registry.js";
 import path from "node:path";
 import { isAbsoluteOnAllPlatforms } from "./cross-platform-path-canonicalization.js";
 
@@ -281,6 +282,20 @@ export async function executeBuiltinTool(
   switch (toolName) {
     case "readFile": {
       const filePath = args["filePath"];
+      /**
+       * MERGE-01-02：逐 action 参数校验（**单一判定点**）。
+       *
+       * 覆盖两件事：① 未知参数（含拼写错误）一律拒绝——静默忽略会让调用方以为其生效；
+       * ② `format`/`view` 只接受确有实现的取值（见下）。
+       * 校验放在**任何 I/O 之前**。
+       */
+      const actionArgumentsOutcome = validateToolActionArguments({
+        toolNameOrAlias: "readFile",
+        argumentsJson,
+      });
+      if (!actionArgumentsOutcome.isValid) {
+        throw new Error("readFile 参数非法：" + String(actionArgumentsOutcome.reason));
+      }
       if (typeof filePath !== "string") {
         throw new Error("readFile 参数 filePath 缺失或非法");
       }
@@ -290,8 +305,7 @@ export async function executeBuiltinTool(
        * 实测：`ReadFormatStrategyRegistry.resolve()` 只按扩展名选策略、**不读 format**；
        * `buildReadView()` 无法产出 summary/outline。因此：
        *  - `format` 仅接受确有实现的取值（`auto` 既有行为 / `text` 强制原文视图）；
-       *  - 其它 format 与任何 `view` **一律拒绝**（不得静默忽略成"逐字节原文"）；
-       *  - 校验放在**读取之前**（不产生无谓 I/O、不登记读取抑制）。
+       *  - 其它 format 与任何 `view` **一律拒绝**（不得静默忽略成"逐字节原文"）。
        */
       const rawFormat = args["format"];
       if (
@@ -596,6 +610,19 @@ export async function executeBuiltinTool(
       };
     }
     case "searchProjectText": {
+      /**
+       * MERGE-01-02：逐 action 参数校验。检索 action 的允许集**不含** format/view，
+       * 因此收到这些参数必须**拒绝**——此前是静默忽略，调用方会以为视图语义生效了。
+       */
+      const searchArgumentsOutcome = validateToolActionArguments({
+        toolNameOrAlias: "searchProjectText",
+        argumentsJson,
+      });
+      if (!searchArgumentsOutcome.isValid) {
+        throw new Error(
+          "searchProjectText 参数非法：" + String(searchArgumentsOutcome.reason),
+        );
+      }
       const pattern = args["pattern"];
       if (typeof pattern !== "string" || pattern.length === 0) {
         throw new Error("searchProjectText 参数 pattern 缺失或非法");

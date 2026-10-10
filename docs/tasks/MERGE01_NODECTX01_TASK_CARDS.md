@@ -196,6 +196,32 @@ summary/outline。因此上一轮枚举里的 `code`/`markup`/`data` 与 `view`�
 
 ## 3. 顺序、交付及门禁
 
+### MERGE-01-02 进展（2026-10-10 续）：逐 action 参数校验（未知参数必须拒绝）
+
+卡内 §1.2："不同 action 的必需参数使用可校验 schema 分支，**不认识的 action/参数拒绝**"。
+
+**实测缺口**：只校验"必需参数"不够 —— `readFile` 此前只显式校验 `format`/`view`，
+**其余未知参数被静默忽略**（`format2`、拼错的 `filepath` 都不报错）；
+`searchProjectText` **完全不校验参数**，传入不适用于该 action 的 `format`/`view` 时静默忽略。
+
+**本轮补上单一判定点**：
+
+- `ToolActionDescriptor` 新增 `allowedParameters`（每个 action 的允许参数全集）；
+- `validateActionArguments()` **先查未知参数、再查必需参数** —— 理由：拼错
+  `filePath`→`filepath` 时，先报"未知参数: filepath"比笼统的"缺少必需参数: filePath"
+  更能指出真正原因（本轮实测确认了这个顺序差异）；
+- 新增 `validateToolActionArguments()`：一次完成"解析 action + 校验参数"，供 builtins
+  在执行**之前**调用（零 I/O）；
+- `readFile` 与 `searchProjectText` 均接入：前者允许集含 `format`/`view` 与两个布尔视图参数；
+  后者允许集**只有** `pattern` ⇒ 检索 action 收到 `format`/`view`/`caseSensitive`
+  一律拒绝并指出参数名。
+- 反例（先红后绿）：`tests/core/integration/merge01-action-argument-validation.test.ts` 5 条
+  （实现前 4 红）；`merge01-tool-action-registry.test.ts` ⑧ 同步校准为
+  "指出未知参数 + 独立断言缺少必需参数"，8/8。
+
+**仍未完成**：设置入口、执行组到原指令映射与合并开关、NODECTX-01 全部内容
+⇒ **不主张 MERGE-01 通过**。
+
 建议先 NODECTX-01-01 与 MERGE-01-01 做契约（同一实施者每轮一个）；落实 SMART 生产接线与相关可靠性返修后，再依次 NODECTX-01-02/03、MERGE-01-02/03。共享 assembler/调度/权限入口串行集成，不同时重写。
 
 每个检查点先反例后实现，变量名完整，布尔/时间量遵循命名规范，覆盖/删除前工具备份。运行定向测试、`npm run check`、覆盖率及安全专项，冻结同一提交后 `npm pack`、verify-package 与 smoke-install；包级验收必须真正驱动请求/工具而不是只 import。记录平台、命令退出码、包哈希、请求和产物关联、人工/真实服务未测范围。失败门禁或 skip 不算通过，不放宽原阈值。
