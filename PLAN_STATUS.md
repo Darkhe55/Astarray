@@ -55,8 +55,27 @@
    落在 check 输出里（`SyntaxError: Unexpected non-whitespace character after JSON at position 2`）。
    修复：从后往前逐候选起点尝试解析（提交 `c24a26c`）。
 
-**尚未处理（如实登记）**：超时型抖动与上述三者**不同源**——`tests/tui/unit/run-command-gaps.test.ts`
-曾在默认并发下以 `Test timed out in 60000ms` 失败（隔离复跑 5.4s 通过）；需单独评估其超时预算或竞态。
+### E2E-01-04 剩余缺口（2026-10-10 逐项核实，均如实保留 blocked，不用文字覆盖）
+
+1. **`cli-anthropic-protocol.test.ts` ①（最后一个 `it.skip`）——本日在 HEAD 上复核：仍然红**。
+   - 实测：`npx vitest run tests/tui/integration/cli-anthropic-protocol.test.ts` → **exit 1**，
+     `AssertionError: expected 'blocked' to be 'done'`，耗时 31.0s（反例真实、可复现，不是过时记录）。
+   - **已定位的缺口性质**（测试文件内原始诊断，本日复核未推翻）：**协议层已全部打通**
+     （请求确实走 Anthropic 运行时、顶层 `system`、工具用 `input_schema`、
+     回填为 `assistant.tool_use` + `user.tool_result`）；**缺口在 CLI 裁决层**——
+     工具调用返回 `permission-ask-pending` 后，**非 TTY（管道）下 `allow-once` 裁决输入未被消费**
+     （无 grant 痕迹），只走 1 轮裁决 ⇒ 任务 `blocked`，重跑仍得 `permission-ask-pending`。
+   - 既有线索与矛盾点：stderr 曾显示"已按精确参数 allow-once 授权（作用域授权: granted）"，
+     但紧随其后的工具调用仍被"该授权已被消费"拒绝；而一次性诊断 `ASTARRAY_SCOPE_TRACE`
+     在离线路径下**未打印**，说明该路径可能根本没走到登记函数——两者需一并查清。
+   - **下一步最小验证**（原诊断已写明，未执行）：在授权登记点与后续 `authorizeForExecution`
+     各打印**范围指纹**与 `consumedAtIso`，确认"写入的记录"与"重跑读取的记录"是否同一条；
+     并查非 TTY 下 stdin 行读取路径（`isInteractive` / 裁决输入消费）。
+   - 处理约定：**不删除**该反例（删除等于假装已支持），也**不解除 skip 让门禁长期变红**；
+     修复后应改回 `it`。
+2. **超时型抖动**（独立于已修的三层根因）：`tests/tui/unit/run-command-gaps.test.ts`
+   曾在默认并发下 `Test timed out in 60000ms`（隔离复跑 5.4s 通过），需单独评估超时预算或竞态。
+3. **人工体验结论**、**Linux/macOS 平台证据**：只能由用户或平台提供，故 E2E-01-04 保持 `in_progress`。
 
 ### E2E-01-04 追加：CLI 滞留缺陷已修并转绿（2026-10-10）
 
