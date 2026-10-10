@@ -5015,3 +5015,143 @@ export async function executeToolPackageChangeCommand(
     failWith(error instanceof Error ? error : new Error(String(error)));
   }
 }
+/* ────────── TOOLKIT-01-04：取消 / 崩溃恢复 与独立反馈入口 ────────── */
+
+export interface ToolPackageCancelCommandOptions {
+  toolPackageId: string;
+  projectIdentifier: string;
+  stateDirectory: string;
+  isJsonOutput: boolean;
+  requestingAgentInstanceId: string;
+}
+
+/**
+ * `tool-package cancel <id> --project P`：取消（**阻止新运行**，保留在途调用）。
+ *
+ * 卡内 §8："停用阻止新运行，在途调用按安全点取消/收敛，
+ * **不能删掉运行中的文件造成结果未知**" ⇒ 此处**只停用**，
+ * 并在输出中**明确告知**仍有多少在途调用需要收敛。
+ */
+export async function executeToolPackageCancelCommand(
+  options: ToolPackageCancelCommandOptions,
+): Promise<number> {
+  try {
+    const { cancelProjectToolPackage } = await import(
+      "../../../core/src/toolkit/tool-package-operation-control.js"
+    );
+    const outcome = await cancelProjectToolPackage({
+      stateDirectory: options.stateDirectory,
+      projectIdentifier: options.projectIdentifier,
+      toolPackageId: options.toolPackageId,
+      reason: "用户/管理入口要求取消后续运行",
+      requestingAgentInstanceId: options.requestingAgentInstanceId,
+    });
+    if (!outcome.isCancelled) {
+      logToStderr(String(outcome.reason));
+      if (options.isJsonOutput) {
+        printJson({ isCancelled: false, reason: outcome.reason });
+      }
+      return EXIT_CODES.FAILURE;
+    }
+    if (options.isJsonOutput) {
+      printJson({
+        isCancelled: true,
+        revision: outcome.revision,
+        retainedInFlightCallCount: outcome.retainedInFlightCallCount,
+      });
+    } else {
+      process.stdout.write(
+        "已取消（revision " +
+          String(outcome.revision) +
+          "）；保留在途调用 " +
+          String(outcome.retainedInFlightCallCount) +
+          " 个，待按安全点收敛\n",
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    failWith(error instanceof Error ? error : new Error(String(error)));
+  }
+}
+
+/** `tool-package recover <id> --project P`：把半提交切换收敛到可信版本。 */
+export async function executeToolPackageRecoverCommand(
+  options: ToolPackageCancelCommandOptions,
+): Promise<number> {
+  try {
+    const { recoverInterruptedVersionSwitch } = await import(
+      "../../../core/src/toolkit/tool-package-operation-control.js"
+    );
+    const outcome = await recoverInterruptedVersionSwitch({
+      stateDirectory: options.stateDirectory,
+      projectIdentifier: options.projectIdentifier,
+      toolPackageId: options.toolPackageId,
+      requestingAgentInstanceId: options.requestingAgentInstanceId,
+    });
+    if (options.isJsonOutput) {
+      printJson({
+        isRecovered: outcome.isRecovered,
+        activeVersion: outcome.activeVersion,
+        feedbackRecordIdentifier: outcome.feedbackRecordIdentifier,
+      });
+    } else {
+      process.stdout.write(
+        (outcome.isRecovered ? "已恢复" : "无需恢复") +
+          "（当前可信版本 " +
+          String(outcome.activeVersion) +
+          "）\n",
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    failWith(error instanceof Error ? error : new Error(String(error)));
+  }
+}
+
+export interface ToolPackageFeedbackCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+}
+
+/** `tool-package feedback`：只读列出独立反馈记录（来源/动作/revision/结果）。 */
+export async function executeToolPackageFeedbackCommand(
+  options: ToolPackageFeedbackCommandOptions,
+): Promise<number> {
+  try {
+    const { ToolPackageOperationFeedbackStore } = await import(
+      "../../../core/src/toolkit/tool-package-operation-control.js"
+    );
+    const store = new ToolPackageOperationFeedbackStore({
+      stateDirectory: options.stateDirectory,
+    });
+    const records = await store.listRecords();
+    if (options.isJsonOutput) {
+      printJson({ records });
+      return EXIT_CODES.SUCCESS;
+    }
+    process.stdout.write(
+      records
+        .map(
+          (record) =>
+            "[" +
+            record.outcome +
+            "] " +
+            record.operationKind +
+            " " +
+            record.toolPackageId +
+            "@" +
+            record.projectIdentifier +
+            " r" +
+            String(record.revision) +
+            " by " +
+            record.requestingAgentInstanceId +
+            " — " +
+            record.detail,
+        )
+        .join("\n") + "\n",
+    );
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    failWith(error instanceof Error ? error : new Error(String(error)));
+  }
+}

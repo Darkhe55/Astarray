@@ -520,6 +520,33 @@ CLI 每次调用都是**独立进程**，因此"停用阻止新运行"与"回滚
   + `toolkit01-promotion.test.ts` 新增 ⑫（合计 19/19）。
 - **仍未完成**：04 的独立反馈与取消/崩溃恢复管理入口；
   更大样本的复用次数与构建成本实测 ⇒ **不主张 TOOLKIT-01 通过**。
+### TOOLKIT-01-04 进展（2026-10-10 五）：取消 / 崩溃恢复管理入口 与 独立反馈
+
+**缺口**：上一轮已有 `recordPendingVersionSwitch` / `recoverFromInterruptedSwitch` 两个**底层方法**，
+但**没有管理入口** —— 跨进程（真实 CLI）既看不到"半提交"现场、也无法触发恢复；
+也**没有独立反馈**记录（谁在何时对哪个包做了什么、结果如何）。
+
+**本轮交付** `packages/core/src/toolkit/tool-package-operation-control.ts`：
+
+- `cancelProjectToolPackage()`：**只停用（阻止新运行）**，并**明确报告仍保留多少个在途调用**
+  待按安全点收敛（卡内 §8："不能删掉运行中的文件造成结果未知"）；
+- `recoverInterruptedVersionSwitch()`：把半提交切换收敛到**上一个可信版本**，
+  并断言**绝不留下"已启用但哈希不符"**；恢复动作**幂等**（无待恢复项时如实报告"未做变更"）；
+- `ToolPackageOperationFeedbackStore`：**独立**落盘（与版本状态分开，避免状态回滚牵连反馈历史），
+  每条含**具体 `agentInstanceId` 来源**、动作、revision、结果与说明；
+  **命中秘密/凭据/nonce 即拒绝记录**（不做部分脱敏）；
+- CLI：`tool-package cancel|recover|feedback`（真实子进程端到端验证）。
+
+**本片由反例 ① 逼出并修掉一个真实缺陷（重要）**：
+
+> **在途调用此前没有持久化**。取消的语义是"阻止新运行但**保留在途调用**待收敛"，
+> 而在途调用只存在内存里时，**取消之后下一个进程就再也看不到它们** ——
+> 等于"悄悄丢掉运行中的调用"，正是卡内明文禁止的情形。
+> 已把 `inFlightCalls` 纳入版本状态快照（`listAllInFlightCalls()` + 快照读写 + 恢复）。
+
+- 反例（先红后绿）：`tests/tui/integration/toolkit01-operation-control.test.ts` **4 条**
+  （实现前模块不存在即失败），其中 ④ 驱动**真实 `dist/cli.js` 子进程**。
+- **仍未完成**：更大样本的复用次数与构建成本实测 ⇒ **不主张 TOOLKIT-01 通过**。
 - **本卡当前总账（仍未完成）**：01 的其余部分（隔离 fixture 与基线成本记录）；
   02 的真实项目 fixture 与基线成本记录；03 的真实第二项目 fixture 与导出内容检查、
   接入注册表的"目标项目显式启用并固定版本"端到端演示；

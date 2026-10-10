@@ -36,6 +36,15 @@ export interface ToolPackageVersionStateSnapshot {
     revision: number;
   }>;
   callHistory: ToolPackageCallRecord[];
+  /** 在途调用（取消后必须仍可见，待按安全点收敛）。 */
+  inFlightCalls: Array<{
+    runIdentifier: string;
+    stepIdentifier: string;
+    projectIdentifier: string;
+    toolPackageId: string;
+    version: number;
+    argumentHash: string;
+  }>;
   pendingSwitches: Array<{
     projectIdentifier: string;
     toolPackageId: string;
@@ -82,6 +91,7 @@ export class ToolPackageVersionStateStore {
       versions: raw.versions,
       projectLocks: raw.projectLocks ?? [],
       callHistory: raw.callHistory ?? [],
+      inFlightCalls: raw.inFlightCalls ?? [],
       pendingSwitches: raw.pendingSwitches ?? [],
     };
   }
@@ -102,6 +112,7 @@ export class ToolPackageVersionStateStore {
       versions: controller.listRegisteredVersions(),
       projectLocks: controller.listProjectLocks(),
       callHistory: controller.listAllCallRecords(),
+      inFlightCalls: controller.listAllInFlightCalls(),
       pendingSwitches: controller.listPendingSwitches(),
     };
     await backupExistingFile(this.stateFilePath, this.backupFilePath);
@@ -195,6 +206,7 @@ export class ToolPackageVersionStateStore {
       versions: [],
       projectLocks: [],
       callHistory: [],
+      inFlightCalls: [],
       pendingSwitches: [],
     };
   }

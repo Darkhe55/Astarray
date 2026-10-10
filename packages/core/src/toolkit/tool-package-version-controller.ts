@@ -469,6 +469,18 @@ export class ToolPackageVersionController {
     );
   }
 
+  /**
+   * **全部**在途调用（供持久化使用）。
+   *
+   * 为什么必须持久化（2026-10-10 由反例 ① 暴露）：取消的语义是"阻止新运行但
+   * **保留在途调用**待按安全点收敛"。若在途调用只在内存里，那么取消之后
+   * **下一个进程就再也看不到它们** —— 等于"悄悄丢掉运行中的调用"，
+   * 正是卡内"不能删掉运行中的文件造成结果未知"要禁止的情形。
+   */
+  listAllInFlightCalls(): ToolPackageInFlightCall[] {
+    return [...this.inFlightCalls.values()].map((call) => ({ ...call }));
+  }
+
   /** 按安全点收敛在途调用（停用后仍需完成，避免"结果未知"）。 */
   convergeInFlightCall(input: { runIdentifier: string }): { isConverged: boolean } {
     return { isConverged: this.inFlightCalls.delete(input.runIdentifier) };
@@ -548,6 +560,7 @@ export class ToolPackageVersionController {
       revision: number;
     }>;
     callHistory: ToolPackageCallRecord[];
+    inFlightCalls?: ToolPackageInFlightCall[];
     pendingSwitches?: PendingVersionSwitch[];
   }): void {
     for (const stored of snapshot.versions) {
@@ -568,6 +581,10 @@ export class ToolPackageVersionController {
         ...record,
         producedArtifacts: [...record.producedArtifacts],
       });
+    }
+    this.inFlightCalls.clear();
+    for (const inFlightCall of snapshot.inFlightCalls ?? []) {
+      this.inFlightCalls.set(inFlightCall.runIdentifier, { ...inFlightCall });
     }
     for (const pendingSwitch of snapshot.pendingSwitches ?? []) {
       this.pendingSwitches.set(

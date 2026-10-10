@@ -182,6 +182,20 @@ export {
   type TargetProjectEnablementOutcome,
 } from "./toolkit/promotion-fixtures.js";
 
+// ─── TOOLKIT-01-04：取消 / 崩溃恢复管理入口 与 独立反馈 ───
+// 取消只阻止新运行、**保留在途调用**（不得"删掉运行中的文件造成结果未知"）；
+// 恢复把半提交切换收敛到可信版本；每次操作产生独立反馈记录。
+export {
+  TOOL_PACKAGE_FEEDBACK_SCHEMA_VERSION,
+  ToolPackageOperationFeedbackStore,
+  cancelProjectToolPackage,
+  recoverInterruptedVersionSwitch,
+  type InterruptedSwitchRecoveryOutcome,
+  type ToolPackageCancellationOutcome,
+  type ToolPackageOperationFeedbackRecord,
+  type ToolPackageOperationKind,
+} from "./toolkit/tool-package-operation-control.js";
+
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
 // 否则 runtime: "provider" 在打包产物上不可用。

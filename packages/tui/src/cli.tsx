@@ -64,9 +64,12 @@ import {
   executeInstructionDeadlineCommand,
   executeInstructionListCommand,
   executePerfOverviewCommand,
+  executeToolPackageCancelCommand,
   executeToolPackageChangeCommand,
   executeToolPackageDescribeCommand,
+  executeToolPackageFeedbackCommand,
   executeToolPackageListCommand,
+  executeToolPackageRecoverCommand,
   executeToolPackageStatusCommand,
   executeUsageOverviewCommand,
 } from "./cli/commands.js";
@@ -436,6 +439,64 @@ for (const changeKind of ["enable", "disable", "upgrade", "rollback"] as const) 
     },
   );
 }
+
+/**
+ * TOOLKIT-01-04：取消 / 崩溃恢复 与独立反馈（管理入口）。
+ *
+ * `cancel` **不删除在途调用**（卡内 §8："不能删掉运行中的文件造成结果未知"）；
+ * `recover` 把半提交切换收敛到可信版本；`feedback` 只读列出操作记录。
+ */
+toolPackageCommand
+  .command("cancel <tool-package-id>")
+  .description("取消后续运行（保留在途调用，待按安全点收敛）")
+  .option("--project <project-id>", "项目标识")
+  .option("--state-dir <dir>", "状态目录")
+  .option("--json", "JSON 输出")
+  .action(
+    async (
+      toolPackageId: string,
+      options: { project?: string; stateDir?: string; json?: boolean },
+    ) => {
+      process.exitCode = await executeToolPackageCancelCommand({
+        toolPackageId,
+        projectIdentifier: options.project ?? "",
+        stateDirectory: options.stateDir ?? defaultStateDirectory(),
+        isJsonOutput: options.json === true,
+        requestingAgentInstanceId: "authenticated-user",
+      });
+    },
+  );
+toolPackageCommand
+  .command("recover <tool-package-id>")
+  .description("崩溃恢复：把半提交的版本切换收敛到可信版本")
+  .option("--project <project-id>", "项目标识")
+  .option("--state-dir <dir>", "状态目录")
+  .option("--json", "JSON 输出")
+  .action(
+    async (
+      toolPackageId: string,
+      options: { project?: string; stateDir?: string; json?: boolean },
+    ) => {
+      process.exitCode = await executeToolPackageRecoverCommand({
+        toolPackageId,
+        projectIdentifier: options.project ?? "",
+        stateDirectory: options.stateDir ?? defaultStateDirectory(),
+        isJsonOutput: options.json === true,
+        requestingAgentInstanceId: "authenticated-user",
+      });
+    },
+  );
+toolPackageCommand
+  .command("feedback")
+  .description("列出工具包管理操作的独立反馈（来源/动作/revision/结果）")
+  .option("--state-dir <dir>", "状态目录")
+  .option("--json", "JSON 输出")
+  .action(async (options: { stateDir?: string; json?: boolean }) => {
+    process.exitCode = await executeToolPackageFeedbackCommand({
+      stateDirectory: options.stateDir ?? defaultStateDirectory(),
+      isJsonOutput: options.json === true,
+    });
+  });
 
 /**
  * PROJECT-01-04：跨项目授权与副本的公开只读入口。
