@@ -192,3 +192,29 @@ released、claim 未结算 → 重启不重复执行、重启后异参拒绝、*
 - 反例（先红后绿）：`tests/core/unit/reliability-guidance-journal-integrity.test.ts` **6 条**。
 - 矩阵该条目由 `not-verified` 改为 **fixed** 并附证据；
   **未验证时点由 2 项降为 1 项**（仅剩 `before-dispatch-crash`）。
+## 10. 时点"派发前崩溃"的落实（2026-10-10）：矩阵**未验证项归零**
+
+**注入方式（真实跨进程硬杀，不用计时窗口）**：子进程通过 stdin 握手告知"即将派发"，
+父进程收到握手的**下一 tick 立即 `SIGKILL`**；子进程另写相位标记文件以便核对相位。
+即：竞态由**外部终止**制造，而不是靠"过窄的真实计时窗口"。
+
+**覆盖的两个相位**（硬杀落点会在其间浮动，故都断言）：
+
+| 相位 | 期望 | 结果 |
+| --- | --- | --- |
+| claim **未落盘** | 无副作用承诺 ⇒ 重试**允许**，但必须给出明确结果 | 已证实（重试返回有效 mission） |
+| claim **已落盘未结算** | **不得重跑**，fail-closed 暴露未结算 | 已证实（`idempotency-claim-pending`） |
+| pending claim + **异参同键** | 冲突检查**照旧生效** | 已证实（`idempotency-key-conflict`） |
+
+**注意点（如实记录）**：既有 `reliability-sdk-idempotency.test.ts` ② 的"重启"走的是
+**优雅 shutdown**（claim 已结算、`missionIdentifier` 非空），**并未**覆盖本形态 ——
+本轮把这一缺口补上。
+
+**为避免"过窄计时窗口"**：冲突检查用例改为**确定性植入** pending claim（即崩溃后磁盘上
+应有的形态）再验证，不依赖硬杀落点；真实硬杀相位由同套件 ①②④ 覆盖。
+
+**矩阵状态更新**：`before-dispatch-crash` 由 `not-verified` 改为 **`confirmed`** 并附证据
+⇒ **未验证时点归零**（`unverifiedEntryIdentifiers: []`，13 条 = 9 confirmed + 4 fixed，
+**10 个覆盖维度齐备**）。
+
+**限制**：仍**只保证本项目控制的**请求装配与存储；Linux/macOS 平台证据未取得，保留待平台提供。

@@ -201,10 +201,15 @@ export const FAULT_INJECTION_MATRIX: readonly FaultInjectionEntry[] = [
     entryIdentifier: "before-dispatch-crash",
     timing: "before-dispatch",
     dimension: "parent-process-exit",
-    representativeOperation: "派发前父进程退出",
-    verdict: "not-verified",
+    representativeOperation: "任务提交：派发前进程被强杀（父进程外部终止子进程）",
+    verdict: "confirmed",
     summary:
-      "尚无'派发前崩溃 + 重启'的受控反例（不拿相邻测试冒充）；父进程退出仅有反馈进程侧的既有覆盖",
+      "真实跨进程**硬杀**注入（收到子进程 stdin 握手后立即 SIGKILL，不用任何计时窗口）：① 若 claim 未落盘则重试允许且必须给出明确结果；② 若 claim 已落盘未结算则 fail-closed（idempotency-claim-pending，不重跑）；③ pending claim 与异参同键冲突检查照旧生效。既有 idempotency ② 的'重启'走优雅 shutdown（claim 已结算），**未**覆盖本形态",
+    evidenceFilePaths: [
+      "tests/core/integration/reliability-before-dispatch-crash.test.ts",
+    ],
+    limitation:
+      "硬杀落点在'claim 未落盘'与'claim 已落盘未结算'之间浮动；为避免'过窄计时窗口'，冲突检查用例改为**确定性植入** pending claim 验证，两个相位均由该套件覆盖",
   },
   {
     entryIdentifier: "guidance-receipt-write-interrupted",

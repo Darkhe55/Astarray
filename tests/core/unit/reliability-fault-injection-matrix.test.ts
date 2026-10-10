@@ -52,12 +52,36 @@ describe("RELIABILITY-01：故障注入矩阵（如实、可核对）", () => {
       entries: FAULT_INJECTION_MATRIX,
       repositoryRoot,
     });
-    // 本仓当前确实还有未验证时点 ⇒ 必须出现，且矩阵的 isAccepted 不得掩盖它们
-    expect(outcome.unverifiedEntryIdentifiers.length).toBeGreaterThan(0);
+    /**
+     * 本仓当前已无未验证时点（`before-dispatch-crash` 已用真实跨进程硬杀注入落实）。
+     * 因此本用例改为**证明"未验证不会被掩盖"这一机制本身仍有效**：
+     * 往矩阵里掺一条未验证条目，它必须出现在 `unverifiedEntryIdentifiers` 中，
+     * 且**不得**被算作已证实。
+     */
+    const withUnverified: FaultInjectionEntry[] = [
+      ...FAULT_INJECTION_MATRIX,
+      {
+        entryIdentifier: "deliberately-unverified",
+        timing: "inflight",
+        dimension: "same-key-concurrency",
+        representativeOperation: "用于验证掩盖检测",
+        verdict: "not-verified",
+        summary: "故意留为未验证",
+      },
+    ];
+    const mixed = auditFaultInjectionMatrix({ entries: withUnverified, repositoryRoot });
+    expect(mixed.unverifiedEntryIdentifiers).toContain("deliberately-unverified");
+    const unverifiedEntry = mixed.entries.find(
+      (entry) => entry.entryIdentifier === "deliberately-unverified",
+    );
+    expect(unverifiedEntry?.verdict).toBe("not-verified");
+    expect(unverifiedEntry?.evidenceFilePaths ?? []).toEqual([]);
+
+    // 同时如实记录当前真实矩阵的未验证清单（可为空）
+    expect(Array.isArray(outcome.unverifiedEntryIdentifiers)).toBe(true);
     for (const identifier of outcome.unverifiedEntryIdentifiers) {
       const entry = outcome.entries.find((candidate) => candidate.entryIdentifier === identifier);
       expect(entry?.verdict).toMatch(/not-verified|gap/);
-      // 未验证条目不得带证据引用
       expect(entry?.evidenceFilePaths ?? []).toEqual([]);
     }
   });
