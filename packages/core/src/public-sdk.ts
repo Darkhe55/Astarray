@@ -73,6 +73,24 @@ export {
   type ToolPackageStatus,
 } from "./toolkit/tool-package-registry.js";
 
+// ─── TOOLKIT-01-02：工作流配方（有界偏序执行 + 草案→独立验证→登记启用）公开入口 ───
+// 卡内要求"证明复用不是只 import"：验证期必须真实经工具网关执行配方声明的全部工具，
+// 该判定在本入口内实现，消费者与包级验收需要可复现地调用它。
+export {
+  RecipeExecutionEngine,
+  createRecipeLifecycle,
+  validateRecipeDefinition,
+  type RecipeDefinitionValidation,
+  type RecipeDraftRecord,
+  type RecipeDraftStatus,
+  type RecipeExecutionOutcome,
+  type RecipeLifecycle,
+  type RecipeStepReceipt,
+  type RecipeStepStatus,
+  type WorkflowRecipeDefinition,
+  type WorkflowRecipeStep,
+} from "./toolkit/workflow-recipe-engine.js";
+
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
 // 否则 runtime: "provider" 在打包产物上不可用。

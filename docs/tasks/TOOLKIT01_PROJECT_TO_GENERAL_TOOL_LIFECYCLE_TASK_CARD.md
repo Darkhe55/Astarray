@@ -179,8 +179,36 @@ GUI/TUI 人工体验：用户能区分草案/已验证/已启用、项目专用/
 - 反例（先红后绿）：`tests/core/unit/toolkit01-tool-package-registry.test.ts` **9 条**
   （实现前模块不存在即失败）。
 - 已由 `public-sdk` 公开导出，并从**构建产物**实测可达。
-- **仍未完成（不主张 TOOLKIT-01 通过）**：01 的其余部分（隔离 fixture 与基线成本记录）、
-  02（项目配方草案→独立验证→登记/启用→按需发现→实际调用，须证明**复用不是只 import**）、
+
+### TOOLKIT-01-02 进展（2026-10-10）：工作流配方有界偏序执行 + 独立验证
+
+新增 `packages/core/src/toolkit/workflow-recipe-engine.ts`，落实卡内"工作流配方 =
+已有工具可完成的稳定多步操作，实现为**有界偏序步骤与输入输出映射**，
+通过**现有工具执行网关**调用"，并"完整保留来源与**逐步骤回执**"：
+
+- `validateRecipeDefinition()`（纯函数，fail-closed）：拒绝空步骤、重复步骤 ID、
+  **未知依赖**、**依赖环**（Kahn 检测）、**未在 `usedToolReferences` 声明的工具**
+  （不得引入新工具）、引用未声明输入；
+- `RecipeExecutionEngine`：**不新增执行通道**，所有步骤经注入的现有 `ToolPort` 执行；
+  反复选取"依赖全部已完成"的步骤；依赖失败/被跳过的步骤一律
+  `skipped-dependency-failed`（**不带着坏输入硬跑**）；顶层步骤失败 ⇒ `isSuccessful=false`
+  （**不声称成功**）；每步产出回执（配方 ID/版本、步骤 ID、工具名、**实际参数**、状态、输出/失败原因）；
+- `createRecipeLifecycle()`：检查点 02 点名的链路"草案 → **独立验证** → 登记/启用 →
+  按需发现 → **实际调用**"，与 01 的 `ToolPackageRegistry` 组合复用其作用域/不可变/启用判定。
+
+**"复用不是只 import"的可执行判定**（本检查点核心验收）：
+
+1. 验证者与作者必须是**不同** `agentInstanceId`（沿用 T08D"作者不能自验"，实测自验被拒）；
+2. 验证期必须**真实经工具网关执行过配方声明的全部工具**，否则判为未验证 ——
+   仅 import 一个函数**不会产生任何工具执行记录**，因此该断言无法被"假装复用"通过；
+3. 执行失败的验证不得登记为 `validated`。
+
+- 反例（先红后绿）：`tests/core/unit/toolkit01-workflow-recipe-engine.test.ts` **8 条**
+  （实现前模块不存在即失败）；其中 ③⑥ 用**真实内置工具**（`readFile`/`listDirectory`）
+  经真实 `PolicyWrapper` 网关跑出内容，证明是真实执行而非 import。
+- **仍未完成**：01 的其余部分（隔离 fixture 与基线成本记录）、
+  02 的**真实项目 fixture 与基线成本记录**（引擎与独立验证判定已实现并通过反例，
+  但尚未在选定真实重复流程上记录基线成本）、
   03（用户级推广与第二个项目 fixture、来源项目零修改、目标权限不继承、导出无敏感数据）、
   04（参数授权设置接线，依赖 MERGE-01）、05（受控确定性程序工具与沙箱/broker 边界）、
   06（SDK 与 CLI/TUI/GUI 最小管理入口、tarball 隔离包闭环、收益评估）。
