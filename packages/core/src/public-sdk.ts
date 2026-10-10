@@ -249,6 +249,18 @@ export {
   type ContextVisibilityViewRow,
 } from "./toolkit/context-visibility-view.js";
 
+// ─── RELIABILITY-01：故障注入矩阵（可核对、如实、覆盖维度齐备） ───
+export {
+  FAULT_INJECTION_MATRIX,
+  auditFaultInjectionMatrix,
+  type FaultCoverageDimension,
+  type FaultInjectionEntry,
+  type FaultInjectionTiming,
+  type FaultMatrixAuditEntry,
+  type FaultMatrixAuditOutcome,
+  type FaultVerdict,
+} from "./toolkit/fault-injection-matrix.js";
+
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
 // 否则 runtime: "provider" 在打包产物上不可用。
