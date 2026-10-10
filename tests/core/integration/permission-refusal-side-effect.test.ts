@@ -49,11 +49,33 @@ function buildGate(): ScopeAuthorizationGate {
   });
 }
 
+/**
+ * 真实 CLI 装配下的范围门禁形态：项目内写操作由范围裁决直接 `allow`（协同模式本地判定），
+ * 随后由**内层权限引擎**决定是否 ask。③ 必须用这个形态才能复现真实时序。
+ */
+function buildAllowingGate(): ScopeAuthorizationGate {
+  return new ScopeAuthorizationGate({
+    getMode: () => "assist",
+    getRegisteredProjectRoots: () => [
+      {
+        projectIdentifier: "probe-project",
+        rootPath: projectRootPath,
+        registeredAtIso: "2026-10-02T00:00:00.000Z",
+      },
+    ],
+    getConfiguredDecision: () => "allow",
+    isInstallationEnabled: async () => false,
+    getAuthorizationRevision: () => 1,
+  });
+}
+
 function buildWritingInnerPort(): ToolPort {
   return {
     execute: async (_toolName, argumentsJson, callId) => {
       const parsed = JSON.parse(argumentsJson) as { filePath: string; content: string };
-      const absolutePath = path.join(projectRootPath, parsed.filePath);
+      const absolutePath = path.isAbsolute(parsed.filePath)
+        ? parsed.filePath
+        : path.join(projectRootPath, parsed.filePath);
       await fs.mkdir(path.dirname(absolutePath), { recursive: true });
       await fs.writeFile(absolutePath, parsed.content, "utf8");
       return { kind: "success", callId, outputText: "已写入", isSideEffectFree: false };
@@ -155,4 +177,137 @@ describe("权限门禁拦截 = 确定无副作用（不得毒化重试）", () =
     expect(existsSync(path.join(projectRootPath, relativePath))).toBe(true);
   });
 
+  /**
+   * ③ 2026-10-10 真实 CLI 端到端定位（`cli-anthropic-protocol` ① 的根因）：
+   * 装配顺序是 `ScopeGatedToolPort(PolicyWrapper(...))`，即**范围门禁在外、权限裁决在内**。
+   * 于是"第一次真实尝试"的时序是：范围门禁先**授权并消费**该操作，随后内层权限引擎判 `ask`、
+   * 抛 `permission-ask-pending` ⇒ 工具**从未执行**。
+   *
+   * 旧行为：`settleReservation(released)` 只恢复"逻辑操作授权快照"（此处本就为空），
+   * **范围记录仍停在已消费**，于是用户 `allow-once` 并重新登记后，重跑依然恒得
+   * `auth-scope-replay-rejected`（实测 6 连拒 + 任务 blocked；请求序列
+   * permission-ask-pending → replay-rejected × N）。
+   *
+   * 期望语义：无副作用被拒的那次不得烧掉范围授权；用户裁决后的重跑必须真正执行；
+   * 成功之后同一逻辑操作再次调用仍必须被拒（重放保护不放宽）。
+   */
+  it("③ 范围门禁先消费、内层权限引擎再 ask：用户裁决后重跑必须能执行（不得 replay-rejected）", async () => {
+    const gate = buildAllowingGate();
+    const relativePath = "docs/OUTER-SCOPE-INNER-ASK.md";
+    const fileContent = "# OSIA\n";
+    // 目标路径用**绝对路径**：真实 CLI 以项目根为 cwd 运行，范围解析基于进程 cwd；
+    // 测试进程的 cwd 是仓库根，故须显式给出项目内绝对路径才能落在已登记项目根内。
+    const absoluteTargetPath = path.join(projectRootPath, relativePath);
+    const argumentsJson = JSON.stringify({ filePath: absoluteTargetPath, content: fileContent });
+    const operation = describeToolOperation("createProjectFile", argumentsJson);
+    expect(operation).not.toBeNull();
+
+    // 内层端口 = 权限引擎：第 1 次 ask（未执行、无副作用），之后放行真正写入。
+    const writingInnerPort = buildWritingInnerPort();
+    let isFirstAttempt = true;
+    const askThenWritePort: ToolPort = {
+      execute: async (toolName, argsJson, callId, signal) => {
+        if (isFirstAttempt) {
+          isFirstAttempt = false;
+          return {
+            kind: "error",
+            callId,
+            errorCode: "permission-ask-pending",
+            errorMessage: "工具 createProjectFile 需要用户裁决",
+            isIdempotencyConfirmed: true,
+            sideEffectStatus: "none",
+          };
+        }
+        return writingInnerPort.execute(toolName, argsJson, callId, signal);
+      },
+    } as ToolPort;
+    const gatedPort = new ScopeGatedToolPort(askThenWritePort, gate);
+
+    // 第 1 次尝试：范围门禁授权并消费；内层 ask ⇒ 返回被拒（内层工具未执行）。
+    const refused = await gatedPort.execute(
+      "createProjectFile",
+      argumentsJson,
+      "call-ask",
+      new AbortController().signal,
+    );
+    expect(refused.kind).toBe("error");
+    if (refused.kind === "error") {
+      expect(refused.errorCode).toBe("permission-ask-pending");
+    }
+
+    // 用户 `allow-once` → 重新登记作用域授权（CLI 现有接线：grantUserAuthorization）。
+    await gate.grantUserAuthorization({
+      operation: operation as NonNullable<typeof operation>,
+      approvedByUserId: "probe-user",
+      argumentsJson,
+    });
+
+    // 重跑：必须真正执行并落盘（旧行为在此恒得 auth-scope-replay-rejected）。
+    const rerun = await gatedPort.execute(
+      "createProjectFile",
+      argumentsJson,
+      "call-rerun",
+      new AbortController().signal,
+    );
+    expect(rerun.kind).toBe("success");
+    expect(existsSync(path.join(projectRootPath, relativePath))).toBe(true);
+
+    // 重放保护不放宽：同一逻辑操作（同参数）再次调用仍必须被拒。
+    const replay = await gatedPort.execute(
+      "createProjectFile",
+      argumentsJson,
+      "call-replay",
+      new AbortController().signal,
+    );
+    expect(replay.kind).toBe("error");
+    if (replay.kind === "error") {
+      expect(replay.errorCode).toBe("auth-scope-replay-rejected");
+    }
+  });
+
+  /**
+   * ④ 同③但**不重新登记**：一次错误授权不得被"无副作用被拒"行为扩大为可用授权。
+   * 没有用户裁决时，重跑必须仍是 fail-closed 的"等待用户授权"，绝不放行执行。
+   */
+  it("④ 无用户重新登记时：被拒一次后重跑仍必须 fail-closed（不得放行、不得变 replay-rejected）", async () => {
+    const gate = buildGate();
+    const relativePath = "docs/NO-REGRANT.md";
+    const argumentsJson = JSON.stringify({ filePath: relativePath, content: "# NR\n" });
+    const operation = describeToolOperation("createProjectFile", argumentsJson);
+    expect(operation).not.toBeNull();
+
+    const countingInnerPort: ToolPort = {
+      execute: async (_toolName, _argumentsJson, callId) => ({
+        kind: "error",
+        callId,
+        errorCode: "permission-ask-pending",
+        errorMessage: "需要用户裁决",
+        isIdempotencyConfirmed: true,
+        sideEffectStatus: "none",
+      }),
+    } as ToolPort;
+    const gatedPort = new ScopeGatedToolPort(countingInnerPort, gate);
+
+    const first = await gatedPort.execute(
+      "createProjectFile",
+      argumentsJson,
+      "call-1",
+      new AbortController().signal,
+    );
+    expect(first.kind).toBe("error");
+    if (first.kind === "error") {
+      expect(first.errorCode).toBe("auth-scope-awaiting-user-authorization");
+    }
+    const second = await gatedPort.execute(
+      "createProjectFile",
+      argumentsJson,
+      "call-2",
+      new AbortController().signal,
+    );
+    expect(second.kind).toBe("error");
+    if (second.kind === "error") {
+      // 未获用户裁决 → 仍须等待用户授权（既不执行，也不得退化成"已消费的重放"误导文案）。
+      expect(second.errorCode).toBe("auth-scope-awaiting-user-authorization");
+    }
+  });
 });

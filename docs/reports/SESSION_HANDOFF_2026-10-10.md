@@ -30,7 +30,18 @@
 
 ## 3. 未完成的（按优先级）
 
-### ① 最后一个 `it.skip`：`cli-anthropic-protocol.test.ts` ①（**首选**）
+### ① 最后一个 `it.skip`：`cli-anthropic-protocol.test.ts` ① —— **已修复并转绿（同日收口）**
+
+- **结论：`skipped` 1 → 0；仓库当前无任何 `it.skip`。** 详见
+  `docs/reports/E2E01_04_LAST_SKIP_RESOLVED_2026-10-10.md`（含真因、修复与红→绿证据）。
+- 修复前基线：`npx vitest run tests/tui/integration/cli-anthropic-protocol.test.ts` → **exit 1**、
+  `expected 'blocked' to be 'done'`、31.2s；修复后 **exit 0、0.85s、`status=done` + 产物落盘**。
+- **本文件下面记录的"谁先消费了 stdin"假设已被 STDIN-TRACE 实测证伪**
+  （`data len=11 value="allow-once\n"` 正常到达）。以下内容作为**已排除方向的存档**保留，
+  不要再据此重复排查：
+
+<details>
+<summary>存档：已证伪的 STDIN-TRACE 排查路线（勿重走）</summary>
 
 - 现状（本日复核）：**仍红** —— `npx vitest run tests/tui/integration/cli-anthropic-protocol.test.ts` → **exit 1**，
   `AssertionError: expected 'blocked' to be 'done'`，约 31s。
@@ -50,10 +61,18 @@
   - **出现 `data` 但 `readDecision` 返回 `null`/`deny`** ⇒ 时序或判定问题（`isEnded`/trim 比较）。
   - 痕迹**只用于定位**：验证完立即移除，**不得留进提交**。
 
+**存档要点（本轮真因，供对照）**：修的是①范围门禁先消费范围记录、内层权限引擎随后才判 `ask`
+（工具从未执行）导致范围记录永久停在已消费 ⇒ 重跑恒得 `auth-scope-replay-rejected`；
+②`createProjectFile` 在父目录不存在时以 `wx` 直接打开目标文件 ⇒ `ENOENT`。
+两处修复与红→绿反例见 `docs/reports/E2E01_04_LAST_SKIP_RESOLVED_2026-10-10.md`。
+
+</details>
+
 ### ② 超时型抖动（独立于已修的三层根因）
 
 - `tests/tui/unit/run-command-gaps.test.ts` 曾在默认并发下 `Test timed out in 60000ms`（隔离复跑 5.4s 通过）。
 - 下一步：评估其超时预算是否合理（**不要用无依据地放大超时来掩盖竞态**），或定位真实竞态。
+- 2026-10-10 本轮状态：`npm run check` 与 `npm run test:coverage`（默认并发）**均未复现**，仍保留为待评估项。
 
 ### ③ 只能由用户/平台提供（不得用文字覆盖）
 

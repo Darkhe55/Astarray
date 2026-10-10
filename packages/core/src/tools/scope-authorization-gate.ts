@@ -42,6 +42,16 @@ export interface ExecutionReservation {
     authorizationRevision: number;
     grantedAtIso: string;
   };
+  /**
+   * 建立预留时**本次使用掉**的范围授权记录指纹（2026-10-10 真实 CLI 端到端定位）。
+   *
+   * 装配顺序是 `ScopeGatedToolPort(PolicyWrapper(...))`：范围门禁先授权并消费该记录，
+   * 内层权限引擎随后可能判 `ask`（`permission-ask-pending`）——此时工具**从未执行**。
+   * 若只恢复 `armedAuthorization`（范围裁决路径下它本就是空的），被消费的范围记录会
+   * 永久停在已消费，重跑恒得 `auth-scope-replay-rejected`（实测 6 连拒 + 任务 blocked）。
+   * 因此把本次消费的指纹挂到预留上，仅供"确定无副作用"的结算**恢复**该记录的一次可用性。
+   */
+  authorizedScopeFingerprint?: string;
 }
 
 export type ExecutionReservationStatus =
@@ -235,7 +245,7 @@ export class ScopeAuthorizationGate {
     // `allow` 与 `ask-superior`（协同模式项目内默认由本地上级批准）：走一次正式授权，
     // 保留回执与审计；随后**同步**建立预留，并把授权快照挂到预留上（明确无副作用的
     // 失败可据此恢复授权重试，成功后不恢复）。
-    const authorization = await this.authorizeForExecution(input.operation);
+    const authorization = await this.performScopeAuthorization(input.operation);
     if (!authorization.isAllowed) {
       return {
         status: "awaiting-user-authorization",
@@ -244,7 +254,11 @@ export class ScopeAuthorizationGate {
         reasons: authorization.reasons,
       };
     }
-    return this.createReservation(logicalFingerprint);
+    return this.createReservation(
+      logicalFingerprint,
+      undefined,
+      authorization.operationFingerprint,
+    );
   }
 
   /** 建立预留（同步段内调用；调用点前不得有 await）。 */
@@ -255,6 +269,7 @@ export class ScopeAuthorizationGate {
       authorizationRevision: number;
       grantedAtIso: string;
     },
+    authorizedScopeFingerprint?: string,
   ): ExecutionReservationOutcome {
     const reservation: ExecutionReservation = {
       reservationIdentifier: "scope-reservation-" + logicalFingerprint.slice(8, 24),
@@ -262,6 +277,7 @@ export class ScopeAuthorizationGate {
       reservedAtIso: this.nowIso(),
       settlement: null,
       ...(armedAuthorization === undefined ? {} : { armedAuthorization }),
+      ...(authorizedScopeFingerprint === undefined ? {} : { authorizedScopeFingerprint }),
     };
     this.reservationsByLogicalOperation.set(logicalFingerprint, reservation);
     return {
@@ -342,6 +358,12 @@ export class ScopeAuthorizationGate {
           reservation.armedAuthorization,
         );
       }
+      // 2026-10-10 真实 CLI 端到端定位：装配为 `ScopeGatedToolPort(PolicyWrapper(...))` 时，
+      // 范围门禁会先消费一次性范围授权，紧接着内层权限引擎才判 `ask`（工具从未执行）。
+      // 若不恢复该范围记录，重跑恒得 `auth-scope-replay-rejected`，用户 `allow-once` 也无法
+      // 让工具真正执行（实测 6 连拒 + 任务 blocked）。此处只**恢复同一指纹的一次可用性**：
+      // 真正执行成功后该记录仍停在已消费，重放保护不放宽。
+      this.restoreConsumedScopeRecord(reservation.authorizedScopeFingerprint);
       return { status: "released", logicalOperationFingerprint: logicalFingerprint };
     }
     reservation.settlement = "requires-reconciliation";
@@ -352,6 +374,24 @@ export class ScopeAuthorizationGate {
 
   private nowIso(): string {
     return this.options.nowIso?.() ?? new Date().toISOString();
+  }
+
+  /**
+   * 恢复"本次预留消费掉的范围授权记录"的一次可用性（仅用于**确定无副作用**的释放路径）。
+   *
+   * 只清回 `consumedAtIso`，不改写裁决内容、不新增记录、不跨 revision 放宽：
+   * 该记录原本就是本次执行刚消费掉的同一条授权，且工具从未执行（调用方已确认
+   * `sideEffectStatus === "none"`），因此把它还给下一次重试不扩大任何授权范围。
+   * 执行成功后记录仍停在已消费，同一逻辑操作的重放保护不受影响。
+   */
+  private restoreConsumedScopeRecord(operationFingerprint: string | undefined): void {
+    if (operationFingerprint === undefined) {
+      return;
+    }
+    const record = this.recordsByFingerprint.get(operationFingerprint);
+    if (record !== undefined) {
+      record.consumedAtIso = null;
+    }
   }
 
   private async resolve(operation: OperationDescriptor) {
@@ -446,6 +486,26 @@ export class ScopeAuthorizationGate {
 
   /** 对一次工具执行做范围判定与裁决；未获授权时不执行（调用方据此短路）。 */
   async authorizeForExecution(operation: OperationDescriptor): Promise<ScopeGateOutcome> {
+    const authorization = await this.performScopeAuthorization(operation);
+    // 只返回公共裁决面，不把内部范围记录指纹暴露给调用方。
+    return {
+      isAllowed: authorization.isAllowed,
+      errorCode: authorization.errorCode,
+      reasons: authorization.reasons,
+      resolution: authorization.resolution,
+      record: authorization.record,
+    };
+  }
+
+  /**
+   * `authorizeForExecution` 的核心：在同一个 `ScopeGateOutcome` 上**附带**本次裁决绑定的范围记录指纹。
+   *
+   * 调用方需要该指纹才能把"这次消费掉的记录"挂到预留上，并在"确定无副作用"的
+   * 结算里恢复它（2026-10-10 真实 CLI 端到端定位，见 `ExecutionReservation.authorizedScopeFingerprint`）。
+   */
+  private async performScopeAuthorization(
+    operation: OperationDescriptor,
+  ): Promise<ScopeGateOutcome & { operationFingerprint: string }> {
     const resolution = await this.resolve(operation);
     const nowIso = this.nowIso();
     const operationFingerprint = computeOperationFingerprint({ operation, resolution });
@@ -466,6 +526,7 @@ export class ScopeAuthorizationGate {
           resolvedTargetPath: resolution.resolvedTargetPath,
         },
         record: existingRecord === undefined ? null : { ...existingRecord },
+        operationFingerprint,
       };
     }
     if (
@@ -486,6 +547,7 @@ export class ScopeAuthorizationGate {
           resolvedTargetPath: resolution.resolvedTargetPath,
         },
         record: { ...existingRecord },
+        operationFingerprint,
       };
     }
     if (existingRecord !== undefined && existingRecord.consumedAtIso !== null) {
@@ -499,6 +561,7 @@ export class ScopeAuthorizationGate {
           resolvedTargetPath: resolution.resolvedTargetPath,
         },
         record: { ...existingRecord },
+        operationFingerprint,
       };
     }
 
@@ -524,6 +587,7 @@ export class ScopeAuthorizationGate {
           resolvedTargetPath: resolution.resolvedTargetPath,
         },
         record: null,
+        operationFingerprint,
       };
     }
 
@@ -541,6 +605,7 @@ export class ScopeAuthorizationGate {
           resolvedTargetPath: resolution.resolvedTargetPath,
         },
         record: null,
+        operationFingerprint,
       };
     }
 
@@ -565,6 +630,7 @@ export class ScopeAuthorizationGate {
             resolvedTargetPath: resolution.resolvedTargetPath,
           },
           record: null,
+          operationFingerprint,
         };
       }
       const record: ScopeGateDecisionRecord = {
@@ -591,6 +657,7 @@ export class ScopeAuthorizationGate {
           resolvedTargetPath: resolution.resolvedTargetPath,
         },
         record: { ...record },
+        operationFingerprint,
       };
     }
 
@@ -619,6 +686,7 @@ export class ScopeAuthorizationGate {
         resolvedTargetPath: resolution.resolvedTargetPath,
       },
       record: { ...record },
+      operationFingerprint,
     };
   }
 

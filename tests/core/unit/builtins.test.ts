@@ -484,4 +484,40 @@ describe("T06A 备份层内置工具", () => {
       ),
     ).rejects.toThrowError(/本地只读边界/);
   });
+
+  /**
+   * 2026-10-10 真实 CLI 端到端定位（`cli-anthropic-protocol` ① 的第二层缺口）：
+   * 需求文本是"创建 .tmp/ANTHROPIC.md"，而 `.tmp/` 尚未存在时，
+   * `createProjectFile` 直接以 `wx` 打开目标文件 → `ENOENT`，
+   * 用户 `allow-once` 之后工具仍然失败，任务最终 blocked。
+   *
+   * 期望：工具**自行补建父目录**后完成排他创建（"仅新建、不覆盖"语义不变：
+   * 目标文件已存在时仍然拒绝）。
+   */
+  it("createProjectFile 自动补建不存在的父目录后完成排他创建", async () => {
+    const relativePath = path.join("nested", "deeper", "PROBE.md");
+    const result = await executeBuiltinTool(
+      "createProjectFile",
+      JSON.stringify({ filePath: relativePath, content: "# NESTED\n" }),
+      executionContext(),
+    );
+    expect(result.isSideEffectFree).toBe(false);
+    const written = await fs.readFile(path.join(workspaceDirectory, relativePath), "utf8");
+    expect(written).toBe("# NESTED\n");
+  });
+
+  it("createProjectFile 已存在文件仍拒绝覆盖（不放宽排他创建语义）", async () => {
+    const relativePath = path.join("nested", "EXISTING.md");
+    await fs.mkdir(path.join(workspaceDirectory, "nested"), { recursive: true });
+    await fs.writeFile(path.join(workspaceDirectory, relativePath), "# 原有\n", "utf8");
+    await expect(
+      executeBuiltinTool(
+        "createProjectFile",
+        JSON.stringify({ filePath: relativePath, content: "# 新的\n" }),
+        executionContext(),
+      ),
+    ).rejects.toThrowError(/拒绝覆盖已存在文件/);
+    const unchanged = await fs.readFile(path.join(workspaceDirectory, relativePath), "utf8");
+    expect(unchanged).toBe("# 原有\n");
+  });
 });

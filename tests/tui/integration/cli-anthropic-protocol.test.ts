@@ -45,44 +45,31 @@ function sse(event: unknown): string {
 
 describe("CLI 端到端：anthropic-messages 协议", () => {
   /**
-   * 现状（2026-10-02，第 2 项排查）——**协议层可用，但离线路径存在未定位缺口**：
+   * 2026-10-10 结案（本用例由 `it.skip` 改回 `it` 并转绿）。
    *
-   * 已确证：
-   *  - 同一构建经 tarball 隔离安装后，用**同一协议、同一夹具形态、同样管道 allow-once**
-   *    的两条协议干跑均 6/6 通过（含产物落盘与 status=done）；
-   *  - 而本用例（仓库内直接跑 dist/cli.js）与等价探针均为 `status=blocked`，
-   *    且工具结果序列为：permission-ask-pending → auth-scope-replay-rejected（重复）。
-   *    stderr 显示"已按精确参数 allow-once 授权（作用域授权: granted）"，
-   *    但**紧随其后的工具调用仍被"该授权已被消费"拒绝**。
+   * 真实根因有两层，都在**装配顺序**上（`ScopeGatedToolPort(PolicyWrapper(...))`：范围门禁外、权限引擎内）：
    *
-   * 已排除：夹具成功判据错误（已按"最近一次 tool_result 不含 错误(" 修正，仍红）；
-   *         providerProtocol 未透传（已修，请求确实走 Anthropic 运行时与正确形态）。
+   * 1. **范围授权被"从未执行的拒绝"永久烧掉**——
+   *    范围门禁先授权并消费该操作的范围记录，紧接着内层权限引擎判 `ask` 抛
+   *    `permission-ask-pending`（工具从未执行）。结算走 "确定无副作用" 的释放路径时，
+   *    只恢复了"逻辑操作授权快照"（范围裁决路径下它本就是空的），**范围记录仍停在已消费**，
+   *    因此重跑恒得 `auth-scope-replay-rejected`（实测请求序列：permission-ask-pending →
+   *    replay-rejected × 6 + 任务 blocked），用户 `allow-once` 也无法让工具真正执行。
+   *    修复：把本次消费的范围记录指纹挂到预留上，并在"确定无副作用"的释放路径恢复它
+   *    （`packages/core/src/tools/scope-authorization-gate.ts`；成功后仍停在已消费，
+   *    重放保护不放宽）。
+   * 2. **父目录不存在导致工具失败**——需求是"创建 .tmp/ANTHROPIC.md"，而 `.tmp/` 尚不存在时
+   *    `createProjectFile` 以 `wx` 直接打开目标文件 → `ENOENT`，授权后仍失败。
+   *    修复：工具自行补建父目录后仍以 `wx` 排他创建（"仅新建、不覆盖"语义不变）。
    *
-   * 待查（下一步最小验证）：在授权登记点与后续 authorizeForExecution 各打印
-   * 范围指纹与 consumedAtIso，确认"授权写入的记录"与"重跑读取的记录"是否同一条。
-   * 注：一次性诊断曾在 grantUserAuthorization 内加入 ASTARRAY_SCOPE_TRACE，
-   * 但离线路径下**未打印**，说明该离线路径可能没有走到该登记函数
-   * ——这一点与"作用域授权: granted"文案存在矛盾，需一并查清。
+   * 诊断纪律（本次有效）：交接文档记录的"谁先消费了 stdin"假设被 **STDIN-TRACE 实测证伪**
+   * （`data len=11 value="allow-once\n"` 正常到达）。定位靠的是在门禁状态变更点打序号痕迹，
+   * 而不是继续推测读取器。
    *
-   * 以 it.skip 保留：不删除（删除等于假装已支持），也不让门禁长期变红。
+   * 协议层本身自始就是通的（请求确实走 Anthropic 运行时、顶层 `system`、工具用 `input_schema`、
+   * 回填为 `assistant.tool_use` + `user.tool_result`），本用例同时守住这份协议契约。
    */
-  /**
-   * 现状（2026-10-02，多协议装配第二步）：**协议层已全部打通**，剩余缺口在 CLI 裁决层。
-   *
-   * 已用诊断探针逐项证实（假 Anthropic 服务器 + 完整 stderr）：
-   *  - 修好 `providerProtocol` 透传后，请求确实走 Anthropic 运行时；
-   *  - 请求体形态正确：顶层 system、user 文本、工具用 input_schema；
-   *  - 工具循环回填形态正确：`assistant.tool_use` + `user.tool_result`（不再是 OpenAI 的 role=tool）；
-   *  - 升级文本可解析：`ask=createProjectFile`、参数完整（含 \n）。
-   *
-   * 剩余缺口（不在协议层）：工具调用返回 `permission-ask-pending` 后，
-   * CLI 未执行授权（无 grant 痕迹）且只走了 1 轮裁决 → 任务 blocked、
-   * 后续每次重跑仍得到 permission-ask-pending。
-   * 下一步：查非 TTY（管道）下裁决输入为何未被消费（`isInteractive`/stdin 行读取路径）。
-   *
-   * 以 it.skip 保留为待通过反例：不删除（删除等于假装已支持），也不让门禁长期变红。
-   */
-  it.skip("① 工具调用 → 权限询问 → allow-once → 产物落盘且 status=done", async () => {
+  it("① 工具调用 → 权限询问 → allow-once → 产物落盘且 status=done", async () => {
     const relativePath = ".tmp/ANTHROPIC.md";
     const absolutePath = path.join(projectPath, relativePath);
     const fileContent = "# ANTHROPIC\n";

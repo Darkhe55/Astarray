@@ -15,7 +15,7 @@
 | PROJECT-01 | in_progress | 授权/回执/查询组件成立；readResource/importCopy 尚无真实资源 I/O，不能把回执当借阅/导入完成；需接线及来源零写入动态证据 |
 | RELIABILITY-01 | in_progress | 已有修复保留；R4 SDK 幂等账目损坏处理、并发落盘、提前拒绝结算与备份需返修；故障矩阵未齐 |
 | E2E-01-03 | done（卡内明确验收范围） | 2026-10-09 真实 Provider、隔离包与入库判定；人工并发口径按该卡记录，不扩大为所有并发情形 |
-| E2E-01-04 / 整体 E2E-01 | in_progress（**本地可证项已全部通过**，仅剩人工与平台） | **HEAD 最新实测**：`npm run check` exit 0；`npm run test:coverage`（仓库配置、默认并发、阈值 85）**exit 0**，**307 文件 / 2346 用例**，行/分支/函数/语句 = **92.66 / 85.05 / 92.62 / 92.7**（分支达标）；安全关键模块 22/22；fixture 指纹 `6512b2a6…c7c` 一致；`npm pack`+`verify-package` exit 0（239 文件）；**`smoke-install` exit 0（冒烟全部通过）**。仍缺：**人工体验结论**、**Linux/macOS 平台证据**（只能由用户/平台提供）。~~CLI 退出反例仍 skip~~ → **已于 2026-10-10 修复并转绿**（`cli-exit-linger` ② 从">60s 滞留失败"变为"36s 自然退出通过"，2/2；见下方证据链）。证据链见下方「E2E-01-04 证据链」小节 |
+| E2E-01-04 / 整体 E2E-01 | in_progress（**本地可证项已全部通过，且已无本地可修的已知阻塞**；仅剩人工与平台） | **HEAD 最新实测（2026-10-10 本轮）**：`npm run check` exit 0，**308 文件 / 2352 用例通过、skipped 0**；`npm run test:coverage`（仓库配置、默认并发、阈值 85）**exit 0**，行/分支/函数/语句 = **92.66 / 85.05 / 92.62 / 92.7**（分支达标，与上轮持平无回归）；安全关键模块 22/22；fixture 指纹 `6512b2a6…c7c` 一致；`npm pack`+`verify-package` exit 0（239 文件）；**`smoke-install` exit 0（冒烟全部通过）**。~~CLI 退出反例仍 skip~~ → 已于 2026-10-10 修复并转绿（`cli-exit-linger` ② 从">60s 滞留失败"变为"36s 自然退出通过"）；~~最后一个 `it.skip`（`cli-anthropic-protocol` ①）~~ → **本轮定位并修复，skipped 由 1 降为 0**（31.2s 恒 `blocked` → **0.85s `status=done`**）。仍缺：**人工体验结论**、**Linux/macOS 平台证据**（只能由用户/平台提供）。证据链见下方「E2E-01-04 证据链」小节 |
 | BRIDGE-01 / GUI-01-R | in_progress | 保留自动/包证据；真实客户端、人工体验和平台剩余范围按各卡逐项确认 |
 | COMM-01 / WB-00 | pending | 通信新拓扑与原型未取得完整实施证据 |
 | MERGE-01 / NODECTX-01 | pending | 本轮新增指令合并/参数授权、禁用压缩/节点关闭任务；见 `docs/tasks/MERGE01_NODECTX01_TASK_CARDS.md` |
@@ -56,65 +56,31 @@
    落在 check 输出里（`SyntaxError: Unexpected non-whitespace character after JSON at position 2`）。
    修复：从后往前逐候选起点尝试解析（提交 `c24a26c`）。
 
-### E2E-01-04 剩余缺口（2026-10-10 逐项核实，均如实保留 blocked，不用文字覆盖）
+### E2E-01-04 剩余缺口（2026-10-10 逐项核实，均如实保留，不用文字覆盖）
 
-1. **`cli-anthropic-protocol.test.ts` ①（最后一个 `it.skip`）——本日在 HEAD 上复核：仍然红**。
-   - 实测：`npx vitest run tests/tui/integration/cli-anthropic-protocol.test.ts` → **exit 1**，
-     `AssertionError: expected 'blocked' to be 'done'`，耗时 31.0s（反例真实、可复现，不是过时记录）。
-   - **已定位的缺口性质**（测试文件内原始诊断，本日复核未推翻）：**协议层已全部打通**
-     （请求确实走 Anthropic 运行时、顶层 `system`、工具用 `input_schema`、
-     回填为 `assistant.tool_use` + `user.tool_result`）；**缺口在 CLI 裁决层**——
-     工具调用返回 `permission-ask-pending` 后，**非 TTY（管道）下 `allow-once` 裁决输入未被消费**
-     （无 grant 痕迹），只走 1 轮裁决 ⇒ 任务 `blocked`，重跑仍得 `permission-ask-pending`。
-   - 既有线索与矛盾点：stderr 曾显示"已按精确参数 allow-once 授权（作用域授权: granted）"，
-     但紧随其后的工具调用仍被"该授权已被消费"拒绝；而一次性诊断 `ASTARRAY_SCOPE_TRACE`
-     在离线路径下**未打印**，说明该路径可能根本没走到登记函数——两者需一并查清。
-   - **下一步最小验证**（原诊断已写明，未执行）：在授权登记点与后续 `authorizeForExecution`
-     各打印**范围指纹**与 `consumedAtIso`，确认"写入的记录"与"重跑读取的记录"是否同一条；
-     并查非 TTY 下 stdin 行读取路径（`isInteractive` / 裁决输入消费）。
-   - **2026-10-10 追加：已把该缺口定位到具体接缝（比原记录更精确，供下轮直接起步）**：
-     - `packages/tui/src/cli/permission-ask-adjudication.ts`
-       —— L304-305 `hasInputChannel()` 判 `process.stdin.isTTY !== true`（**管道 stdin 视为显式输入通道**，设计上正确）；
-       L309-346 为**按换行切分**的 stdin 行读取器（支持 `printf 'allow-once\nallow-once\n' | …` 多条裁决）；
-       L396 `isInteractive()` = `isInteractiveFlag() || hasInputChannelFlag()`；
-       L400-414 `readDecision()` 仅当整行 `trim().toLowerCase() === "allow-once"` 才返回授权；
-       L288 即在成功时打印"已按精确参数 allow-once 授权"。
-     - **2026-10-10 修正（读完调用点后，上一条的优先怀疑被证伪）**：
-       `run-command.ts` L265-272 传给 `runPermissionAskAdjudication` 的是
-       `isInteractive: decisionPort.isInteractive()`——**端口内部已做 `isInteractiveFlag() || hasInputChannelFlag()`**，
-       因此**并非** `bootstrap.ts` 那个 TTY-only 口径在挡路。**不要把改动先花在 bootstrap 上。**
-     - **读完调用点后更可能的方向**：同文件 L240-276 的裁决循环是
-       `while (finalStatus === "blocked" && adjudicationRound < MAXIMUM_ADJUDICATION_ROUNDS)`，
-       且 **L274-276 `if (decision !== "allowed-once") break;`** ——
-       只要 `decisionPort.readDecision()` 返回 `null` 或 `deny`，就会**只走 1 轮**并停在 blocked，
-       与实测"无 grant 痕迹、只走 1 轮、任务 blocked"**完全吻合**。
-       故首选核对：**裁决读取时 stdin 是否已被消费或已 `end`**（例如先被别处读取/关闭），
-       以及 L309-346 行读取器在"管道已给完数据但尚未 end / 已 end"两种时序下的返回值。
-     - 复核纪律不变：该用例 spawn `dist/cli.js`，改 `src` 后必须 `npm run build`；单次复跑约 31s，一次只验一个假设。
-     - **2026-10-10 再进一步（读了行读取器本体后）**：`createStdinLineReader()`（L315-348）**实现是稳的**——
-       跨 chunk 缓存半行、`end` 时 flush 余量、`pendingLines`/`pendingResolvers` 配对，且注释明确记录了
-       "按 chunk 读会把多行裁决误判为拒绝"这一 2026-10-02 真实复现。**故问题不在读取器健壮性**，
-       而在**是否有别的组件先消费/关闭了 stdin**（或读取时机早于数据到达）。
-     - **下轮唯一要做的实验（一次只验一个假设）**：在 `createStdinLineReader()` 创建处与每次 `data`/`end`
-       各打一条**临时 stderr 痕迹**（如 `[STDIN-TRACE] created` / `data len=…` / `end`），`npm run build` 后
-       单跑该用例一次，用 31s 的退出码与痕迹判断：
-       ① 若从未出现 `data` ⇒ stdin 已被别处读走或本路径未创建读取器（查候选消费者：
-       `install-decision-port.ts` L39-44 的 `process.stdin.once("data")`、
-       `commands.ts` L2080-2113 的凭据负载读取、以及反馈子进程的 stdin 处理）；
-       ② 若出现 `data` 但 `readDecision` 仍返回 `null`/`deny` ⇒ 时序/判定问题（`isEnded` 或 trim 比较）。
-       痕迹只用于定位，验证完即删，**不留进提交**。
-     - `packages/tui/src/cli/run-command.ts` L268：`isInteractive: decisionPort.isInteractive()` 的接线段；
-       L28-46 另有"等待新一轮 permission-ask 文本到达"与"`allow-once` 后等待重跑窗口"的时间窗逻辑。
-     - **关键矛盾（下轮先证伪/证实）**：stderr 已打印"已按精确参数 allow-once 授权（作用域授权: granted）"，
-       却仍报"该授权已被消费"⇒ 指向**登记的作用域指纹 / revision 与 `authorizeForExecution` 复核所用不一致**，
-       或**同一条授权被两次消费**；原诊断另注 `ASTARRAY_SCOPE_TRACE` 在离线路径未打印（该路径可能未走到登记函数）。
-     - 复核方式（与其它走构建产物的用例一致）：**改 `src` 后必须 `npm run build`**，该用例 spawn 的是 `dist/cli.js`；
-       单次复跑约 31s，故一次只验一个假设。
-   - 处理约定：**不删除**该反例（删除等于假装已支持），也**不解除 skip 让门禁长期变红**；
-     修复后应改回 `it`。
+1. **`cli-anthropic-protocol.test.ts` ①（最后一个 `it.skip`）——本轮已定位、修复并转绿，`skipped` 1 → 0**。
+   - 修复前实测（基线）：`npx vitest run tests/tui/integration/cli-anthropic-protocol.test.ts` → **exit 1**，
+     `AssertionError: expected 'blocked' to be 'done'`，耗时 31.2s，请求序列
+     `permission-ask-pending → auth-scope-replay-rejected × 6`。
+   - 修复后实测：同一用例 **exit 0、0.85s、`status=done` + `permissionAsk=allowed-once` + 产物落盘且内容一致**。
+   - **交接文档 §3① 的假设被实测证伪**：STDIN-TRACE 显示 `data len=11 value="allow-once\n"` **正常到达**，
+     并非"谁先消费了 stdin"，`createStdinLineReader()` 无需改动；`bootstrap.ts` 的 TTY 口径也不是原因。
+   - **真实根因（两层，均在装配顺序 `ScopeGatedToolPort(PolicyWrapper(...))` 上）**：
+     ① **范围门禁先授权并消费范围记录，内层权限引擎随后才判 `ask`**（工具从未执行）——
+     结算走"确定无副作用"释放路径时只恢复了"逻辑操作授权快照"（范围裁决路径下它本就是空的），
+     **范围记录永久停在已消费** ⇒ 重跑恒得 `auth-scope-replay-rejected`，用户 `allow-once` 也无法让工具真正执行。
+     修复＝把本次消费的范围记录指纹挂到预留上（`ExecutionReservation.authorizedScopeFingerprint`），
+     并在"确定无副作用"的释放路径恢复它（`restoreConsumedScopeRecord`）；成功后仍停在已消费，**重放保护不放宽**。
+     ② **`createProjectFile` 在父目录不存在时以 `wx` 直接打开目标文件** ⇒ `ENOENT`（需求是"创建 .tmp/ANTHROPIC.md"）。
+     修复＝补建父目录后仍以 `wx` 排他创建（"仅新建、不覆盖"语义不变）。
+   - 回归反例（均先红后绿）：`tests/core/integration/permission-refusal-side-effect.test.ts` ③④、
+     `tests/core/unit/builtins.test.ts` 两条（父目录补建 / 已存在仍拒绝覆盖）。
+   - 诊断纪律：**临时痕迹只用于定位，验证后已全部移除**（提交内不含任何 TRACE 代码）。
 2. **超时型抖动**（独立于已修的三层根因）：`tests/tui/unit/run-command-gaps.test.ts`
    曾在默认并发下 `Test timed out in 60000ms`（隔离复跑 5.4s 通过），需单独评估超时预算或竞态。
+   本轮 `npm run check` 与 `npm run test:coverage` 均未复现。
 3. **人工体验结论**、**Linux/macOS 平台证据**：只能由用户或平台提供，故 E2E-01-04 保持 `in_progress`。
+   除这两项外，本节点**已无本地可修的已知阻塞**。
 
 ### E2E-01-04 追加：CLI 滞留缺陷已修并转绿（2026-10-10）
 

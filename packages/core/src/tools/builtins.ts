@@ -432,7 +432,10 @@ export async function executeBuiltinTool(
         filePath,
         "create",
       );
-      const { writeFile } = await import("node:fs/promises");
+      const { writeFile, mkdir } = await import("node:fs/promises");
+      // 需求形如"创建 .tmp/X.md"时，父目录可能尚不存在；补建父目录（幂等、不覆盖任何文件）
+      // 后仍以 `wx` 排他创建，保持"仅新建、不覆盖"语义不变（2026-10-10 真实 CLI 端到端定位）。
+      await mkdir(path.dirname(createdTargetPath), { recursive: true });
       try {
         await writeFile(createdTargetPath, content, {
           encoding: "utf8",
