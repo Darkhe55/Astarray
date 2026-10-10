@@ -82,6 +82,20 @@ export interface GuiApplicationPort {
       admittedAtIso: string;
     }>;
   }>;
+  /**
+   * PROJECT-01-04：跨项目授权只读列表（可选能力；缺失时快照返回空列表，
+   * 不伪造授权、也不阻塞既有 /state 与 SSE 快照）。
+   */
+  listCrossProjectAuthorizations?(): Promise<
+    Array<{
+      authorizationIdentifier: string;
+      sourceProjectIdentifier: string;
+      targetProjectIdentifier: string;
+      operationKind: "read" | "import-copy";
+      state: string;
+      taskIdentifier: string;
+    }>
+  >;
   updateContextBudget?(input: {
     expectedRevision: number;
     configuredMaximumGlobalContextTokenCount: number;
@@ -618,6 +632,55 @@ export async function startGuiServer(
     return instructionWindow === undefined ? {} : { instructionWindow };
   }
 
+  /**
+   * PROJECT-01-04：读取跨项目授权（可选能力）。
+   * 缺失或读取失败 → 不含该键（快照返回空列表）：**不伪造授权**，也不让快照失败。
+   */
+  async function readCrossProjectOrDefault(): Promise<{
+    crossProject?: {
+      authorizations: Array<{
+        authorizationIdentifier: string;
+        sourceProjectIdentifier: string;
+        targetProjectIdentifier: string;
+        operationKind: string;
+        state: string;
+        taskIdentifier: string;
+      }>;
+      copyReceipts: Array<{
+        receiptIdentifier: string;
+        sourceProjectIdentifier: string;
+        sourceRevision: number;
+        targetProjectIdentifier: string;
+        sourceResourcePath: string;
+        targetResourcePath: string;
+      }>;
+    };
+  }> {
+    const listAuthorizations = options.applicationService.listCrossProjectAuthorizations;
+    if (listAuthorizations === undefined) {
+      return {};
+    }
+    try {
+      const authorizations = await listAuthorizations();
+      return {
+        crossProject: {
+          authorizations: authorizations.map((record) => ({
+            authorizationIdentifier: record.authorizationIdentifier,
+            sourceProjectIdentifier: record.sourceProjectIdentifier,
+            targetProjectIdentifier: record.targetProjectIdentifier,
+            operationKind: record.operationKind,
+            state: record.state,
+            taskIdentifier: record.taskIdentifier,
+          })),
+          // 副本回执由跨项目存储另行提供；此处只读视图不猜、不伪造。
+          copyReceipts: [],
+        },
+      };
+    } catch {
+      return {};
+    }
+  }
+
   async function readBody(request: http.IncomingMessage): Promise<string> {
     const chunks: Buffer[] = [];
     let totalBytes = 0;
@@ -715,6 +778,7 @@ export async function startGuiServer(
             mode: options.mode,
             tracker,
             ...(await readInstructionWindowOrDefault()),
+            ...(await readCrossProjectOrDefault()),
           }),
         ),
       );
@@ -738,6 +802,7 @@ export async function startGuiServer(
             mode: options.mode,
             tracker,
             ...(await readInstructionWindowOrDefault()),
+            ...(await readCrossProjectOrDefault()),
           }),
           isReconnect: typeof lastEventId === "string",
         })}\n\n`,

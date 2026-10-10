@@ -27,6 +27,94 @@ export interface GuiSnapshot {
    * **始终存在**（未提供窗口时为空窗口），保证快照形状唯一、不伪造指令。
    */
   instructions: GuiInstructionWindowView;
+  /**
+   * PROJECT-01-04：跨项目授权与副本的只读视图。
+   *
+   * 卡内验收要求"可追溯、不串数据"且"**人工能分辨副本与原件**"：
+   * 副本回执必须带 `isCopyOfExternalSource` 与可读 `displayLabel`（含来源项目与 revision）。
+   * **始终存在**（未提供时为空列表）。
+   */
+  crossProject: GuiCrossProjectView;
+}
+
+export interface GuiCrossProjectAuthorizationView {
+  authorizationIdentifier: string;
+  sourceProjectIdentifier: string;
+  targetProjectIdentifier: string;
+  operationKind: string;
+  state: string;
+  taskIdentifier: string;
+}
+
+export interface GuiCrossProjectCopyReceiptView {
+  receiptIdentifier: string;
+  sourceProjectIdentifier: string;
+  sourceRevision: number;
+  targetProjectIdentifier: string;
+  sourceResourcePath: string;
+  targetResourcePath: string;
+  /** 恒为 true：明确标记"这是外部来源的副本"，供人工与原件分辨。 */
+  isCopyOfExternalSource: boolean;
+  /** 人工可读标签（含"副本"字样与来源项目/revision）。 */
+  displayLabel: string;
+}
+
+export interface GuiCrossProjectView {
+  authorizations: GuiCrossProjectAuthorizationView[];
+  copyReceipts: GuiCrossProjectCopyReceiptView[];
+}
+
+/** 把跨项目授权与副本回执映射为 GUI 只读视图（纯函数；副本显式标注、人工可分辨）。 */
+export function buildGuiCrossProjectView(input: {
+  authorizations: Array<{
+    authorizationIdentifier: string;
+    sourceProjectIdentifier: string;
+    targetProjectIdentifier: string;
+    operationKind: string;
+    state: string;
+    taskIdentifier: string;
+  }>;
+  copyReceipts: Array<{
+    receiptIdentifier: string;
+    sourceProjectIdentifier: string;
+    sourceRevision: number;
+    targetProjectIdentifier: string;
+    sourceResourcePath: string;
+    targetResourcePath: string;
+    isCopyOfExternalSource?: boolean;
+  }>;
+}): GuiCrossProjectView {
+  return {
+    authorizations: input.authorizations.map((authorization) => ({
+      authorizationIdentifier: authorization.authorizationIdentifier,
+      sourceProjectIdentifier: authorization.sourceProjectIdentifier,
+      targetProjectIdentifier: authorization.targetProjectIdentifier,
+      operationKind: authorization.operationKind,
+      state: authorization.state,
+      taskIdentifier: authorization.taskIdentifier,
+    })),
+    copyReceipts: input.copyReceipts.map((receipt) => ({
+      receiptIdentifier: receipt.receiptIdentifier,
+      sourceProjectIdentifier: receipt.sourceProjectIdentifier,
+      sourceRevision: receipt.sourceRevision,
+      targetProjectIdentifier: receipt.targetProjectIdentifier,
+      sourceResourcePath: receipt.sourceResourcePath,
+      targetResourcePath: receipt.targetResourcePath,
+      // 卡内要求"人工能分辨副本与原件"：此处恒为 true 并由 displayLabel 明确写出。
+      isCopyOfExternalSource: true,
+      displayLabel:
+        "副本 " +
+        receipt.sourceProjectIdentifier +
+        "@r" +
+        String(receipt.sourceRevision) +
+        " " +
+        receipt.sourceResourcePath +
+        " → " +
+        receipt.targetProjectIdentifier +
+        " " +
+        receipt.targetResourcePath,
+    })),
+  };
 }
 
 export interface GuiInstructionView {
@@ -161,6 +249,8 @@ export function buildGuiSnapshot(input: {
     activeInstructions: Parameters<typeof buildGuiInstructionWindowView>[0]["activeInstructions"];
     queuedInstructions: Parameters<typeof buildGuiInstructionWindowView>[0]["queuedInstructions"];
   };
+  /** PROJECT-01-04：跨项目授权与副本（缺省为空列表；不伪造授权）。 */
+  crossProject?: Parameters<typeof buildGuiCrossProjectView>[0];
 }): GuiSnapshot {
   return {
     sessionId: input.sessionId,
@@ -174,5 +264,9 @@ export function buildGuiSnapshot(input: {
       input.instructionWindow === undefined
         ? { capacity: 0, activeCount: 0, queuedCount: 0, rows: [] }
         : buildGuiInstructionWindowView(input.instructionWindow),
+    crossProject:
+      input.crossProject === undefined
+        ? { authorizations: [], copyReceipts: [] }
+        : buildGuiCrossProjectView(input.crossProject),
   };
 }

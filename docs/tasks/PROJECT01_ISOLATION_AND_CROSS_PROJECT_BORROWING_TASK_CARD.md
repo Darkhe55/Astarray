@@ -190,6 +190,21 @@ Agent仅接收不透明授权引用和公开范围说明，不接收可外传的
 （实现前 **4 failed**）：有效授权只读真实读到内容且来源不变、未授权不谎报已读、
 导入真实落盘且重复导入幂等、目标被人工占用时拒绝覆盖。
 
+**GUI 只读入口（2026-10-10 续）**：卡内验收要求"可追溯、不串数据"且"**人工能分辨副本与原件**"，
+而 GUI 只读快照此前完全没有跨项目信息。
+
+- `packages/gui/src/application/gui-read-model.ts`：新增 `GuiCrossProjectView` 与纯函数
+  `buildGuiCrossProjectView()`；`GuiSnapshot.crossProject` **始终存在**（未提供时为空列表）。
+  副本回执 **恒标 `isCopyOfExternalSource: true`** 并给出含"副本"字样、来源项目与 revision 的
+  `displayLabel`（人工可分辨副本与原件）；
+- `packages/gui/src/server/gui-server.ts`：`GuiApplicationPort` 新增可选
+  `listCrossProjectAuthorizations()`；`/state` 与 SSE 首帧快照均携带；
+  能力缺失或读取抛错 ⇒ 空列表（**不伪造授权、不 500**）。
+- 反例（先红后绿）：`tests/gui/unit/project01-cross-project-gui-view.test.ts` 4 条
+  （实现前 **3 failed**）+ `gui-server.test.ts` 新增 1 条（`/state` 携带授权列表；能力缺失空列表不 500）。
+- **如实登记的剩余缺口**：GUI 侧的 `copyReceipts` 目前恒为空列表 —— `GuiApplicationPort`
+  只暴露了授权列表，副本回执尚未经该端口提供（未伪造、未用说明文字覆盖）。
+
 ## 9. 必测场景与交付
 
 1. 未授权跨项目读取、列目录、搜索、直接写入、命令间接读取及Git路径访问均不能绕过；覆盖Windows/POSIX路径与真实文件系统差异。

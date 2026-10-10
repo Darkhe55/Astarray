@@ -468,6 +468,48 @@ describe("SMART-01-04：GUI 暴露指令窗口（只读，不冒充成果完成�
     expect(payload.instructions?.capacity).toBe(0);
     expect(payload.instructions?.rows).toHaveLength(0);
   });
+
+  /**
+   * PROJECT-01-04：跨项目授权必须进入 /state 只读快照（可追溯），
+   * 且能力缺失时返回空列表而非 500。
+   */
+  it("/state 必须携带跨项目授权列表（可追溯），能力缺失时空列表不 500", async () => {
+    const handle = await startServer({
+      applicationService: {
+        ...createFakeApplicationPort(),
+        async listCrossProjectAuthorizations() {
+          return [
+            {
+              authorizationIdentifier: "auth-1",
+              sourceProjectIdentifier: "project-a",
+              targetProjectIdentifier: "project-b",
+              operationKind: "read" as const,
+              state: "active",
+              taskIdentifier: "T-001",
+            },
+          ];
+        },
+      },
+    });
+    const response = await request({ port: handle.port, method: "GET", path: "/state" });
+    expect(response.statusCode).toBe(200);
+    const payload = JSON.parse(response.body) as {
+      crossProject?: { authorizations: Array<{ sourceProjectIdentifier: string; taskIdentifier: string }> };
+    };
+    expect(payload.crossProject?.authorizations).toHaveLength(1);
+    expect(payload.crossProject?.authorizations[0]?.sourceProjectIdentifier).toBe("project-a");
+    expect(payload.crossProject?.authorizations[0]?.taskIdentifier).toBe("T-001");
+
+    // 能力缺失 ⇒ 空列表且不 500
+    const bareHandle = await startServer();
+    const bareResponse = await request({ port: bareHandle.port, method: "GET", path: "/state" });
+    expect(bareResponse.statusCode).toBe(200);
+    const barePayload = JSON.parse(bareResponse.body) as {
+      crossProject?: { authorizations: unknown[]; copyReceipts: unknown[] };
+    };
+    expect(barePayload.crossProject?.authorizations).toHaveLength(0);
+    expect(barePayload.crossProject?.copyReceipts).toHaveLength(0);
+  });
 });
 
 describe("GUI-01-R-02 按钮触发真实任务（公共应用服务）", () => {
