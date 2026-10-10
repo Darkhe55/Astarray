@@ -269,8 +269,7 @@ describe("权限门禁拦截 = 确定无副作用（不得毒化重试）", () =
    * ④ 同③但**不重新登记**：一次错误授权不得被"无副作用被拒"行为扩大为可用授权。
    * 没有用户裁决时，重跑必须仍是 fail-closed 的"等待用户授权"，绝不放行执行。
    */
-  it("④ 无用户重新登记时：被拒一次后重跑仍必须 fail-closed（不得放行、不得变 replay-rejected）", async () => {
-    const gate = buildGate();
+  it("④ 无用户重新登记时：被拒一次后重跑仍必须 fail-closed（不得放行、不得变 replay-rejected）", async () => {    const gate = buildGate();
     const relativePath = "docs/NO-REGRANT.md";
     const argumentsJson = JSON.stringify({ filePath: relativePath, content: "# NR\n" });
     const operation = describeToolOperation("createProjectFile", argumentsJson);
@@ -309,5 +308,72 @@ describe("权限门禁拦截 = 确定无副作用（不得毒化重试）", () =
       // 未获用户裁决 → 仍须等待用户授权（既不执行，也不得退化成"已消费的重放"误导文案）。
       expect(second.errorCode).toBe("auth-scope-awaiting-user-authorization");
     }
+  });
+
+  /**
+   * ⑤ 2026-10-10 返修（RELIABILITY-01-02「提前拒绝结算」）：
+   *
+   * "**提前拒绝**"指工具在**执行之前**就被拒绝（未注册/不在 Worker 子集/安装门禁拒绝等）。
+   * 这类拒绝**确定没有副作用**，因此门禁必须**释放**预留并恢复授权，使用户修正后重跑可行。
+   *
+   * 缺陷：`isExecutionRefusalErrorCode` 只列了
+   * `permission-ask-pending` / `tool-permission-denied` / `auth-scope-awaiting-user-authorization`
+   * / `auth-scope-denied`，**漏掉了同样"从未执行"的 `tool-not-found`**。
+   * 于是未注册工具的调用被当作 `sideEffectStatus: "unknown"` 结算 ⇒ 预留进入
+   * `requires-reconciliation` ⇒ 该逻辑操作**永久**无法重试（"需人工对账"），
+   * 而实际从未发生过任何副作用。
+   *
+   * 期望：提前拒绝（从未执行）一律按"确定无副作用"结算 ⇒ 预留释放并可重试；
+   * 成功的重放保护仍然不得放宽（见 ③）。
+   */
+  it("⑤ 提前拒绝（tool-not-found，从未执行）必须按无副作用结算 ⇒ 预约释放、重跑可行", async () => {
+    const gate = buildAllowingGate();
+    const relativePath = "docs/EARLY-REFUSAL.md";
+    const argumentsJson = JSON.stringify({
+      filePath: path.join(projectRootPath, relativePath),
+      content: "# EARLY\n",
+    });
+
+    // 内层端口模拟"执行前就被拒"（未注册工具）：从未进入副作用通道。
+    const earlyRefusingPort: ToolPort = {
+      execute: async (_toolName, _argumentsJson, callId) => ({
+        kind: "error",
+        callId,
+        errorCode: "tool-not-found",
+        errorMessage: "工具未注册: createProjectFile",
+        isIdempotencyConfirmed: false,
+        sideEffectStatus: "none",
+      }),
+    } as ToolPort;
+
+    let isFirstAttempt = true;
+    const earlyRefusalThenWritingPort: ToolPort = {
+      execute: async (toolName, argsJson, callId, signal) => {
+        if (isFirstAttempt) {
+          isFirstAttempt = false;
+          return earlyRefusingPort.execute(toolName, argsJson, callId, signal);
+        }
+        return buildWritingInnerPort().execute(toolName, argsJson, callId, signal);
+      },
+    } as ToolPort;
+
+    const gatedPort = new ScopeGatedToolPort(earlyRefusalThenWritingPort, gate);
+    const refused = await gatedPort.execute(
+      "createProjectFile",
+      argumentsJson,
+      "call-early-refused",
+      new AbortController().signal,
+    );
+    expect(refused.kind).toBe("error");
+
+    // 重跑必须能真正执行（不得因"未知副作用"被判 requires-reconciliation 永久毒化）
+    const rerun = await gatedPort.execute(
+      "createProjectFile",
+      argumentsJson,
+      "call-rerun",
+      new AbortController().signal,
+    );
+    expect(rerun.kind).toBe("success");
+    expect(existsSync(path.join(projectRootPath, relativePath))).toBe(true);
   });
 });

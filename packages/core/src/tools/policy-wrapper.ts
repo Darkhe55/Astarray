@@ -107,17 +107,24 @@ export interface PolicyWrapperOptions {
 }
 
 /**
- * 授权类"拒绝执行"错误码：这些错误意味着工具**从未进入执行**，副作用确定为 none。
+ * 授权/前置类"拒绝执行"错误码：这些错误意味着工具**从未进入执行**，副作用确定为 none。
  * 与"执行中失败/结果未知"严格区分，是门禁释放预留（使批准后重跑不被在途预留挡住）
  * 的依据之一（2026-10-02 真实 CLI 端到端复现后固化）。
  *
  * 注意**不包含** `auth-scope-replay-rejected` / `operation-already-in-flight`：
  * 这两种表示"该逻辑操作此前已执行/正在执行"，绝不能按无副作用释放（否则重放保护失效）。
+ *
+ * 2026-10-10 返修（RELIABILITY-01-02「提前拒绝结算」）：补上 `tool-not-found`。
+ * 未注册工具、超出 Worker 子集、安装门禁拒绝都属"**执行之前**就被拒"，
+ * 确定无副作用；漏掉 `tool-not-found` 会让这类调用按 `unknown` 结算，
+ * 使范围门禁的预留进入 `requires-reconciliation` ⇒ 该逻辑操作**永久**无法重试，
+ * 而实际从未发生任何副作用。
  */
 function isExecutionRefusalErrorCode(errorCode: string): boolean {
   return (
     errorCode === "permission-ask-pending" ||
     errorCode === "tool-permission-denied" ||
+    errorCode === "tool-not-found" ||
     errorCode === "auth-scope-awaiting-user-authorization" ||
     errorCode === "auth-scope-denied"
   );

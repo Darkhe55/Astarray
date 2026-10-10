@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 
 import { PolicyWrapper } from "../../../packages/core/src/tools/policy-wrapper.js";
+import { BUILTIN_TOOL_DESCRIPTORS } from "../../../packages/core/src/tools/builtins.js";
 import { ToolRegistry } from "../../../packages/core/src/tools/registry.js";
 import { WorkspaceBoundary } from "../../../packages/core/src/tools/workspace-boundary.js";
 import { ProtectedStoragePolicy } from "../../../packages/core/src/tools/protected-storage-policy.js";
@@ -72,5 +73,52 @@ describe("PolicyWrapper 缺口分支", () => {
       }),
     ).rejects.toThrow(/未装配/);
     await fs.rm(baseDirectory, { recursive: true, force: true });
+  });
+
+  /**
+   * RELIABILITY-01-02「提前拒绝结算」（2026-10-10 返修）：
+   *
+   * "提前拒绝"= 工具在**执行之前**就被拒（未注册 / 不在 Worker 子集 / 安装门禁拒绝）。
+   * 这类拒绝**确定没有副作用**，必须报 `sideEffectStatus: "none"`，使范围门禁
+   * **释放预留并恢复授权**，让用户修正后重跑可行。
+   *
+   * 缺陷：`isExecutionRefusalErrorCode` 漏掉了同样"从未执行"的 `tool-not-found`，
+   * 于是未注册工具的调用被当成 `unknown` 结算 ⇒ 预留进入 `requires-reconciliation`
+   * ⇒ 该逻辑操作**永久**无法重试，而实际从未发生任何副作用。
+   */
+  it("提前拒绝：tool-not-found（从未执行）必须报 sideEffectStatus=none，不得污染为 unknown", async () => {
+    const wrapper = makeWrapper();
+    const result = await wrapper.execute(
+      "thisToolIsNotRegistered",
+      "{}",
+      "call-not-registered",
+      new AbortController().signal,
+    );
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.errorCode).toBe("tool-not-found");
+      // 从未进入副作用通道 ⇒ 必须允许门禁释放预留（否则永久 requires-reconciliation）
+      expect(result.sideEffectStatus).toBe("none");
+    }
+  });
+
+  it("提前拒绝：不在 Worker 子集（tool-permission-denied）同样必须报 none", async () => {
+    const registry = new ToolRegistry();
+    registry.registerMany(BUILTIN_TOOL_DESCRIPTORS);
+    const wrapper = makeWrapper({
+      registry,
+      workerAllowedToolNames: new Set<string>(["someOtherTool"]),
+    });
+    const result = await wrapper.execute(
+      "createProjectFile",
+      JSON.stringify({ filePath: "x.md", content: "y" }),
+      "call-outside-subset",
+      new AbortController().signal,
+    );
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.errorCode).toBe("tool-permission-denied");
+      expect(result.sideEffectStatus).toBe("none");
+    }
   });
 });
