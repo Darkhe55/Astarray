@@ -18,7 +18,8 @@
  *   node scripts/verify-instruction-entry-package.mjs
  *   node scripts/verify-instruction-entry-package.mjs --run-prepack
  */
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import path from "node:path";
 import process from "node:process";
 
@@ -28,7 +29,10 @@ import {
   readSourceCommit,
   runInstalledCli,
 } from "./lib/package-acceptance-runtime.mjs";
-import { buildInstructionPackageChecks } from "./lib/smart01-instruction-package-checks.mjs";
+import {
+  buildCrossProjectPackageChecks,
+  buildInstructionPackageChecks,
+} from "./lib/smart01-instruction-package-checks.mjs";
 
 const repositoryRoot = process.cwd();
 const verificationRunIdentifier = new Date().toISOString().replace(/[:.]/g, "-");
@@ -156,6 +160,173 @@ const checks = buildInstructionPackageChecks({
 for (const check of checks) {
   console.log(`${check.passed ? "✓" : "✗"} ${check.name} — ${check.detail}`);
 }
+
+// ─── PROJECT-01-04：跨项目只读 / 副本导入（同一 tarball 内）───
+// 授权用**已安装包**的公开 SDK 写入；随后的只读/导入走**已安装包**的 CLI。
+const crossProjectRoot = path.join(installRoot, "cross-project");
+const sourceAbsolutePath = path.join(crossProjectRoot, "project-a", "docs", "spec.md");
+const targetAbsolutePath = path.join(crossProjectRoot, "project-b", "docs", "spec-copy.md");
+const occupiedTargetPath = path.join(crossProjectRoot, "project-b", "docs", "occupied.md");
+const sourceContent = "# 包级验收来源内容\n";
+const occupiedContent = "# 人工已有内容（不得被覆盖）\n";
+mkdirSync(path.dirname(sourceAbsolutePath), { recursive: true });
+mkdirSync(path.dirname(targetAbsolutePath), { recursive: true });
+writeFileSync(sourceAbsolutePath, sourceContent, "utf8");
+writeFileSync(occupiedTargetPath, occupiedContent, "utf8");
+
+const installedSdkUrl = pathToFileURL(
+  path.join(installRoot, "node_modules", "astarray", "dist", "public-sdk.js"),
+).href;
+try {
+  const installedSdk = await import(installedSdkUrl);
+  const store = new installedSdk.CrossProjectAuthorizationStore({
+    baseDirectory: path.join(installRoot, ".astarray"),
+  });
+  const grantBase = {
+    sourceProjectIdentifier: "project-a",
+    sourceProjectRevision: 3,
+    targetProjectIdentifier: "project-b",
+    targetProjectRevision: 1,
+    resourceScope: { pathPrefixes: ["docs/"], realPaths: [], isDynamicSharedDirectory: false },
+    expiresAtIso: "2030-01-01T00:00:00.000Z",
+    grantedByUserId: "package-acceptance-user",
+    taskIdentifier: "T-PKG-001",
+  };
+  await store.grantAuthorization({
+    ...grantBase,
+    authorizationIdentifier: "pkg-auth-read",
+    operationKind: "read",
+    argumentsHash: "pkg-hash-read",
+  });
+  await store.grantAuthorization({
+    ...grantBase,
+    authorizationIdentifier: "pkg-auth-import",
+    operationKind: "import-copy",
+    argumentsHash: "pkg-hash-import",
+  });
+} catch (error) {
+  console.log("✗ 跨项目授权准备失败 — " + String(error?.message ?? error));
+}
+
+const readAllowed = runInstalled([
+  "cross-project",
+  "read",
+  "--authorization",
+  "pkg-auth-read",
+  "--source-project",
+  "project-a",
+  "--target-project",
+  "project-b",
+  "--resource",
+  "docs/spec.md",
+  "--absolute-resource",
+  sourceAbsolutePath,
+  "--arguments-hash",
+  "pkg-hash-read",
+  "--json",
+]);
+const readUnauthorized = runInstalled([
+  "cross-project",
+  "read",
+  "--authorization",
+  "pkg-auth-missing",
+  "--source-project",
+  "project-a",
+  "--target-project",
+  "project-b",
+  "--resource",
+  "docs/spec.md",
+  "--absolute-resource",
+  sourceAbsolutePath,
+  "--arguments-hash",
+  "pkg-hash-read",
+  "--json",
+]);
+const importAllowed = runInstalled([
+  "cross-project",
+  "import-copy",
+  "--authorization",
+  "pkg-auth-import",
+  "--source-project",
+  "project-a",
+  "--target-project",
+  "project-b",
+  "--source-resource",
+  "docs/spec.md",
+  "--target-resource",
+  "docs/spec-copy.md",
+  "--absolute-source",
+  sourceAbsolutePath,
+  "--absolute-target",
+  targetAbsolutePath,
+  "--source-revision",
+  "3",
+  "--arguments-hash",
+  "pkg-hash-import",
+  "--json",
+]);
+const importStaleRejected = runInstalled([
+  "cross-project",
+  "import-copy",
+  "--authorization",
+  "pkg-auth-import",
+  "--source-project",
+  "project-a",
+  "--target-project",
+  "project-b",
+  "--source-resource",
+  "docs/spec.md",
+  "--target-resource",
+  "docs/occupied.md",
+  "--absolute-source",
+  sourceAbsolutePath,
+  "--absolute-target",
+  occupiedTargetPath,
+  "--source-revision",
+  "3",
+  "--arguments-hash",
+  "pkg-hash-import",
+  "--json",
+]);
+
+const crossProjectChecks = buildCrossProjectPackageChecks({
+  readAllowed,
+  readUnauthorized,
+  importAllowed,
+  importStaleRejected,
+});
+for (const check of crossProjectChecks) {
+  console.log(`${check.passed ? "✓" : "✗"} ${check.name} — ${check.detail}`);
+}
+
+// 真实文件断言：导入的副本必须真的存在且内容等于来源；被占目标必须原样保留。
+const importedCopyText = existsSync(targetAbsolutePath)
+  ? readFileSync(targetAbsolutePath, "utf8")
+  : null;
+const occupiedText = readFileSync(occupiedTargetPath, "utf8");
+const fileChecks = [
+  {
+    name: "跨项目导入：目标副本文件真实存在且内容等于来源",
+    passed: importedCopyText === sourceContent,
+    detail: importedCopyText === null ? "目标文件不存在" : "内容一致",
+  },
+  {
+    name: "跨项目导入：被人工占用的目标字节保持不变（拒绝陈旧覆盖）",
+    passed: occupiedText === occupiedContent,
+    detail: occupiedText === occupiedContent ? "人工字节保留" : "人工字节被改写",
+  },
+  {
+    name: "跨项目只读：来源文件字节未被修改",
+    passed:
+      readFileSync(sourceAbsolutePath, "utf8") === sourceContent,
+    detail: "来源内容前后一致",
+  },
+];
+for (const check of fileChecks) {
+  console.log(`${check.passed ? "✓" : "✗"} ${check.name} — ${check.detail}`);
+}
+
+checks.push(...crossProjectChecks, ...fileChecks);
 
 const failedCheckNames = checks.filter((check) => !check.passed).map((check) => check.name);
 const verdict = {

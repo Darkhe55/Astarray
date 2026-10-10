@@ -171,3 +171,78 @@ export function buildInstructionPackageChecks(observation) {
 
   return checks;
 }
+
+/**
+ * PROJECT-01-04 包级判据：跨项目**只读**与**副本导入**入口在同一次 tarball 验收内也必须成立。
+ *
+ * 与指令窗口同一纪律：**观测缺失即失败**（fail-closed），且"回执成立"不等于"落实"——
+ * 只读必须以真的读到（`didRead`）为准，导入必须以真的写出（`didWriteTarget`）为准。
+ */
+export function buildCrossProjectPackageChecks(observation) {
+  const checks = [];
+  const record = (name, passed, detail) => checks.push({ name, passed, detail });
+
+  // ① 有效授权只读：exit 0 + 真的读到 + 来源零写入（前后哈希相等）
+  const readAllowed = parseJsonObjectFromOutput(observation?.readAllowed?.stdoutText);
+  record(
+    "跨项目只读：有效授权 ⇒ exit 0 且真实读取（didRead=true）",
+    observation?.readAllowed?.exitCode === 0 &&
+      readAllowed !== null &&
+      readAllowed["outcome"] === "read-allowed" &&
+      readAllowed["didRead"] === true &&
+      typeof readAllowed["content"] === "string" &&
+      readAllowed["content"].length > 0,
+    `exit=${String(observation?.readAllowed?.exitCode)} outcome=${String(readAllowed?.["outcome"])} didRead=${String(readAllowed?.["didRead"])}`,
+  );
+  record(
+    "跨项目只读：来源零写入（读取前后哈希相等，且未修改来源）",
+    readAllowed !== null &&
+      readAllowed["didModifySource"] === false &&
+      typeof readAllowed["sourceContentHashBefore"] === "string" &&
+      readAllowed["sourceContentHashBefore"] === readAllowed["sourceContentHashAfter"],
+    `before=${String(readAllowed?.["sourceContentHashBefore"])} after=${String(readAllowed?.["sourceContentHashAfter"])}`,
+  );
+
+  // ② 未授权只读：必须非 0 且不得回显内容
+  const readUnauthorized = parseJsonObjectFromOutput(observation?.readUnauthorized?.stdoutText);
+  record(
+    "跨项目只读：未授权 ⇒ 非 0 退出码且不回显来源内容",
+    typeof observation?.readUnauthorized?.exitCode === "number" &&
+      observation.readUnauthorized.exitCode !== 0 &&
+      readUnauthorized !== null &&
+      readUnauthorized["didRead"] !== true &&
+      (readUnauthorized["content"] === null || readUnauthorized["content"] === undefined),
+    `exit=${String(observation?.readUnauthorized?.exitCode)} didRead=${String(readUnauthorized?.["didRead"])}`,
+  );
+
+  // ③ 有效授权导入：exit 0 + 真的写出 + 回执标记为副本
+  const importAllowed = parseJsonObjectFromOutput(observation?.importAllowed?.stdoutText);
+  record(
+    "跨项目导入：有效授权 ⇒ exit 0 且真实写出目标（didWriteTarget=true）",
+    observation?.importAllowed?.exitCode === 0 &&
+      importAllowed !== null &&
+      importAllowed["outcome"] === "imported-copy" &&
+      importAllowed["didWriteTarget"] === true &&
+      importAllowed["receipt"] !== null &&
+      importAllowed["receipt"]?.["isCopyOfExternalSource"] === true,
+    `exit=${String(observation?.importAllowed?.exitCode)} outcome=${String(importAllowed?.["outcome"])} didWriteTarget=${String(importAllowed?.["didWriteTarget"])}`,
+  );
+
+  // ④ 目标被人工占用且无基线：必须拒绝覆盖（非 0）且不得落定回执
+  const importStaleRejected = parseJsonObjectFromOutput(
+    observation?.importStaleRejected?.stdoutText,
+  );
+  record(
+    "跨项目导入：目标被人工占用且无基线 ⇒ 拒绝覆盖（非 0，且不落定回执）",
+    typeof observation?.importStaleRejected?.exitCode === "number" &&
+      observation.importStaleRejected.exitCode !== 0 &&
+      importStaleRejected !== null &&
+      importStaleRejected["outcome"] === "target-stale-rejected" &&
+      importStaleRejected["didWriteTarget"] !== true &&
+      (importStaleRejected["receipt"] === null ||
+        importStaleRejected["receipt"] === undefined),
+    `exit=${String(observation?.importStaleRejected?.exitCode)} outcome=${String(importStaleRejected?.["outcome"])}`,
+  );
+
+  return checks;
+}

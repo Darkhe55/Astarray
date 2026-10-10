@@ -156,6 +156,25 @@ Agent仅接收不透明授权引用和公开范围说明，不接收可外传的
 - PROJECT-01 三套件合计 **24/24** 通过；真实 `dist/cli.js` 实测：缺必需参数 exit 1、
   未知授权 `authorization-not-found` exit 1，`cross-project --help` 三个子命令均可见。
 
+**包级 tarball 验收（本轮扩展，2026-10-10）**：`npm run verify:instruction-entry-package`
+在**隔离安装的 tarball** 上用**已安装包**的 CLI 实跑跨项目场景 ⇒ **exit 0，15/15 判据通过**
+（指令窗口 7 项 + 跨项目 8 项），其中跨项目 8 项为：
+
+| 判据 | 实测 |
+| --- | --- |
+| 有效授权只读 ⇒ exit 0 且 `didRead=true`（真的读到内容） | `read-allowed`，`content` 非空 |
+| **来源零写入**（读取前后来源 sha256 相等） | `47c5627f79e3…` 前后一致 |
+| 未授权只读 ⇒ 非 0 且**不回显来源内容** | `exit=1`、`didRead=false` |
+| 有效授权导入 ⇒ exit 0 且 `didWriteTarget=true` | `imported-copy`、回执标记 `isCopyOfExternalSource` |
+| 目标被人工占用且**无基线** ⇒ 拒绝覆盖（非 0，不落定回执） | `target-stale-rejected`、`receipt=null` |
+| 目标副本文件**真实存在**且内容等于来源 | 逐字节一致 |
+| 被人工占用的目标**字节保持不变** | 人工字节保留 |
+| 只读后**来源文件字节未变** | 前后一致 |
+
+判定逻辑同样抽为可单测纯函数 `buildCrossProjectPackageChecks`（先红后绿，
+`npm run test:scripts` **24/24**）。tarball 记录：`astarray-0.1.0.tgz`、sha256 `71b52d0893f9a88b…`、
+来源提交 `6b1b0be`。
+
 ## 9. 必测场景与交付
 
 1. 未授权跨项目读取、列目录、搜索、直接写入、命令间接读取及Git路径访问均不能绕过；覆盖Windows/POSIX路径与真实文件系统差异。

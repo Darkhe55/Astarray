@@ -14,7 +14,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { buildInstructionPackageChecks } from "./smart01-instruction-package-checks.mjs";
+import { buildInstructionPackageChecks, buildCrossProjectPackageChecks } from "./smart01-instruction-package-checks.mjs";
 
 /** 造一份"全部正常"的观测输入；各用例只覆盖需要变形的字段。 */
 function buildPassingObservation() {
@@ -184,4 +184,92 @@ test("全部观测缺失 ⇒ 全部判失败，且不抛错（零判据不得通
   assert.equal(allPassed(checks), false);
   const failed = checks.filter((check) => check.passed);
   assert.deepEqual(failed, [], "零观测时不得有任何通过项");
+});
+
+// ─── PROJECT-01-04：跨项目只读/导入入口（同一 tarball 验收内）───
+
+function buildPassingCrossProjectObservation() {
+  return {
+    readAllowed: {
+      exitCode: 0,
+      stdoutText: JSON.stringify({
+        outcome: "read-allowed",
+        didRead: true,
+        didModifySource: false,
+        content: "# 来源内容\n",
+        sourceContentHashBefore: "aaa",
+        sourceContentHashAfter: "aaa",
+      }),
+    },
+    readUnauthorized: {
+      exitCode: 1,
+      stdoutText: JSON.stringify({
+        outcome: "authorization-not-found",
+        didRead: false,
+        content: null,
+      }),
+    },
+    importAllowed: {
+      exitCode: 0,
+      stdoutText: JSON.stringify({
+        outcome: "imported-copy",
+        didWriteTarget: true,
+        receipt: { receiptIdentifier: "copy-1", isCopyOfExternalSource: true },
+      }),
+    },
+    importStaleRejected: {
+      exitCode: 1,
+      stdoutText: JSON.stringify({
+        outcome: "target-stale-rejected",
+        receipt: null,
+        didWriteTarget: false,
+      }),
+    },
+  };
+}
+
+test("跨项目：全部正常观测 ⇒ 通过（基例）", () => {
+  const checks = buildCrossProjectPackageChecks(buildPassingCrossProjectObservation());
+  const failed = checks.filter((check) => !check.passed).map((check) => check.name);
+  assert.deepEqual(failed, [], "基例不应有失败项：" + failed.join("、"));
+});
+
+test("跨项目：只读未授权却 exit 0 ⇒ 必须失败", () => {
+  const observation = buildPassingCrossProjectObservation();
+  observation.readUnauthorized = {
+    exitCode: 0,
+    stdoutText: JSON.stringify({ outcome: "read-allowed", didRead: true }),
+  };
+  const checks = buildCrossProjectPackageChecks(observation);
+  assert.equal(allPassed(checks), false);
+});
+
+test("跨项目：导入声称成功但 didWriteTarget=false ⇒ 必须失败（回执不等于文件）", () => {
+  const observation = buildPassingCrossProjectObservation();
+  observation.importAllowed = {
+    exitCode: 0,
+    stdoutText: JSON.stringify({
+      outcome: "imported-copy",
+      didWriteTarget: false,
+      receipt: { receiptIdentifier: "copy-1" },
+    }),
+  };
+  const checks = buildCrossProjectPackageChecks(observation);
+  assert.equal(allPassed(checks), false);
+});
+
+test("跨项目：陈旧覆盖被拒却 exit 0 ⇒ 必须失败", () => {
+  const observation = buildPassingCrossProjectObservation();
+  observation.importStaleRejected = {
+    exitCode: 0,
+    stdoutText: JSON.stringify({ outcome: "target-stale-rejected", didWriteTarget: false }),
+  };
+  const checks = buildCrossProjectPackageChecks(observation);
+  assert.equal(allPassed(checks), false);
+});
+
+test("跨项目：观测缺失 ⇒ 全部判失败（fail-closed）", () => {
+  const checks = buildCrossProjectPackageChecks({});
+  assert.equal(checks.length >= 4, true);
+  assert.equal(allPassed(checks), false);
 });
