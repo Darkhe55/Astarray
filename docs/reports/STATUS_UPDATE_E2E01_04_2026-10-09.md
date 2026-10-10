@@ -49,4 +49,10 @@ EPERM 持续必须**恰好 7 次**有界失败、ENOENT 必须**只尝试 1 次*
 2. **超时型抖动仍属独立风险**：本轮另一次默认并发运行中 `run-command-gaps` 曾以
    `Test timed out in 60000ms` 失败（隔离复跑 5.4s 通过）。本次修复针对 EPERM，**不覆盖**该类超时抖动；
    该用例的超时预算是下一轮的候选处理项。
-3. `smoke-install.mjs` 需在本次修复后再跑一次确认（依赖其内部 `prepack → check`）。
+3. `smoke-install.mjs` 在本次修复后**复跑仍 exit 1**（`.tmp/session-r2-04/smoke-after-fix.log`）。
+   已知：失败发生在它内部的**不带 `--ignore-scripts` 的 `npm pack` → `prepack` → `npm run check`**，
+   报错为 `Command failed: npm pack …`。
+   **尚未定位这次运行的具体失败用例**（本轮只确认到 `npm pack` 命令失败）——不做猜测，
+   留待下一轮抓取其内部 `npm run check` 的 FAIL 明细后再判定是"同一抖动"还是"另有原因"。
+   注意：`npm run check` 本身在 **默认并发** 下本轮并未复现 EPERM（`test:coverage` exit 0），
+   故 `smoke-install` 的失败**很可能另有其因**（例如它自身的打包/安装步骤或超时型抖动）。
