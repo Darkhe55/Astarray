@@ -15,6 +15,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ScopeAuthorizationGate } from "../../../packages/core/src/tools/scope-authorization-gate.js";
+import { BUILTIN_TOOL_DESCRIPTORS } from "../../../packages/core/src/tools/builtins.js";
 import { describeToolOperation } from "../../../packages/core/src/tools/scope-authorization-gate.js";
 import { ScopeGatedToolPort } from "../../../packages/core/src/tools/scope-authorization-gate.js";
 import type { ToolPort } from "../../../packages/core/src/core/types.js";
@@ -375,5 +376,82 @@ describe("权限门禁拦截 = 确定无副作用（不得毒化重试）", () =
     );
     expect(rerun.kind).toBe("success");
     expect(existsSync(path.join(projectRootPath, relativePath))).toBe(true);
+  });
+
+  /**
+   * ⑥ 2026-10-10 返修（RELIABILITY-01-02「提前拒绝结算」的**变更前中止**同族缺陷）：
+   *
+   * `replaceFileContent` 在写入前会做自动备份 + TOCTOU 复检；若复检发现目标在备份后
+   * 被第三方修改，实现会**抛出普通 `Error`**（"目标文件在备份后被修改"）。
+   * 由于普通 Error 不带"确定无副作用"语义，`PolicyWrapper` 只能按
+   * `sideEffectStatus: "unknown"` 结算 ⇒ 范围门禁的预留进入 `requires-reconciliation`
+   * ⇒ 该逻辑操作**永久**无法重试（须人工对账），尽管**这次写入根本没有发生**。
+   *
+   * 注意同文件中"排他创建遇到已存在"本来就正确使用 `SideEffectNoneError`（见 builtins），
+   * 说明该语义在本仓已有先例，此处属**漏用**。
+   *
+   * 期望：**变更前中止**（未写入任何字节）必须按"确定无副作用"结算 ⇒ 预留释放、重试可行；
+   * 目标文件必须保持第三方修改后的内容不变。
+   */
+  it("⑥ 备份后复检失败而中止的覆盖：不得写入，且必须按无副作用结算（重试可行）", async () => {
+    const { PolicyWrapper } = await import("../../../packages/core/src/tools/policy-wrapper.js");
+    const { ToolRegistry } = await import("../../../packages/core/src/tools/registry.js");
+    const { WorkspaceBoundary } = await import("../../../packages/core/src/tools/workspace-boundary.js");
+    const { ProtectedStoragePolicy } = await import(
+      "../../../packages/core/src/tools/protected-storage-policy.js"
+    );
+    const { ModeMachine } = await import("../../../packages/core/src/core/mode-machine.js");
+    const { PermissionDecider, SessionAuthorizationManager } = await import(
+      "../../../packages/core/src/core/permission-policy.js"
+    );
+
+    const relativePath = "docs/TOCTOU.md";
+    const absolutePath = path.join(projectRootPath, relativePath);
+    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+    const contentBeforeMutation = "# 第三方修改后的内容\n";
+    await fs.writeFile(absolutePath, contentBeforeMutation, "utf8");
+
+    const modeMachine = new ModeMachine("devolve");
+    const registry = new ToolRegistry();
+    registry.registerMany(BUILTIN_TOOL_DESCRIPTORS);
+    // 覆盖前备份由工具自动完成；此处只让 TOCTOU 复检返回"目标已变"。
+    const backupServicePort = {
+      createPreMutationBackup: async () => ({
+        backupIdentifier: "backup-1",
+        targetFingerprintBeforeMutation: "sha256:whatever",
+        createdAtIso: "2026-10-10T00:00:00.000Z",
+      }),
+      verifyTargetUnchanged: async () => false,
+    };
+    const wrapper = new PolicyWrapper({
+      permissionDecider: new PermissionDecider(modeMachine, new SessionAuthorizationManager()),
+      registry,
+      workspaceBoundary: new WorkspaceBoundary(projectRootPath),
+      temporaryDirectoryPath: path.join(projectRootPath, ".tmp"),
+      workerAllowedToolNames: null,
+      nowUnixSeconds: () => Math.floor(Date.now() / 1000),
+      getCurrentMode: () => modeMachine.getCurrentMode(),
+      requestingAgentInstanceId: "agent-test",
+      taskExecutionId: "task-test",
+      protectedStoragePolicy: new ProtectedStoragePolicy({
+        stateDirectoryPath: path.join(projectRootPath, ".astarray-test"),
+      }),
+      backupServicePort,
+    } as never);
+
+    const result = await wrapper.execute(
+      "replaceFileContent",
+      JSON.stringify({ filePath: relativePath, content: "# 新的内容\n" }),
+      "call-toctou",
+      new AbortController().signal,
+    );
+
+    // 未写入：第三方内容必须原样保留
+    expect(await fs.readFile(absolutePath, "utf8")).toBe(contentBeforeMutation);
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      // 变更前中止 ⇒ 确定无副作用（否则门禁预留被永久毒化为 requires-reconciliation）
+      expect(result.sideEffectStatus).toBe("none");
+    }
   });
 });

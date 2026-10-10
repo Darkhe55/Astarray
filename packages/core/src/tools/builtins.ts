@@ -506,7 +506,11 @@ export async function executeBuiltinTool(
           receipt.targetFingerprintBeforeMutation,
         );
       if (!targetIsUnchanged) {
-        throw new Error(
+        // 变更前中止（**未写入任何字节**）⇒ 必须用 SideEffectNoneError 声明"确定无副作用"，
+        // 否则 PolicyWrapper 只能按 unknown 结算，使范围门禁的预留进入
+        // requires-reconciliation，该逻辑操作**永久**无法重试（尽管这次覆盖从未发生）。
+        // 2026-10-10 RELIABILITY-01-02「提前拒绝/变更前中止结算」返修。
+        throw new SideEffectNoneError(
           "replaceFileContent 中止：目标文件在备份后被修改（TOCTOU 防护）",
         );
       }

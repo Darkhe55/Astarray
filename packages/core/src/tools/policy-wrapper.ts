@@ -386,6 +386,16 @@ export class PolicyWrapper implements ToolPort {
             error instanceof DomainError ? error.errorCode : "tool-execution-failed",
           errorMessage: (error as Error).message,
           isIdempotencyConfirmed: false,
+          /**
+           * 2026-10-10 RELIABILITY-01-02 返修：此处原**完全省略** `sideEffectStatus`，
+           * 于是工具自己声明的"确定无副作用"（`SideEffectNoneError`，例如排他创建遇到
+           * 已存在、`replaceFileContent` 备份后 TOCTOU 中止）被**丢弃**，
+           * 门禁只能按 `unknown` 结算 ⇒ 预留进入 `requires-reconciliation`，
+           * 该逻辑操作永久无法重试，尽管从未写入任何字节。
+           * 现在如实透传：只有工具明确自报"确定未进入副作用通道"才报 none。
+           */
+          sideEffectStatus:
+            error instanceof SideEffectNoneError ? ("none" as const) : ("unknown" as const),
         };
       }
     }

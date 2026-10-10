@@ -312,28 +312,33 @@ describe("完成门禁：未解决的必需操作失败不得结案", () => {
     }
   });
 
-  it("B. 未解决的写失败后声称完成 → 必须被拦（本轮不提供第二次工具机会）", async () => {
+  /**
+   * B. 未解决的写失败后声称完成 → 必须被拦。
+   *
+   * 2026-10-10 校准：本用例原先靠"第二轮把预置文件删掉"来构造"worker 不给第二次机会"的假象。
+   * RELIABILITY-01-02 返修后，**可证无副作用的失败（排他创建遇到已存在 = EEXIST）会释放预留**，
+   * 因此模型确实会拿到第二次工具机会；若第二次成功，判 `done` 是**正确**的
+   * （见 B2）。为继续守住"**未解决**的必需操作失败不得结案"这一真实不变量，
+   * 此处让预置文件**始终存在**，使失败在本轮内无法收敛。
+   */
+  it("B. 未解决的写失败后声称完成 → 必须被拦（失败始终未收敛）", async () => {
     const targetPath = path.join(workspaceDirectory, "PROBE-OK.md");
-    await fs.writeFile(targetPath, "# 预置（导致首次 createProjectFile 失败）\n", "utf8");
+    await fs.writeFile(targetPath, "# 预置（导致 createProjectFile 持续失败）\n", "utf8");
     const toolArguments = JSON.stringify({
       filePath: "PROBE-OK.md",
       content: "# 重试后写入\n",
     });
     const endpoint = await startScriptedProviderServer([
       () => sseToolCall("createProjectFile", toolArguments, "call-retry-1"),
-      // 脚本准备了"第二轮修正"与完成事件；实测运行链路上不会走到（见断言）。
-      () => {
-        rmSync(targetPath, { force: true });
-        return sseToolCall("createProjectFile", toolArguments, "call-retry-2");
-      },
+      // 预置文件**不删除**：排他创建继续失败，本轮内无法收敛为成功。
+      () => sseToolCall("createProjectFile", toolArguments, "call-retry-2"),
       () => sseContent("已完成。\n" + completionMarkerLine("attempt-retry-1")),
     ]);
     const application = await createApplication(endpoint);
     try {
       await grantToolExecution(application, "createProjectFile", toolArguments);
       const status = await runToTerminal(application, "创建 PROBE-OK.md");
-      // 实测（2026-10-01）：写工具失败后 worker **不会**再给模型第二轮机会，
-      // 直接以"完成声明与本地工具结果不一致"结案 → 终态非 done。
+      // 未解决的必需操作失败 ⇒ 完成声明与本地工具结果不一致 ⇒ 终态非 done。
       expect(status).not.toBe("done");
       expect(["blocked", "failed"]).toContain(status);
       const archivedSummaries = await readArchivedSummaries(stateDirectory);
@@ -344,6 +349,40 @@ describe("完成门禁：未解决的必需操作失败不得结案", () => {
             summary.includes("必需操作未成功执行"),
         ),
       ).toBe(true);
+    } finally {
+      await application.shutdown();
+    }
+  });
+
+  /**
+   * B2. 2026-10-10（RELIABILITY-01-02 返修的正向证据）：
+   * **可证无副作用**的失败（EEXIST：排他创建在写入前被拒）必须释放预留，
+   * 使模型拿到第二次工具机会；第二次成功后完成声明**应当**被接受 ⇒ `done`。
+   * 若缺少该释放，"从未写入任何字节"的失败会把逻辑操作毒化成 requires-reconciliation。
+   */
+  it("B2. 可证无副作用的失败（EEXIST）释放预留 ⇒ 第二轮成功后可正常结案", async () => {
+    const targetPath = path.join(workspaceDirectory, "PROBE-RETRY-OK.md");
+    await fs.writeFile(targetPath, "# 预置（首次失败）\n", "utf8");
+    const toolArguments = JSON.stringify({
+      filePath: "PROBE-RETRY-OK.md",
+      content: "# 第二轮写入\n",
+    });
+    const endpoint = await startScriptedProviderServer([
+      () => sseToolCall("createProjectFile", toolArguments, "call-b2-1"),
+      // 人工移走预置文件（等价于用户修正了造成失败的条件）后重试。
+      () => {
+        rmSync(targetPath, { force: true });
+        return sseToolCall("createProjectFile", toolArguments, "call-b2-2");
+      },
+      () => sseContent("已完成。\n" + completionMarkerLine("attempt-b2")),
+    ]);
+    const application = await createApplication(endpoint);
+    try {
+      await grantToolExecution(application, "createProjectFile", toolArguments);
+      const status = await runToTerminal(application, "创建 PROBE-RETRY-OK.md");
+      expect(status).toBe("done");
+      // 产物必须真实落盘（不是靠文本声称成功）
+      expect(await fs.readFile(targetPath, "utf8")).toBe("# 第二轮写入\n");
     } finally {
       await application.shutdown();
     }
