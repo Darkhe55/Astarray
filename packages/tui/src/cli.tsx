@@ -58,6 +58,9 @@ import {
   executeWorkflowScenarioCommand,
   executeCrossProjectListCommand,
   executeDoctorErrorsCommand,
+  executeInstructionAcceptCommand,
+  executeInstructionDeadlineCommand,
+  executeInstructionListCommand,
   executePerfOverviewCommand,
   executeUsageOverviewCommand,
 } from "./cli/commands.js";
@@ -211,6 +214,105 @@ usageCommand
         ...(options.inputTokenBudget === undefined
           ? {}
           : { inputTokenBudget: options.inputTokenBudget }),
+      });
+    },
+  );
+
+/**
+ * SMART-01-04：指令窗口 CLI 入口（与 SDK 入口共享同一状态目录的同一窗口）。
+ */
+const instructionCommand = program
+  .command("instruction")
+  .description("指令窗口（智能模式计数 / 排队 / 三分钟期限；只读优先，不冒充成果完成）");
+instructionCommand
+  .command("accept <text>")
+  .description("接收一条用户指令进入指令窗口（上限默认 3，超出即排队，不丢弃）")
+  .option("--idempotency-key <key>", "必需：幂等键（同键同参幂等复用，同键异参拒绝）")
+  .option("--revision <revision>", "指令 revision（修订绑定原指令，缺省 1）")
+  .option("--now <iso>", "显式接收时间（ISO 8601；缺省当前时间）")
+  .option("--json", "JSON 输出")
+  .action(
+    async (
+      text: string,
+      options: {
+        idempotencyKey?: string;
+        revision?: string;
+        now?: string;
+        json?: boolean;
+      },
+    ) => {
+      if (options.idempotencyKey === undefined || options.idempotencyKey.trim() === "") {
+        process.stderr.write("astarray: 缺少 --idempotency-key（拒绝接收，不伪造指令）\n");
+        process.exitCode = 2;
+        return;
+      }
+      process.exitCode = await executeInstructionAcceptCommand({
+        stateDirectory: defaultStateDirectory(),
+        isJsonOutput: options.json === true,
+        instructionText: text,
+        idempotencyKey: options.idempotencyKey,
+        ...(options.revision === undefined
+          ? {}
+          : { instructionRevision: Number(options.revision) }),
+        ...(options.now === undefined ? {} : { nowIso: options.now }),
+      });
+    },
+  );
+instructionCommand
+  .command("list")
+  .description("列出指令窗口（窗口内 / 排队 / 终态）")
+  .option("--json", "JSON 输出")
+  .action(async (options: { json?: boolean }) => {
+    process.exitCode = await executeInstructionListCommand({
+      stateDirectory: defaultStateDirectory(),
+      isJsonOutput: options.json === true,
+    });
+  });
+instructionCommand
+  .command("deadline")
+  .description("评估一条指令的三分钟处理期限（超期如实报告，不伪报已派发）")
+  .option("--idempotency-key <key>", "必需：指令幂等键")
+  .option("--now <iso>", "显式当前时间（ISO 8601；缺省当前时间）")
+  .option("--awaiting-clarification", "该指令正在等待用户澄清（不得视为完成）")
+  .option("--awaiting-permission", "该指令正在等待权限裁决（门禁优先，不被补位绕过）")
+  .option("--resting", "计划休息中（门禁优先）")
+  .option("--user-stopped", "用户显式停止（门禁优先）")
+  .option("--long-subordinate-task", "存在长下级任务在途（不得阻塞接收新指令）")
+  .option("--json", "JSON 输出")
+  .action(
+    async (options: {
+      idempotencyKey?: string;
+      now?: string;
+      awaitingClarification?: boolean;
+      awaitingPermission?: boolean;
+      resting?: boolean;
+      userStopped?: boolean;
+      longSubordinateTask?: boolean;
+      json?: boolean;
+    }) => {
+      if (options.idempotencyKey === undefined || options.idempotencyKey.trim() === "") {
+        process.stderr.write("astarray: 缺少 --idempotency-key（拒绝评估，不伪造指令）\n");
+        process.exitCode = 2;
+        return;
+      }
+      process.exitCode = await executeInstructionDeadlineCommand({
+        stateDirectory: defaultStateDirectory(),
+        isJsonOutput: options.json === true,
+        idempotencyKey: options.idempotencyKey,
+        ...(options.now === undefined ? {} : { nowIso: options.now }),
+        ...(options.awaitingClarification === undefined
+          ? {}
+          : { isAwaitingClarification: options.awaitingClarification }),
+        ...(options.awaitingPermission === undefined
+          ? {}
+          : { isAwaitingPermissionDecision: options.awaitingPermission }),
+        ...(options.resting === undefined ? {} : { isResting: options.resting }),
+        ...(options.userStopped === undefined
+          ? {}
+          : { isExplicitUserStop: options.userStopped }),
+        ...(options.longSubordinateTask === undefined
+          ? {}
+          : { hasLongRunningSubordinateTask: options.longSubordinateTask }),
       });
     },
   );

@@ -97,12 +97,27 @@
   `isGatedByExistingGate=true` 且 `canAcceptNewInstruction=false`、未知幂等键**响亮拒绝**。
 - 反例（先红后绿）：`tests/core/integration/smart01-window-deadline-entry.test.ts` 5 条，
   实现前 `acceptUserInstruction is not a function` / 5 failed。
-- **尚未完成（如实保留，不主张 SMART-01-04 通过）**：CLI/TUI/GUI **三个入口**的接线、
+- **尚未完成（如实保留，不主张 SMART-01-04 通过）**：**TUI/GUI 两个入口**的接线、
   **包级 tarball 验收**、以及"模拟慢模型/长下级任务仍能接收新指令"的**真实运行**证据（此前只用离线探针）。
+
+**SMART-01-04 CLI 入口接线（2026-10-10，本轮续）**：新增 `astarray instruction` 命令组
+（`accept <text> --idempotency-key` / `list` / `deadline --idempotency-key`，均支持 `--json` 与 `--now`），
+与 SDK 入口**共享同一状态目录的同一落盘窗口**（不是第二套计数）：
+
+- `executeInstructionAcceptCommand` / `executeInstructionListCommand` / `executeInstructionDeadlineCommand`
+  落在 `packages/tui/src/cli/commands.ts`，`cli.tsx` 注册为 `instruction` 命令组（缺 `--idempotency-key` 时 exit 2，拒绝伪造指令）；
+- 反例（先红后绿）：`tests/tui/unit/smart01-instruction-cli-entry.test.ts` 5 条，
+  实现前 `4 failed`（入口不存在）；
+  其中 ⑤ 为**真实构建产物端到端**：`dist/cli.js instruction accept` ×4 后，
+  另一个进程的 SDK facade 必须读到 `active=3 / queued=["跨进程指令 4"]`，
+  且 CLI 侧超期输出 `overdue-not-dispatched` + `"isTruthfulTimeout": true`、未知键 exit≠0；
+- 真实 CLI 实测：第 4 条 `admissionOutcome=queued`（`窗口已满：已排队（不丢弃）`）、
+  `instruction deadline` 超期 exit 0 且如实报超时、未知键 exit 1；`instruction --help` 三个子命令均可见。
+
 - **已登记的两处口径待确认**（本轮未改生产语义，避免超出检查点）：①契约 §4.3 写
   "`accepted` + `dispatched` + `awaiting-clarification` 计入占用"，而 store 的 `SLOT_OCCUPYING_STATES`
   为 `dispatched`/`awaiting-clarification`/`partially-completed`（`accepted` 只作排队标记）；
-  ②本轮窗口为 **facade 级**（同一状态目录单一窗口），按会话隔离与否需在入口接线时明确决定。
+  ②本轮窗口为 **facade/状态目录级**（同一状态目录单一窗口），按会话隔离与否需在入口接线时明确决定。
 
 每次执行一个检查点，超过三小时再拆分。依赖现有指导安全点、权威任务状态和恢复能力的真实接线证据，未满足前驱先登记，不靠历史 done 推断。
 

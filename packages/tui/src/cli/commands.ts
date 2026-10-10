@@ -973,6 +973,233 @@ export interface CrossProjectListCommandOptions {
   receivingAgentInstanceId?: string;
 }
 
+/**
+ * SMART-01-04：指令窗口的 CLI 入口选项。
+ *
+ * 与 SDK 入口（`AstarrayApplicationFacade.acceptUserInstruction` /
+ * `queryInstructionWindow` / `evaluateInstructionHandlingDeadline`）**共享同一状态目录**，
+ * 因此 CLI 接收的指令与 SDK 看到的是**同一个窗口**，不是第二套计数。
+ */
+export interface InstructionAcceptCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+  instructionText: string;
+  idempotencyKey: string;
+  /** 指令 revision（修订绑定原指令；缺省 1）。 */
+  instructionRevision?: number;
+  /** 显式接收时间（缺省当前时间）。 */
+  nowIso?: string;
+  sourceKind?: "user" | "agent";
+}
+
+export interface InstructionListCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+}
+
+export interface InstructionDeadlineCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+  idempotencyKey: string;
+  nowIso?: string;
+  isAwaitingClarification?: boolean;
+  isAwaitingPermissionDecision?: boolean;
+  isResting?: boolean;
+  isExplicitUserStop?: boolean;
+  hasLongRunningSubordinateTask?: boolean;
+}
+
+/**
+ * SMART-01-04：接收一条用户指令进入指令窗口（CLI 入口）。
+ *
+ * 语义与 SDK 入口一致：原子准入、上限默认 3、超出即**排队**（不丢弃）、
+ * 同键同参幂等复用、同键异参拒绝。
+ */
+export async function executeInstructionAcceptCommand(
+  options: InstructionAcceptCommandOptions,
+): Promise<number> {
+  try {
+    const instructionText = options.instructionText.trim();
+    if (instructionText === "") {
+      logToStderr("指令文本为空，拒绝接收（不伪造指令）");
+      return EXIT_CODES.USAGE_ERROR;
+    }
+    if (options.idempotencyKey.trim() === "") {
+      logToStderr("指令幂等键为空，拒绝接收（不伪造指令）");
+      return EXIT_CODES.USAGE_ERROR;
+    }
+    const { InstructionWindowStore } = await import(
+      "../../../core/src/orchestration/instruction-window-store.js"
+    );
+    const store = new InstructionWindowStore({ baseDirectory: options.stateDirectory });
+    const nowIso = options.nowIso ?? new Date().toISOString();
+    const result = await store.admitInstruction({
+      instructionIdentifier:
+        "cli-instruction-" + nowIso + "-" + String(options.idempotencyKey),
+      instructionRevision: options.instructionRevision ?? 1,
+      sourceKind: options.sourceKind ?? "user",
+      instructionText,
+      idempotencyKey: options.idempotencyKey,
+      nowIso,
+    });
+    const snapshot = await store.snapshot();
+    if (options.isJsonOutput) {
+      printJson({
+        instructionIdentifier: result.instructionIdentifier,
+        admissionOutcome: result.outcome,
+        admittedAtIso: nowIso,
+        windowCapacity: snapshot.windowCapacity,
+        activeInstructionCount: snapshot.activeInstructions.length,
+        queuedInstructionCount: snapshot.queuedInstructions.length,
+        detail: result.detail,
+      });
+    } else {
+      process.stdout.write(
+        result.outcome +
+          " " +
+          result.instructionIdentifier +
+          "（窗口 " +
+          String(snapshot.activeInstructions.length) +
+          "/" +
+          String(snapshot.windowCapacity) +
+          "，排队 " +
+          String(snapshot.queuedInstructions.length) +
+          "）\n" +
+          result.detail +
+          "\n",
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr("指令接收失败: " + (error as Error).message);
+    return EXIT_CODES.FAILURE;
+  }
+}
+
+/** SMART-01-04：只读展示指令窗口（窗口内 / 排队 / 终态；不冒充"成果完成"）。 */
+export async function executeInstructionListCommand(
+  options: InstructionListCommandOptions,
+): Promise<number> {
+  try {
+    const { InstructionWindowStore } = await import(
+      "../../../core/src/orchestration/instruction-window-store.js"
+    );
+    const store = new InstructionWindowStore({ baseDirectory: options.stateDirectory });
+    const snapshot = await store.snapshot();
+    const describeRecord = (record: {
+      instructionIdentifier: string;
+      instructionText: string;
+      state: string;
+      admittedAtIso: string;
+    }): string =>
+      "  " +
+      record.instructionIdentifier +
+      " [" +
+      record.state +
+      "] " +
+      record.admittedAtIso +
+      " " +
+      record.instructionText;
+    if (options.isJsonOutput) {
+      printJson({
+        windowCapacity: snapshot.windowCapacity,
+        activeInstructions: snapshot.activeInstructions,
+        queuedInstructions: snapshot.queuedInstructions,
+        terminalInstructions: snapshot.terminalInstructions,
+      });
+    } else {
+      process.stdout.write(
+        "capacity: " +
+          String(snapshot.windowCapacity) +
+          "\nactive: " +
+          String(snapshot.activeInstructions.length) +
+          "\n" +
+          snapshot.activeInstructions.map(describeRecord).join("\n") +
+          "\nqueued: " +
+          String(snapshot.queuedInstructions.length) +
+          "\n" +
+          snapshot.queuedInstructions.map(describeRecord).join("\n") +
+          "\n",
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr("指令窗口查询失败（只读入口不得阻塞业务）: " + (error as Error).message);
+    return EXIT_CODES.FAILURE;
+  }
+}
+
+/**
+ * SMART-01-04：评估一条指令的三分钟处理期限（CLI 入口）。
+ *
+ * 期限自**接收时间**起计（含队列等待）；超期**如实报告**（命令本身不是失败 ⇒ exit 0）；
+ * 未知幂等键**响亮失败**（非 0），不得伪造一条指令。
+ */
+export async function executeInstructionDeadlineCommand(
+  options: InstructionDeadlineCommandOptions,
+): Promise<number> {
+  try {
+    const { InstructionWindowStore } = await import(
+      "../../../core/src/orchestration/instruction-window-store.js"
+    );
+    const { evaluateInstructionDeadline } = await import(
+      "../../../core/src/orchestration/main-agent-deadline-supervisor.js"
+    );
+    const store = new InstructionWindowStore({ baseDirectory: options.stateDirectory });
+    const snapshot = await store.snapshot();
+    const allRecords = [
+      ...snapshot.activeInstructions,
+      ...snapshot.queuedInstructions,
+      ...snapshot.terminalInstructions,
+    ];
+    const record = allRecords.find(
+      (candidate) => candidate.idempotencyKey === options.idempotencyKey,
+    );
+    if (record === undefined) {
+      logToStderr("未知指令幂等键，拒绝评估（不伪造指令）: " + options.idempotencyKey);
+      return EXIT_CODES.FAILURE;
+    }
+    const evaluation = evaluateInstructionDeadline({
+      instructionIdentifier: record.instructionIdentifier,
+      acceptedAtIso: record.admittedAtIso,
+      nowIso: options.nowIso ?? new Date().toISOString(),
+      ...(options.isAwaitingClarification === undefined
+        ? {}
+        : { isAwaitingClarification: options.isAwaitingClarification }),
+      ...(options.isAwaitingPermissionDecision === undefined
+        ? {}
+        : { isAwaitingPermissionDecision: options.isAwaitingPermissionDecision }),
+      ...(options.isResting === undefined ? {} : { isResting: options.isResting }),
+      ...(options.isExplicitUserStop === undefined
+        ? {}
+        : { isExplicitUserStop: options.isExplicitUserStop }),
+      ...(options.hasLongRunningSubordinateTask === undefined
+        ? {}
+        : { hasLongRunningSubordinateTask: options.hasLongRunningSubordinateTask }),
+    });
+    if (options.isJsonOutput) {
+      printJson({
+        instructionIdentifier: evaluation.instructionIdentifier,
+        kind: evaluation.kind,
+        deadlineMilliseconds: evaluation.deadlineMilliseconds,
+        elapsedMilliseconds: evaluation.elapsedMilliseconds,
+        remainingMilliseconds: evaluation.remainingMilliseconds,
+        isTruthfulTimeout: evaluation.isTruthfulTimeout,
+        canAcceptNewInstruction: evaluation.canAcceptNewInstruction,
+        isGatedByExistingGate: evaluation.isGatedByExistingGate,
+        isWorkCompleted: evaluation.isWorkCompleted,
+        detail: evaluation.detail,
+      });
+    } else {
+      process.stdout.write(evaluation.kind + "： " + evaluation.detail + "\n");
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    logToStderr("指令期限评估失败: " + (error as Error).message);
+    return EXIT_CODES.FAILURE;
+  }
+}
+
 export async function executeCrossProjectListCommand(
   options: CrossProjectListCommandOptions,
 ): Promise<number> {
