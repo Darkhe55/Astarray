@@ -12,6 +12,13 @@ import path from "node:path";
 // 装配层内部使用（不是再导出）：把真实用量观测接到账目存储上（2026-10-06 接线）。
 import { createProviderUsageLedgerObserver } from "./orchestration/provider-usage-ledger-observer.js";
 import { UsageLedgerStore } from "./orchestration/usage-ledger-store.js";
+// SMART-01-04：指令窗口与三分钟期限必须由**产品入口**真实驱动（此前只有 re-export 的独立组件）。
+import { InstructionWindowStore } from "./orchestration/instruction-window-store.js";
+import type { InstructionWindowSnapshot } from "./orchestration/instruction-window-store.js";
+import {
+  evaluateInstructionDeadline,
+  type InstructionDeadlineEvaluation,
+} from "./orchestration/main-agent-deadline-supervisor.js";
 
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
@@ -2639,6 +2646,156 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     };
   }
 
+  /**
+   * SMART-01-04：接收一条用户指令进入**指令窗口**（智能模式计数 / 队列 / 准入）。
+   *
+   * - 窗口上限由 `InstructionWindowStore`（默认 3）决定；超出即**排队**，绝不静默丢弃；
+   * - 同 `idempotencyKey` 同参幂等复用、异参拒绝（不覆盖既有指令）；
+   * - 准入是**原子**的（同步段内判容量并占位），故连发不会超容；
+   * - 期限自**本地接收**（admittedAtIso）起计，排队等待**不得**在取出队列时重新计时。
+   *
+   * 本入口只登记与判定窗口，不代替任务派发：派发仍走 `submitTask`（本地控制面）。
+   */
+  async acceptUserInstruction(input: {
+    sessionId: string;
+    instructionText: string;
+    idempotencyKey: string;
+    /** 指令 revision（修订绑定原指令；缺省 1）。 */
+    instructionRevision?: number;
+    /** 显式接收时间（缺省当前时间；供确定性判定与恢复对账使用）。 */
+    nowIso?: string;
+    /** 指令来源；默认 `user`。Agent 派生节点只能传 `agent`（层级 1 或以下，不能规避窗口计数）。 */
+    sourceKind?: "user" | "agent";
+  }): Promise<{
+    instructionIdentifier: string;
+    instructionRevision: number;
+    admissionOutcome: "admitted" | "queued" | "duplicate-idempotent" | "idempotency-conflict";
+    admittedAtIso: string;
+    windowCapacity: number;
+    activeInstructionCount: number;
+    detail: string;
+  }> {
+    this.assertOpen();
+    this.requireSession(input.sessionId);
+    const instructionText = input.instructionText.trim();
+    if (instructionText === "") {
+      throw new PublicApplicationError("invalid-arguments", "指令文本为空，拒绝接收");
+    }
+    if (input.idempotencyKey.trim() === "") {
+      throw new PublicApplicationError("invalid-arguments", "指令幂等键为空，拒绝接收");
+    }
+    const instructionRevision = input.instructionRevision ?? 1;
+    const nowIso = input.nowIso ?? new Date().toISOString();
+    this.userInstructionCounter += 1;
+    const defaultIdentifier =
+      "user-instruction-" + nowIso + "-" + String(this.userInstructionCounter);
+    const store = await this.getInstructionWindowStore();
+    const result = await store.admitInstruction({
+      instructionIdentifier: defaultIdentifier,
+      instructionRevision,
+      sourceKind: input.sourceKind ?? "user",
+      instructionText,
+      idempotencyKey: input.idempotencyKey,
+      nowIso,
+    });
+    const snapshot = await store.snapshot();
+    const admittedRecord = [...snapshot.activeInstructions, ...snapshot.queuedInstructions].find(
+      (record) => record.instructionIdentifier === result.instructionIdentifier,
+    );
+    return {
+      instructionIdentifier: result.instructionIdentifier,
+      instructionRevision,
+      admissionOutcome: result.outcome,
+      admittedAtIso: admittedRecord?.admittedAtIso ?? nowIso,
+      windowCapacity: snapshot.windowCapacity,
+      activeInstructionCount: snapshot.activeInstructions.length,
+      detail: result.detail,
+    };
+  }
+
+  /** SMART-01-04：指令窗口快照（窗口内 / 排队 / 终态；UI 据此区分"已派发"与"工作成果完成"）。 */
+  async queryInstructionWindow(input: {
+    sessionId: string;
+  }): Promise<InstructionWindowSnapshot> {
+    this.assertOpen();
+    this.requireSession(input.sessionId);
+    return (await this.getInstructionWindowStore()).snapshot();
+  }
+
+  /**
+   * SMART-01-04：评估一条已接收指令的**三分钟处理期限**（含队列等待）。
+   *
+   * 语义全部委托 `evaluateInstructionDeadline`（既有冻结契约），本入口只负责
+   * 取出**接收时间**并如实回传：超期 ⇒ `isTruthfulTimeout=true` 且**不得**伪报已派发；
+   * 等待澄清 ⇒ `isWorkCompleted=false`；门禁（权限等待/休息/显式停止）优先，不被补位绕过。
+   */
+  async evaluateInstructionHandlingDeadline(input: {
+    sessionId: string;
+    idempotencyKey: string;
+    nowIso?: string;
+    dispatchedAtIso?: string | null;
+    isAwaitingClarification?: boolean;
+    isAwaitingPermissionDecision?: boolean;
+    isResting?: boolean;
+    isExplicitUserStop?: boolean;
+    hasLongRunningSubordinateTask?: boolean;
+  }): Promise<InstructionDeadlineEvaluation & { admittedAtIso: string }> {
+    this.assertOpen();
+    this.requireSession(input.sessionId);
+    const snapshot = await (await this.getInstructionWindowStore()).snapshot();
+    const allRecords = [
+      ...snapshot.activeInstructions,
+      ...snapshot.queuedInstructions,
+      ...snapshot.terminalInstructions,
+    ];
+    const record = allRecords.find(
+      (candidate) => candidate.idempotencyKey === input.idempotencyKey,
+    );
+    if (record === undefined) {
+      throw new PublicApplicationError(
+        "unknown-instruction",
+        "未知指令幂等键：拒绝评估（不得伪造一条指令）",
+      );
+    }
+    const evaluation = evaluateInstructionDeadline({
+      instructionIdentifier: record.instructionIdentifier,
+      acceptedAtIso: record.admittedAtIso,
+      nowIso: input.nowIso ?? new Date().toISOString(),
+      ...(input.dispatchedAtIso === undefined ? {} : { dispatchedAtIso: input.dispatchedAtIso }),
+      ...(input.isAwaitingClarification === undefined
+        ? {}
+        : { isAwaitingClarification: input.isAwaitingClarification }),
+      ...(input.isAwaitingPermissionDecision === undefined
+        ? {}
+        : { isAwaitingPermissionDecision: input.isAwaitingPermissionDecision }),
+      ...(input.isResting === undefined ? {} : { isResting: input.isResting }),
+      ...(input.isExplicitUserStop === undefined
+        ? {}
+        : { isExplicitUserStop: input.isExplicitUserStop }),
+      ...(input.hasLongRunningSubordinateTask === undefined
+        ? {}
+        : { hasLongRunningSubordinateTask: input.hasLongRunningSubordinateTask }),
+    });
+    return { ...evaluation, admittedAtIso: record.admittedAtIso };
+  }
+
+  /** 指令窗口存储（单一状态目录；无状态目录时响亮失败，不静默降级）。 */
+  private async getInstructionWindowStore(): Promise<InstructionWindowStore> {
+    if (this.instructionWindowStore !== null) {
+      return this.instructionWindowStore;
+    }
+    if (this.stateDirectory === null) {
+      throw new PublicApplicationError(
+        "missing-state-directory",
+        "未配置状态目录：无法驱动指令窗口（拒绝隐式落盘到当前目录）",
+      );
+    }
+    this.instructionWindowStore = new InstructionWindowStore({
+      baseDirectory: this.stateDirectory,
+    });
+    return this.instructionWindowStore;
+  }
+
   /** 安全关闭：会话转 closed、订阅释放、运行资源回收。 */
   async shutdown(): Promise<void> {
     if (this.isClosedFlag) {
@@ -2839,6 +2996,11 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
 
   private eventCounter = 0;
   private readonly sessionEventRevisionBySessionId = new Map<string, number>();
+
+  /** SMART-01-04：指令窗口存储（按会话共享同一状态目录；懒构造，避免无谓落盘）。 */
+  private instructionWindowStore: InstructionWindowStore | null = null;
+  /** 用户指令标识序号（本地受理标识；不用模型文本合成）。 */
+  private userInstructionCounter = 0;
 
   private nextEventIdempotencyId(): string {
     this.eventCounter += 1;

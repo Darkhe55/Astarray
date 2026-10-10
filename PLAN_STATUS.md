@@ -11,7 +11,7 @@
 | SUM-01 / SUM-02 / GUIDE-01 | re-verifying | 已有实现、入口和包/计量报告，非未开始；逐条核对卡内剩余验收，再收口；见 SUM01_04B、SUM02_04、GUIDE01_04 报告 |
 | EVENT-01 | pending | 本轮未取得完成证据，不凭 GUIDE 完成推断 |
 | OBS（PERF/USAGE/DIAG） | re-verifying | 存储、查询、部分采集及包级概览成立；需要逐组核对全部生产采集与入口范围，非整体未实施 |
-| SMART-01 | in_progress | 02/03 组件证据保留；04 窗口到模型运行/四入口完整接线与包级场景待验收，公开 re-export 和概览查询不替代执行闭环 |
+| SMART-01 | in_progress（**2026-10-10 本轮：SDK 入口已真实接线**） | 02/03 组件证据保留；04 **SDK 入口**已完成：`acceptUserInstruction`（原子准入、上限 3 第 4 条排队、同键幂等/异参拒绝）、`queryInstructionWindow`、`evaluateInstructionHandlingDeadline`（期限自**接收**起计含队列等待、超期如实报超时、澄清不算完成、权限/休息/停止门禁优先、未知键响亮拒绝）；反例先红后绿见 `tests/core/integration/smart01-window-deadline-entry.test.ts`（5 条）。**仍未完成**：CLI/TUI/GUI 三入口接线与**包级 tarball 验收**、"模拟慢模型/长下级任务仍能接收新指令"的**真实运行**证据（此前只有离线探针）⇒ 不主张 SMART-01-04 通过 |
 | PROJECT-01 | in_progress | 授权/回执/查询组件成立；readResource/importCopy 尚无真实资源 I/O，不能把回执当借阅/导入完成；需接线及来源零写入动态证据 |
 | RELIABILITY-01 | in_progress | 已有修复保留；R4 SDK 幂等账目损坏处理、并发落盘、提前拒绝结算与备份需返修；故障矩阵未齐 |
 | E2E-01-03 | done（卡内明确验收范围） | 2026-10-09 真实 Provider、隔离包与入库判定；人工并发口径按该卡记录，不扩大为所有并发情形 |

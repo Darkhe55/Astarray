@@ -1,6 +1,6 @@
 # SMART-01：智能指令窗口与主 Agent 响应期限
 
-日期：2026-10-01；2026-10-10 对账状态：in_progress。02/03 队列与分类组件已有证据；04 公开导出、概览入口和独立持续接收实验不等于窗口实际驱动模型的四入口闭环，接线/包场景继续验收。计划状态修改：必须，继承 IMPLEMENTATION_PLAN §8.4 用户授权。
+日期：2026-10-01；2026-10-10 对账状态：in_progress。02/03 队列与分类组件已有证据；04 已于 2026-10-10 补上 **SDK 入口真实接线**（`acceptUserInstruction` / `queryInstructionWindow` / `evaluateInstructionHandlingDeadline`，反例先红后绿），但 **CLI/TUI/GUI 三入口、包级验收与"真实运行"持续接收证据仍未完成**，故整体仍 in_progress。计划状态修改：必须，继承 IMPLEMENTATION_PLAN §8.4 用户授权。
 
 ## 1. 目标与关联
 
@@ -82,6 +82,27 @@
 | SMART-01-02 | 持久队列、原子准入/回执/补位、模式及窗口设置 | 上限3时第4条排队；重复/乱序回执、降上限、同键异参、并发连发和重启无重复投递 |
 | SMART-01-03 | 早停分类、漏回执兜底及澄清参考 | 早停不注入新工作；无答案保持等待；仅抽取答案；混合信封保留剩余任务；停止/休息/授权不被绕过 |
 | SMART-01-04 | 主 Agent 期限监督、持续接收、SDK/CLI/TUI/GUI入口和包验收 | 模拟慢模型/长下级任务仍能接收新指令；180秒内派发或如实超时/待澄清；关闭回收，UI状态不冒充成果完成 |
+
+**SMART-01-04 进展（2026-10-10，本轮）**：指令窗口与三分钟期限此前只有"**被 re-export 的独立组件**"
+（`InstructionWindowStore`、`evaluateInstructionDeadline`、`buildBackfillPlan`），
+`AstarrayApplicationFacade` 上**没有任何入口真实消费它们** ⇒ "第 4 条排队 / 超期如实报超时 /
+等待澄清不冒充完成"都不能从产品入口取得。本轮补上 **SDK 入口真实接线**：
+
+- `acceptUserInstruction({ sessionId, instructionText, idempotencyKey, instructionRevision?, nowIso?, sourceKind? })`
+  —— 原子准入（上限默认 3，第 4 条 `queued` 不丢弃）、同键同参幂等/异参拒绝；
+- `queryInstructionWindow({ sessionId })` —— 窗口内/排队/终态快照；
+- `evaluateInstructionHandlingDeadline({ sessionId, idempotencyKey, ...门禁与澄清入参 })`
+  —— 期限自**接收时间**起计（**含队列等待**，不得取出队列时重新计时）、超期 `isTruthfulTimeout=true`
+  且 `isWorkCompleted=false`、等待澄清 `awaiting-clarification` 非完成、权限等待/休息/显式停止
+  `isGatedByExistingGate=true` 且 `canAcceptNewInstruction=false`、未知幂等键**响亮拒绝**。
+- 反例（先红后绿）：`tests/core/integration/smart01-window-deadline-entry.test.ts` 5 条，
+  实现前 `acceptUserInstruction is not a function` / 5 failed。
+- **尚未完成（如实保留，不主张 SMART-01-04 通过）**：CLI/TUI/GUI **三个入口**的接线、
+  **包级 tarball 验收**、以及"模拟慢模型/长下级任务仍能接收新指令"的**真实运行**证据（此前只用离线探针）。
+- **已登记的两处口径待确认**（本轮未改生产语义，避免超出检查点）：①契约 §4.3 写
+  "`accepted` + `dispatched` + `awaiting-clarification` 计入占用"，而 store 的 `SLOT_OCCUPYING_STATES`
+  为 `dispatched`/`awaiting-clarification`/`partially-completed`（`accepted` 只作排队标记）；
+  ②本轮窗口为 **facade 级**（同一状态目录单一窗口），按会话隔离与否需在入口接线时明确决定。
 
 每次执行一个检查点，超过三小时再拆分。依赖现有指导安全点、权威任务状态和恢复能力的真实接线证据，未满足前驱先登记，不靠历史 done 推断。
 
