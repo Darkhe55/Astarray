@@ -198,4 +198,59 @@ describe("恢复分类：已确认成功不得重放（含非幂等）", () => {
       });
     }
   });
+
+  /**
+   * ⑧ 零预算必须**真正生效**（2026-10-10 返修，RELIABILITY-01-02）：
+   *
+   * 静态疑点原文要求核查"**零预算**等输入"。既有实现只对 `confirmed-failure` 分支检查了
+   * `remainingRetryBudget > 0`，而**尾部分支（幂等 planned/started/result-unknown）**
+   * 无条件返回 `bounded-retry` —— 即使预算为 0 也告诉调用方"可以重试"。
+   * 调用方（`recovery-center-controller`）只读 `category`，不自行判预算，
+   * 因此零预算下幂等操作仍会被重试：**预算失效**。
+   *
+   * 期望：预算为 0 时**绝不**给出可重试分类；预算充足时既有语义不变（见 ⑦）。
+   */
+  it("⑧ 零预算 + 幂等 planned/started/result-unknown → 绝不判为可重试", () => {
+    for (const state of ["planned", "started", "result-unknown"] as const) {
+      const result = service.classifyRecovery({
+        checkpoint: makeCheckpoint({
+          toolCalls: [
+            {
+              toolCallIdentifier: "tc-" + state + "-idempotent-zero-budget",
+              toolName: "project.read",
+              state,
+              isIdempotent: true,
+              completionAttemptIdentifier: null,
+            },
+          ],
+        }),
+        remainingRetryBudget: 0,
+      });
+      const classification = result.toolCallClassifications[0]?.classification;
+      expect(classification?.category).not.toBe("bounded-retry");
+      // 结果未知/未收敛的幂等调用在零预算下必须阻塞对账，不得静默重试。
+      expect(classification?.category).toBe("blocked-uncertain-side-effect");
+    }
+  });
+
+  it("⑨ 预算充足时幂等 result-unknown 仍可有界重试（不得过度收紧）", () => {
+    const result = service.classifyRecovery({
+      checkpoint: makeCheckpoint({
+        toolCalls: [
+          {
+            toolCallIdentifier: "tc-result-unknown-idempotent",
+            toolName: "project.read",
+            state: "result-unknown",
+            isIdempotent: true,
+            completionAttemptIdentifier: null,
+          },
+        ],
+      }),
+      remainingRetryBudget: 3,
+    });
+    expect(result.toolCallClassifications[0]?.classification).toEqual({
+      category: "bounded-retry",
+      remainingRetryBudget: 3,
+    });
+  });
 });

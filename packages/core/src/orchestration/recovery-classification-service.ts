@@ -153,7 +153,20 @@ export class RecoveryClassificationService {
         reason: `非幂等工具调用 ${toolCall.toolName}（${toolCall.toolCallIdentifier}）处于 ${toolCall.state}；无法排除部分副作用，禁止自动重试`,
       };
     }
-    // 幂等的 planned/started/result-unknown：可重新调度
+    /**
+     * 幂等的 planned/started/result-unknown：预算充足时可重新调度。
+     *
+     * RELIABILITY-01-02 返修（2026-10-10）：此前尾部分支**无条件**返回 `bounded-retry`，
+     * 即使 `remainingRetryBudget === 0` 也告诉调用方"可以重试"。调用方
+     * `recovery-center-controller` 只读 `category`、不自行判预算，因此零预算下幂等操作
+     * 仍会被重试 —— 预算形同失效。此处补上同一道预算闸门（与 confirmed-failure 分支一致）。
+     */
+    if (remainingRetryBudget <= 0) {
+      return {
+        category: "blocked-uncertain-side-effect",
+        reason: `工具调用 ${toolCall.toolName}（${toolCall.toolCallIdentifier}）处于 ${toolCall.state} 且重试预算为 0；不再自动重试，需对账/人工裁决`,
+      };
+    }
     return { category: "bounded-retry", remainingRetryBudget };
   }
 
