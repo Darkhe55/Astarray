@@ -43,6 +43,13 @@ export interface ToolActionDescriptor {
   isIdempotent: boolean;
   /** 必需参数名（供可校验 schema 分支；缺失即拒绝该 action 的调用）。 */
   requiredParameters: string[];
+  /**
+   * 该 action 是否支持统一的 `format` / `view` 视图参数（MERGE-01 §1.2）。
+   *
+   * 与"必需参数"一样**逐 action** 判定：不适用的 action 收到这些参数必须**拒绝**，
+   * 而不是静默忽略（否则调用方会以为视图语义生效了）。
+   */
+  supportsReadViewParameters?: boolean;
 }
 
 export interface ToolCapabilityFamily {
@@ -70,6 +77,7 @@ export const PROJECT_FILE_READ_FAMILY: ToolCapabilityFamily = {
       requiresPreMutationBackup: false,
       isIdempotent: true,
       requiredParameters: ["filePath"],
+      supportsReadViewParameters: true,
     },
     {
       action: "search",
@@ -190,4 +198,173 @@ export function validateActionArguments(input: {
     }
   }
   return { isValid: true, reason: null };
+}
+
+/** 统一视图参数允许的 `format` 取值（枚举；不接受枚举外取值）。 */
+export const READ_VIEW_FORMATS = ["auto", "text", "code", "markup", "data"] as const;
+export type ReadViewFormat = (typeof READ_VIEW_FORMATS)[number];
+
+/** 统一视图参数允许的 `view` 取值（枚举）。 */
+export const READ_VIEW_KINDS = ["full", "summary", "outline"] as const;
+export type ReadViewKind = (typeof READ_VIEW_KINDS)[number];
+
+export type NormalizeReadViewOutcome =
+  | "normalized"
+  | "unknown-tool-action"
+  | "parameter-not-applicable"
+  | "invalid-arguments"
+  | "invalid-format"
+  | "invalid-view";
+
+export interface NormalizedReadViewParameters {
+  outcome: NormalizeReadViewOutcome;
+  /** 解析出的 action（未解析成功时为 null）。 */
+  action: string | null;
+  /** 规范化的 format；失败时为 null。 */
+  format: ReadViewFormat | null;
+  /** 规范化的 view；失败时为 null。 */
+  view: ReadViewKind | null;
+  /** 既有 `readFile` 视图布尔参数的规范化取值。 */
+  shouldIncludeComments: boolean | null;
+  shouldIncludeImports: boolean | null;
+  reason: string | null;
+}
+
+/**
+ * MERGE-01 §1.2：统一读取工具的 **format / view 参数化**（单一规范化入口）。
+ *
+ * 为什么要有这一层：`readFile` 已有 `shouldIncludeComments` / `shouldIncludeImports`，
+ * 但若每个调用点各自解释"视图参数"，同一族内的语义就会分叉。此处把
+ * "族名或别名 → action → 视图参数"固定为**一个确定性判定点**：
+ *  - 别名与统一名走**同一实现**，规范化结果必须完全一致；
+ *  - 缺省值与**既有读取行为一致**（两个布尔参数缺省 true、format 缺省 `auto`），
+ *    因此引入 format/view **不改变**默认读取；
+ *  - 仅 `supportsReadViewParameters` 的 action 接受这些参数，其余**拒绝**（不透传、不忽略）；
+ *  - format/view 与布尔参数都做**严格类型与枚举校验**，非法一律拒绝（fail-closed）。
+ */
+export function normalizeReadViewParameters(input: {
+  toolNameOrAlias: string;
+  action?: string;
+  argumentsJson: string;
+}): NormalizedReadViewParameters {
+  const failure = (
+    outcome: NormalizeReadViewOutcome,
+    reason: string,
+    action: string | null = null,
+  ): NormalizedReadViewParameters => ({
+    outcome,
+    action,
+    format: null,
+    view: null,
+    shouldIncludeComments: null,
+    shouldIncludeImports: null,
+    reason,
+  });
+
+  const resolved =
+    input.action === undefined
+      ? resolveToolAction({ toolNameOrAlias: input.toolNameOrAlias })
+      : resolveToolAction({ toolNameOrAlias: input.toolNameOrAlias, action: input.action });
+  if (resolved === null) {
+    return failure(
+      "unknown-tool-action",
+      "未知工具名/别名或未知 action（不得猜测）",
+    );
+  }
+
+  let parsed: Record<string, unknown>;
+  try {
+    const candidate = JSON.parse(input.argumentsJson) as unknown;
+    if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
+      return failure("invalid-arguments", "参数不是 JSON 对象", resolved.action);
+    }
+    parsed = candidate as Record<string, unknown>;
+  } catch {
+    return failure("invalid-arguments", "参数不是合法 JSON", resolved.action);
+  }
+
+  const hasViewParameter =
+    "format" in parsed || "view" in parsed || "shouldIncludeComments" in parsed ||
+    "shouldIncludeImports" in parsed;
+  const supportsViewParameters = (() => {
+    for (const family of REGISTERED_TOOL_CAPABILITY_FAMILIES) {
+      if (family.familyName !== resolved.familyName) {
+        continue;
+      }
+      const descriptor = family.actions.find(
+        (candidate) => candidate.action === resolved.action,
+      );
+      return descriptor?.supportsReadViewParameters === true;
+    }
+    return false;
+  })();
+  if (hasViewParameter && !supportsViewParameters) {
+    return failure(
+      "parameter-not-applicable",
+      "该 action 不支持 format/view 视图参数（拒绝，不得静默忽略）",
+      resolved.action,
+    );
+  }
+
+  // format：缺省 auto；必须在枚举内
+  const rawFormat = parsed["format"];
+  let format: ReadViewFormat = "auto";
+  if (rawFormat !== undefined) {
+    if (typeof rawFormat !== "string" || !READ_VIEW_FORMATS.includes(rawFormat as ReadViewFormat)) {
+      return failure(
+        "invalid-format",
+        "format 必须是枚举值之一: " + READ_VIEW_FORMATS.join(" | "),
+        resolved.action,
+      );
+    }
+    format = rawFormat as ReadViewFormat;
+  }
+
+  // view：缺省 full；必须在枚举内
+  const rawView = parsed["view"];
+  let view: ReadViewKind = "full";
+  if (rawView !== undefined) {
+    if (typeof rawView !== "string" || !READ_VIEW_KINDS.includes(rawView as ReadViewKind)) {
+      return failure(
+        "invalid-view",
+        "view 必须是枚举值之一: " + READ_VIEW_KINDS.join(" | "),
+        resolved.action,
+      );
+    }
+    view = rawView as ReadViewKind;
+  }
+
+  // 既有布尔视图参数：缺省 true（与既有读取行为一致）；必须为布尔类型。
+  const readBoolean = (
+    parameterName: string,
+    defaultValue: boolean,
+  ): { isOk: true; value: boolean } | { isOk: false } => {
+    const rawValue = parsed[parameterName];
+    if (rawValue === undefined) {
+      return { isOk: true, value: defaultValue };
+    }
+    if (typeof rawValue !== "boolean") {
+      return { isOk: false };
+    }
+    return { isOk: true, value: rawValue };
+  };
+  const comments = readBoolean("shouldIncludeComments", true);
+  const imports = readBoolean("shouldIncludeImports", true);
+  if (!comments.isOk || !imports.isOk) {
+    return failure(
+      "invalid-arguments",
+      "shouldIncludeComments/shouldIncludeImports 必须为布尔值",
+      resolved.action,
+    );
+  }
+
+  return {
+    outcome: "normalized",
+    action: resolved.action,
+    format,
+    view,
+    shouldIncludeComments: comments.value,
+    shouldIncludeImports: imports.value,
+    reason: null,
+  };
 }

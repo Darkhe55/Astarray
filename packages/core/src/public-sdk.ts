@@ -43,10 +43,17 @@ export {
 // 只读投影由本入口导出，保证 Ponder/主 Agent 视图不会因统一族名而暴露隐藏写动作。
 export {
   PROJECT_FILE_READ_FAMILY,
+  READ_VIEW_FORMATS,
+  READ_VIEW_KINDS,
   REGISTERED_TOOL_CAPABILITY_FAMILIES,
+  normalizeReadViewParameters,
   projectReadOnlyActionProjection,
   resolveToolAction,
   validateActionArguments,
+  type NormalizedReadViewParameters,
+  type NormalizeReadViewOutcome,
+  type ReadViewFormat,
+  type ReadViewKind,
   type ResolvedToolAction,
   type ToolActionDescriptor,
   type ToolActionMutationKind,

@@ -96,8 +96,29 @@
     参数不可解析 / 缺必需参数 ⇒ 拒绝 —— 动作切换（如 read→search）沿用旧参数会被明确拒绝。
 - 反例（先红后绿）：`tests/core/unit/merge01-tool-action-registry.test.ts` 8 条
   （实现前模块不存在即失败）。
-- **仍未完成**：把该族接到工具描述符/执行派发与设置入口、`format/view` 参数化、
-  执行组到原指令映射与合并开关、NODECTX-01 全部内容 ⇒ **不主张 MERGE-01 通过**。
+- **仍未完成**：把该族接到工具描述符/执行派发与设置入口、执行组到原指令映射与合并开关、
+  NODECTX-01 全部内容 ⇒ **不主张 MERGE-01 通过**。
+
+### MERGE-01-02 进展（2026-10-10）：统一读取工具的 format / view 参数化
+
+卡内 §1.2 原文点名"例如统一读取工具的 **format/view 参数**，复用 READ-FORMAT/SUM"。
+`readFile` 虽已有 `shouldIncludeComments`/`shouldIncludeImports`，但**没有**统一到能力族的
+format/view 参数层，故同一族内"视图参数"的语义没有单一判定点，容易被各调用点各写一套。
+
+- 在 `packages/core/src/tools/tool-action-registry.ts` 增加**单一规范化入口**
+  `normalizeReadViewParameters()`（纯函数）：族名或别名 → action → 视图参数；
+- 硬保证：
+  · **别名与统一名走同一实现**，规范化结果必须完全一致（不得两套行为）；
+  · 缺省与**既有读取行为一致**（两个布尔参数缺省 `true`、`format` 缺省 `auto`）⇒
+    引入 format/view **不改变**默认读取；
+  · `format`/`view` 为**枚举**（`READ_VIEW_FORMATS` / `READ_VIEW_KINDS`），枚举外一律拒绝；
+  · 仅 `supportsReadViewParameters` 的 action 接受这些参数，**其余拒绝**
+    （`parameter-not-applicable`，不静默忽略、不透传）；
+  · 未知族名/别名/action、参数不可解析、布尔参数非布尔 ⇒ 一律拒绝（fail-closed，不猜测）。
+- 已公开导出并从**构建产物**实测：缺省 `normalized auto full true`；非法 view ⇒ `invalid-view`。
+- 反例（先红后绿）：`tests/core/unit/merge01-read-view-parameters.test.ts` 7 条（实现前全红）。
+- **仍未完成**：把规范化结果接到 `readFile`/`searchProjectText` 的实际执行路径、
+  设置入口、执行组到原指令映射与合并开关、NODECTX-01 全部内容。
 
 测试重点：上限 3 不因分组越窗；A 写 X/B 写 Y 不误合并；重复读减少 I/O 但各回执可追踪；参数 read→write、路径逃逸、批次夹带动作被拒；总开关×单工具细分×基线三态×规则冲突矩阵；同键不同值重新授权，单纯键序变化不重复询问；取消和崩溃不重做已成功写入。指标记录请求/工具次数、token、延迟、误合并/漏合并与返修次数，不预设虚假节省百分比。
 
