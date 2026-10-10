@@ -151,6 +151,40 @@ GUI/TUI 人工体验：用户能区分草案/已验证/已启用、项目专用/
 
 遵守可读变量名、布尔/时间单位规范、个体来源、备份、独立反馈和 Git 分流职责。修改前备份，提交只含自己的改动；阶段验收及本地提交后按仓库规则尝试 push，不夹带并行文件。
 
+## 13. 实施进展（2026-10-10，TOOLKIT-01-01 首片）
+
+**核查结论（不凭历史 done 判断）**：工匠侧**已有**实质接线 ——
+`CraftsmanWorkflowLifecycleController`（bundle schema 校验、单链约束、工具须已存在且已授权、
+缺失只报 `blocked-with-dependency-gap`、**作者不能自验**、验收绑定 bundleId/版本/内容哈希）、
+`CRAFTSMAN_WORKFLOW_BUNDLE_V1` schema、披露/阶段/生命周期控制器与 store。
+**缺口**：§4/§5 要求的**包登记与作用域**这一层**完全不存在** ——
+三层作用域（`project`/`user`/`portable`）、"名称不是路由键"、"已启用内容不可原地修改"、
+"运行前校验实际哈希"、"未启用只能查看不能调用"、"推广只产生提案"均无判定点。
+
+**本片交付**：新增 `packages/core/src/toolkit/tool-package-registry.ts`（纯本地确定性判定，
+不执行工具、不联网、不读凭据），逐条落实卡内硬要求：
+
+| 卡内要求 | 实现 |
+| --- | --- |
+| 名称不是路由键，禁止自动选"最新同名" | 只能按 `ID+版本+哈希` 寻址；`resolveByReadableName()` **恒返回 null**（可执行断言） |
+| 已启用内容不可原地修改 | 同 `ID+版本` 换哈希**拒绝**，须升版本 |
+| 运行前校验实际文件哈希 | `verifyContentBeforeUse()` 不一致即拒绝（拒绝"校验后偷换内容"） |
+| 三层作用域 | `project` 仅来源项目可发现/启用；`user`/`portable` 仍需**目标项目显式启用** |
+| 未启用只能查看不能调用 | `resolveForExecution()` 仅对"该项目已显式启用且状态 enabled"返回 |
+| 推广不自动发生 | `proposePromotion()` 只产生提案、**不改变可用性**；`applyPromotionDecision()` 仅改作用域，**不在任何项目自动启用** |
+| 来源身份具体到 agentInstanceId | 生成者/验收者必须为非空 `agentInstanceId`，且**两者不同**（作者不能自验） |
+| 不含凭据/nonce/私有记忆 | 命中禁止字段**登记即拒绝** |
+| 状态最小集合 | `draft/validated/enabled/rejected/disabled/deprecated`；未验收（`isAcceptanceRecorded:false`）不得启用 |
+
+- 反例（先红后绿）：`tests/core/unit/toolkit01-tool-package-registry.test.ts` **9 条**
+  （实现前模块不存在即失败）。
+- 已由 `public-sdk` 公开导出，并从**构建产物**实测可达。
+- **仍未完成（不主张 TOOLKIT-01 通过）**：01 的其余部分（隔离 fixture 与基线成本记录）、
+  02（项目配方草案→独立验证→登记/启用→按需发现→实际调用，须证明**复用不是只 import**）、
+  03（用户级推广与第二个项目 fixture、来源项目零修改、目标权限不继承、导出无敏感数据）、
+  04（参数授权设置接线，依赖 MERGE-01）、05（受控确定性程序工具与沙箱/broker 边界）、
+  06（SDK 与 CLI/TUI/GUI 最小管理入口、tarball 隔离包闭环、收益评估）。
+
 参考用于设计借鉴，不构成本项目已兼容或依赖安装要求：
 
 - [MCP 工具接口与命名消歧](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/draft/server/tools.mdx)：结构化输入输出，工具元数据不替代本地授权。

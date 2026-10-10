@@ -60,6 +60,19 @@ export {
   type ToolCapabilityFamily,
 } from "./tools/tool-action-registry.js";
 
+// ─── TOOLKIT-01：工具包登记与作用域公开入口 ───
+// 卡内 §4/§5 的作用域（project/user/portable）、不可变、显式启用与推广提案
+// 由本地确定性注册表判定；消费者与包级验收需要经公开入口使用它。
+export {
+  TOOL_PACKAGE_SCHEMA_VERSION,
+  ToolPackageRegistry,
+  type ToolPackageKind,
+  type ToolPackagePromotionProposal,
+  type ToolPackageRegistration,
+  type ToolPackageScope,
+  type ToolPackageStatus,
+} from "./toolkit/tool-package-registry.js";
+
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
 // 否则 runtime: "provider" 在打包产物上不可用。
