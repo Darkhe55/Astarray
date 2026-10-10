@@ -223,4 +223,47 @@ describe("TOOLKIT-01-03：推广不自动启用、目标项目零修改、版本
     expect(outcome.inheritedPermissionDeclarations).toEqual([]);
     expect(candidate.carriedPermissionDeclarations).toEqual([]);
   });
+
+  it("⑫ 候选哈希必须是**真内容寻址**：通用逻辑变化 ⇒ 哈希必然变化", () => {
+    /**
+     * 回归背景（2026-10-10）：初版候选哈希是**自造多项式哈希**并把 16 位十六进制
+     * 重复 4 次凑成 64 位 —— "确定性但不可内容寻址"，原则上"内容变了哈希却没变"。
+     * 本用例直接钉住"内容变 ⇒ 哈希变"，防止再退回假哈希。
+     */
+    const baseline = createPromotionCandidate({
+      sourcePackage: buildSourcePackage(),
+      targetScope: "user",
+      reason: "基线",
+    });
+    const changedLogic = createPromotionCandidate({
+      sourcePackage: {
+        ...buildSourcePackage(),
+        generalLogic: { steps: ["parse-test-results", "compute-statistics", "extra-step"] },
+      },
+      targetScope: "user",
+      reason: "逻辑变化",
+    });
+    const changedPreferences = createPromotionCandidate({
+      sourcePackage: {
+        ...buildSourcePackage(),
+        userPreferences: { language: "en-US", ordering: "conclusion-first" },
+      },
+      targetScope: "user",
+      reason: "偏好变化",
+    });
+    expect(changedLogic.candidateContentHash).not.toBe(baseline.candidateContentHash);
+    expect(changedPreferences.candidateContentHash).not.toBe(baseline.candidateContentHash);
+    // 同输入必须同哈希（确定性不得丢失）
+    const identical = createPromotionCandidate({
+      sourcePackage: buildSourcePackage(),
+      targetScope: "user",
+      reason: "基线（同输入）",
+    });
+    expect(identical.candidateContentHash).toBe(baseline.candidateContentHash);
+    // 哈希形态必须是 64 位十六进制（不得出现"重复 4 次"那种低熵形态）
+    expect(baseline.candidateContentHash).toMatch(/^sha256:[a-f0-9]{64}$/);
+    const hexPart = baseline.candidateContentHash.slice("sha256:".length);
+    const firstQuarter = hexPart.slice(0, 16);
+    expect(hexPart).not.toBe(firstQuarter.repeat(4));
+  });
 });

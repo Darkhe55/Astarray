@@ -18,6 +18,8 @@
  *  - **目标项目零修改**、**目标权限不继承**、**固定版本+哈希**（不自动随库升级）。
  */
 
+import { createHash } from "node:crypto";
+
 export type ToolPackagePromotionScope = "user" | "portable";
 
 /** 安全范围的配置键：这些键**不得**被偏好/项目适配/本次参数覆盖。 */
@@ -109,29 +111,43 @@ function stableStringify(value: unknown): string {
   });
 }
 
-/** 本地确定性内容哈希（无 I/O；用于候选包新哈希的稳定计算）。 */
-function computeCandidateContentHash(input: {
+/**
+ * 构造候选哈希的**确定性载荷**（键序稳定）。
+ *
+ * 与 `computeCandidateContentHash` 分开，是为了让"载荷构造"与"哈希算法"
+ * 各自可单独阅读与核对。
+ */
+export function buildPromotionCandidateHashPayload(input: {
   sourceContentHash: string;
   targetScope: string;
   generalLogic: unknown;
   userPreferences: unknown;
   candidateVersion: number;
 }): string {
-  // 复用来源哈希 + 结构化内容，保证"同样输入 ⇒ 同样哈希"，且与来源哈希不同。
-  const payload = [
+  return [
     input.sourceContentHash,
     input.targetScope,
     String(input.candidateVersion),
     stableStringify(input.generalLogic),
     stableStringify(input.userPreferences),
   ].join("|");
-  let hashValue = 0n;
-  const primeModulus = 9007199254740881n;
-  for (let index = 0; index < payload.length; index += 1) {
-    hashValue = (hashValue * 131n + BigInt(payload.charCodeAt(index))) % primeModulus;
-  }
-  const baseHash = hashValue.toString(16).padStart(16, "0");
-  return "sha256:" + baseHash.repeat(4).slice(0, 64);
+}
+
+/**
+ * 本地确定性内容哈希（无 I/O）。
+ *
+ * 说明（2026-10-10 由反例修正）：初版是**自造的多项式哈希**，并把 16 位十六进制
+ * **重复 4 次**凑成 64 位 —— 那是"确定性但**不可内容寻址**"的假哈希：
+ * 64 位里只有 16 位承载信息，且与真实字节没有对应关系，
+ * 于是"内容变了哈希却没变"在原理上就可能发生。
+ * 现在改为对**载荷字节**做真实 sha256，使"内容变了 ⇒ 哈希必然变"，
+ * 与注册表的哈希校验口径一致。
+ *
+ * 导出该函数是为了让**调用方核对副本**时**复用同一算法**，
+ * 而不是各自重写一份（重写必然分叉）。
+ */
+export function computePromotionCandidateContentHash(payload: string): string {
+  return "sha256:" + createHash("sha256").update(payload, "utf8").digest("hex");
 }
 
 let nextCandidateSequence = 1;
@@ -159,13 +175,15 @@ export function createPromotionCandidate(input: {
     sourceContentHash: input.sourcePackage.contentHash,
     sourceProjectIdentifier: input.sourcePackage.sourceProjectIdentifier,
     candidateVersion,
-    candidateContentHash: computeCandidateContentHash({
-      sourceContentHash: input.sourcePackage.contentHash,
-      targetScope: input.targetScope,
-      generalLogic,
-      userPreferences,
-      candidateVersion,
-    }),
+    candidateContentHash: computePromotionCandidateContentHash(
+      buildPromotionCandidateHashPayload({
+        sourceContentHash: input.sourcePackage.contentHash,
+        targetScope: input.targetScope,
+        generalLogic,
+        userPreferences,
+        candidateVersion,
+      }),
+    ),
     targetScope: input.targetScope,
     generalLogic,
     userPreferences,

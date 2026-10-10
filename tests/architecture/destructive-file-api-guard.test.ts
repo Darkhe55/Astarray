@@ -41,6 +41,12 @@ const ALLOWED_MODULES: Record<string, { tokens: AllowedTokens; reason: string }>
     tokens: ["copyFile", "rm"],
     reason: "权限组存储管理自身 .bak 与清理；正文写入走原子写（此文件仅 copy/rm）",
   },
+  "core/src/toolkit/promotion-fixtures.ts": {
+    tokens: ["writeFile"],
+    reason:
+      "TOOLKIT-01-03 隔离项目 fixture：只在**调用方传入的临时目录**下创建 fixture 文件，" +
+      "不删除、不覆盖既有内容（仅 writeFile，无 rm/rename/copyFile）",
+  },
   "core/src/tools/session-permission-elevation.ts": {
     tokens: ["rm", "writeFile"],
     reason: "会话提升记录持久化（writeFile + 失效记录清理 rm）",
