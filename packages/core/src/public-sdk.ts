@@ -91,6 +91,22 @@ export {
   type WorkflowRecipeStep,
 } from "./toolkit/workflow-recipe-engine.js";
 
+// ─── TOOLKIT-01-03：项目→用户级/通用推广、三段分离与防提权公开入口 ───
+// 卡内 §5/§6/§7：推广不自动发生、用户批准推广≠在所有项目运行、候选必须去项目化、
+// 配置优先级固定且**安全范围不参与后写覆盖**。这些判定须可复现，故公开导出。
+export {
+  applyPromotionDecision,
+  createPromotionCandidate,
+  resolveEffectiveConfiguration,
+  validatePromotionCandidate,
+  type EffectiveConfigurationResolution,
+  type PromotionCandidateValidation,
+  type PromotionDecisionOutcome,
+  type ToolPackagePromotionCandidate,
+  type ToolPackagePromotionScope,
+  type ToolPackageSourceContent,
+} from "./toolkit/tool-package-promotion.js";
+
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
 // 否则 runtime: "provider" 在打包产物上不可用。

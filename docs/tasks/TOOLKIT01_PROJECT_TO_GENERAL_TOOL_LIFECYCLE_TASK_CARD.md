@@ -206,6 +206,30 @@ GUI/TUI 人工体验：用户能区分草案/已验证/已启用、项目专用/
 - 反例（先红后绿）：`tests/core/unit/toolkit01-workflow-recipe-engine.test.ts` **8 条**
   （实现前模块不存在即失败）；其中 ③⑥ 用**真实内置工具**（`readFile`/`listDirectory`）
   经真实 `PolicyWrapper` 网关跑出内容，证明是真实执行而非 import。
+
+### TOOLKIT-01-03 进展（2026-10-10）：推广去项目化、三段分离与防提权
+
+新增 `packages/core/src/toolkit/tool-package-promotion.ts`（纯本地确定性判定；
+不做 I/O、不联网、不读凭据、不执行工具）：
+
+| 卡内要求（§5/§6/§7/§8） | 实现 |
+| --- | --- |
+| 推广**不自动发生**，只产生候选 | `createPromotionCandidate()` 只产出候选，**不改变任何可用性** |
+| 用户批准推广 **≠** 在所有项目运行 | `applyPromotionDecision()` 的 `enabledProjectIdentifiers` **恒为空**；目标项目须显式启用 |
+| 候选必须**去项目化** | 候选**不含**任何项目适配，并记录 `strippedProjectIdentifiers` |
+| 不带出源码片段/绝对路径/凭据/nonce/私有记忆 | 本地确定性模式匹配，命中即**拒绝**（非模型判断） |
+| `portable` 至少两个结构不同隔离项目 | 保守解读：来源计一个，**另需两个**（合计 ≥3），否则拒绝 |
+| **三段分离** | 通用逻辑 / 项目适配 / 用户偏好分开建模 |
+| 配置优先级固定且**安全范围不参与后写覆盖** | `resolveEffectiveConfiguration()`：包默认→用户偏好→项目适配→本次显式参数；任何层出现安全键或**验收事实键**（`acceptanceVerdict`）即拒绝，须走权限求交 |
+| 未知配置键拒绝 | 声明键集之外的键一律拒绝（schema 校验 fail-closed） |
+| **目标项目零修改** | `isSourceProjectModified` 恒为 `false`（本层不写回来源项目） |
+| **目标权限不继承** | `inheritedPermissionDeclarations` 恒为空，候选不携带来源权限声明 |
+| **固定版本+哈希**，不自动随库升级 | 批准结果固定 `pinnedVersion`/`pinnedContentHash` |
+
+- 反例（先红后绿）：`tests/core/unit/toolkit01-promotion.test.ts` **11 条**
+  （实现前模块不存在即失败）。
+- 一处**解读分歧已如实固化**："两个结构不同的隔离项目"我采用**保守解读**
+  （来源计一、另需两个），理由写入代码注释；若上游采用宽解读，需改此处与测试。
 - **仍未完成**：01 的其余部分（隔离 fixture 与基线成本记录）、
   02 的**真实项目 fixture 与基线成本记录**（引擎与独立验证判定已实现并通过反例，
   但尚未在选定真实重复流程上记录基线成本）、
