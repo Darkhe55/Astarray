@@ -58,16 +58,30 @@ export async function writeAtomicJson(
 }
 
 /**
- * Windows 下 rename 偶发 EPERM/EBUSY（杀软扫描临时文件等瞬时锁），
- * 做有界重试（2 次 × 50ms），避免瞬时抖动导致任务写入失败。
+ * Windows 下 rename 偶发 EPERM/EBUSY（杀软扫描、索引器或并发读句柄造成的**瞬时锁**），
+ * 做**有界指数退避**重试。
+ *
+ * 2026-10-09 实测教训：原实现只重试 3 次 × 50ms（合计约 150ms），在**默认高并发**
+ * （`npm run test:coverage` / `npm run check` / `smoke-install` 内部的 `prepack`）下
+ * 重试预算会被耗尽并抛出 EPERM——真实抓到
+ * `missions/<id>/summary.json` 的 `.tmp → summary.json` rename EPERM，
+ * 表现为整测试套件偶发失败（隔离运行时从不复现）。
+ *
+ * 现改为 7 次、25→800ms 指数退避（合计约 1.6 秒）：
+ * - 仍然**有界**（绝不无限重试，符合仓库"有界重试"纪律）；
+ * - 非可重试错误码**立即**抛出，不掩盖真实错误；
+ * - 预算耗尽后照旧抛出最后一次错误，不静默吞掉。
  */
 async function renameWithRetryOnWindowsContention(
   tempFilePath: string,
   targetFilePath: string,
 ): Promise<void> {
   const retryableErrorCodes = new Set(["EPERM", "EBUSY", "ENOTEMPTY"]);
+  const maximumAttemptCount = 7;
+  const maximumDelayMilliseconds = 800;
+  let delayMilliseconds = 25;
   let lastError: unknown = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < maximumAttemptCount; attempt++) {
     try {
       await fs.rename(tempFilePath, targetFilePath);
       return;
@@ -76,7 +90,11 @@ async function renameWithRetryOnWindowsContention(
       if (!retryableErrorCodes.has((error as NodeJS.ErrnoException).code ?? "")) {
         throw error;
       }
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      if (attempt === maximumAttemptCount - 1) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delayMilliseconds));
+      delayMilliseconds = Math.min(delayMilliseconds * 2, maximumDelayMilliseconds);
     }
   }
   throw lastError;
