@@ -15,6 +15,15 @@ import { UsageLedgerStore } from "./orchestration/usage-ledger-store.js";
 // SMART-01-04：指令窗口与三分钟期限必须由**产品入口**真实驱动（此前只有 re-export 的独立组件）。
 import { InstructionWindowStore } from "./orchestration/instruction-window-store.js";
 import type { InstructionWindowSnapshot } from "./orchestration/instruction-window-store.js";
+// PROJECT-01-04：跨项目传输的真实 I/O 与人工改动守卫（由嵌入方注入）。
+import {
+  CrossProjectAuthorizationStore,
+  CrossProjectTransferService,
+  type CrossProjectImportResult,
+  type CrossProjectReadResult,
+  type CrossProjectResourceIoPort,
+  type CrossProjectTargetHumanEditGuardPort,
+} from "./orchestration/cross-project-authorization-store.js";
 import {
   evaluateInstructionDeadline,
   type InstructionDeadlineEvaluation,
@@ -769,6 +778,15 @@ export interface PublicApplicationOptions {
   backupDeletionControlPort?: BackupDeletionAuthorizationControlPort | null;
   /** 检查点 B：安装交互端口（询问已有资源 + 精确计划逐次授权；缺端口即拒绝且不等待）。 */
   installationUserPort?: InstallationGateUserPort | null;
+  /**
+   * PROJECT-01-04：跨项目传输的资源 I/O 端口。
+   *
+   * 未注入时跨项目只读/导入会**如实失败**（不伪装成功）——SDK 消费者必须显式提供
+   * 受控的读写实现，避免"回执成立但文件不存在"的假完成。
+   */
+  crossProjectResourceIo?: CrossProjectResourceIoPort | null;
+  /** PROJECT-01-04：目标人工改动守卫（缺守卫且目标已存在 ⇒ 拒绝覆盖，fail-closed）。 */
+  crossProjectHumanEditGuard?: CrossProjectTargetHumanEditGuardPort | null;
 }
 
 /** 公开 Provider 配置：只含受保护凭据引用与允许列表，不含秘密内容。 */
@@ -980,6 +998,9 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       idempotencyLedgerEntries: await loadTaskIdempotencyLedger(
         options.stateDirectory,
       ),
+      // PROJECT-01-04：跨项目传输的真实 I/O 与人工改动守卫（未注入 ⇒ 如实失败，不伪装）。
+      crossProjectResourceIo: options.crossProjectResourceIo ?? null,
+      crossProjectHumanEditGuard: options.crossProjectHumanEditGuard ?? null,
     });
   }
 
@@ -989,11 +1010,15 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       statusPollIntervalMilliseconds?: number;
       stateDirectory?: string;
       idempotencyLedgerEntries?: TaskIdempotencyLedgerEntry[];
+      crossProjectResourceIo?: CrossProjectResourceIoPort | null;
+      crossProjectHumanEditGuard?: CrossProjectTargetHumanEditGuardPort | null;
     } = {},
   ) {
     this.statusPollIntervalMilliseconds =
       options.statusPollIntervalMilliseconds ?? 25;
     this.stateDirectory = options.stateDirectory ?? null;
+    this.crossProjectResourceIo = options.crossProjectResourceIo ?? null;
+    this.crossProjectHumanEditGuard = options.crossProjectHumanEditGuard ?? null;
     this.idempotencyLedgerFilePath =
       this.stateDirectory === null
         ? null
@@ -2796,6 +2821,229 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     return this.instructionWindowStore;
   }
 
+  // ─── PROJECT-01-04：跨项目只读 / 副本导入（公开入口）──────────────────
+
+  /** 跨项目传输服务（懒构造；未注入 I/O 端口 ⇒ 如实失败，不伪装成功）。 */
+  private async getCrossProjectTransferService(): Promise<CrossProjectTransferService> {
+    if (this.crossProjectTransferService !== null) {
+      return this.crossProjectTransferService;
+    }
+    if (this.stateDirectory === null) {
+      throw new PublicApplicationError(
+        "missing-state-directory",
+        "未配置状态目录：无法访问跨项目授权存储（拒绝隐式落盘到当前目录）",
+      );
+    }
+    const store = new CrossProjectAuthorizationStore({ baseDirectory: this.stateDirectory });
+    this.crossProjectTransferService = new CrossProjectTransferService({
+      store,
+      ...(this.crossProjectResourceIo === null
+        ? {}
+        : { resourceIo: this.crossProjectResourceIo }),
+      ...(this.crossProjectHumanEditGuard === null
+        ? {}
+        : { humanEditGuard: this.crossProjectHumanEditGuard }),
+    });
+    return this.crossProjectTransferService;
+  }
+
+  /**
+   * PROJECT-01-04：按授权**跨项目只读**（真实读取；来源零写入）。
+   *
+   * 未授权/参数不匹配/超出范围一律拒绝且 `didRead=false`（**不谎报已读**）；
+   * 成功时返回真实内容与读取前后的来源哈希（相等 ⇒ 来源零写入的可核对证据）。
+   */
+  async readCrossProjectResource(input: {
+    authorizationIdentifier: string;
+    sourceProjectIdentifier: string;
+    targetProjectIdentifier: string;
+    sourceResourcePath: string;
+    absoluteResourcePath: string;
+    argumentsHash: string;
+    nowIso?: string;
+    currentSourceProjectRevision?: number;
+    expectedContentHash?: string;
+  }): Promise<CrossProjectReadResult> {
+    this.assertOpen();
+    const service = await this.getCrossProjectTransferService();
+    return service.readResource({
+      authorizationIdentifier: input.authorizationIdentifier,
+      sourceProjectIdentifier: input.sourceProjectIdentifier,
+      targetProjectIdentifier: input.targetProjectIdentifier,
+      resourcePath: input.sourceResourcePath,
+      absoluteResourcePath: input.absoluteResourcePath,
+      argumentsHash: input.argumentsHash,
+      nowIso: input.nowIso ?? new Date().toISOString(),
+      sourceWriteProbe: { writeAttemptCount: 0 },
+      ...(input.currentSourceProjectRevision === undefined
+        ? {}
+        : { currentSourceProjectRevision: input.currentSourceProjectRevision }),
+      ...(input.expectedContentHash === undefined
+        ? {}
+        : { expectedContentHash: input.expectedContentHash }),
+    });
+  }
+
+  /**
+   * PROJECT-01-04：按授权**导入副本**（真实写出目标；来源零写入；拒绝陈旧覆盖）。
+   *
+   * 目标已存在时：有基线（`expectedTargetContentHash`）且一致 ⇒ 允许；
+   * 有基线但不一致、或**未提供基线** ⇒ 拒绝覆盖（fail-closed），人工字节保留。
+   */
+  async importCrossProjectResource(input: {
+    authorizationIdentifier: string;
+    sourceProjectIdentifier: string;
+    targetProjectIdentifier: string;
+    sourceResourcePath: string;
+    targetResourcePath: string;
+    absoluteSourcePath: string;
+    absoluteTargetPath: string;
+    sourceRevision: number;
+    argumentsHash: string;
+    nowIso?: string;
+    /** 目标预期内容哈希（给出时才可判定"无人工改动"）。 */
+    expectedTargetContentHash?: string;
+  }): Promise<CrossProjectImportResult> {
+    this.assertOpen();
+    if (this.crossProjectResourceIo === null) {
+      throw new PublicApplicationError(
+        "cross-project-resource-io-missing",
+        "未注入跨项目资源 I/O 端口：拒绝执行（不产生回执假完成）",
+      );
+    }
+    const transferService = new CrossProjectTransferService({
+      store: await this.getCrossProjectAuthorizationStore(),
+      resourceIo: this.crossProjectResourceIo,
+      ...(input.expectedTargetContentHash === undefined
+        ? {}
+        : {
+            humanEditGuard: {
+              hasUnexpectedHumanChange: async (guardInput: {
+                absoluteTargetPath: string;
+                expectedContent: string;
+              }) => {
+                let existing: string;
+                try {
+                  existing = await this.crossProjectResourceIo!.readTextFile(
+                    guardInput.absoluteTargetPath,
+                  );
+                } catch {
+                  return { hasHumanChange: false };
+                }
+                return createHash("sha256").update(existing, "utf8").digest("hex") ===
+                  input.expectedTargetContentHash
+                  ? { hasHumanChange: false }
+                  : {
+                      hasHumanChange: true,
+                      reason: "目标实际内容哈希与给定基线不一致（疑似人工修改）",
+                    };
+              },
+            },
+          }),
+    });
+    // 声明的内容哈希取自**来源实际内容**：入口不猜哈希，避免把别的版本当本次许可内容。
+    let declaredContentHash = "";
+    try {
+      const sourceText = await this.crossProjectResourceIo.readTextFile(input.absoluteSourcePath);
+      declaredContentHash = createHash("sha256").update(sourceText, "utf8").digest("hex");
+    } catch {
+      // 来源不可读 ⇒ 保持空哈希：后续会因 "contentHash 与来源实际不一致" 被如实拒绝。
+    }
+    return transferService.importCopy({
+      authorizationIdentifier: input.authorizationIdentifier,
+      sourceProjectIdentifier: input.sourceProjectIdentifier,
+      targetProjectIdentifier: input.targetProjectIdentifier,
+      sourceResourcePath: input.sourceResourcePath,
+      targetResourcePath: input.targetResourcePath,
+      sourceRevision: input.sourceRevision,
+      contentHash: declaredContentHash,
+      argumentsHash: input.argumentsHash,
+      nowIso: input.nowIso ?? new Date().toISOString(),
+      absoluteSourcePath: input.absoluteSourcePath,
+      absoluteTargetPath: input.absoluteTargetPath,
+    });
+  }
+
+  /** 跨项目授权存储（与传输服务共用同一状态目录实例）。 */
+  private async getCrossProjectAuthorizationStore(): Promise<CrossProjectAuthorizationStore> {
+    if (this.crossProjectAuthorizationStore !== null) {
+      return this.crossProjectAuthorizationStore;
+    }
+    if (this.stateDirectory === null) {
+      throw new PublicApplicationError(
+        "missing-state-directory",
+        "未配置状态目录：无法访问跨项目授权存储",
+      );
+    }
+    this.crossProjectAuthorizationStore = new CrossProjectAuthorizationStore({
+      baseDirectory: this.stateDirectory,
+    });
+    return this.crossProjectAuthorizationStore;
+  }
+
+  /**
+   * 登记一条跨项目授权（**认证控制面**入口，不是模型工具）。
+   *
+   * 卡内 §8 要求"基础规则协调完成后才能改变生产默认行为"，故此处不新增默认放行路径：
+   * 授权仍需认证用户标识；未认证一律不登记（存储层自身 fail-closed）。
+   */
+  async grantCrossProjectAuthorizationForAcceptance(input: {
+    authorizationIdentifier: string;
+    sourceProjectIdentifier: string;
+    sourceProjectRevision: number;
+    targetProjectIdentifier: string;
+    targetProjectRevision?: number;
+    operationKind: "read" | "import-copy";
+    resourcePathPrefixes: string[];
+    argumentsHash: string;
+    expiresAtIso?: string;
+    taskIdentifier?: string;
+  }): Promise<void> {
+    this.assertOpen();
+    const store = await this.getCrossProjectAuthorizationStore();
+    await store.grantAuthorization({
+      authorizationIdentifier: input.authorizationIdentifier,
+      sourceProjectIdentifier: input.sourceProjectIdentifier,
+      sourceProjectRevision: input.sourceProjectRevision,
+      targetProjectIdentifier: input.targetProjectIdentifier,
+      targetProjectRevision: input.targetProjectRevision ?? 1,
+      operationKind: input.operationKind,
+      resourceScope: {
+        pathPrefixes: input.resourcePathPrefixes,
+        realPaths: [],
+        isDynamicSharedDirectory: false,
+      },
+      argumentsHash: input.argumentsHash,
+      expiresAtIso: input.expiresAtIso ?? "2030-01-01T00:00:00.000Z",
+      grantedByUserId: this.runtime.authenticatedUserId ?? "unauthenticated",
+      taskIdentifier: input.taskIdentifier ?? "T-cross-project",
+    });
+  }
+
+  /** 只读列出跨项目授权（不含秘密；供 SDK/GUI 只读视图使用）。 */
+  async listCrossProjectAuthorizations(): Promise<
+    Array<{
+      authorizationIdentifier: string;
+      sourceProjectIdentifier: string;
+      targetProjectIdentifier: string;
+      operationKind: "read" | "import-copy";
+      state: string;
+      taskIdentifier: string;
+    }>
+  > {
+    this.assertOpen();
+    const store = await this.getCrossProjectAuthorizationStore();
+    const records = await store.listAuthorizations({});
+    return records.map((record) => ({
+      authorizationIdentifier: record.authorizationIdentifier,
+      sourceProjectIdentifier: record.sourceProjectIdentifier,
+      targetProjectIdentifier: record.targetProjectIdentifier,
+      operationKind: record.operationKind,
+      state: record.state,
+      taskIdentifier: record.taskIdentifier,
+    }));
+  }
+
   /** 安全关闭：会话转 closed、订阅释放、运行资源回收。 */
   async shutdown(): Promise<void> {
     if (this.isClosedFlag) {
@@ -3001,6 +3249,12 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
   private instructionWindowStore: InstructionWindowStore | null = null;
   /** 用户指令标识序号（本地受理标识；不用模型文本合成）。 */
   private userInstructionCounter = 0;
+
+  /** PROJECT-01-04：跨项目传输服务与注入端口（懒构造）。 */
+  private crossProjectTransferService: CrossProjectTransferService | null = null;
+  private crossProjectAuthorizationStore: CrossProjectAuthorizationStore | null = null;
+  private readonly crossProjectResourceIo: CrossProjectResourceIoPort | null;
+  private readonly crossProjectHumanEditGuard: CrossProjectTargetHumanEditGuardPort | null;
 
   private nextEventIdempotencyId(): string {
     this.eventCounter += 1;

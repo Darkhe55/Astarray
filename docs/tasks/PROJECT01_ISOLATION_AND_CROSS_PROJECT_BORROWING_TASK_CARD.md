@@ -172,8 +172,23 @@ Agent仅接收不透明授权引用和公开范围说明，不接收可外传的
 | 只读后**来源文件字节未变** | 前后一致 |
 
 判定逻辑同样抽为可单测纯函数 `buildCrossProjectPackageChecks`（先红后绿，
-`npm run test:scripts` **24/24**）。tarball 记录：`astarray-0.1.0.tgz`、sha256 `71b52d0893f9a88b…`、
+`npm run test:scripts` **24/24**）。tarball 记录：`astarray-0.1.0.tar.gz`、sha256 `71b52d0893f9a88b…`、
 来源提交 `6b1b0be`。
+
+**SDK 公开入口（2026-10-10 续）**：此前 CLI 已有 `cross-project read/import-copy`，
+但 `AstarrayApplicationFacade` 上没有跨项目传输入口 —— SDK 消费者只能直接去找授权存储内部路径，
+违反"消费者不依赖内部实现"的公开入口约束。本轮补齐：
+
+- `readCrossProjectResource`（真实读取；未授权 ⇒ `didRead=false` 不谎报；返回前后来源哈希）；
+- `importCrossProjectResource`（真实写出；**未注入 I/O 端口即抛错**，不产生回执假完成；
+  支持 `expectedTargetContentHash` 判定人工改动；声明哈希取自**来源实际内容**）；
+- `grantCrossProjectAuthorizationForAcceptance`（**认证控制面**入口，不是模型工具；
+  未认证用户仍由存储层 fail-closed）；
+- `listCrossProjectAuthorizations`（只读列表，不含秘密，供 SDK/GUI 只读视图使用）。
+
+反例（先红后绿）：`tests/core/integration/cross-project-sdk-entry.test.ts` 4 条
+（实现前 **4 failed**）：有效授权只读真实读到内容且来源不变、未授权不谎报已读、
+导入真实落盘且重复导入幂等、目标被人工占用时拒绝覆盖。
 
 ## 9. 必测场景与交付
 
