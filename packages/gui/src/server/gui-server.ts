@@ -62,6 +62,26 @@ export interface GuiApplicationPort {
   }): Promise<void>;
   // ─── GUI-01-R-03：设置与恢复（可选能力；缺失时服务端显式 501，不静默降级） ───
   queryContextSettings?(): Promise<GuiContextSettingsView>;
+  /**
+   * SMART-01-04：指令窗口只读查询（可选能力；缺失时快照返回空窗口，
+   * 不伪造指令、也不阻塞既有 /state 与 SSE 快照）。
+   * 签名与公共 facade `queryInstructionWindow({ sessionId })` 对齐。
+   */
+  queryInstructionWindow?(input: { sessionId: string }): Promise<{
+    windowCapacity: number;
+    activeInstructions: Array<{
+      instructionIdentifier: string;
+      instructionText: string;
+      state: string;
+      admittedAtIso: string;
+    }>;
+    queuedInstructions: Array<{
+      instructionIdentifier: string;
+      instructionText: string;
+      state: string;
+      admittedAtIso: string;
+    }>;
+  }>;
   updateContextBudget?(input: {
     expectedRevision: number;
     configuredMaximumGlobalContextTokenCount: number;
@@ -557,6 +577,47 @@ export async function startGuiServer(
     });
   });
 
+  /**
+   * SMART-01-04：读取指令窗口（可选能力）。
+   * 缺失或读取失败 → 空窗口：**不伪造指令**，也不让 /state 与 SSE 快照因此失败。
+   */
+  async function readInstructionWindow(sessionId: string): Promise<
+    | {
+        windowCapacity: number;
+        activeInstructions: Array<{
+          instructionIdentifier: string;
+          instructionText: string;
+          state: string;
+          admittedAtIso: string;
+        }>;
+        queuedInstructions: Array<{
+          instructionIdentifier: string;
+          instructionText: string;
+          state: string;
+          admittedAtIso: string;
+        }>;
+      }
+    | undefined
+  > {
+    const query = options.applicationService.queryInstructionWindow;
+    if (query === undefined) {
+      return undefined;
+    }
+    try {
+      return await query({ sessionId });
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** 组 `buildGuiSnapshot` 的可选入参（缺失时不含该键 ⇒ 快照返回空窗口）。 */
+  async function readInstructionWindowOrDefault(): Promise<{
+    instructionWindow?: Awaited<ReturnType<typeof readInstructionWindow>>;
+  }> {
+    const instructionWindow = await readInstructionWindow(options.sessionId);
+    return instructionWindow === undefined ? {} : { instructionWindow };
+  }
+
   async function readBody(request: http.IncomingMessage): Promise<string> {
     const chunks: Buffer[] = [];
     let totalBytes = 0;
@@ -653,6 +714,7 @@ export async function startGuiServer(
             sessionId: options.sessionId,
             mode: options.mode,
             tracker,
+            ...(await readInstructionWindowOrDefault()),
           }),
         ),
       );
@@ -675,6 +737,7 @@ export async function startGuiServer(
             sessionId: options.sessionId,
             mode: options.mode,
             tracker,
+            ...(await readInstructionWindowOrDefault()),
           }),
           isReconnect: typeof lastEventId === "string",
         })}\n\n`,

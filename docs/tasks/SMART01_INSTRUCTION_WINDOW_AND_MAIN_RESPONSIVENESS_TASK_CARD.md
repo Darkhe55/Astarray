@@ -97,8 +97,28 @@
   `isGatedByExistingGate=true` 且 `canAcceptNewInstruction=false`、未知幂等键**响亮拒绝**。
 - 反例（先红后绿）：`tests/core/integration/smart01-window-deadline-entry.test.ts` 5 条，
   实现前 `acceptUserInstruction is not a function` / 5 failed。
-- **尚未完成（如实保留，不主张 SMART-01-04 通过）**：**GUI 入口**的接线、
-  **包级 tarball 验收**、以及"模拟慢模型/长下级任务仍能接收新指令"的**真实运行**证据（此前只用离线探针）。
+- **尚未完成（如实保留，不主张 SMART-01-04 通过）**：**包级 tarball 验收**、
+  以及"模拟慢模型/长下级任务仍能接收新指令"的**真实运行**证据（此前只用离线探针）。
+  四入口（SDK/CLI/TUI/GUI）接线本轮**均已落地**。
+
+**SMART-01-04 GUI 入口接线（2026-10-10，本轮续）**：
+
+- `packages/gui/src/application/gui-read-model.ts`：新增 `GuiInstructionView` /
+  `GuiInstructionWindowView` 与纯函数 `buildGuiInstructionWindowView()`；
+  `GuiSnapshot.instructions` **始终存在**（未提供窗口时为空窗口，形状唯一、不伪造指令）。
+- `packages/gui/src/server/gui-server.ts`：`GuiApplicationPort` 新增可选
+  `queryInstructionWindow({ sessionId })`（签名与公共 facade 对齐），
+  `/state` 与 SSE 首帧快照**均携带指令窗口**；能力缺失或读取失败 ⇒ 空窗口，
+  **不让 /state 因此 500、也不伪造指令**。
+- 反例（先红后绿）：`tests/gui/unit/smart01-instruction-gui-read-model.test.ts` 4 条
+  （实现前 `2 failed`）+ `tests/gui/integration/gui-server.test.ts` 新增 2 条
+  （`/state` 携带窗口且 `dispatched`/排队 `isWorkCompleted=false`；能力缺失时空窗口不 500）；
+  GUI 套件 **46/46** 通过。
+
+- **已登记的两处口径待确认**（本轮未改生产语义，避免超出检查点）：①契约 §4.3 写
+  "`accepted` + `dispatched` + `awaiting-clarification` 计入占用"，而 store 的 `SLOT_OCCUPYING_STATES`
+  为 `dispatched`/`awaiting-clarification`/`partially-completed`（`accepted` 只作排队标记）；
+  ②本轮窗口为 **facade/状态目录级**（同一状态目录单一窗口），按会话隔离与否需在入口接线时明确决定。
 
 **SMART-01-04 TUI 入口接线（2026-10-10，本轮续）**：卡内硬要求"UI 状态不冒充成果完成"、
 必须区分"已派发"与"工作成果完成"。此前 `AppState` **完全没有**指令窗口状态 ⇒ TUI 无处展示。

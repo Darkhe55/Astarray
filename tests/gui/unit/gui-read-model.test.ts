@@ -92,6 +92,8 @@ describe("gui-read-model", () => {
         },
       ],
       missions: ["mission-z"],
+      // SMART-01-04：快照始终携带指令窗口视图（未提供窗口时为空窗口；不伪造指令）。
+      instructions: { capacity: 0, activeCount: 0, queuedCount: 0, rows: [] },
     });
     expect(JSON.stringify(snapshot)).not.toContain("stateDirectory");
   });

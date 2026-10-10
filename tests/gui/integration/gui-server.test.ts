@@ -401,6 +401,75 @@ describe("GUI-01-R-02 命令与事件", () => {
   });
 });
 
+describe("SMART-01-04：GUI 暴露指令窗口（只读，不冒充成果完成）", () => {
+  it("/state 必须携带指令窗口：已派发/排队可分辨，仅 completed 为成果完成", async () => {
+    const handle = await startServer({
+      applicationService: {
+        ...createFakeApplicationPort(),
+        async queryInstructionWindow(_input: { sessionId: string }) {
+          return {
+            windowCapacity: 3,
+            activeInstructions: [
+              {
+                instructionIdentifier: "i-1",
+                instructionText: "窗口内指令",
+                state: "dispatched",
+                admittedAtIso: "2026-10-10T00:00:00.000Z",
+              },
+              {
+                instructionIdentifier: "i-2",
+                instructionText: "已完成指令",
+                state: "completed",
+                admittedAtIso: "2026-10-10T00:00:00.000Z",
+              },
+            ],
+            queuedInstructions: [
+              {
+                instructionIdentifier: "i-4",
+                instructionText: "排队指令",
+                state: "accepted",
+                admittedAtIso: "2026-10-10T00:00:00.000Z",
+              },
+            ],
+          };
+        },
+      },
+    });
+    const response = await request({ port: handle.port, method: "GET", path: "/state" });
+    expect(response.statusCode).toBe(200);
+    const payload = JSON.parse(response.body) as {
+      instructions?: {
+        capacity: number;
+        activeCount: number;
+        queuedCount: number;
+        rows: Array<{ instructionIdentifier: string; stateLabel: string; isWorkCompleted: boolean; isQueued: boolean }>;
+      };
+    };
+    expect(payload.instructions?.capacity).toBe(3);
+    expect(payload.instructions?.queuedCount).toBe(1);
+    const byIdentifier = new Map(
+      (payload.instructions?.rows ?? []).map((row) => [row.instructionIdentifier, row]),
+    );
+    expect(byIdentifier.get("i-1")?.stateLabel).toBe("已派发");
+    expect(byIdentifier.get("i-1")?.isWorkCompleted).toBe(false);
+    expect(byIdentifier.get("i-4")?.stateLabel).toBe("排队");
+    expect(byIdentifier.get("i-4")?.isQueued).toBe(true);
+    expect(byIdentifier.get("i-4")?.isWorkCompleted).toBe(false);
+    expect(byIdentifier.get("i-2")?.isWorkCompleted).toBe(true);
+  });
+
+  it("应用服务未提供窗口能力时 /state 仍可用（空窗口，不伪造指令、不 500）", async () => {
+    const handle = await startServer();
+    const response = await request({ port: handle.port, method: "GET", path: "/state" });
+    expect(response.statusCode).toBe(200);
+    const payload = JSON.parse(response.body) as {
+      instructions?: { capacity: number; rows: unknown[] };
+    };
+    expect(payload.instructions?.capacity).toBe(0);
+    expect(payload.instructions?.rows).toHaveLength(0);
+  });
+});
+
 describe("GUI-01-R-02 按钮触发真实任务（公共应用服务）", () => {
   it("经 GUI 命令提交真实任务并由公共应用服务完成", async () => {
     const application = await AstarrayApplicationFacade.create({
