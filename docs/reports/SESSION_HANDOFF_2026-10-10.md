@@ -106,3 +106,59 @@ node scripts/smoke-install.mjs
 > 纪律：一次只领一个检查点；先写行为反例再实现；跑 `npm run check`（覆盖率改动跑 `test:coverage`）；
 > 只暂存本检查点文件、绝不 `git add -A`；每次报告真实退出码；不打印/写入密钥；
 > 改 `src` 后先 `npm run build` 再跑由 `dist/` 驱动的测试。
+> 目标处理见本文 §7：若现有目标仍为 `paused`，请提示用户恢复；或由你 `create_goal` 新建一个（用 §7 的建议文本）。
+
+## 7. 持续目标（goal）的创建与说明（交接必读）
+
+### 7.1 机制
+
+- **`create_goal({ objective, max_goal_rounds })`** 创建一个**持久目标**：此后系统会以
+  "goal round" 形式**自动续跑**，每轮都要求"做出具体进展并验证结果"；`objective` 是长期意图的自然语言描述，
+  `max_goal_rounds` 是自动续跑轮数上限（本会话用 60）。
+- **每轮的正确做法**：读交接文档 + `PLAN_STATUS.md` 顶部当前有效表 → 领**一个**检查点 →
+  先写行为反例（红）→ 实现（绿）→ 跑门禁 → **单独提交推送** → **逐项核对通过后**才改卡状态 →
+  汇报**真实退出码**与被卡住的**具体条件**。
+- **`update_goal` 的四种动作与其硬性约束**（本会话实测）：
+  | 动作 | 约束 |
+  | --- | --- |
+  | `create`（即 `create_goal`） | 由模型发起即可 |
+  | `pause` / `resume` / `edit` | **必须由用户直接请求**。**模型不能 resume 一个 `paused` 目标**——实测工具直接报错：`the model cannot resume a paused goal; the user must resume it` |
+  | `complete` | 只在整个 objective 真正达成时；自动续跑轮次中也可调用 |
+  | `blocked` | 仅当**同一阻塞条件连续 ≥3 轮**持续、且能给出**具体条件**时才可标；**"困难/不确定/还有活没干完"不算 blocked** |
+- **会话恢复/分叉时的行为**：目标会被 `disarm`（需重新武装）。用户在**任意措辞**下说"继续/恢复"时，
+  模型应调用 `update_goal action=resume` 重新武装——但**若目标是 `paused` 则仍需用户本人恢复**。
+
+### 7.2 本会话的目标现状（交接事实）
+
+| 项 | 值 |
+| --- | --- |
+| goal id | `goal-cda8d618-c392-42f4-8754-53cebf659ab6` |
+| revision | 4 |
+| phase | **`paused`**（activation `disarmed`） |
+| roundsStarted / maxGoalRounds | **30 / 60** |
+| objective 文本 | **已过时**：仍写着"分支覆盖率 83.26% < 85%、还需覆盖 164 条…smoke-install 两次 exit 1"——**这些现已全部完成**（覆盖率 85.05%、smoke-install exit 0） |
+
+### 7.3 交接建议（二选一）
+
+- **做法 A：用户本人恢复现有目标**（同一 id）。注意其 `objective` 文本仍过时，建议同时由用户在
+  `update_goal action=edit` 下替换为 §7.4 的建议文本；否则后续自动续跑会按"过时的当前首要缺口"推进。
+- **做法 B（推荐）：新会话 `create_goal` 新建一个目标**，直接使用 §7.4 的更新文本。
+  新会话与旧目标无绑定关系，新建更干净，也避免"模型无权 resume"的卡顿。
+
+### 7.4 建议的新 objective 文本（可直接用）
+
+```text
+逐步完成 docs/tasks 下所有任务卡内容：按卡、按检查点推进（每片先写行为反例再实现、跑门禁、单独提交推送、逐项核对后才改卡状态）。
+当前基线（2026-10-10，见 docs/reports/SESSION_HANDOFF_2026-10-10.md 与 PLAN_STATUS.md 顶部对账）：
+E2E-01-04 本地可证项已全部 exit 0（check 307 文件/2347 用例、分支覆盖率 85.05%、安全关键模块 22/22、
+fixture 指纹一致、pack+verify-package 239 文件、smoke-install exit 0、CLI 滞留缺陷已修且 skipped 由 2 降为 1）。
+剩余优先：① 最后一个 it.skip（cli-anthropic-protocol ①：anthropic 权限裁决层，先做 STDIN-TRACE 实验二分"谁先消费了 stdin"）；
+② 超时型抖动（tests/tui/unit/run-command-gaps.test.ts 曾 60s 超时）；③ 之后按依赖推进 SMART-01、PROJECT-01、
+RELIABILITY-01、MERGE-01/NODECTX-01、TOOLKIT-01，并收口 GUI-01-R、BRIDGE-01、AR-07、B6R-10。
+人工体验结论与 Linux/macOS 平台证据必须由用户或平台提供，如实保留 blocked/pending，不用说明文字覆盖未满足门禁。
+纪律：每轮汇报真实退出码与被卡住的具体条件；绝不打印或写入密钥；只暂存本检查点文件、绝不 git add -A；
+改 src 后必须先 npm run build 再跑由 dist/ 驱动的测试。
+```
+
+> 建议 `max_goal_rounds` 取 **20–60**：数值小便于阶段性复核（每轮结束都能看到真实进展），
+> 数值大则减少"中途需要用户再恢复"的次数。上不封顶不是目的，**每轮有实测证据**才是。
