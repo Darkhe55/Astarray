@@ -57,6 +57,8 @@ import {
   executeStatusCommand,
   executeWorkflowScenarioCommand,
   executeCrossProjectListCommand,
+  executeCrossProjectImportCopyCommand,
+  executeCrossProjectReadCommand,
   executeDoctorErrorsCommand,
   executeInstructionAcceptCommand,
   executeInstructionDeadlineCommand,
@@ -349,6 +351,104 @@ crossProjectCommand
         ...(options.agent === undefined
           ? {}
           : { receivingAgentInstanceId: options.agent }),
+      });
+    },
+  );
+
+crossProjectCommand
+  .command("read")
+  .description("按授权跨项目只读（真实读取；来源零写入；未授权不触达资源）")
+  .requiredOption("--authorization <id>", "授权标识")
+  .requiredOption("--source-project <project-id>", "来源项目标识")
+  .requiredOption("--target-project <project-id>", "目标项目标识")
+  .requiredOption("--resource <relative-path>", "来源资源相对路径（用于授权范围判定）")
+  .requiredOption("--absolute-resource <absolute-path>", "来源资源绝对路径（真正被读取）")
+  .requiredOption("--arguments-hash <hash>", "完整规范化参数哈希（必须与授权绑定一致）")
+  .option("--source-revision <revision>", "来源项目当前 revision（给出时须与授权绑定一致）")
+  .option("--expected-content-hash <hash>", "期望内容哈希（不符即拒绝）")
+  .option("--now <iso>", "显式当前时间（ISO 8601）")
+  .option("--json", "JSON 输出")
+  .action(
+    async (options: {
+      authorization: string;
+      sourceProject: string;
+      targetProject: string;
+      resource: string;
+      absoluteResource: string;
+      argumentsHash: string;
+      sourceRevision?: string;
+      expectedContentHash?: string;
+      now?: string;
+      json?: boolean;
+    }) => {
+      process.exitCode = await executeCrossProjectReadCommand({
+        stateDirectory: defaultStateDirectory(),
+        isJsonOutput: options.json === true,
+        authorizationIdentifier: options.authorization,
+        sourceProjectIdentifier: options.sourceProject,
+        targetProjectIdentifier: options.targetProject,
+        sourceResourcePath: options.resource,
+        absoluteResourcePath: options.absoluteResource,
+        argumentsHash: options.argumentsHash,
+        ...(options.sourceRevision === undefined
+          ? {}
+          : { currentSourceProjectRevision: Number(options.sourceRevision) }),
+        ...(options.expectedContentHash === undefined
+          ? {}
+          : { expectedContentHash: options.expectedContentHash }),
+        ...(options.now === undefined ? {} : { nowIso: options.now }),
+      });
+    },
+  );
+crossProjectCommand
+  .command("import-copy")
+  .description("按授权跨项目导入副本（真实写出目标；来源零写入；拒绝陈旧覆盖人工修改）")
+  .requiredOption("--authorization <id>", "授权标识")
+  .requiredOption("--source-project <project-id>", "来源项目标识")
+  .requiredOption("--target-project <project-id>", "目标项目标识")
+  .requiredOption("--source-resource <relative-path>", "来源资源相对路径（用于授权范围判定）")
+  .requiredOption("--target-resource <relative-path>", "目标资源相对路径（用于回执）")
+  .requiredOption("--absolute-source <absolute-path>", "来源绝对路径（真正被读取）")
+  .requiredOption("--absolute-target <absolute-path>", "目标绝对路径（真正被写出）")
+  .requiredOption("--source-revision <revision>", "来源项目 revision（必须与授权绑定一致）")
+  .requiredOption("--arguments-hash <hash>", "完整规范化参数哈希（必须与授权绑定一致）")
+  .option(
+    "--expected-target-content-hash <hash>",
+    "目标预期内容哈希（给出时可判定人工改动；未给出且目标已存在则拒绝覆盖）",
+  )
+  .option("--now <iso>", "显式当前时间（ISO 8601）")
+  .option("--json", "JSON 输出")
+  .action(
+    async (options: {
+      authorization: string;
+      sourceProject: string;
+      targetProject: string;
+      sourceResource: string;
+      targetResource: string;
+      absoluteSource: string;
+      absoluteTarget: string;
+      sourceRevision: string;
+      argumentsHash: string;
+      expectedTargetContentHash?: string;
+      now?: string;
+      json?: boolean;
+    }) => {
+      process.exitCode = await executeCrossProjectImportCopyCommand({
+        stateDirectory: defaultStateDirectory(),
+        isJsonOutput: options.json === true,
+        authorizationIdentifier: options.authorization,
+        sourceProjectIdentifier: options.sourceProject,
+        targetProjectIdentifier: options.targetProject,
+        sourceResourcePath: options.sourceResource,
+        targetResourcePath: options.targetResource,
+        absoluteSourcePath: options.absoluteSource,
+        absoluteTargetPath: options.absoluteTarget,
+        sourceRevision: Number(options.sourceRevision),
+        argumentsHash: options.argumentsHash,
+        ...(options.expectedTargetContentHash === undefined
+          ? {}
+          : { expectedTargetContentHash: options.expectedTargetContentHash }),
+        ...(options.now === undefined ? {} : { nowIso: options.now }),
       });
     },
   );

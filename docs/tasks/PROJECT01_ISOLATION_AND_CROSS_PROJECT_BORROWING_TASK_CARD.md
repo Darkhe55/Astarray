@@ -124,9 +124,37 @@ Agent仅接收不透明授权引用和公开范围说明，不接收可外传的
 "只看回执就算成功"的用例改为**真实文件** + 注入 I/O 端口（原断言在旧语义下才成立）。
 两套件合计 **20/20** 通过。
 
-**仍未完成（不主张 PROJECT-01-03/04 通过）**：`readResource`/`importCopy` 尚**未接入公开入口**
-（SDK/CLI/GUI 目前只有授权与副本回执的列表查询）；"目标有人工修改时拒绝陈旧覆盖"、
+**仍未完成（不主张 PROJECT-01-03/04 通过）**：SDK/GUI 入口尚未接线（CLI 已可用）；
 多项目/多同级个体压力验收与包级验收仍待做。
+
+### PROJECT-01-04 陈旧覆盖拒绝 + 公开入口（2026-10-10 续）
+
+**缺口**：`importCopy` 接入真实 I/O 后只做"建父目录 → 覆盖写目标 → 复核存在"，
+因此**会静默覆盖人工刚改过的目标文件**（卡内必测场景 2 明确要求"目标有人工修改时拒绝陈旧覆盖"）；
+且 `readResource`/`importCopy` **没有任何公开入口**，产品上无法执行。
+
+**本轮接线**：
+
+- 新增可注入 `CrossProjectTargetHumanEditGuardPort`：目标已存在时先问"是否存在与预期副本不同的人工内容"。
+  - 有人工改动 ⇒ `target-stale-rejected`，**不写目标、不落定回执**（避免重试被幂等挡住）；
+  - **未注入守卫且目标已存在 ⇒ fail-closed 拒绝覆盖**（不静默覆盖人工字节）；
+  - **守卫自身抛错 ⇒ 同样 fail-closed 拒绝**（宁可不导入）；
+  - 目标不存在 ⇒ 正常写入，**不调用守卫**（避免无谓 I/O）。
+- 公开 CLI 入口（`packages/tui/src/cli.tsx` + `commands.ts`）：
+  - `astarray cross-project read`：真实读取；`read-allowed` ⇒ exit 0，其余一律非 0；
+    未授权时**不回显来源内容**（只在 truly allowed 时输出 `content`）；
+  - `astarray cross-project import-copy`：真实写出目标；`imported-copy`/`reused-existing-copy` ⇒ exit 0；
+    声明哈希取自**来源实际内容**（入口不猜哈希）；提供 `--expected-target-content-hash`
+    时才可判定人工改动。
+
+**反例（先红后绿）**：
+
+- `tests/core/integration/cross-project-stale-overwrite.test.ts` 4 条（实现前 **2 failed**）：
+  人工改动拒绝且保留人工字节、目标一致不误拒、目标不存在不受影响且不调守卫、无守卫时 fail-closed；
+- `tests/tui/unit/cross-project-transfer-cli-entry.test.ts` 4 条（实现前 **4 failed**）：
+  只读成功与参数不匹配拒绝、导入真实落盘且来源不变、目标被占且无基线时拒绝覆盖；
+- PROJECT-01 三套件合计 **24/24** 通过；真实 `dist/cli.js` 实测：缺必需参数 exit 1、
+  未知授权 `authorization-not-found` exit 1，`cross-project --help` 三个子命令均可见。
 
 ## 9. 必测场景与交付
 

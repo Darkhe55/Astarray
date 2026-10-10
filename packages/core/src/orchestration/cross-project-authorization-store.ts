@@ -455,7 +455,8 @@ export interface CrossProjectImportResult {
     | "resource-not-found"
     | "resource-read-failed"
     | "content-hash-mismatch"
-    | "target-write-failed";
+    | "target-write-failed"
+    | "target-stale-rejected";
   receipt: CrossProjectCopyReceipt | null;
   /** 是否**真的**写出了目标副本（回执存在不等于文件存在）。 */
   didWriteTarget: boolean;
@@ -479,6 +480,20 @@ export interface CrossProjectResourceIoPort {
   fileExists(absolutePath: string): Promise<boolean>;
 }
 
+/**
+ * 目标人工改动守卫（2026-10-10，PROJECT-01-04 必测场景 2："目标有人工修改时拒绝陈旧覆盖"）。
+ *
+ * 副本导入在**目标已存在**时必须先问这个端口：人工是否在该目标上留下了与预期副本不同的内容。
+ * 未注入守卫且目标已存在 ⇒ 服务**fail-closed 拒绝覆盖**（不静默覆盖人工字节）。
+ */
+export interface CrossProjectTargetHumanEditGuardPort {
+  hasUnexpectedHumanChange(input: {
+    absoluteTargetPath: string;
+    /** 本次准备写入的内容（即来源内容）——守卫据此判断"目标是否已与预期一致"。 */
+    expectedContent: string;
+  }): Promise<{ hasHumanChange: boolean; reason?: string }>;
+}
+
 export class CrossProjectTransferService {
   constructor(
     private readonly options: {
@@ -489,6 +504,8 @@ export class CrossProjectTransferService {
        * `target-write-failed`，从而不会产生"有回执但无文件"的假完成。
        */
       resourceIo?: CrossProjectResourceIoPort;
+      /** 目标人工改动守卫；未注入且目标已存在 ⇒ 拒绝覆盖（fail-closed）。 */
+      humanEditGuard?: CrossProjectTargetHumanEditGuardPort;
     },
   ) {}
 
@@ -781,6 +798,48 @@ export class CrossProjectTransferService {
           "来源实际内容哈希（" +
             sourceContentHashBefore.slice(0, 12) +
             "…）与声明的 contentHash 不一致：拒绝导入",
+        ),
+        sourceContentHashBefore,
+      };
+    }
+
+    // 真实写出目标副本之前：**目标已存在时必须先查人工改动**（拒绝陈旧覆盖）。
+    // 目标不存在 ⇒ 无需询问守卫（避免无谓 I/O）。
+    try {
+      if (await resourceIo.fileExists(input.absoluteTargetPath)) {
+        const guard = this.options.humanEditGuard;
+        if (guard === undefined) {
+          await releaseClaim();
+          return {
+            ...refusal(
+              "target-stale-rejected",
+              "目标已存在且未装配人工改动守卫：拒绝覆盖（fail-closed，避免静默覆盖人工字节）",
+            ),
+            sourceContentHashBefore,
+          };
+        }
+        const guardOutcome = await guard.hasUnexpectedHumanChange({
+          absoluteTargetPath: input.absoluteTargetPath,
+          expectedContent: sourceContent,
+        });
+        if (guardOutcome.hasHumanChange) {
+          await releaseClaim();
+          return {
+            ...refusal(
+              "target-stale-rejected",
+              "目标已被人工修改，拒绝陈旧覆盖：" + String(guardOutcome.reason ?? "存在人工改动"),
+            ),
+            sourceContentHashBefore,
+          };
+        }
+      }
+    } catch (error) {
+      // 守卫自身失败 ⇒ fail-closed：宁可不导入，也不静默覆盖。
+      await releaseClaim();
+      return {
+        ...refusal(
+          "target-stale-rejected",
+          "目标人工改动检查失败（fail-closed，拒绝覆盖）：" + (error as Error).message,
         ),
         sourceContentHashBefore,
       };

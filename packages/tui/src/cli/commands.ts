@@ -2,6 +2,7 @@
  * status / resume / cancel / doctor / config init 命令（T11）。
  */
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -1007,6 +1008,241 @@ export interface InstructionDeadlineCommandOptions {
   isResting?: boolean;
   isExplicitUserStop?: boolean;
   hasLongRunningSubordinateTask?: boolean;
+}
+
+/**
+ * PROJECT-01-04：跨项目**只读**入口选项。
+ *
+ * 相对路径（`sourceResourcePath`）只用于**授权范围判定**；真正被读取的是
+ * `absoluteResourcePath`。入口自身不做任何范围猜测：授权链任一环不通过即不触达资源。
+ */
+export interface CrossProjectReadCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+  authorizationIdentifier: string;
+  sourceProjectIdentifier: string;
+  targetProjectIdentifier: string;
+  sourceResourcePath: string;
+  absoluteResourcePath: string;
+  argumentsHash: string;
+  nowIso?: string;
+  currentSourceProjectRevision?: number;
+  expectedContentHash?: string;
+}
+
+/**
+ * PROJECT-01-04：跨项目**副本导入**入口选项。
+ *
+ * 目标已存在时由 `humanEditGuard` 判定是否存在人工改动；**未注入基线信息则拒绝覆盖**
+ * （fail-closed），不静默覆盖人工字节。
+ */
+export interface CrossProjectImportCopyCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+  authorizationIdentifier: string;
+  sourceProjectIdentifier: string;
+  targetProjectIdentifier: string;
+  sourceResourcePath: string;
+  targetResourcePath: string;
+  absoluteSourcePath: string;
+  absoluteTargetPath: string;
+  sourceRevision: number;
+  argumentsHash: string;
+  nowIso?: string;
+  /**
+   * 人工改动基线：目标文件的**预期内容哈希**。给出且目标实际哈希与之相同
+   * ⇒ 视为"目标与预期一致（无人工改动）"，允许写入；不同 ⇒ 判人工改动，拒绝覆盖。
+   * 未给出且目标已存在 ⇒ 拒绝覆盖（不做静默覆盖）。
+   */
+  expectedTargetContentHash?: string;
+}
+
+/**
+ * PROJECT-01-04：跨项目只读（**真实读取**；来源零写入）。
+ *
+ * 退出码语义：`read-allowed` ⇒ 0（仅当真的读到了内容）；其余一律非 0（如实报告未读取）。
+ */
+export async function executeCrossProjectReadCommand(
+  options: CrossProjectReadCommandOptions,
+): Promise<number> {
+  try {
+    const { CrossProjectAuthorizationStore, CrossProjectTransferService } = await import(
+      "../../../core/src/orchestration/cross-project-authorization-store.js"
+    );
+    const store = new CrossProjectAuthorizationStore({ baseDirectory: options.stateDirectory });
+    const service = new CrossProjectTransferService({
+      store,
+      resourceIo: buildLocalResourceIoPort(),
+    });
+    const result = await service.readResource({
+      authorizationIdentifier: options.authorizationIdentifier,
+      sourceProjectIdentifier: options.sourceProjectIdentifier,
+      targetProjectIdentifier: options.targetProjectIdentifier,
+      resourcePath: options.sourceResourcePath,
+      argumentsHash: options.argumentsHash,
+      nowIso: options.nowIso ?? new Date().toISOString(),
+      sourceWriteProbe: { writeAttemptCount: 0 },
+      absoluteResourcePath: options.absoluteResourcePath,
+      ...(options.currentSourceProjectRevision === undefined
+        ? {}
+        : { currentSourceProjectRevision: options.currentSourceProjectRevision }),
+      ...(options.expectedContentHash === undefined
+        ? {}
+        : { expectedContentHash: options.expectedContentHash }),
+    });
+    const isAllowed = result.outcome === "read-allowed";
+    if (options.isJsonOutput) {
+      printJson({
+        outcome: result.outcome,
+        didRead: result.didRead,
+        didModifySource: result.didModifySource,
+        sourceWriteCount: result.sourceWriteCount,
+        // 只有真的读到才回显内容（未授权/失败时不得泄露来源内容）
+        content: isAllowed ? result.content : null,
+        contentHash: result.contentHash,
+        sourceContentHashBefore: result.sourceContentHashBefore,
+        sourceContentHashAfter: result.sourceContentHashAfter,
+        detail: result.detail,
+      });
+    } else {
+      logToStderr(
+        "跨项目只读: " +
+          result.outcome +
+          "（来源零写入=" +
+          String(result.sourceContentHashBefore === result.sourceContentHashAfter && isAllowed) +
+          "）",
+      );
+    }
+    return isAllowed ? EXIT_CODES.SUCCESS : EXIT_CODES.FAILURE;
+  } catch (error) {
+    logToStderr("跨项目只读失败: " + (error as Error).message);
+    return EXIT_CODES.FAILURE;
+  }
+}
+
+/**
+ * PROJECT-01-04：跨项目副本导入（**真实写出目标**；来源零写入；拒绝陈旧覆盖）。
+ *
+ * 退出码语义：`imported-copy` 或幂等 `reused-existing-copy` ⇒ 0；其余一律非 0。
+ */
+export async function executeCrossProjectImportCopyCommand(
+  options: CrossProjectImportCopyCommandOptions,
+): Promise<number> {
+  try {
+    const { CrossProjectAuthorizationStore, CrossProjectTransferService } = await import(
+      "../../../core/src/orchestration/cross-project-authorization-store.js"
+    );
+    const store = new CrossProjectAuthorizationStore({ baseDirectory: options.stateDirectory });
+    // 人工改动守卫：仅在给出"预期目标内容哈希"时才能判定；否则**拒绝覆盖已存在目标**。
+    const expectedTargetContentHash = options.expectedTargetContentHash;
+    const service = new CrossProjectTransferService({
+      store,
+      resourceIo: buildLocalResourceIoPort(),
+      ...(expectedTargetContentHash === undefined
+        ? {}
+        : {
+            humanEditGuard: {
+              hasUnexpectedHumanChange: async (input: {
+                absoluteTargetPath: string;
+                expectedContent: string;
+              }) => {
+                const existing = await readFileOrNull(input.absoluteTargetPath);
+                if (existing === null) {
+                  return { hasHumanChange: false };
+                }
+                const existingHash = createHash("sha256")
+                  .update(existing, "utf8")
+                  .digest("hex");
+                return existingHash === expectedTargetContentHash
+                  ? { hasHumanChange: false }
+                  : {
+                      hasHumanChange: true,
+                      reason:
+                        "目标实际内容哈希与给定基线不一致（疑似人工修改）：拒绝陈旧覆盖",
+                    };
+              },
+            },
+          }),
+    });
+    const result = await service.importCopy({
+      authorizationIdentifier: options.authorizationIdentifier,
+      sourceProjectIdentifier: options.sourceProjectIdentifier,
+      targetProjectIdentifier: options.targetProjectIdentifier,
+      sourceResourcePath: options.sourceResourcePath,
+      targetResourcePath: options.targetResourcePath,
+      sourceRevision: options.sourceRevision,
+      contentHash: await (async () => {
+        // 声明哈希取自**来源实际内容**：入口不做"猜测哈希"，避免把别的版本当本次许可内容。
+        const sourceText = await readFileOrNull(options.absoluteSourcePath);
+        return sourceText === null
+          ? ""
+          : createHash("sha256").update(sourceText, "utf8").digest("hex");
+      })(),
+      argumentsHash: options.argumentsHash,
+      nowIso: options.nowIso ?? new Date().toISOString(),
+      absoluteSourcePath: options.absoluteSourcePath,
+      absoluteTargetPath: options.absoluteTargetPath,
+    });
+    const isImported =
+      result.outcome === "imported-copy" || result.outcome === "reused-existing-copy";
+    if (options.isJsonOutput) {
+      printJson({
+        outcome: result.outcome,
+        receipt: result.receipt,
+        didWriteTarget: result.didWriteTarget,
+        sourceContentHashBefore: result.sourceContentHashBefore,
+        sourceContentHashAfter: result.sourceContentHashAfter,
+        detail: result.detail,
+      });
+    } else {
+      logToStderr("跨项目副本导入: " + result.outcome + " — " + result.detail);
+    }
+    return isImported ? EXIT_CODES.SUCCESS : EXIT_CODES.FAILURE;
+  } catch (error) {
+    logToStderr("跨项目副本导入失败: " + (error as Error).message);
+    return EXIT_CODES.FAILURE;
+  }
+}
+
+/** 本地文件系统资源 I/O 端口（CLI 入口专用；不引入核心包依赖）。 */
+function buildLocalResourceIoPort(): {
+  readTextFile(absolutePath: string): Promise<string>;
+  writeTextFile(absolutePath: string, content: string): Promise<void>;
+  ensureDirectory(absoluteDirectoryPath: string): Promise<void>;
+  fileExists(absolutePath: string): Promise<boolean>;
+} {
+  return {
+    readTextFile: async (absolutePath) => {
+      const { promises: fsPromises } = await import("node:fs");
+      return fsPromises.readFile(absolutePath, "utf8");
+    },
+    writeTextFile: async (absolutePath, content) => {
+      const { promises: fsPromises } = await import("node:fs");
+      await fsPromises.writeFile(absolutePath, content, "utf8");
+    },
+    ensureDirectory: async (absoluteDirectoryPath) => {
+      const { promises: fsPromises } = await import("node:fs");
+      await fsPromises.mkdir(absoluteDirectoryPath, { recursive: true });
+    },
+    fileExists: async (absolutePath) => {
+      const { promises: fsPromises } = await import("node:fs");
+      try {
+        await fsPromises.stat(absolutePath);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
+async function readFileOrNull(absolutePath: string): Promise<string | null> {
+  const { promises: fsPromises } = await import("node:fs");
+  try {
+    return await fsPromises.readFile(absolutePath, "utf8");
+  } catch {
+    return null;
+  }
 }
 
 /**
