@@ -262,3 +262,28 @@ summary/outline。因此上一轮枚举里的 `code`/`markup`/`data` 与 `view`�
   **6 条**（实现前模块不存在即失败），含"设置→引擎→裁决一致"（关闭总开关后规则不再放行）。
 - 六个 MERGE-01 套件合计 **41/41**。
 - **仍未完成**：执行组到原指令映射与合并开关、NODECTX-01 全部内容。
+
+### MERGE-01 进展（2026-10-10）：执行组到原指令映射 与 合并开关
+
+**缺口**：本卡此前只有"参数级授权"一片落地；§1.1/§1.2 点名的
+"**执行组到原指令映射**"与"**合并开关**"**完全没有实现** ⇒ 两条硬约束无判定点。
+
+**本轮交付** `packages/core/src/toolkit/instruction-merge-mapping.ts`（纯本地确定性判定）：
+
+| 卡内 §1.1/§1.2 要求 | 实现 |
+| --- | --- |
+| 原指令**追加保存**，保留来源/ID/revision/优先级/取消权/验收条件 | 追加式记录；组映射逐项带回**全部**这些字段 |
+| 执行组**仅引用原指令**，**不能覆盖原文** | 组只保存引用；原文**逐字**取自原指令；派生物 `isOriginalInstructionTextOverridden` **恒为 false** |
+| **不得伪装用户指令** | 组派生物 `sourceKind` **恒为** `group-derivative`，并带回 `originatingInstructionIdentifiers` |
+| 引用必须绑定 revision/内容 | 引用记录 revision + **内容指纹**；原指令 revision 前进或内容变化 ⇒ 引用**失效** |
+| "SMART 窗口按**原始未完成意图**计数，不按执行组数量计数" | `countUnfinishedOriginalIntentions()` 只看原指令；`isWindowCapacityExceeded()` 据此判定（**与组数无关**） |
+| "未准入候选**只保存关联**" + 合并开关 | 开关关闭 ⇒ **不得建组**，改为记录候选关联（去重）供后续复用 |
+| "组完成**不自动关闭全部原指令**，逐项由本地门禁核验" | `markGroupCompleted()` **刻意不做任何事**（代码内注释说明，防止后来者"顺手补上"自动关闭）；关闭只能经 `verifyInstructionCompletion()` 且核验不通过时 fail-closed |
+
+- 反例（先红后绿）：`tests/core/unit/merge01-instruction-merge-mapping.test.ts` **10 条**
+  （实现前模块不存在即失败）。
+- 已公开导出，并从**构建产物**实测：把 2 条原指令合为 1 组后
+  `unfinished intents = 2`、`groups = 1`、`window exceeded = true`；组完成后
+  原指令**仍为未完成**。
+- **仍未完成**：把该层接到 SMART 实际装配入口（当前为纯判定层）、两个工具适配样本、
+  NODECTX-01 全部内容 ⇒ **不主张 MERGE-01 / NODECTX-01 通过**。

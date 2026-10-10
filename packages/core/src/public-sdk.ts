@@ -196,6 +196,16 @@ export {
   type ToolPackageOperationKind,
 } from "./toolkit/tool-package-operation-control.js";
 
+// ─── MERGE-01：执行组到原指令映射 与 合并开关 ───
+// 原文逐字保留、组只引用；窗口按**原始未完成意图**计数；组完成不自动关闭原指令。
+export {
+  createInstructionMergeController,
+  type DerivedWorkItem,
+  type ExecutionGroupMappingEntry,
+  type InstructionMergeController,
+  type OriginalInstructionRecord,
+} from "./toolkit/instruction-merge-mapping.js";
+
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
 // 否则 runtime: "provider" 在打包产物上不可用。

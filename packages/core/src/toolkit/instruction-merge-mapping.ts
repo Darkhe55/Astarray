@@ -1,0 +1,348 @@
+/**
+ * MERGE-01：**执行组到原指令映射**与**合并开关**（2026-10-10）。
+ *
+ * 契约来源：`docs/tasks/MERGE01_NODECTX01_TASK_CARDS.md` §1.1/§1.2。
+ *
+ * 卡内硬要求逐条落实：
+ *  - "原始用户指令**追加保存**，保留每条**来源、ID、revision、优先级、取消权和验收条件**"
+ *    ⇒ 原指令为**不可变追加**记录（同 ID 新内容必须升 revision）；
+ *  - "执行组**仅引用原指令**，**不能覆盖原文、伪装用户指令或自动认定被合并项完成**"
+ *    ⇒ 组只保存引用；引用绑定 revision 与内容指纹，原指令变化即**失效**；
+ *    组派生物标记为 `group-derivative`（来源仍是原指令）；
+ *  - "SMART 窗口按**原始未完成意图**计数，**不按执行组数量**计数" ⇒ 窗口计数只看原指令；
+ *  - "**未准入候选只保存关联**" + 合并开关 ⇒ 开关关闭时不得建组，只记录候选关联；
+ *  - "**组完成不自动关闭全部原指令**，逐项由本地门禁核验" ⇒ 关闭只能经逐项核验。
+ *
+ * 本模块只做**本地确定性判定**：不做 I/O、不联网、不调用模型。
+ */
+
+import { createHash } from "node:crypto";
+
+export interface OriginalInstructionRecord {
+  instructionIdentifier: string;
+  instructionText: string;
+  /** 来源类型：用户 / Agent / 系统。**不得**被组改写。 */
+  sourceKind: "user" | "agent" | "system";
+  sourceActorIdentifier: string;
+  revision: number;
+  priorityTier: number;
+  cancellationRightHolderIdentifier: string;
+  acceptanceCriteria: string[];
+  isCompleted: boolean;
+}
+
+export interface ExecutionGroupMappingEntry {
+  instructionIdentifier: string;
+  instructionText: string;
+  sourceKind: OriginalInstructionRecord["sourceKind"];
+  sourceActorIdentifier: string;
+  revision: number;
+  contentFingerprint: string;
+  priorityTier: number;
+  cancellationRightHolderIdentifier: string;
+  acceptanceCriteria: string[];
+}
+
+export interface DerivedWorkItem {
+  derivedIdentifier: string;
+  groupIdentifier: string;
+  derivedText: string;
+  producedByAgentInstanceId: string;
+  /**
+   * 来源种类**恒为** `group-derivative`。
+   *
+   * 卡内："不能……**伪装用户指令**" ⇒ 由组派生的内容绝不能被标成 `user`。
+   */
+  sourceKind: "group-derivative";
+  originatingInstructionIdentifiers: string[];
+  /**
+   * 是否覆盖了原指令文本。
+   *
+   * **恒为 false**：本模块**不提供**任何改写原文的能力（卡内"不能覆盖原文"）。
+   */
+  isOriginalInstructionTextOverridden: false;
+}
+
+export interface InstructionMergeController {
+  appendInstruction(record: OriginalInstructionRecord): void;
+  createExecutionGroup(input: {
+    groupIdentifier: string;
+    referencedInstructionIdentifiers: string[];
+    createdByAgentInstanceId: string;
+  }): { isCreated: boolean; reason: string | null };
+  describeGroupMapping(input: { groupIdentifier: string }): ExecutionGroupMappingEntry[];
+  isGroupReferenceStillValid(input: {
+    groupIdentifier: string;
+  }): { isValid: boolean; reason: string | null };
+  createDerivedWorkItem(input: {
+    groupIdentifier: string;
+    derivedText: string;
+    producedByAgentInstanceId: string;
+  }): DerivedWorkItem;
+  listCandidateAssociations(): Array<{ instructionIdentifier: string; revision: number }>;
+  countUnfinishedOriginalIntentions(): number;
+  countExecutionGroups(): number;
+  isWindowCapacityExceeded(): boolean;
+  markGroupCompleted(input: { groupIdentifier: string }): void;
+  isInstructionCompleted(instructionIdentifier: string): boolean;
+  verifyInstructionCompletion(input: {
+    instructionIdentifier: string;
+    verifiedByGateIdentifier: string;
+    isAccepted: boolean;
+  }): { isCompleted: boolean; reason: string | null };
+}
+
+function computeInstructionContentFingerprint(record: OriginalInstructionRecord): string {
+  // 指纹只覆盖**内容与元数据**，不含 `isCompleted` —— 完成状态变化不应使引用失效。
+  return (
+    "sha256:" +
+    createHash("sha256")
+      .update(
+        [
+          record.instructionIdentifier,
+          record.instructionText,
+          record.sourceKind,
+          record.sourceActorIdentifier,
+          String(record.revision),
+          String(record.priorityTier),
+          record.cancellationRightHolderIdentifier,
+          record.acceptanceCriteria.join(","),
+        ].join("|"),
+        "utf8",
+      )
+      .digest("hex")
+  );
+}
+
+/**
+ * 创建合并控制器。
+ *
+ * `isMergeEnabled` 即卡内"合并开关"：关闭时**不得新建执行组**，
+ * 但候选关联仍被记录（"轮到它时可复用已验证结果"）。
+ */
+export function createInstructionMergeController(options: {
+  isMergeEnabled: boolean;
+  windowCapacity: number;
+}): InstructionMergeController {
+  /** instructionIdentifier → 最新 revision 记录（**追加**语义：同 ID 新记录替换"最新"视图）。 */
+  const latestInstructionByIdentifier = new Map<string, OriginalInstructionRecord>();
+  /** 历史 revision 内容指纹（用于判断"引用时的 revision 是否仍是最新且内容一致"）。 */
+  const fingerprintByRevisionKey = new Map<string, string>();
+  const groupMappings = new Map<
+    string,
+    Array<{ instructionIdentifier: string; revision: number; contentFingerprint: string }>
+  >();
+  const completedGroupIdentifiers = new Set<string>();
+  const candidateAssociations: Array<{ instructionIdentifier: string; revision: number }> = [];
+  const derivedWorkItems: DerivedWorkItem[] = [];
+  let derivedSequence = 0;
+
+  const revisionKey = (instructionIdentifier: string, revision: number): string =>
+    instructionIdentifier + "@" + String(revision);
+
+  return {
+    appendInstruction(record) {
+      latestInstructionByIdentifier.set(record.instructionIdentifier, { ...record });
+      fingerprintByRevisionKey.set(
+        revisionKey(record.instructionIdentifier, record.revision),
+        computeInstructionContentFingerprint(record),
+      );
+    },
+
+    createExecutionGroup(input) {
+      if (!options.isMergeEnabled) {
+        /**
+         * 合并开关关闭：**不得**建组；未准入候选**只保存关联**。
+         * 这里对每个引用原指令各记一条关联（去重后），供后续复用。
+         */
+        for (const instructionIdentifier of input.referencedInstructionIdentifiers) {
+          const instruction = latestInstructionByIdentifier.get(instructionIdentifier);
+          if (instruction === undefined) {
+            continue;
+          }
+          const isAlreadyRecorded = candidateAssociations.some(
+            (association) =>
+              association.instructionIdentifier === instructionIdentifier &&
+              association.revision === instruction.revision,
+          );
+          if (!isAlreadyRecorded) {
+            candidateAssociations.push({
+              instructionIdentifier,
+              revision: instruction.revision,
+            });
+          }
+        }
+        return {
+          isCreated: false,
+          reason: "合并开关未启用：不得新建执行组（候选只保存关联）",
+        };
+      }
+      if (input.referencedInstructionIdentifiers.length === 0) {
+        return {
+          isCreated: false,
+          reason: "执行组必须映射到至少一条原指令（空映射不得存在）",
+        };
+      }
+      const missingIdentifiers = input.referencedInstructionIdentifiers.filter(
+        (instructionIdentifier) =>
+          !latestInstructionByIdentifier.has(instructionIdentifier),
+      );
+      if (missingIdentifiers.length > 0) {
+        return {
+          isCreated: false,
+          reason: "引用的原指令不存在: " + missingIdentifiers.join(","),
+        };
+      }
+      groupMappings.set(
+        input.groupIdentifier,
+        input.referencedInstructionIdentifiers.map((instructionIdentifier) => {
+          const instruction = latestInstructionByIdentifier.get(
+            instructionIdentifier,
+          ) as OriginalInstructionRecord;
+          return {
+            instructionIdentifier,
+            revision: instruction.revision,
+            contentFingerprint: computeInstructionContentFingerprint(instruction),
+          };
+        }),
+      );
+      return { isCreated: true, reason: null };
+    },
+
+    describeGroupMapping(input) {
+      const mapping = groupMappings.get(input.groupIdentifier) ?? [];
+      return mapping.map((entry) => {
+        const instruction = latestInstructionByIdentifier.get(
+          entry.instructionIdentifier,
+        ) as OriginalInstructionRecord;
+        return {
+          instructionIdentifier: entry.instructionIdentifier,
+          // 原文**逐字**来自原指令记录（组不保存也不改写文本）
+          instructionText: instruction.instructionText,
+          sourceKind: instruction.sourceKind,
+          sourceActorIdentifier: instruction.sourceActorIdentifier,
+          revision: entry.revision,
+          contentFingerprint: entry.contentFingerprint,
+          priorityTier: instruction.priorityTier,
+          cancellationRightHolderIdentifier: instruction.cancellationRightHolderIdentifier,
+          acceptanceCriteria: [...instruction.acceptanceCriteria],
+        };
+      });
+    },
+
+    isGroupReferenceStillValid(input) {
+      const mapping = groupMappings.get(input.groupIdentifier);
+      if (mapping === undefined) {
+        return { isValid: false, reason: "执行组不存在" };
+      }
+      for (const entry of mapping) {
+        const instruction = latestInstructionByIdentifier.get(entry.instructionIdentifier);
+        if (instruction === undefined) {
+          return {
+            isValid: false,
+            reason: "原指令已不存在: " + entry.instructionIdentifier,
+          };
+        }
+        if (instruction.revision !== entry.revision) {
+          return {
+            isValid: false,
+            reason:
+              "原指令 revision 已前进（引用失效）: " +
+              entry.instructionIdentifier +
+              "（引用 r" +
+              String(entry.revision) +
+              " → 最新 r" +
+              String(instruction.revision) +
+              "）",
+          };
+        }
+        if (computeInstructionContentFingerprint(instruction) !== entry.contentFingerprint) {
+          return {
+            isValid: false,
+            reason: "原指令内容已变化（引用失效）: " + entry.instructionIdentifier,
+          };
+        }
+      }
+      return { isValid: true, reason: null };
+    },
+
+    createDerivedWorkItem(input) {
+      derivedSequence += 1;
+      const derived: DerivedWorkItem = {
+        derivedIdentifier: "derived-" + String(derivedSequence),
+        groupIdentifier: input.groupIdentifier,
+        derivedText: input.derivedText,
+        producedByAgentInstanceId: input.producedByAgentInstanceId,
+        sourceKind: "group-derivative",
+        originatingInstructionIdentifiers: (
+          groupMappings.get(input.groupIdentifier) ?? []
+        ).map((entry) => entry.instructionIdentifier),
+        isOriginalInstructionTextOverridden: false,
+      };
+      derivedWorkItems.push(derived);
+      return derived;
+    },
+
+    listCandidateAssociations() {
+      return candidateAssociations.map((association) => ({ ...association }));
+    },
+
+    countUnfinishedOriginalIntentions() {
+      let unfinishedCount = 0;
+      for (const instruction of latestInstructionByIdentifier.values()) {
+        if (!instruction.isCompleted) {
+          unfinishedCount += 1;
+        }
+      }
+      return unfinishedCount;
+    },
+
+    countExecutionGroups() {
+      return groupMappings.size;
+    },
+
+    isWindowCapacityExceeded() {
+      /**
+       * 卡内："SMART 窗口按**原始未完成意图**计数，**不按执行组数量**计数：
+       * 窗口 3 条不能通过合并塞入第 4 条。"
+       */
+      return this.countUnfinishedOriginalIntentions() > options.windowCapacity;
+    },
+
+    markGroupCompleted(input) {
+      completedGroupIdentifiers.add(input.groupIdentifier);
+      /**
+       * **刻意不做任何事**：卡内"组完成**不自动关闭全部原指令**"。
+       * 这里显式留空，避免后来者误以为漏写而"顺手"补上自动关闭。
+       */
+      void completedGroupIdentifiers;
+    },
+
+    isInstructionCompleted(instructionIdentifier) {
+      return (
+        latestInstructionByIdentifier.get(instructionIdentifier)?.isCompleted ?? false
+      );
+    },
+
+    verifyInstructionCompletion(input) {
+      const instruction = latestInstructionByIdentifier.get(input.instructionIdentifier);
+      if (instruction === undefined) {
+        return { isCompleted: false, reason: "原指令不存在" };
+      }
+      if (!input.isAccepted) {
+        return {
+          isCompleted: false,
+          reason: "逐项核验未通过（不得关闭原指令）",
+        };
+      }
+      if (input.verifiedByGateIdentifier === "") {
+        return { isCompleted: false, reason: "缺少核验门禁标识" };
+      }
+      latestInstructionByIdentifier.set(input.instructionIdentifier, {
+        ...instruction,
+        isCompleted: true,
+      });
+      return { isCompleted: true, reason: null };
+    },
+  };
+}
