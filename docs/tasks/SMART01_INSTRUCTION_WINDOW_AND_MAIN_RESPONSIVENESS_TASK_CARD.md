@@ -97,9 +97,34 @@
   `isGatedByExistingGate=true` 且 `canAcceptNewInstruction=false`、未知幂等键**响亮拒绝**。
 - 反例（先红后绿）：`tests/core/integration/smart01-window-deadline-entry.test.ts` 5 条，
   实现前 `acceptUserInstruction is not a function` / 5 failed。
-- **尚未完成（如实保留，不主张 SMART-01-04 通过）**：**包级 tarball 验收**、
-  以及"模拟慢模型/长下级任务仍能接收新指令"的**真实运行**证据（此前只用离线探针）。
-  四入口（SDK/CLI/TUI/GUI）接线本轮**均已落地**。
+- **尚未完成（如实保留，不主张 SMART-01-04 通过）**：
+  "模拟慢模型/长下级任务仍能接收新指令"的**真实运行**证据（此前只用离线探针；
+  该路径需真实 Provider 凭据与费用授权，属用户/外部依赖）。
+  四入口（SDK/CLI/TUI/GUI）接线与**包级 tarball 验收**本轮**均已落地**。
+
+**SMART-01-04 包级 tarball 验收（2026-10-10，本轮续）**：
+
+- 新增 `scripts/verify-instruction-entry-package.mjs`（`npm run verify:instruction-entry-package`）：
+  `npm pack` → **隔离安装** → 用**已安装包**的 CLI 实跑
+  `instruction accept ×4 / list / deadline（期限内、超期）/ deadline（未知键）`；
+- 判定逻辑抽为**可单测的纯函数** `scripts/lib/smart01-instruction-package-checks.mjs`
+  （沿用本仓教训：内联判定曾导致"零判据通过"）；**任何观测缺失即失败**（fail-closed）；
+- 机械步骤（解析 npm-cli.js、打包、隔离安装、实跑已安装 CLI、tarball 指纹）收敛到
+  `scripts/lib/package-acceptance-runtime.mjs`；`verify-observability-entry-package.mjs`
+  已改为复用同一实现（行为不变，回归 **8/8** 通过、tarball sha256 不变）；
+- **实测结论**：`exit 0`，**7/7 判据通过**——`admitted`（容量 3）→ 第 4 条 `queued`
+  （`active=3/queued=1`）→ 列表窗口内 3 条且 `states=dispatched,dispatched,dispatched`（无 `completed`）
+  → 期限内 `dispatched-within-deadline` → 超期 `overdue-not-dispatched` + `isTruthfulTimeout=true`
+  + `isWorkCompleted=false` → 未知键 `exit=1`；tarball `astarray-0.1.0.tgz`（1 142 667 字节，
+  sha256 `e2ecab40f2a5d463…`，来源提交 `bcfc746`）；
+- 反例（先红后绿）：`scripts/lib/smart01-instruction-package-checks.test.mjs` 9 条
+  （实现前模块缺失即失败；含"第 4 条被 admitted ⇒ 必须失败""超期未如实报超时 ⇒ 必须失败"
+  "未知键 exit 0 ⇒ 必须失败""全部观测缺失 ⇒ 零判据不得通过"），`npm run test:scripts` **19/19** 通过。
+
+- **已登记的两处口径待确认**（本轮未改生产语义，避免超出检查点）：①契约 §4.3 写
+  "`accepted` + `dispatched` + `awaiting-clarification` 计入占用"，而 store 的 `SLOT_OCCUPYING_STATES`
+  为 `dispatched`/`awaiting-clarification`/`partially-completed`（`accepted` 只作排队标记）；
+  ②本轮窗口为 **facade/状态目录级**（同一状态目录单一窗口），按会话隔离与否需在入口接线时明确决定。
 
 **SMART-01-04 GUI 入口接线（2026-10-10，本轮续）**：
 
