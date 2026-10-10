@@ -49,10 +49,28 @@ EPERM 持续必须**恰好 7 次**有界失败、ENOENT 必须**只尝试 1 次*
 2. **超时型抖动仍属独立风险**：本轮另一次默认并发运行中 `run-command-gaps` 曾以
    `Test timed out in 60000ms` 失败（隔离复跑 5.4s 通过）。本次修复针对 EPERM，**不覆盖**该类超时抖动；
    该用例的超时预算是下一轮的候选处理项。
-3. `smoke-install.mjs` 在本次修复后**复跑仍 exit 1**（`.tmp/session-r2-04/smoke-after-fix.log`）。
-   已知：失败发生在它内部的**不带 `--ignore-scripts` 的 `npm pack` → `prepack` → `npm run check`**，
-   报错为 `Command failed: npm pack …`。
-   **尚未定位这次运行的具体失败用例**（本轮只确认到 `npm pack` 命令失败）——不做猜测，
-   留待下一轮抓取其内部 `npm run check` 的 FAIL 明细后再判定是"同一抖动"还是"另有原因"。
-   注意：`npm run check` 本身在 **默认并发** 下本轮并未复现 EPERM（`test:coverage` exit 0），
-   故 `smoke-install` 的失败**很可能另有其因**（例如它自身的打包/安装步骤或超时型抖动）。
+3. `smoke-install.mjs` **已修复并实测 exit 0**（"冒烟测试全部通过 ✓"）。此前 exit 1 由**三个叠加原因**造成，
+   已逐一定位并修掉（都不是"玄学抖动"）：
+
+   | # | 真实原因 | 证据 | 修复 |
+   | --- | --- | --- | --- |
+   | 1 | Windows `rename` 瞬时锁 EPERM（重试预算仅 150ms） | `EPERM: … rename '….summary.json.<pid>.<uuid>.tmp' -> '…summary.json'` | 有界指数退避 7 次 / 25→800ms（`atomic-json.ts`） |
+   | 2 | **我埋下的类型缺陷**（第 10 轮为该测试自造 `Record<string, unknown>` 形参） | `tsc`：`error TS2345`(L279)、`error TS2322`(L529) | 入参类型改为从 `ProviderRequestUsageObserverPort` 端口签名派生 |
+   | 3 | `smoke-install.mjs` 解析 `npm pack --json` **过于脆弱** | `SyntaxError: Unexpected non-whitespace character after JSON at position 2`（`prepack` 输出混进 stdout，首 `[` 落在 check 输出里） | 从后往前逐候选起点尝试解析，取首个"数组且首元素含 filename" |
+
+   **流程失误的教训（已记）**：#2 之所以潜伏多轮，是因为我当时**只跑了 `vitest` 与 `eslint`、没跑
+   `npm run typecheck`**——vitest 不做类型检查，全绿掩盖了 `tsc` 失败。以后凡改 `tests/**` 或
+   `packages/**` 的 TS，必须跑 `npm run typecheck`（或直接 `npm run check`）。
+
+## 4. E2E-01-04 本地可证项现状（全部本地项现已通过）
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run check`（typecheck+lint+build+test） | **exit 0**（由 `smoke-install` 的 `prepack` 路径实测） |
+| `npm run test:coverage`（仓库配置、默认并发、阈值 85） | **exit 0**，分支 **85.05%** 达标 |
+| 安全关键模块专项 | **22/22 ≥95%** |
+| E2E-01-01 fixture 复现 | 指纹 `6512b2a6…c7c` 与历史一致 |
+| `npm pack` + `verify-package` | exit 0（239 文件，sha256 `8b175e31…`） |
+| `smoke-install.mjs` | **exit 0（冒烟测试全部通过）** |
+
+**仍未满足**：人工体验结论、Linux/macOS 平台证据（只能由用户或平台提供）→ `E2E-01-04` 保持 `in_progress`。

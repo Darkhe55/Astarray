@@ -56,8 +56,27 @@ const packOutput = run(
 const packOutputWithoutAnsi = packOutput
   .replace(/\u001B\[[0-9;]*m/g, "")
   .trim();
-const packJsonStart = packOutputWithoutAnsi.indexOf("[");
-const packResult = JSON.parse(packOutputWithoutAnsi.slice(packJsonStart))[0];
+/**
+ * `npm pack` 会把 **prepack（`npm run check`）的输出一起打到 stdout**，因此不能简单切片：
+ *  - 取**首个** `[` 可能落在 check 的输出里（2026-10-09 实测报
+ *    `SyntaxError: Unexpected non-whitespace character after JSON at position 2`）；
+ *  - 取**最后一个** `[` 又会被 JSON 数组内部的嵌套 `[` 误导。
+ * 这里**从后往前逐个候选起点尝试解析**，取第一个能解析成「数组且首元素含 filename」的切片。
+ */
+const packResult = (() => {
+  for (let candidateIndex = packOutputWithoutAnsi.length - 1; candidateIndex >= 0; candidateIndex -= 1) {
+    if (packOutputWithoutAnsi[candidateIndex] !== "[") continue;
+    try {
+      const parsedCandidate = JSON.parse(packOutputWithoutAnsi.slice(candidateIndex));
+      if (Array.isArray(parsedCandidate) && typeof parsedCandidate[0]?.filename === "string") {
+        return parsedCandidate[0];
+      }
+    } catch {
+      // 该起点不是有效 JSON，继续向前寻找
+    }
+  }
+  throw new Error("smoke-install: 无法从 `npm pack --json` 输出中解析出 tarball 信息");
+})();
 const tarballFileName = packResult.filename;
 const tarballPath = path.join(packageArchiveRoot, tarballFileName);
 console.log(
