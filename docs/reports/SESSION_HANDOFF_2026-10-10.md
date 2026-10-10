@@ -72,7 +72,14 @@
 
 - `tests/tui/unit/run-command-gaps.test.ts` 曾在默认并发下 `Test timed out in 60000ms`（隔离复跑 5.4s 通过）。
 - 下一步：评估其超时预算是否合理（**不要用无依据地放大超时来掩盖竞态**），或定位真实竞态。
-- 2026-10-10 本轮状态：`npm run check` 与 `npm run test:coverage`（默认并发）**均未复现**，仍保留为待评估项。
+- **2026-10-10 本轮实测**：隔离 8 次 + 全量 `--maxWorkers=12` 3 次 + `check`/`coverage` 各 1 次，
+  **13 次运行全部通过、未复现** ⇒ **不宣称已修复**（无失败样本可证因）。
+- **已定位的可证接缝（确定性）**：该文件走真实 mission 的两个用例**不传 `timeoutSeconds`** ⇒
+  `executeRunCommand` → `waitForTaskTerminal(timeoutMilliseconds = null)` 以 50ms 轮询**且无 deadline**
+  等待终态（T07D-R2-03 既定契约："缺省不设固定上限"）。mission 长期停在非终态时
+  （`mapMissionStatus` 在 `summary.status` 缺失时回退 `running`）等待会静默持续到框架超时。
+- **本轮处置**：新增确定性反例钉住该等待形状（预算给足但永不终态 ⇒ 有界返回 `running` 且不伪装 done；
+  零预算 ⇒ 立即返回不空转；进入等待前有待裁决询问 ⇒ 立即返回 `blocked`）。**未**改动等待契约、**未**放大超时。
 
 ### ③ 只能由用户/平台提供（不得用文字覆盖）
 
