@@ -4751,3 +4751,267 @@ export async function executeSummaryShowCommand(
 }
 
 
+
+/* ────────────── TOOLKIT-01-04：工具包版本管理入口（CLI 最小管理面） ────────────── */
+
+export interface ToolPackageVersionCommandOptions {
+  toolPackageId: string;
+  stateDirectory: string;
+  isJsonOutput: boolean;
+  fromVersion?: number;
+  toVersion?: number;
+}
+
+export interface ToolPackageProjectCommandOptions {
+  toolPackageId: string;
+  projectIdentifier: string;
+  stateDirectory: string;
+  isJsonOutput: boolean;
+  version?: number;
+  isReauthorized?: boolean;
+}
+
+/**
+ * `tool-package describe <id> --from A --to B`：展示**升级差异**。
+ *
+ * 卡内 §8 要求"新版本展示行为、依赖和权限差异；新增副作用须重新授权"，
+ * 这里把差异**直接呈现**给用户（含是否需要重新授权），而不是只让内部判定知道。
+ */
+export async function executeToolPackageDescribeCommand(
+  options: ToolPackageVersionCommandOptions,
+): Promise<number> {
+  try {
+    const { ToolPackageVersionStateStore } = await import(
+      "../../../core/src/toolkit/tool-package-version-state-store.js"
+    );
+    const store = new ToolPackageVersionStateStore({
+      stateDirectory: options.stateDirectory,
+    });
+    if (options.fromVersion === undefined || options.toVersion === undefined) {
+      failWith(new Error("describe 需要 --from 与 --to"), EXIT_CODES.USAGE_ERROR);
+    }
+    const differences = await store.describeUpgradeDifferences({
+      toolPackageId: options.toolPackageId,
+      fromVersion: options.fromVersion,
+      toVersion: options.toVersion,
+    });
+    if (options.isJsonOutput) {
+      printJson(differences);
+      return EXIT_CODES.SUCCESS;
+    }
+    process.stdout.write(
+      "行为差异(新增副作用): " +
+        (differences.addedSideEffects.join(",") || "-") +
+        "\n行为差异(移除副作用): " +
+        (differences.removedSideEffects.join(",") || "-") +
+        "\n依赖差异: " +
+        (differences.dependencyDifferences.join(",") || "-") +
+        "\n权限差异: " +
+        (differences.permissionDifferences.join(",") || "-") +
+        "\n是否需要重新授权: " +
+        (differences.requiresReauthorization ? "是" : "否") +
+        "\n",
+    );
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    failWith(error instanceof Error ? error : new Error(String(error)));
+  }
+}
+
+/** `tool-package status <id> --project P`：只读显示项目锁定与启用状态。 */
+export async function executeToolPackageStatusCommand(
+  options: ToolPackageProjectCommandOptions,
+): Promise<number> {
+  try {
+    const { ToolPackageVersionStateStore } = await import(
+      "../../../core/src/toolkit/tool-package-version-state-store.js"
+    );
+    const store = new ToolPackageVersionStateStore({
+      stateDirectory: options.stateDirectory,
+    });
+    const controller = await store.loadController();
+    const lock = controller.findProjectLock({
+      projectIdentifier: options.projectIdentifier,
+      toolPackageId: options.toolPackageId,
+    });
+    if (lock === null) {
+      const payload = {
+        toolPackageId: options.toolPackageId,
+        projectIdentifier: options.projectIdentifier,
+        isLocked: false,
+        isEnabled: false,
+        version: null,
+        revision: null,
+      };
+      if (options.isJsonOutput) {
+        printJson(payload);
+      } else {
+        process.stdout.write("未锁定该工具包\n");
+      }
+      return EXIT_CODES.SUCCESS;
+    }
+    const resolveResult = controller.resolveVersionForExecution({
+      projectIdentifier: options.projectIdentifier,
+      toolPackageId: options.toolPackageId,
+    });
+    const payload = {
+      toolPackageId: options.toolPackageId,
+      projectIdentifier: options.projectIdentifier,
+      isLocked: true,
+      isEnabled: lock.isEnabled,
+      version: lock.version,
+      revision: lock.revision,
+      isRunnable: resolveResult !== null,
+      inFlightCallCount: controller.listInFlightCalls({
+        projectIdentifier: options.projectIdentifier,
+      }).length,
+    };
+    if (options.isJsonOutput) {
+      printJson(payload);
+    } else {
+      process.stdout.write(
+        "版本: " +
+          String(lock.version) +
+          "\n已启用: " +
+          (lock.isEnabled ? "是" : "否") +
+          "\nrevision: " +
+          String(lock.revision) +
+          "\n",
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    failWith(error instanceof Error ? error : new Error(String(error)));
+  }
+}
+
+export interface ToolPackageListCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+}
+
+/** `tool-package list`：只读列出已登记版本与状态。 */
+export async function executeToolPackageListCommand(
+  options: ToolPackageListCommandOptions,
+): Promise<number> {
+  try {
+    const { ToolPackageVersionStateStore } = await import(
+      "../../../core/src/toolkit/tool-package-version-state-store.js"
+    );
+    const store = new ToolPackageVersionStateStore({
+      stateDirectory: options.stateDirectory,
+    });
+    const snapshot = await store.readSnapshot();
+    if (options.isJsonOutput) {
+      printJson({
+        versions: snapshot.versions.map((entry) => ({
+          toolPackageId: entry.registration.toolPackageId,
+          version: entry.registration.version,
+          status: entry.status,
+          contentHash: entry.registration.contentHash,
+        })),
+        projectLocks: snapshot.projectLocks,
+      });
+      return EXIT_CODES.SUCCESS;
+    }
+    process.stdout.write(
+      snapshot.versions
+        .map(
+          (entry) =>
+            entry.registration.toolPackageId +
+            "@" +
+            String(entry.registration.version) +
+            " [" +
+            entry.status +
+            "]",
+        )
+        .join("\n") + "\n",
+    );
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    failWith(error instanceof Error ? error : new Error(String(error)));
+  }
+}
+
+/**
+ * `tool-package enable|disable|upgrade|rollback`：变更并**原子落盘**。
+ *
+ * 失败（例如未重新授权就升级含新增副作用的版本）必须**退出码非 0** 并给出原因，
+ * 不得静默成功。
+ */
+export async function executeToolPackageChangeCommand(
+  options: ToolPackageProjectCommandOptions & {
+    changeKind: "enable" | "disable" | "upgrade" | "rollback";
+  },
+): Promise<number> {
+  try {
+    const { ToolPackageVersionStateStore } = await import(
+      "../../../core/src/toolkit/tool-package-version-state-store.js"
+    );
+    const store = new ToolPackageVersionStateStore({
+      stateDirectory: options.stateDirectory,
+    });
+    const outcome = await (async () => {
+      switch (options.changeKind) {
+        case "enable": {
+          if (options.version === undefined) {
+            failWith(new Error("enable 需要 --tool-version"), EXIT_CODES.USAGE_ERROR);
+          }
+          return store.enableForProject({
+            projectIdentifier: options.projectIdentifier,
+            toolPackageId: options.toolPackageId,
+            version: options.version,
+          });
+        }
+        case "disable": {
+          return store.disableForProject({
+            projectIdentifier: options.projectIdentifier,
+            toolPackageId: options.toolPackageId,
+          });
+        }
+        case "upgrade": {
+          if (options.version === undefined) {
+            failWith(new Error("upgrade 需要 --tool-version"), EXIT_CODES.USAGE_ERROR);
+          }
+          return store.upgradeProjectVersion({
+            projectIdentifier: options.projectIdentifier,
+            toolPackageId: options.toolPackageId,
+            toVersion: options.version,
+            isReauthorized: options.isReauthorized === true,
+          });
+        }
+        case "rollback": {
+          if (options.version === undefined) {
+            failWith(new Error("rollback 需要 --tool-version"), EXIT_CODES.USAGE_ERROR);
+          }
+          return store.rollbackProjectVersion({
+            projectIdentifier: options.projectIdentifier,
+            toolPackageId: options.toolPackageId,
+            toVersion: options.version,
+          });
+        }
+      }
+    })();
+    if (!outcome.isApplied) {
+      logToStderr(String(outcome.reason));
+      if (options.isJsonOutput) {
+        printJson({ isApplied: false, reason: outcome.reason });
+      }
+      return EXIT_CODES.FAILURE;
+    }
+    if (options.isJsonOutput) {
+      printJson({
+        isApplied: true,
+        revision: outcome.revision,
+        changeKind: options.changeKind,
+      });
+    } else {
+      process.stdout.write(
+        "已应用 " + options.changeKind + "（revision " + String(outcome.revision) + "）\n",
+      );
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    failWith(error instanceof Error ? error : new Error(String(error)));
+  }
+}

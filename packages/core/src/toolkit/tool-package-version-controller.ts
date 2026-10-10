@@ -124,6 +124,58 @@ export class ToolPackageVersionController {
     });
   }
 
+  /** 全部已登记版本（供持久化与只读管理视图使用）。 */
+  listRegisteredVersions(): Array<{
+    registration: ToolPackageVersionRegistration;
+    status: ToolPackageVersionLifecycleStatus;
+  }> {
+    return [...this.versions.values()]
+      .map((stored) => ({ registration: { ...stored.registration }, status: stored.status }))
+      .sort((left, right) => {
+        if (left.registration.toolPackageId !== right.registration.toolPackageId) {
+          return left.registration.toolPackageId.localeCompare(right.registration.toolPackageId);
+        }
+        return left.registration.version - right.registration.version;
+      });
+  }
+
+  /** 全部项目锁定（供持久化与只读管理视图使用）。 */
+  listProjectLocks(): Array<{
+    projectIdentifier: string;
+    toolPackageId: string;
+    version: number;
+    contentHash: string;
+    isEnabled: boolean;
+    revision: number;
+  }> {
+    return [...this.projectLocks.values()]
+      .map((lock) => ({ ...lock }))
+      .sort((left, right) => {
+        if (left.projectIdentifier !== right.projectIdentifier) {
+          return left.projectIdentifier.localeCompare(right.projectIdentifier);
+        }
+        return left.toolPackageId.localeCompare(right.toolPackageId);
+      });
+  }
+
+  /** 查询单个项目锁定（不存在返回 null）。 */
+  findProjectLock(input: {
+    projectIdentifier: string;
+    toolPackageId: string;
+  }): {
+    projectIdentifier: string;
+    toolPackageId: string;
+    version: number;
+    contentHash: string;
+    isEnabled: boolean;
+    revision: number;
+  } | null {
+    const lock = this.projectLocks.get(
+      projectLockKey(input.projectIdentifier, input.toolPackageId),
+    );
+    return lock === undefined ? null : { ...lock };
+  }
+
   describeVersion(input: {
     toolPackageId: string;
     version: number;
@@ -466,6 +518,68 @@ export class ToolPackageVersionController {
     return this.callHistory.filter(
       (record) => record.projectIdentifier === input.projectIdentifier,
     );
+  }
+
+  /** 全部调用历史（供持久化使用）。 */
+  listAllCallRecords(): ToolPackageCallRecord[] {
+    return this.callHistory.map((record) => ({
+      ...record,
+      producedArtifacts: [...record.producedArtifacts],
+    }));
+  }
+
+  /**
+   * 从持久化快照恢复状态（供跨进程管理入口使用）。
+   *
+   * 只恢复数据，不改变任何判定逻辑；`pendingSwitches` 一并恢复，
+   * 使崩溃恢复在**新进程**中依然可用。
+   */
+  restoreFromSnapshot(snapshot: {
+    versions: Array<{
+      registration: ToolPackageVersionRegistration;
+      status: ToolPackageVersionLifecycleStatus;
+    }>;
+    projectLocks: Array<{
+      projectIdentifier: string;
+      toolPackageId: string;
+      version: number;
+      contentHash: string;
+      isEnabled: boolean;
+      revision: number;
+    }>;
+    callHistory: ToolPackageCallRecord[];
+    pendingSwitches?: PendingVersionSwitch[];
+  }): void {
+    for (const stored of snapshot.versions) {
+      this.versions.set(
+        versionKey(stored.registration.toolPackageId, stored.registration.version),
+        { registration: { ...stored.registration }, status: stored.status },
+      );
+    }
+    for (const lock of snapshot.projectLocks) {
+      this.projectLocks.set(
+        projectLockKey(lock.projectIdentifier, lock.toolPackageId),
+        { ...lock },
+      );
+    }
+    this.callHistory.length = 0;
+    for (const record of snapshot.callHistory) {
+      this.callHistory.push({
+        ...record,
+        producedArtifacts: [...record.producedArtifacts],
+      });
+    }
+    for (const pendingSwitch of snapshot.pendingSwitches ?? []) {
+      this.pendingSwitches.set(
+        projectLockKey(pendingSwitch.projectIdentifier, pendingSwitch.toolPackageId),
+        { ...pendingSwitch },
+      );
+    }
+  }
+
+  /** 全部待处理切换意图（供持久化使用）。 */
+  listPendingSwitches(): PendingVersionSwitch[] {
+    return [...this.pendingSwitches.values()].map((pending) => ({ ...pending }));
   }
 
   /** 废弃（标记，不删除）。 */

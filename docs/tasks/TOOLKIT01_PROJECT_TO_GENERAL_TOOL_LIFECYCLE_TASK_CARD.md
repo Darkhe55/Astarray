@@ -230,21 +230,6 @@ GUI/TUI 人工体验：用户能区分草案/已验证/已启用、项目专用/
   （实现前模块不存在即失败）。
 - 一处**解读分歧已如实固化**："两个结构不同的隔离项目"我采用**保守解读**
   （来源计一、另需两个），理由写入代码注释；若上游采用宽解读，需改此处与测试。
-- **仍未完成**：01 的其余部分（隔离 fixture 与基线成本记录）、
-  02 的**真实项目 fixture 与基线成本记录**（引擎与独立验证判定已实现并通过反例，
-  但尚未在选定真实重复流程上记录基线成本）、
-  03（用户级推广与第二个项目 fixture、来源项目零修改、目标权限不继承、导出无敏感数据）、
-  04（参数授权设置接线，依赖 MERGE-01）、05（受控确定性程序工具与沙箱/broker 边界）、
-  06（SDK 与 CLI/TUI/GUI 最小管理入口、tarball 隔离包闭环、收益评估）。
-
-参考用于设计借鉴，不构成本项目已兼容或依赖安装要求：
-
-- [MCP 工具接口与命名消歧](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/draft/server/tools.mdx)：结构化输入输出，工具元数据不替代本地授权。
-- [GitHub 可复用工作流](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows)：组合调用权限不提升，工具版本固定。
-- [Agent Skills 规范](https://github.com/agentskills/agentskills/blob/main/docs/specification.mdx)：说明、脚本和参考资料分离，渐进加载；技能文字不授予执行权限。
-
-实施时冻结实际采用的规范版本；不因在线草案更新自动变更本卡权限与数据边界。
-
 ### TOOLKIT-01-04 进展（2026-10-10）：版本、更新、回滚与故障
 
 新增 `packages/core/src/toolkit/tool-package-version-controller.ts`（纯本地确定性判定；
@@ -280,10 +265,50 @@ GUI/TUI 人工体验：用户能区分草案/已验证/已启用、项目专用/
 （仅此一处），并记录以免重犯。
 
 - 反例（先红后绿）：`tests/core/unit/toolkit01-version-controller.test.ts` **10 条**
-- **仍未完成**：01 的其余部分（隔离 fixture 与基线成本记录）、
-  02 的**真实项目 fixture 与基线成本记录**、
-  03 的真实第二项目 fixture 与导出内容检查、
-  05（受控确定性程序工具与沙箱/broker 边界）、
-  06（SDK 与 CLI/TUI/GUI 最小管理入口、tarball 隔离包闭环、收益评估）。
-  04 的**参数授权设置**所依赖的 MERGE-01 设置入口已完成（设置存储 + 默认全开 + 规则校验），
-  故 04 不再被阻塞；其余（升级差异展示入口、停用/回滚的管理入口与独立反馈）仍待后续检查点。
+  （实现前模块不存在即失败）。
+
+### TOOLKIT-01-04 进展（2026-10-10 续）：持久化 + CLI 最小管理入口
+
+**缺口**：上一轮的 `ToolPackageVersionController` 是**纯内存**的，且**没有任何管理入口**。
+CLI 每次调用都是**独立进程**，因此"停用阻止新运行"与"回滚"在真实使用路径上**不可达**
+（跨进程看不到锁定/启用/历史状态）。
+
+**本轮交付**：
+
+1. `packages/core/src/toolkit/tool-package-version-state-store.ts`：
+   版本状态（已登记版本、项目锁定、调用历史、待处理切换）**原子落盘**；
+   读-改-写便捷方法每次变更都落盘；**判定逻辑全部复用控制器**，不复制任何规则，
+   避免"存储层与判定层结论不一致"。
+2. CLI 最小管理面 `astarray tool-package`：
+   `list`（只读）、`describe <id> --from A --to B`（**升级差异**：新增/移除副作用、
+   依赖差异、权限差异、是否需要重新授权）、`status <id> --project P`（含 `isRunnable`
+   与在途调用数）、`enable/disable/upgrade/rollback`（变更并原子落盘；
+   失败**退出码非 0** 且给出原因）。
+
+**本片暴露并修掉一个真实缺陷 + 记住一个陷阱**：
+
+- **`--version` 被 commander 吞掉**：子命令上用 `--version` 会与**程序版本标志**冲突 ——
+  commander 直接打印 `0.1.0` 并退出，**子命令根本没执行**（表现为"升级总是成功"，
+  极具欺骗性）。已改名 `--tool-version`，并在代码注释中记录原因。
+  反例 ④ 正是先红于此。
+- **`ToolPackageVersionStateStore` 漏了公开导出**：反例测试 import 失败 ⇒
+  状态从未写入 ⇒ 断言看到空状态。已补入 `public-sdk`。
+  （这是本会话第三次遇到"新增能力漏公开导出"，已作为反复出现的模式记录。）
+
+- 反例（先红后绿）：`tests/tui/integration/toolkit01-tool-package-cli.test.ts` **4 条**，
+  其中 ③④ 驱动**真实 `dist/cli.js` 子进程**验证跨进程生效（非仅内存断言）。
+- **本卡当前总账（仍未完成）**：01 的其余部分（隔离 fixture 与基线成本记录）；
+  02 的真实项目 fixture 与基线成本记录；03 的真实第二项目 fixture 与导出内容检查、
+  接入注册表的"目标项目显式启用并固定版本"端到端演示；
+  04 的升级差异 **TUI/GUI 面板展示**、独立反馈入口、取消/崩溃恢复的管理入口；
+  05（受控确定性程序工具与沙箱/broker 边界，未开始）；
+  06（SDK 与 CLI/TUI/GUI 最小管理入口补齐、tarball 隔离包闭环、收益评估，未开始）。
+
+参考用于设计借鉴，不构成本项目已兼容或依赖安装要求：
+
+- [MCP 工具接口与命名消歧](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/specification/draft/server/tools.mdx)：结构化输入输出，工具元数据不替代本地授权。
+- [GitHub 可复用工作流](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows)：组合调用权限不提升，工具版本固定。
+- [Agent Skills 规范](https://github.com/agentskills/agentskills/blob/main/docs/specification.mdx)：说明、脚本和参考资料分离，渐进加载；技能文字不授予执行权限。
+
+实施时冻结实际采用的规范版本；不因在线草案更新自动变更本卡权限与数据边界。
+

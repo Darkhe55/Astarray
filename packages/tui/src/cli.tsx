@@ -64,6 +64,10 @@ import {
   executeInstructionDeadlineCommand,
   executeInstructionListCommand,
   executePerfOverviewCommand,
+  executeToolPackageChangeCommand,
+  executeToolPackageDescribeCommand,
+  executeToolPackageListCommand,
+  executeToolPackageStatusCommand,
   executeUsageOverviewCommand,
 } from "./cli/commands.js";
 
@@ -318,6 +322,120 @@ instructionCommand
       });
     },
   );
+
+/**
+ * TOOLKIT-01-04：工具包版本管理入口（CLI 最小管理面）。
+ *
+ * 卡内检查点 04/06 要求"升级差异、停用/回滚、CLI 最小管理入口"。
+ * 每次调用都是**独立进程**，因此状态经 `ToolPackageVersionStateStore` 原子落盘，
+ * 判定逻辑全部复用 `ToolPackageVersionController`（不复制规则）。
+ */
+const toolPackageCommand = program
+  .command("tool-package")
+  .description("工具包版本管理（锁定/启用/停用/升级/回滚；不自动升级）");
+toolPackageCommand
+  .command("list")
+  .description("列出已登记版本与项目锁定（只读）")
+  .option("--state-dir <dir>", "状态目录")
+  .option("--json", "JSON 输出")
+  .action(async (options: { stateDir?: string; json?: boolean }) => {
+    process.exitCode = await executeToolPackageListCommand({
+      stateDirectory: options.stateDir ?? defaultStateDirectory(),
+      isJsonOutput: options.json === true,
+    });
+  });
+toolPackageCommand
+  .command("describe <tool-package-id>")
+  .description("展示两版本之间的行为/依赖/权限差异与是否需要重新授权")
+  .option("--from <version>", "源版本")
+  .option("--to <version>", "目标版本")
+  .option("--state-dir <dir>", "状态目录")
+  .option("--json", "JSON 输出")
+  .action(
+    async (
+      toolPackageId: string,
+      options: { from?: string; to?: string; stateDir?: string; json?: boolean },
+    ) => {
+      process.exitCode = await executeToolPackageDescribeCommand({
+        toolPackageId,
+        fromVersion: options.from === undefined ? undefined : Number(options.from),
+        toVersion: options.to === undefined ? undefined : Number(options.to),
+        stateDirectory: options.stateDir ?? defaultStateDirectory(),
+        isJsonOutput: options.json === true,
+      });
+    },
+  );
+toolPackageCommand
+  .command("status <tool-package-id>")
+  .description("显示项目锁定版本、启用状态与 revision（只读）")
+  .option("--project <project-id>", "项目标识")
+  .option("--state-dir <dir>", "状态目录")
+  .option("--json", "JSON 输出")
+  .action(
+    async (
+      toolPackageId: string,
+      options: { project?: string; stateDir?: string; json?: boolean },
+    ) => {
+      process.exitCode = await executeToolPackageStatusCommand({
+        toolPackageId,
+        projectIdentifier: options.project ?? "",
+        stateDirectory: options.stateDir ?? defaultStateDirectory(),
+        isJsonOutput: options.json === true,
+      });
+    },
+  );
+
+/** enable/disable/upgrade/rollback 共用同一变更入口（差别只在 changeKind 与是否需版本）。 */
+for (const changeKind of ["enable", "disable", "upgrade", "rollback"] as const) {
+  const isVersionRequired = changeKind !== "disable";
+  let registration = toolPackageCommand
+    .command(`${changeKind} <tool-package-id>`)
+    .description(
+      changeKind === "disable"
+        ? "停用（阻止新运行；在途调用仍按安全点收敛，不删除）"
+        : changeKind === "rollback"
+          ? "回滚到指定版本（只切换后续使用版本，不撤销历史副作用）"
+          : changeKind === "upgrade"
+            ? "升级到指定版本（含新增副作用时须 --reauthorized）"
+            : "在项目内启用指定版本",
+    )
+    .option("--project <project-id>", "项目标识")
+    .option("--state-dir <dir>", "状态目录")
+    .option("--json", "JSON 输出");
+  if (isVersionRequired) {
+    // 注意：**不能**用 `--version` —— commander 会把它当作程序版本标志（打印 0.1.0 后退出），
+    // 子命令根本不会执行。这也正是本片反例先红的原因（2026-10-10 实测）。
+    registration = registration.option("--tool-version <version>", "目标版本");
+  }
+  if (changeKind === "upgrade") {
+    registration = registration.option(
+      "--reauthorized",
+      "已就该版本的新增副作用重新授权",
+    );
+  }
+  registration.action(
+    async (
+      toolPackageId: string,
+      options: {
+        project?: string;
+        toolVersion?: string;
+        reauthorized?: boolean;
+        stateDir?: string;
+        json?: boolean;
+      },
+    ) => {
+      process.exitCode = await executeToolPackageChangeCommand({
+        changeKind,
+        toolPackageId,
+        projectIdentifier: options.project ?? "",
+        version: options.toolVersion === undefined ? undefined : Number(options.toolVersion),
+        isReauthorized: options.reauthorized === true,
+        stateDirectory: options.stateDir ?? defaultStateDirectory(),
+        isJsonOutput: options.json === true,
+      });
+    },
+  );
+}
 
 /**
  * PROJECT-01-04：跨项目授权与副本的公开只读入口。

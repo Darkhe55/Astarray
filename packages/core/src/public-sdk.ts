@@ -120,6 +120,13 @@ export {
   type ToolPackageVersionLifecycleStatus,
   type ToolPackageVersionRegistration,
 } from "./toolkit/tool-package-version-controller.js";
+// 版本状态的**持久化**存储：CLI 是独立进程，跨进程必须落盘才能看到锁定/启用/历史。
+export {
+  TOOL_PACKAGE_VERSION_STATE_SCHEMA_VERSION,
+  ToolPackageVersionStateStore,
+  type ToolPackageVersionStateSnapshot,
+  type ToolPackageVersionStateStoreOptions,
+} from "./toolkit/tool-package-version-state-store.js";
 
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
