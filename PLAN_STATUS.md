@@ -79,8 +79,18 @@
        L396 `isInteractive()` = `isInteractiveFlag() || hasInputChannelFlag()`；
        L400-414 `readDecision()` 仅当整行 `trim().toLowerCase() === "allow-once"` 才返回授权；
        L288 即在成功时打印"已按精确参数 allow-once 授权"。
-     - `packages/tui/src/cli/bootstrap.ts` L29：默认 `isInteractive: () => process.stdin.isTTY === true`
-       （**只看 TTY**）——与上面端口的 `isInteractive()` 口径**不同**，是首先值得核对的一处不一致。
+     - **2026-10-10 修正（读完调用点后，上一条的优先怀疑被证伪）**：
+       `run-command.ts` L265-272 传给 `runPermissionAskAdjudication` 的是
+       `isInteractive: decisionPort.isInteractive()`——**端口内部已做 `isInteractiveFlag() || hasInputChannelFlag()`**，
+       因此**并非** `bootstrap.ts` 那个 TTY-only 口径在挡路。**不要把改动先花在 bootstrap 上。**
+     - **读完调用点后更可能的方向**：同文件 L240-276 的裁决循环是
+       `while (finalStatus === "blocked" && adjudicationRound < MAXIMUM_ADJUDICATION_ROUNDS)`，
+       且 **L274-276 `if (decision !== "allowed-once") break;`** ——
+       只要 `decisionPort.readDecision()` 返回 `null` 或 `deny`，就会**只走 1 轮**并停在 blocked，
+       与实测"无 grant 痕迹、只走 1 轮、任务 blocked"**完全吻合**。
+       故首选核对：**裁决读取时 stdin 是否已被消费或已 `end`**（例如先被别处读取/关闭），
+       以及 L309-346 行读取器在"管道已给完数据但尚未 end / 已 end"两种时序下的返回值。
+     - 复核纪律不变：该用例 spawn `dist/cli.js`，改 `src` 后必须 `npm run build`；单次复跑约 31s，一次只验一个假设。
      - `packages/tui/src/cli/run-command.ts` L268：`isInteractive: decisionPort.isInteractive()` 的接线段；
        L28-46 另有"等待新一轮 permission-ask 文本到达"与"`allow-once` 后等待重跑窗口"的时间窗逻辑。
      - **关键矛盾（下轮先证伪/证实）**：stderr 已打印"已按精确参数 allow-once 授权（作用域授权: granted）"，
