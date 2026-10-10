@@ -118,7 +118,6 @@ export {
   type CrossProjectPermissionEvaluation,
   type CrossProjectReadResult,
 } from "./orchestration/cross-project-authorization-store.js";
-
 export {
   PROVIDER_RUNTIME_CAPABILITIES,
   ProviderConfigurationError,
@@ -787,6 +786,14 @@ export interface PublicApplicationOptions {
   crossProjectResourceIo?: CrossProjectResourceIoPort | null;
   /** PROJECT-01-04：目标人工改动守卫（缺守卫且目标已存在 ⇒ 拒绝覆盖，fail-closed）。 */
   crossProjectHumanEditGuard?: CrossProjectTargetHumanEditGuardPort | null;
+  /**
+   * RELIABILITY-01-02 · R4：幂等账目损坏时是否仍允许启动。
+   *
+   * 缺省 false ⇒ **fail-closed 拒绝启动**（`idempotency-ledger-corrupted`），
+   * 避免把"既有 claim 读不全"当成"全新开始"而重复执行同一请求。
+   * 显式传 true 才会沿用可解析条目继续（调用方自担重复副作用风险）。
+   */
+  allowCorruptedIdempotencyLedger?: boolean;
 }
 
 /** 公开 Provider 配置：只含受保护凭据引用与允许列表，不含秘密内容。 */
@@ -834,60 +841,170 @@ interface TaskIdempotencyLedgerEntry {
 
 /** 解析幂等账目文件（容错：结构非法视为空账目，不伪造历史）。 */
 export function parseTaskIdempotencyLedger(rawText: string): TaskIdempotencyLedgerEntry[] {
+  return parseTaskIdempotencyLedgerWithIntegrity(rawText).entries;
+}
+
+/** 幂等账目**完整性结果**（RELIABILITY-01-02 · R4 返修）。 */
+export interface TaskIdempotencyLedgerIntegrity {
+  /** 可安全使用的条目（结构非法条目不会进入这里）。 */
+  entries: TaskIdempotencyLedgerEntry[];
+  /**
+   * 账目是否**损坏/不可全信**。
+   *
+   * 为 true 时调用方**不得**把 `entries` 当作"完整的既有历史"：文件存在却读不全，
+   * 意味着部分 `(sessionId, idempotencyKey)` 的既有 claim 已不可知，
+   * 直接按空账目继续会**重复执行**并可能产生重复副作用。
+   */
+  isCorrupted: boolean;
+  /** 损坏原因（未损坏时为 null）。 */
+  corruptionReason: string | null;
+  /** 被丢弃的**结构非法**条目数（>0 即视为损坏）。 */
+  unusableEntryCount: number;
+}
+
+/**
+ * 解析幂等账目并**如实报告完整性**（R4：不得把"损坏"静默降级成"全新开始"）。
+ *
+ * 与 `parseTaskIdempotencyLedger` 的区别：后者为兼容既有调用保留"损坏 → 空数组"行为，
+ * 本函数把损坏**显式暴露**出来，供入口在继续受理任务前决策（fail-closed）。
+ */
+export function parseTaskIdempotencyLedgerWithIntegrity(
+  rawText: string,
+): TaskIdempotencyLedgerIntegrity {
+  const corrupted = (reason: string, entries: TaskIdempotencyLedgerEntry[] = [], unusableEntryCount = 0) => ({
+    entries,
+    isCorrupted: true,
+    corruptionReason: reason,
+    unusableEntryCount,
+  });
+
+  let parsed: { schemaVersion?: unknown; entries?: unknown };
   try {
-    const parsed = JSON.parse(rawText) as {
-      schemaVersion?: unknown;
-      entries?: unknown;
-    };
-    if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.entries)) {
-      return [];
-    }
-    const entries: TaskIdempotencyLedgerEntry[] = [];
-    for (const rawEntry of parsed.entries) {
-      if (rawEntry === null || typeof rawEntry !== "object") {
-        continue;
-      }
-      const record = rawEntry as Record<string, unknown>;
-      if (
-        typeof record.sessionIdentifier !== "string" ||
-        typeof record.idempotencyKey !== "string" ||
-        typeof record.inputHash !== "string" ||
-        typeof record.taskIdentifier !== "string" ||
-        typeof record.claimedAtIso !== "string"
-      ) {
-        continue;
-      }
-      entries.push({
-        sessionIdentifier: record.sessionIdentifier,
-        idempotencyKey: record.idempotencyKey,
-        inputHash: record.inputHash,
-        taskIdentifier: record.taskIdentifier,
-        missionIdentifier:
-          typeof record.missionIdentifier === "string" ? record.missionIdentifier : null,
-        claimedAtIso: record.claimedAtIso,
-        settledAtIso: typeof record.settledAtIso === "string" ? record.settledAtIso : null,
-      });
-    }
-    return entries;
-  } catch {
-    return [];
+    parsed = JSON.parse(rawText) as { schemaVersion?: unknown; entries?: unknown };
+  } catch (error) {
+    return corrupted("幂等账目不是合法 JSON：" + (error as Error).message);
   }
+  if (parsed === null || typeof parsed !== "object") {
+    return corrupted("幂等账目顶层不是对象");
+  }
+  if (parsed.schemaVersion !== 1) {
+    return corrupted(
+      "幂等账目 schemaVersion 不是 1（实际 " + String(parsed.schemaVersion) + "）",
+    );
+  }
+  if (!Array.isArray(parsed.entries)) {
+    return corrupted("幂等账目 entries 不是数组");
+  }
+
+  const entries: TaskIdempotencyLedgerEntry[] = [];
+  let unusableEntryCount = 0;
+  for (const rawEntry of parsed.entries) {
+    if (rawEntry === null || typeof rawEntry !== "object") {
+      unusableEntryCount += 1;
+      continue;
+    }
+    const record = rawEntry as Record<string, unknown>;
+    if (
+      typeof record.sessionIdentifier !== "string" ||
+      typeof record.idempotencyKey !== "string" ||
+      typeof record.inputHash !== "string" ||
+      typeof record.taskIdentifier !== "string" ||
+      typeof record.claimedAtIso !== "string"
+    ) {
+      unusableEntryCount += 1;
+      continue;
+    }
+    entries.push({
+      sessionIdentifier: record.sessionIdentifier,
+      idempotencyKey: record.idempotencyKey,
+      inputHash: record.inputHash,
+      taskIdentifier: record.taskIdentifier,
+      missionIdentifier:
+        typeof record.missionIdentifier === "string" ? record.missionIdentifier : null,
+      claimedAtIso: record.claimedAtIso,
+      settledAtIso: typeof record.settledAtIso === "string" ? record.settledAtIso : null,
+    });
+  }
+  if (unusableEntryCount > 0) {
+    // 合法条目仍保留（不因脏条目丢弃好数据），但必须显式标记"不可全信"。
+    return corrupted(
+      "幂等账目存在 " + String(unusableEntryCount) + " 条结构非法条目：既有 claim 不完整",
+      entries,
+      unusableEntryCount,
+    );
+  }
+  return { entries, isCorrupted: false, corruptionReason: null, unusableEntryCount: 0 };
 }
 
 /** 从状态目录加载幂等账目（缺文件/损坏 → 空账目，绝不伪造历史）。 */
 export async function loadTaskIdempotencyLedger(
   stateDirectory: string | undefined,
 ): Promise<TaskIdempotencyLedgerEntry[]> {
+  return (await loadTaskIdempotencyLedgerWithIntegrity(stateDirectory)).entries;
+}
+
+/**
+ * 从状态目录加载幂等账目并**如实报告完整性**（R4 返修）。
+ *
+ * - 目录/文件**不存在** ⇒ `isCorrupted=false`、空账目（正常首次启动）；
+ * - 文件存在但**读失败或不可解析** ⇒ `isCorrupted=true` + 原因（不得静默当作"没有历史"）。
+ */
+export async function loadTaskIdempotencyLedgerWithIntegrity(
+  stateDirectory: string | undefined,
+): Promise<TaskIdempotencyLedgerIntegrity> {
   if (stateDirectory === undefined || stateDirectory === "") {
-    return [];
+    return { entries: [], isCorrupted: false, corruptionReason: null, unusableEntryCount: 0 };
   }
   const filePath = path.join(stateDirectory, "task-idempotency-ledger.json");
+  let rawText: string;
   try {
-    const rawText = await fs.readFile(filePath, "utf8");
-    return parseTaskIdempotencyLedger(rawText);
-  } catch {
-    return [];
+    rawText = await fs.readFile(filePath, "utf8");
+  } catch (error) {
+    // 文件不存在 = 全新安装（正常）；其它读失败（权限/损坏介质）必须响亮报告。
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { entries: [], isCorrupted: false, corruptionReason: null, unusableEntryCount: 0 };
+    }
+    return {
+      entries: [],
+      isCorrupted: true,
+      corruptionReason: "幂等账目读取失败：" + (error as Error).message,
+      unusableEntryCount: 0,
+    };
   }
+  return parseTaskIdempotencyLedgerWithIntegrity(rawText);
+}
+
+/**
+ * `create()` 的幂等账目决策（RELIABILITY-01-02 · R4 返修）。
+ *
+ * 为什么默认**拒绝启动**而不是"空账目继续"：账目文件存在却读不全时，
+ * 部分 `(sessionId, idempotencyKey)` 的既有 claim 已不可知；按空账目继续会让
+ * 同一逻辑请求**再执行一次**（重复副作用），而这正是幂等账目存在的目的。
+ * 因此 fail-closed 是默认值；确需忽略时调用方必须**显式**传
+ * `allowCorruptedIdempotencyLedger: true`（记录在案、不静默）。
+ */
+async function resolveIdempotencyLedgerEntriesForCreate(input: {
+  stateDirectory: string | undefined;
+  allowCorruptedIdempotencyLedger: boolean;
+}): Promise<TaskIdempotencyLedgerEntry[]> {
+  const integrity = await loadTaskIdempotencyLedgerWithIntegrity(input.stateDirectory);
+  if (!integrity.isCorrupted) {
+    return integrity.entries;
+  }
+  if (input.allowCorruptedIdempotencyLedger) {
+    // 显式放行：沿用可解析条目（调用方已知悉"既有 claim 不完整"的风险）。
+    return integrity.entries;
+  }
+  throw new PublicApplicationError(
+    "idempotency-ledger-corrupted",
+    "幂等账目损坏，拒绝启动以避免重复执行同一请求（" +
+      String(integrity.corruptionReason ?? "原因未知") +
+      "；可解析条目 " +
+      String(integrity.entries.length) +
+      "，不可用条目 " +
+      String(integrity.unusableEntryCount) +
+      "）。如确认可忽略历史，请显式传入 allowCorruptedIdempotencyLedger: true。",
+  );
 }
 
 interface TaskRecord {
@@ -995,9 +1112,11 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       statusPollIntervalMilliseconds: options.statusPollIntervalMilliseconds ?? 25,
       stateDirectory: options.stateDirectory,
       // 幂等账目跨进程持久化（R4）：重启后同键同参复用，不重复执行。
-      idempotencyLedgerEntries: await loadTaskIdempotencyLedger(
-        options.stateDirectory,
-      ),
+      // 损坏时**默认 fail-closed**（见下），不得把"读不全"静默换成"全新开始"。
+      idempotencyLedgerEntries: await resolveIdempotencyLedgerEntriesForCreate({
+        stateDirectory: options.stateDirectory,
+        allowCorruptedIdempotencyLedger: options.allowCorruptedIdempotencyLedger === true,
+      }),
       // PROJECT-01-04：跨项目传输的真实 I/O 与人工改动守卫（未注入 ⇒ 如实失败，不伪装）。
       crossProjectResourceIo: options.crossProjectResourceIo ?? null,
       crossProjectHumanEditGuard: options.crossProjectHumanEditGuard ?? null,
