@@ -11,6 +11,7 @@
  *  - 并发/崩溃后重放同一导入 → **幂等复用回执**，不得重复副作用；
  *  - 任务内派生授权必须**不宽于**父授权；**禁止跨项目再转交**。
  */
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -369,6 +370,40 @@ export class CrossProjectAuthorizationStore {
     await this.enqueuePersist();
   }
 
+  /**
+   * 释放**未完成**的认领（2026-10-10，PROJECT-01-03 真实 I/O 接入）。
+   *
+   * 场景：`importCopy` 先原子认领（占位回执），随后真实写入副本；若写入失败，
+   * 占位回执若不撤销，重试会被"已有回执 ⇒ 幂等复用"挡住，而目标项目里**永远没有文件**
+   * ——即"把回执当导入完成"。因此写入失败必须显式释放该键。
+   *
+   * 纪律：**只允许释放占位回执**（`receiptIdentifier` 以 `pending-` 开头）。
+   * 已落定的真实回执一旦被释放，就等价于允许对**已完成**的副本重复写入，属放宽重放保护，
+   * 故此处 fail-closed：非占位回执一律不删。
+   */
+  async releaseCopyReceiptClaim(receiptKeyInput: {
+    authorizationIdentifier: string;
+    sourceProjectIdentifier: string;
+    sourceRevision: number;
+    sourceResourcePath: string;
+    targetResourcePath: string;
+    contentHash: string;
+  }): Promise<{ wasReleased: boolean }> {
+    await this.loadFromDisk();
+    const key = this.buildReceiptKey(receiptKeyInput);
+    const existing = this.copyReceiptsByKey.get(key);
+    if (existing === undefined) {
+      return { wasReleased: false };
+    }
+    if (!existing.receiptIdentifier.startsWith("pending-")) {
+      // 已落定的真实回执：不得撤销（防重复副作用）。
+      return { wasReleased: false };
+    }
+    this.copyReceiptsByKey.delete(key);
+    await this.enqueuePersist();
+    return { wasReleased: true };
+  }
+
   async countCopyReceipts(): Promise<number> {
     await this.loadFromDisk();
     return this.copyReceiptsByKey.size;
@@ -390,10 +425,20 @@ export interface CrossProjectReadResult {
     | "authorization-parameter-mismatch"
     | "project-mismatch"
     | "source-revision-changed"
-    | "resource-out-of-scope";
+    | "resource-out-of-scope"
+    | "resource-not-found"
+    | "resource-read-failed"
+    | "content-hash-mismatch";
   didRead: boolean;
   didModifySource: false;
   sourceWriteCount: number;
+  /** 真实读到的内容；未读取时为 null（**不得**在看板/回执上伪装成已读取）。 */
+  content: string | null;
+  /** 真实内容的 sha256；未读取时为 null。 */
+  contentHash: string | null;
+  /** 读取前后的来源内容哈希（必须相等 ⇒ 来源零写入的**可核对**证据）。 */
+  sourceContentHashBefore: string | null;
+  sourceContentHashAfter: string | null;
   detail: string;
 }
 
@@ -406,13 +451,50 @@ export interface CrossProjectImportResult {
     | "authorization-revoked"
     | "authorization-parameter-mismatch"
     | "resource-out-of-scope"
-    | "wrong-operation-kind";
+    | "wrong-operation-kind"
+    | "resource-not-found"
+    | "resource-read-failed"
+    | "content-hash-mismatch"
+    | "target-write-failed";
   receipt: CrossProjectCopyReceipt | null;
+  /** 是否**真的**写出了目标副本（回执存在不等于文件存在）。 */
+  didWriteTarget: boolean;
+  /** 来源内容哈希（导入前后必须相等 ⇒ 来源零写入的可核对证据）。 */
+  sourceContentHashBefore: string | null;
+  sourceContentHashAfter: string | null;
   detail: string;
 }
 
+/**
+ * 跨项目资源 I/O 端口（2026-10-10，PROJECT-01-03）。
+ *
+ * 为什么不直接 `import { promises as fs }`：本服务被 SDK/CLI/GUI 复用，
+ * 真实 I/O 必须可注入（可测替换、可审计、可换成受控边界实现），
+ * 且"是否真的读/写"必须由调用方提供的端口行为决定，而不是由本服务**自称**。
+ */
+export interface CrossProjectResourceIoPort {
+  readTextFile(absolutePath: string): Promise<string>;
+  writeTextFile(absolutePath: string, content: string): Promise<void>;
+  ensureDirectory(absoluteDirectoryPath: string): Promise<void>;
+  fileExists(absolutePath: string): Promise<boolean>;
+}
+
 export class CrossProjectTransferService {
-  constructor(private readonly options: { store: CrossProjectAuthorizationStore }) {}
+  constructor(
+    private readonly options: {
+      store: CrossProjectAuthorizationStore;
+      /**
+       * 资源 I/O 端口。**未注入时不执行任何资源读写**：`readResource` 会如实
+       * 返回 `resource-read-failed`（不伪装 `didRead`），`importCopy` 会如实返回
+       * `target-write-failed`，从而不会产生"有回执但无文件"的假完成。
+       */
+      resourceIo?: CrossProjectResourceIoPort;
+    },
+  ) {}
+
+  private static sha256Text(text: string): string {
+    return createHash("sha256").update(text, "utf8").digest("hex");
+  }
 
   private isWithinScope(scope: CrossProjectResourceScope, resourcePath: string): boolean {
     return scope.pathPrefixes.some(
@@ -421,10 +503,13 @@ export class CrossProjectTransferService {
   }
 
   /**
-   * 只读访问：**来源零写入**。
+   * 只读访问：**真实读取 + 来源零写入**（2026-10-10 接入真实 I/O）。
    *
    * 校验顺序：授权存在 → 未撤销 → 未过期 → 项目匹配 → 来源 revision 匹配 → 参数哈希匹配
-   * → 资源范围命中。任一失败即拒绝，不读、不写。
+   * → 资源范围命中。**任一失败即拒绝，零 I/O**（不触碰资源，见反例④）。
+   *
+   * 通过校验后才真实读取，并给出**可核对的来源零写入证据**：
+   * 读取前后对来源内容各取一次 sha256，两者必须相等。
    */
   async readResource(input: {
     authorizationIdentifier: string;
@@ -435,6 +520,10 @@ export class CrossProjectTransferService {
     nowIso: string;
     currentSourceProjectRevision?: number;
     sourceWriteProbe: { writeAttemptCount: number };
+    /** 资源的**绝对路径**（相对路径只用于范围判定；未给出即无法真实读取）。 */
+    absoluteResourcePath?: string;
+    /** 调用方声明的内容哈希；给出时必须与实际内容一致，否则拒绝。 */
+    expectedContentHash?: string;
   }): Promise<CrossProjectReadResult> {
     const denied = (
       outcome: CrossProjectReadResult["outcome"],
@@ -444,6 +533,10 @@ export class CrossProjectTransferService {
       didRead: false,
       didModifySource: false,
       sourceWriteCount: input.sourceWriteProbe.writeAttemptCount,
+      content: null,
+      contentHash: null,
+      sourceContentHashBefore: null,
+      sourceContentHashAfter: null,
       detail,
     });
 
@@ -488,18 +581,84 @@ export class CrossProjectTransferService {
       return denied("resource-out-of-scope", "资源超出授权范围：" + input.resourcePath);
     }
 
+    // ─── 以下才触达资源（授权已全部通过）───
+    const resourceIo = this.options.resourceIo;
+    if (resourceIo === undefined || input.absoluteResourcePath === undefined) {
+      return denied(
+        "resource-read-failed",
+        "未接入资源 I/O 端口或缺少资源绝对路径：只读未执行（不伪装已读取）",
+      );
+    }
+    if (!(await resourceIo.fileExists(input.absoluteResourcePath))) {
+      return denied("resource-not-found", "资源不存在：" + input.resourcePath);
+    }
+
+    let content: string;
+    let sourceContentHashBefore: string;
+    try {
+      content = await resourceIo.readTextFile(input.absoluteResourcePath);
+      sourceContentHashBefore = CrossProjectTransferService.sha256Text(content);
+    } catch (error) {
+      return denied("resource-read-failed", "资源读取失败：" + (error as Error).message);
+    }
+
+    const contentHash = CrossProjectTransferService.sha256Text(content);
+    // 声明哈希与实际内容不符 ⇒ 拒绝：不得把别的版本当成本次许可的内容。
+    if (
+      input.expectedContentHash !== undefined &&
+      input.expectedContentHash !== contentHash
+    ) {
+      return denied(
+        "content-hash-mismatch",
+        "声明的内容哈希与实际内容不一致（实际 " +
+          contentHash.slice(0, 12) +
+          "…）：拒绝按此许可读取",
+      );
+    }
+
+    // 读后再取一次来源哈希：与读取前相等 ⇒ 来源零写入的可核对证据。
+    let sourceContentHashAfter: string;
+    try {
+      const sourceTextAfterRead = await resourceIo.readTextFile(input.absoluteResourcePath);
+      sourceContentHashAfter = CrossProjectTransferService.sha256Text(sourceTextAfterRead);
+    } catch (error) {
+      return denied(
+        "resource-read-failed",
+        "读取后复核来源失败：" + (error as Error).message,
+      );
+    }
+    if (sourceContentHashAfter !== sourceContentHashBefore) {
+      return {
+        ...denied(
+          "resource-read-failed",
+          "读取期间来源内容发生变化：拒绝（本次读取结果不构成稳定的只读证据）",
+        ),
+        sourceContentHashBefore,
+        sourceContentHashAfter,
+      };
+    }
+
     return {
       outcome: "read-allowed",
       didRead: true,
       didModifySource: false,
       // 只读路径不产生任何写：来源写入计数必须保持为传入值（测试用 0）
       sourceWriteCount: input.sourceWriteProbe.writeAttemptCount,
-      detail: "只读访问已按授权范围放行（来源零写入）",
+      content,
+      contentHash,
+      sourceContentHashBefore,
+      sourceContentHashAfter,
+      detail: "只读访问已按授权范围放行（真实读取；来源零写入，前后哈希一致）",
     };
   }
 
   /**
-   * 副本导入：并发/崩溃后重放同一内容 → **幂等复用回执**，不产生重复副作用。
+   * 副本导入：**真实写出目标副本** + 并发/崩溃后重放同一内容 → **幂等复用回执**。
+   *
+   * 顺序要紧（2026-10-10 接入真实 I/O）：
+   * 授权校验 → 真实读取来源（含前后哈希，证明来源零写入）→ 原子认领回执 →
+   * **真实写出目标** → 落定真实回执。写入失败 ⇒ **释放认领**并如实返回
+   * `target-write-failed`，绝不留"有回执但无文件"的假完成。
    */
   async importCopy(input: {
     authorizationIdentifier: string;
@@ -511,37 +670,40 @@ export class CrossProjectTransferService {
     contentHash: string;
     argumentsHash: string;
     nowIso: string;
+    /** 来源/目标**绝对路径**（相对路径只用于范围判定与回执；未给出即无法真实拷贝）。 */
+    absoluteSourcePath?: string;
+    absoluteTargetPath?: string;
   }): Promise<CrossProjectImportResult> {
+    const refusal = (
+      outcome: CrossProjectImportResult["outcome"],
+      detail: string,
+    ): CrossProjectImportResult => ({
+      outcome,
+      receipt: null,
+      didWriteTarget: false,
+      sourceContentHashBefore: null,
+      sourceContentHashAfter: null,
+      detail,
+    });
+
     const record = await this.options.store.getAuthorization(input.authorizationIdentifier);
     if (record === null) {
-      return { outcome: "authorization-not-found", receipt: null, detail: "授权不存在" };
+      return refusal("authorization-not-found", "授权不存在");
     }
     if (record.state === "revoked") {
-      return { outcome: "authorization-revoked", receipt: null, detail: "授权已被撤销" };
+      return refusal("authorization-revoked", "授权已被撤销");
     }
     if (Date.parse(input.nowIso) > Date.parse(record.expiresAtIso)) {
-      return { outcome: "authorization-expired", receipt: null, detail: "授权已过期" };
+      return refusal("authorization-expired", "授权已过期");
     }
     if (record.operationKind !== "import-copy") {
-      return {
-        outcome: "wrong-operation-kind",
-        receipt: null,
-        detail: "授权操作类型不是 import-copy",
-      };
+      return refusal("wrong-operation-kind", "授权操作类型不是 import-copy");
     }
     if (record.argumentsHash !== input.argumentsHash) {
-      return {
-        outcome: "authorization-parameter-mismatch",
-        receipt: null,
-        detail: "参数哈希与授权不一致：不沿用许可",
-      };
+      return refusal("authorization-parameter-mismatch", "参数哈希与授权不一致：不沿用许可");
     }
     if (!this.isWithinScope(record.resourceScope, input.sourceResourcePath)) {
-      return {
-        outcome: "resource-out-of-scope",
-        receipt: null,
-        detail: "来源资源超出授权范围",
-      };
+      return refusal("resource-out-of-scope", "来源资源超出授权范围");
     }
 
     // 幂等（并发安全）：先确保磁盘状态已加载（重启后新实例同样适用），
@@ -560,7 +722,112 @@ export class CrossProjectTransferService {
       return {
         outcome: "reused-existing-copy",
         receipt: claim.existingReceipt,
+        didWriteTarget: false,
+        sourceContentHashBefore: null,
+        sourceContentHashAfter: null,
         detail: "已有副本回执：幂等复用，不重复写入（并发/崩溃恢复安全）",
+      };
+    }
+
+    /** 释放未完成的认领，避免"有回执无文件"挡住重试。 */
+    const releaseClaim = async (): Promise<void> => {
+      try {
+        await this.options.store.releaseCopyReceiptClaim({
+          authorizationIdentifier: input.authorizationIdentifier,
+          sourceProjectIdentifier: input.sourceProjectIdentifier,
+          sourceRevision: input.sourceRevision,
+          sourceResourcePath: input.sourceResourcePath,
+          targetResourcePath: input.targetResourcePath,
+          contentHash: input.contentHash,
+        });
+      } catch {
+        // 释放失败不改变"本次未导入成功"的事实；如实返回失败即可。
+      }
+    };
+
+    const resourceIo = this.options.resourceIo;
+    if (
+      resourceIo === undefined ||
+      input.absoluteSourcePath === undefined ||
+      input.absoluteTargetPath === undefined
+    ) {
+      await releaseClaim();
+      return refusal(
+        "target-write-failed",
+        "未接入资源 I/O 端口或缺少源/目标绝对路径：副本未写入（不产生假完成回执）",
+      );
+    }
+
+    // 真实读取来源（并取前后哈希 ⇒ 来源零写入的可核对证据）
+    if (!(await resourceIo.fileExists(input.absoluteSourcePath))) {
+      await releaseClaim();
+      return refusal("resource-not-found", "来源资源不存在：" + input.sourceResourcePath);
+    }
+    let sourceContent: string;
+    let sourceContentHashBefore: string;
+    try {
+      sourceContent = await resourceIo.readTextFile(input.absoluteSourcePath);
+      sourceContentHashBefore = CrossProjectTransferService.sha256Text(sourceContent);
+    } catch (error) {
+      await releaseClaim();
+      return refusal("resource-read-failed", "来源读取失败：" + (error as Error).message);
+    }
+    // 声明哈希与来源实际内容不符 ⇒ 拒绝（不得把别的版本当成本次许可的副本内容）。
+    if (sourceContentHashBefore !== input.contentHash) {
+      await releaseClaim();
+      return {
+        ...refusal(
+          "content-hash-mismatch",
+          "来源实际内容哈希（" +
+            sourceContentHashBefore.slice(0, 12) +
+            "…）与声明的 contentHash 不一致：拒绝导入",
+        ),
+        sourceContentHashBefore,
+      };
+    }
+
+    // 真实写出目标副本（先建父目录，再写内容）
+    try {
+      await resourceIo.ensureDirectory(path.dirname(input.absoluteTargetPath));
+      await resourceIo.writeTextFile(input.absoluteTargetPath, sourceContent);
+    } catch (error) {
+      await releaseClaim();
+      return {
+        ...refusal("target-write-failed", "目标副本写入失败：" + (error as Error).message),
+        sourceContentHashBefore,
+      };
+    }
+
+    // 写出后复核目标确实存在：回执成立必须以文件成立为前提。
+    if (!(await resourceIo.fileExists(input.absoluteTargetPath))) {
+      await releaseClaim();
+      return {
+        ...refusal("target-write-failed", "写入后复核目标不存在：不落定回执"),
+        sourceContentHashBefore,
+      };
+    }
+
+    let sourceContentHashAfter: string;
+    try {
+      sourceContentHashAfter = CrossProjectTransferService.sha256Text(
+        await resourceIo.readTextFile(input.absoluteSourcePath),
+      );
+    } catch (error) {
+      await releaseClaim();
+      return {
+        ...refusal("resource-read-failed", "写入后复核来源失败：" + (error as Error).message),
+        sourceContentHashBefore,
+      };
+    }
+    if (sourceContentHashAfter !== sourceContentHashBefore) {
+      await releaseClaim();
+      return {
+        ...refusal(
+          "resource-read-failed",
+          "导入期间来源内容发生变化：拒绝落定回执（本次导入不构成稳定证据）",
+        ),
+        sourceContentHashBefore,
+        sourceContentHashAfter,
       };
     }
 
@@ -585,7 +852,10 @@ export class CrossProjectTransferService {
     return {
       outcome: "imported-copy",
       receipt,
-      detail: "已导入副本（保留来源项目/revision/哈希，标记为副本）",
+      didWriteTarget: true,
+      sourceContentHashBefore,
+      sourceContentHashAfter,
+      detail: "已导入副本（真实写出目标；保留来源项目/revision/哈希，标记为副本；来源零写入）",
     };
   }
 

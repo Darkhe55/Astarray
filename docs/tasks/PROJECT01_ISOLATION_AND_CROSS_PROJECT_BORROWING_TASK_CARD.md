@@ -96,6 +96,38 @@ Agent仅接收不透明授权引用和公开范围说明，不接收可外传的
 
 每轮一个检查点，超过三小时继续拆分。依赖现有身份、作用域、附件、持久授权及恢复的动态证据；先审计复用，不要求无关大卡全部结束。基础规则协调完成后才能改变生产默认行为。
 
+### PROJECT-01-03 真实资源 I/O 接线（2026-10-10）
+
+**缺口（本轮实测）**：`CrossProjectTransferService` 只做授权/回执判定——
+`readResource()` 直接返回 `didRead: true` 却**从未读取资源**，`importCopy()` 只写回执
+**从不写出副本** ⇒ "回执成立但目标里没有文件"，属**把回执当借阅/导入完成**。
+
+**本轮接线**（`packages/core/src/orchestration/cross-project-authorization-store.ts`）：
+
+- 新增可注入端口 `CrossProjectResourceIoPort`（`readTextFile` / `writeTextFile` /
+  `ensureDirectory` / `fileExists`）。**未注入时不执行任何资源读写**：
+  `readResource` 如实返回 `resource-read-failed`、`importCopy` 如实返回 `target-write-failed`
+  ——**绝不伪装成功**（避免"有回执无文件"的假完成）。
+- `readResource`：授权链全部通过后才触达资源；真实读取并返回 `content` / `contentHash`；
+  **读取前后各取一次来源 sha256**（必须相等）作为"来源零写入"的**可核对证据**；
+  支持 `expectedContentHash`，声明哈希与实际不符 ⇒ `content-hash-mismatch` 拒绝；
+  资源不存在 ⇒ `resource-not-found`（不得谎报已读）。
+- `importCopy`：授权校验 → 真实读取来源（含前后哈希）→ 原子认领回执 → **真实写出目标**
+  （先建父目录）→ 写出后复核目标存在 → 落定真实回执；声明 `contentHash` 与来源实际不符 ⇒
+  `content-hash-mismatch` 拒绝。返回新增 `didWriteTarget` 与来源前后哈希。
+- 新增 `CrossProjectAuthorizationStore.releaseCopyReceiptClaim()`：写入失败时**释放未完成的认领**
+  （否则占位回执会让重试被"幂等复用"挡住，而目标永远没有文件）。**只允许释放 `pending-` 占位回执**，
+  已落定的真实回执一律不删（不放宽重放保护）。
+
+**反例（先红后绿）**：新增 `tests/core/integration/cross-project-resource-io.test.ts` 8 条
+（实现前 **7 failed**）；并把既有 `cross-project-authorization.test.ts` 中 4 条
+"只看回执就算成功"的用例改为**真实文件** + 注入 I/O 端口（原断言在旧语义下才成立）。
+两套件合计 **20/20** 通过。
+
+**仍未完成（不主张 PROJECT-01-03/04 通过）**：`readResource`/`importCopy` 尚**未接入公开入口**
+（SDK/CLI/GUI 目前只有授权与副本回执的列表查询）；"目标有人工修改时拒绝陈旧覆盖"、
+多项目/多同级个体压力验收与包级验收仍待做。
+
 ## 9. 必测场景与交付
 
 1. 未授权跨项目读取、列目录、搜索、直接写入、命令间接读取及Git路径访问均不能绕过；覆盖Windows/POSIX路径与真实文件系统差异。

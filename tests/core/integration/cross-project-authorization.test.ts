@@ -6,6 +6,7 @@
  *
  * 本文件在实现之前必须失败。
  */
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CrossProjectAuthorizationStore,
   CrossProjectTransferService,
+  type CrossProjectResourceIoPort,
 } from "../../../packages/core/src/orchestration/cross-project-authorization-store.js";
 
 let baseDirectory: string;
@@ -30,6 +32,33 @@ afterEach(async () => {
     // 临时目录由系统回收
   }
 });
+
+/**
+ * 真实资源 I/O 端口（2026-10-10）：PROJECT-01-03 要求"来源零写入 + 真实副本"，
+ * 因此测试必须给真实文件系统端口，而不是只看回执。
+ */
+function buildResourceIo(): CrossProjectResourceIoPort {
+  return {
+    readTextFile: (absolutePath: string) => fs.readFile(absolutePath, "utf8"),
+    writeTextFile: (absolutePath: string, content: string) =>
+      fs.writeFile(absolutePath, content, "utf8"),
+    ensureDirectory: async (absoluteDirectory: string) => {
+      await fs.mkdir(absoluteDirectory, { recursive: true });
+    },
+    fileExists: async (absolutePath: string) => {
+      try {
+        await fs.stat(absolutePath);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  };
+}
+
+function sha256Text(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
 
 const SOURCE_PROJECT = "project-a";
 const TARGET_PROJECT = "project-b";
@@ -51,16 +80,25 @@ async function grantReadAuthorization(store: CrossProjectAuthorizationStore) {
 }
 
 describe("PROJECT-01-03：只读跨项目访问", () => {
-  it("① 有有效授权：只读成功，且**来源零写入**", async () => {
+  it("① 有有效授权：只读成功（真实读取），且**来源零写入**", async () => {
     const store = new CrossProjectAuthorizationStore({ baseDirectory });
     await grantReadAuthorization(store);
-    const service = new CrossProjectTransferService({ store });
+    const service = new CrossProjectTransferService({
+      store,
+      resourceIo: buildResourceIo(),
+    });
+    // 真实来源文件（相对路径仅用于范围判定；绝对路径才是被读取的对象）
+    const sourceAbsolutePath = path.join(baseDirectory, "project-a", "docs", "spec.md");
+    await fs.mkdir(path.dirname(sourceAbsolutePath), { recursive: true });
+    const sourceContent = "# 来源规格\n";
+    await fs.writeFile(sourceAbsolutePath, sourceContent, "utf8");
 
     const result = await service.readResource({
       authorizationIdentifier: "auth-1",
       sourceProjectIdentifier: SOURCE_PROJECT,
       targetProjectIdentifier: TARGET_PROJECT,
       resourcePath: "docs/spec.md",
+      absoluteResourcePath: sourceAbsolutePath,
       argumentsHash: "hash-docs-read",
       nowIso: "2026-10-02T00:00:00.000Z",
       sourceWriteProbe: { writeAttemptCount: 0 },
@@ -68,6 +106,12 @@ describe("PROJECT-01-03：只读跨项目访问", () => {
     expect(result.outcome).toBe("read-allowed");
     expect(result.sourceWriteCount).toBe(0);
     expect(result.didModifySource).toBe(false);
+    // 真实读取 + 来源零写入的可核对证据
+    expect(result.didRead).toBe(true);
+    expect(result.content).toBe(sourceContent);
+    expect(result.sourceContentHashBefore).toBe(sha256Text(sourceContent));
+    expect(result.sourceContentHashAfter).toBe(result.sourceContentHashBefore);
+    expect(await fs.readFile(sourceAbsolutePath, "utf8")).toBe(sourceContent);
   });
 
   it("② 同路径但参数变化：不得沿用许可（必须重新授权）", async () => {
@@ -189,7 +233,16 @@ describe("PROJECT-01-03：副本导入", () => {
       grantedByUserId: "user-1",
       taskIdentifier: "T-001",
     });
-    const service = new CrossProjectTransferService({ store });
+    const service = new CrossProjectTransferService({
+      store,
+      resourceIo: buildResourceIo(),
+    });
+    // 真实来源文件（内容哈希需与调用方声明一致）
+    const sourceAbsolutePath = path.join(baseDirectory, "project-a", "docs", "spec.md");
+    const targetAbsolutePath = path.join(baseDirectory, "project-b", "imported", "spec.md");
+    await fs.mkdir(path.dirname(sourceAbsolutePath), { recursive: true });
+    const sourceContent = "# 并发导入内容\n";
+    await fs.writeFile(sourceAbsolutePath, sourceContent, "utf8");
 
     const importInput = {
       authorizationIdentifier: "auth-import",
@@ -197,8 +250,10 @@ describe("PROJECT-01-03：副本导入", () => {
       targetProjectIdentifier: TARGET_PROJECT,
       sourceResourcePath: "docs/spec.md",
       targetResourcePath: "imported/spec.md",
+      absoluteSourcePath: sourceAbsolutePath,
+      absoluteTargetPath: targetAbsolutePath,
       sourceRevision: 3,
-      contentHash: "sha256:abc",
+      contentHash: sha256Text(sourceContent),
       argumentsHash: "hash-import",
       nowIso: "2026-10-02T00:00:00.000Z",
     };
@@ -228,23 +283,38 @@ describe("PROJECT-01-03：副本导入", () => {
       grantedByUserId: "user-1",
       taskIdentifier: "T-001",
     });
-    const service = new CrossProjectTransferService({ store });
+    const service = new CrossProjectTransferService({
+      store,
+      resourceIo: buildResourceIo(),
+    });
+    const sourceAbsolutePath = path.join(baseDirectory, "project-a", "docs", "spec.md");
+    const targetAbsolutePath = path.join(baseDirectory, "project-b", "imported", "spec.md");
+    await fs.mkdir(path.dirname(sourceAbsolutePath), { recursive: true });
+    const sourceContent = "# 副本内容\n";
+    await fs.writeFile(sourceAbsolutePath, sourceContent, "utf8");
+    const declaredContentHash = sha256Text(sourceContent);
+
     const result = await service.importCopy({
       authorizationIdentifier: "auth-import",
       sourceProjectIdentifier: SOURCE_PROJECT,
       targetProjectIdentifier: TARGET_PROJECT,
       sourceResourcePath: "docs/spec.md",
       targetResourcePath: "imported/spec.md",
+      absoluteSourcePath: sourceAbsolutePath,
+      absoluteTargetPath: targetAbsolutePath,
       sourceRevision: 3,
-      contentHash: "sha256:abc",
+      contentHash: declaredContentHash,
       argumentsHash: "hash-import",
       nowIso: "2026-10-02T00:00:00.000Z",
     });
     expect(result.outcome).toBe("imported-copy");
     expect(result.receipt?.sourceProjectIdentifier).toBe(SOURCE_PROJECT);
     expect(result.receipt?.sourceRevision).toBe(3);
-    expect(result.receipt?.contentHash).toBe("sha256:abc");
+    expect(result.receipt?.contentHash).toBe(declaredContentHash);
     expect(result.receipt?.isCopyOfExternalSource).toBe(true);
+    // 真实副本成立：目标文件内容等于来源
+    expect(result.didWriteTarget).toBe(true);
+    expect(await fs.readFile(targetAbsolutePath, "utf8")).toBe(sourceContent);
   });
 
   it("⑨ 崩溃恢复：已有回执时重放不得重复副作用", async () => {
@@ -262,34 +332,47 @@ describe("PROJECT-01-03：副本导入", () => {
       grantedByUserId: "user-1",
       taskIdentifier: "T-001",
     });
-    const firstService = new CrossProjectTransferService({ store });
-    await firstService.importCopy({
+    const sourceAbsolutePath = path.join(baseDirectory, "project-a", "docs", "spec.md");
+    const targetAbsolutePath = path.join(baseDirectory, "project-b", "imported", "spec.md");
+    await fs.mkdir(path.dirname(sourceAbsolutePath), { recursive: true });
+    const sourceContent = "# 崩溃恢复内容\n";
+    await fs.writeFile(sourceAbsolutePath, sourceContent, "utf8");
+    const declaredContentHash = sha256Text(sourceContent);
+
+    const importInput = {
       authorizationIdentifier: "auth-import",
       sourceProjectIdentifier: SOURCE_PROJECT,
       targetProjectIdentifier: TARGET_PROJECT,
       sourceResourcePath: "docs/spec.md",
       targetResourcePath: "imported/spec.md",
+      absoluteSourcePath: sourceAbsolutePath,
+      absoluteTargetPath: targetAbsolutePath,
       sourceRevision: 3,
-      contentHash: "sha256:abc",
+      contentHash: declaredContentHash,
       argumentsHash: "hash-import",
       nowIso: "2026-10-02T00:00:00.000Z",
+    };
+
+    const firstService = new CrossProjectTransferService({
+      store,
+      resourceIo: buildResourceIo(),
     });
+    const firstResult = await firstService.importCopy(importInput);
+    expect(firstResult.outcome).toBe("imported-copy");
     // 模拟进程重启：新 store 实例读同一目录
     const restartedStore = new CrossProjectAuthorizationStore({ baseDirectory });
-    const restartedService = new CrossProjectTransferService({ store: restartedStore });
+    const restartedService = new CrossProjectTransferService({
+      store: restartedStore,
+      resourceIo: buildResourceIo(),
+    });
     const replay = await restartedService.importCopy({
-      authorizationIdentifier: "auth-import",
-      sourceProjectIdentifier: SOURCE_PROJECT,
-      targetProjectIdentifier: TARGET_PROJECT,
-      sourceResourcePath: "docs/spec.md",
-      targetResourcePath: "imported/spec.md",
-      sourceRevision: 3,
-      contentHash: "sha256:abc",
-      argumentsHash: "hash-import",
+      ...importInput,
       nowIso: "2026-10-02T00:10:00.000Z",
     });
     expect(replay.outcome).toBe("reused-existing-copy");
     expect(await restartedService.countCopyReceipts()).toBe(1);
+    // 重放不得重复写入副作用：目标内容不变
+    expect(await fs.readFile(targetAbsolutePath, "utf8")).toBe(sourceContent);
   });
 });
 
