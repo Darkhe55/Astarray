@@ -149,6 +149,16 @@ export {
   type DeterministicProgramToolDeclaration,
 } from "./toolkit/deterministic-program-converter.js";
 
+// ─── TOOLKIT-01：收益判断（不设机械重复次数门槛；自动发现只提案）公开入口 ───
+export {
+  evaluateToolBenefit,
+  type ToolBenefitEvidence,
+  type ToolBenefitOutcome,
+  type ToolBenefitRange,
+  type ToolBenefitRecommendation,
+  type ToolDiscoverySource,
+} from "./toolkit/tool-benefit-evaluation.js";
+
 // ─── Provider 运行时公开入口 ───
 // SDK 消费者必须能只用公开 exports 构造 Provider 运行时（不得依赖内部路径），
 // 否则 runtime: "provider" 在打包产物上不可用。
