@@ -179,17 +179,26 @@ describe("DagScheduler", () => {
     await scheduler.scheduleRound();
     await scheduler.finishTask("t1", "failed", null);
     expect(scheduler.getCurrentGraph().getNode("t2")?.status).toBe("blocked");
-    // 人工裁决：重试 t1
-    await scheduler.unblockTask("t1");
+    /**
+     * 人工裁决：重试 t1。
+     *
+     * 注意（2026-10-10 语义收口）：`t1` 此刻是**失败终态**，重试它的正确入口是
+     * `reassignTask`（生产侧 `AssistScheduler` 也把 `retry`/`reassign` 都路由到它）。
+     * `unblockTask` 的语义已收窄为"把 `blocked` 的任务放回可运行集合"，
+     * 并且**幂等**：对 `running`/`done`/`failed` 一律无操作 —— 否则迟到的
+     * unblock 会把正在运行的任务降回 pending，导致 `pending → done` 非法、
+     * 成果被误判为 blocked（本会话 Linux 平台证据发现的真实缺陷）。
+     */
+    await scheduler.reassignTask("t1");
     const retryRound = await scheduler.scheduleRound();
     expect(retryRound.filter((action) => action.action === "start-task")).toEqual([
-      { action: "start-task", taskId: "t1", assignedAgentId: "L3-2" },
+      { action: "start-task", taskId: "t1", assignedAgentId: "L3-3" },
     ]);
     await scheduler.finishTask("t1", "done", null);
     await scheduler.unblockTask("t2");
     const finalRound = await scheduler.scheduleRound();
     expect(finalRound.filter((action) => action.action === "start-task")).toEqual([
-      { action: "start-task", taskId: "t2", assignedAgentId: "L3-3" },
+      { action: "start-task", taskId: "t2", assignedAgentId: "L3-4" },
     ]);
   });
 

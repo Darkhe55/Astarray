@@ -260,10 +260,12 @@ export const FAULT_INJECTION_MATRIX: readonly FaultInjectionEntry[] = [
       "全量门禁并发下与本次改动无关的用例偶发失败（**已定位到具体用例**）",
     verdict: "not-verified",
     summary:
-      "**已定位到具体用例**（此前只笼统记为『负载抖动』）：" +
-      "`tests/core/integration/reliability-r4-ledger-concurrency.test.ts` ④" +
-      "（多轮交错并发 4×6 幂等账目追平，有界 20s 等待）在本会话至少 2 次全量运行中" +
-      "失败，而**隔离单跑 3/3 通过**；另有少量 provider/gui 用例。" +
+      "**已定位到具体用例**（此前只笼统记为『负载抖动』）：全量并发下失败、**隔离复跑全绿**的用例为" +
+      "`reliability-r4-ledger-concurrency.test.ts` ④（多轮交错并发 4×6 幂等账目追平，有界 20s 等待）、" +
+      "`provider-fake-server.test.ts`（1/6）、" +
+      "`local-readonly-tools-production-wiring.test.ts`（1/3）。" +
+      "**已排除测试污染**：把新增的 `dag-scheduler-late-unblock-race.test.ts` 与" +
+      "`b6r10-stdin-line-reader.test.ts` 同这两个用例一起跑，**21/21 通过**。" +
       "根因此前定位到 `%TEMP%` 下大量 `astarray-*` 目录导致清理失败，清洁后连续通过。" +
       "**未在产品代码中修复**，故**不标为已修**；" +
       "`run-command-gaps` 曾 60s 超时但本会话**未复现**，同样保持未验证",

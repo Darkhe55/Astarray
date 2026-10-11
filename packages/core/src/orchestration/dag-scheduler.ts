@@ -137,10 +137,38 @@ export class DagScheduler {
     return { action: "reassign-task", taskId, assignedAgentId };
   }
 
-  /** 阻塞等待人工裁决的任务重新进入可运行集合。 */
+  /**
+   * 阻塞等待人工裁决的任务重新进入可运行集合。
+   *
+   * **2026-10-10 Linux 平台证据修复：迟到的 unblock 不得降级正在运行/已终态的任务。**
+   *
+   * 缺陷（`authorization-retry-closure` ① 在 WSL Ubuntu 上失败、Windows 上一直通过）：
+   * 批准后的 `unblock` 指令是**异步**送达本调度器的，而调度循环可能已经**抢先**
+   * 把任务重新领取并标记为 `running`。此前本方法只判 `pending`，否则一律
+   * `markPendingForRetry` ⇒ 把**正在运行**的任务**降回 pending**，而领取集合并未释放。
+   * 于是 worker 成功回写时 `finishTask("done")` 面对的是 `pending` 节点 ⇒
+   * `非法状态迁移: <task> pending → done` ⇒ **成果已落盘却被误判为 blocked**。
+   *
+   * **不**放宽状态机（`pending → done` 必须继续非法，由
+   * `tests/core/unit/task-graph-gaps.test.ts` 钉住），而是把本方法**幂等化**：
+   * 只有 `pending`（已是目标态）与 `blocked`（真正等待裁决）才需要处理；
+   * `running`/`done`/`failed` 下这是**冗余的迟到指令**，必须无操作。
+   */
   async unblockTask(taskId: string): Promise<void> {
     const node = this.graph.getNode(taskId);
-    if (node?.status === "pending") {
+    const status = node?.status;
+    /**
+     * `pending` ⇒ 已是可运行态（幂等无操作）。
+     * `running` ⇒ 重跑**已经在进行中**：降回 pending 会让"领取集合含此任务"
+     *   与"图节点 pending"不一致，直接导致 `pending → done` 非法（见方法注释）。
+     * `done`/`failed` ⇒ 已结案：不得复活，也不得把终态改回可运行。
+     */
+    if (
+      status === "pending" ||
+      status === "running" ||
+      status === "done" ||
+      status === "failed"
+    ) {
       return;
     }
     this.graph.markPendingForRetry(taskId);
