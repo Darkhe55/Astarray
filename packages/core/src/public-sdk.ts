@@ -202,6 +202,15 @@ export {
   type BaselinePathMeasurement,
   type MeasurementSourceKind,
 } from "./toolkit/baseline-cost-measurement.js";
+// TOOLKIT-01-06：**更大样本**的多轮复用实测（复用次数与成本结构可核对）。
+export {
+  READ_LIST_REPORT_FIXTURE_IDENTIFIER,
+  buildReadListReportFixtureInput,
+  buildReadListReportFixtureManualSteps,
+  buildReadListReportFixtureRecipe,
+  measureRecipeReuseAcrossRounds,
+  type RecipeReuseAcrossRoundsOutcome,
+} from "./toolkit/baseline-cost-measurement.js";
 
 // ─── TOOLKIT-01-03：两个结构不同的隔离项目 fixture 与目标项目启用演示 ───
 export {

@@ -21,6 +21,7 @@
 
 import {
   RecipeExecutionEngine,
+  validateRecipeDefinition,
   type WorkflowRecipeDefinition,
 } from "./workflow-recipe-engine.js";
 import type { ToolBenefitEvidence } from "./tool-benefit-evaluation.js";
@@ -356,5 +357,173 @@ export function buildReadListReportFixtureInput(): Record<string, unknown> {
     directoryPath: ".",
     reportPath: ".tmp/report.md",
     reportContent: "# report\n",
+  };
+}
+/* ────────── TOOLKIT-01-06：**更大样本**的多轮复用实测 ────────── */
+
+/** 单轮执行结果（供多轮统计）。 */
+interface ReuseRoundOutcome {
+  isSuccessful: boolean;
+  toolCallCount: number;
+}
+
+export interface RecipeReuseAcrossRoundsOutcome {
+  recipeIdentifier: string;
+  /** **实测**完成的轮数（真的执行成功）。 */
+  completedRoundCount: number;
+  /** **实测**失败的轮数（失败不得算成节省）。 */
+  failedRoundCount: number;
+  /** 每轮的工具调用数（逐轮实测值，供核对"单轮成本是否增长"）。 */
+  perRoundToolCallCounts: number[];
+  /** 单轮工具调用数（各轮一致时即该值；不一致时取**最大**值，保守）。 */
+  toolCallCountPerRound: number;
+  /** 全部轮次累计的工具调用数。 */
+  executedToolCallCount: number;
+  /** 单轮成本是否**不随轮数增长**（false ⇒ 复用是假的）。 */
+  isPerRoundCostStable: boolean;
+  isReuseFullySuccessful: boolean;
+  /** **一次性**成本（构建配方 + 定义验证），与轮数无关。 */
+  buildCost: {
+    recipeBuildStepCount: number;
+    validationStepCount: number;
+    isOneTimeCost: true;
+  };
+  /** **按轮发生**的成本。 */
+  recurringCost: {
+    toolCallCountPerRound: number;
+    isOneTimeCost: false;
+  };
+  /**
+   * **预测**的复用次数（用户/Agent 的估计）。
+   *
+   * 与 `completedRoundCount`（**实测**）**分开**：卡内要求记录不确定性，
+   * 预测**不得**冒充实测。
+   */
+  projectedReuseCount: number | null;
+  /**
+   * 本 harness 实测节省分钟数。
+   *
+   * **恒为 0**：本 harness 只测**结构计量**，不测人工时间；
+   * 卡内"无真实 usage 标为未测，**不杜撰节省**"。
+   */
+  measuredSavingMinutes: 0;
+  /** **未测量项**（不得因样本变大就填 0 冒充已测）。 */
+  notMeasuredItems: string[];
+}
+
+/**
+ * 用**同一配方**跑多轮**不同输入**，实测复用次数与成本结构（TOOLKIT-01-06）。
+ *
+ * 为什么需要它：`measureBaselineCost()` 只做**单次**结构计量 ⇒ 卡内点名的
+ * "**更大样本**"没有判定点。本函数把"复用"从**声称**变成**可核对的数据**：
+ *  - 每轮都真的执行配方（不是只 import）；
+ *  - 总调用数必须等于"单轮调用数 × 轮数"（结构性守恒）；
+ *  - 逐轮调用数一并返回 ⇒ 可核对"单轮成本不随轮数增长"；
+ *  - 失败轮单独计数 ⇒ 失败**不得**算成节省。
+ *
+ * 工具执行经**注入的** `ToolPort`（默认使用确定性内存端口），
+ * 不引入新的执行通道、不联网、不读凭据。
+ */
+export async function measureRecipeReuseAcrossRounds(input: {
+  recipe: WorkflowRecipeDefinition;
+  roundInputs: Array<Record<string, unknown>>;
+  /** 预测复用次数（可选）；与实测轮数**分开**记录。 */
+  projectedReuseCount?: number;
+  /** 可注入的受控工具端口（缺省用确定性内存端口）。 */
+  toolPort?: ToolPort;
+}): Promise<RecipeReuseAcrossRoundsOutcome> {
+  /** 一次性成本之一：**定义验证**（与轮数无关）。 */
+  const validation = validateRecipeDefinition(input.recipe);
+  if (!validation.isValid) {
+    throw new Error("配方定义非法: " + String(validation.reason));
+  }
+  const toolPort = input.toolPort ?? buildDeterministicInMemoryToolPort();
+  const engine = new RecipeExecutionEngine({ toolPort });
+
+  const roundOutcomes: ReuseRoundOutcome[] = [];
+  for (const roundInput of input.roundInputs) {
+    const controller = new AbortController();
+    try {
+      const outcome = await engine.execute({
+        recipe: input.recipe,
+        input: roundInput,
+        cancellationSignal: controller.signal,
+      });
+      roundOutcomes.push({
+        isSuccessful: outcome.isSuccessful,
+        toolCallCount: outcome.stepReceipts.length,
+      });
+    } catch {
+      /** 单轮异常**不得**中断整批统计：如实计入失败轮。 */
+      roundOutcomes.push({ isSuccessful: false, toolCallCount: 0 });
+    }
+  }
+
+  const successfulRounds = roundOutcomes.filter((round) => round.isSuccessful);
+  const completedRoundCount = successfulRounds.length;
+  const failedRoundCount = roundOutcomes.length - completedRoundCount;
+  const perRoundToolCallCounts = successfulRounds.map((round) => round.toolCallCount);
+  /**
+   * 单轮成本取**最大**值（保守）：若某轮调用数偏高，不应被平均值掩盖
+   * （卡内要求记录**不确定性**，不是取好看的数字）。
+   */
+  const toolCallCountPerRound =
+    perRoundToolCallCounts.length === 0
+      ? 0
+      : Math.max(...perRoundToolCallCounts);
+  const executedToolCallCount = perRoundToolCallCounts.reduce(
+    (total, count) => total + count,
+    0,
+  );
+  const isPerRoundCostStable =
+    perRoundToolCallCounts.length > 0 &&
+    perRoundToolCallCounts.every((count) => count === toolCallCountPerRound);
+
+  return {
+    recipeIdentifier: input.recipe.recipeIdentifier,
+    completedRoundCount,
+    failedRoundCount,
+    perRoundToolCallCounts,
+    toolCallCountPerRound,
+    executedToolCallCount,
+    isPerRoundCostStable,
+    isReuseFullySuccessful: failedRoundCount === 0 && completedRoundCount > 0,
+    buildCost: {
+      recipeBuildStepCount: input.recipe.steps.length,
+      validationStepCount: 1,
+      isOneTimeCost: true,
+    },
+    recurringCost: {
+      toolCallCountPerRound,
+      isOneTimeCost: false,
+    },
+    projectedReuseCount: input.projectedReuseCount ?? null,
+    measuredSavingMinutes: 0,
+    notMeasuredItems: [
+      "真实 token / 模型请求消耗（无真实 usage 数据）",
+      "人工判断与沟通耗时",
+      "真实维护成本（跨版本升级投入）",
+      "跨机器/跨平台的耗时可比性",
+    ],
+  };
+}
+
+/**
+ * 确定性**内存**工具端口（仅供结构计量使用）。
+ *
+ * 为什么不复用生产 PolicyWrapper：收益的**结构计量**只关心"调了几次、顺序如何"，
+ * 用真实文件系统会让计量随机器/磁盘状态漂移。生产装配路径由
+ * `toolkit01-workflow-recipe-engine.test.ts` 单独覆盖（使用真实 PolicyWrapper）。
+ */
+function buildDeterministicInMemoryToolPort(): ToolPort {
+  return {
+    async execute(toolName, _argumentsJson, callId) {
+      return {
+        kind: "success",
+        callId,
+        outputText: "deterministic-output:" + toolName,
+        isSideEffectFree: toolName !== "createProjectFile",
+      };
+    },
   };
 }

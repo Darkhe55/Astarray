@@ -1,7 +1,7 @@
 # TOOLKIT-01：项目工具孵化、用户级复用与通用工具包
 
 日期：2026-10-10（**第 40 轮订正**）。状态：**部分实施** ——
-01/02/03/05 done，04 大部分完成，06 部分完成（缺更大样本收益实测）。
+01/02/03/05 done，04 大部分完成，06 大部分完成（更大样本复用实测已交付；尚缺真实 token 消耗等须真实额度项）。
 **整卡不主张通过**（剩余卡点见检查点表与
 `docs/reports/CROSS_CARD_RECONCILIATION_2026-10-10.md`）。
 
@@ -123,7 +123,7 @@
 | TOOLKIT-01-03 | **done（2026-10-10）** | 已完成：两个结构不同的 fixture 项目（`fixture-alpha`：`src/`+`tests/`+`.ts`；`fixture-beta`：`lib/`+`lib/vendor/`+`docs/`+`.py`）、来源项目**零修改**、目标项目**显式启用并固定内容哈希**、推广**只提案**（`enabledProjectIdentifiers` 恒为空）、来源项目零修改有反例。**内容哈希已改为真实 sha256**（原为自造多项式哈希）。 |
 | TOOLKIT-01-04 | **大部分完成（2026-10-10）**；**不判通过** | 已完成：设置入口、版本升级差异、停用/回滚、**取消/崩溃恢复管理入口**与**独立反馈**（`tool-package-operation-control.ts`），CLI `list/describe/status/enable/disable/upgrade/rollback/cancel/recover/feedback`，GUI/TUI 面板；**修掉"在途调用未持久化"缺陷**（取消后跨进程仍可见在途调用）。反例含**真实 `dist/cli.js` 子进程**。**仍未完成**：与 MERGE-01 权限功能的完整联测。 |
 | TOOLKIT-01-05 | **done（2026-10-10）** | 已完成：受控确定性程序工具（`DETERMINISTIC_CSV_TO_JSON_CONVERTER`）+ 隔离门禁（沙箱与 broker **两者都必需**、未支持能力**先于**沙箱检查拒绝、`fallbackPath: "recipe-only"`、**不允许任意脚本兜底**）。 |
-| TOOLKIT-01-06 | **部分完成（2026-10-10）**；**不判通过** | 已交付：tarball 隔离安装闭环（`npm run verify:toolkit-package` **39/39**）、SDK 与 CLI/TUI/GUI 最小管理入口、受益评估（**保守取区间下限**、无机械重复门槛、自动发现只提案）、**如实记录 `measuredSavingMinutes: 0` 与 `notMeasuredItems`**。**仍未完成**：卡内点名的**更大样本**复用次数/构建成本实测（当前仅单一 fixture 计量）⇒ 不主张整卡通过。 ||
+| TOOLKIT-01-06 | **大部分完成（2026-10-10）**；**不判通过** | 已交付：tarball 隔离安装闭环（`verify:toolkit-package` **48/48**）、SDK 与 CLI/TUI/GUI 最小管理入口、受益评估（**保守取区间下限**、无机械重复门槛、自动发现只提案）、**如实记录 `measuredSavingMinutes: 0` 与 `notMeasuredItems`**、**更大样本的多轮复用实测**（`measureRecipeReuseAcrossRounds()`：**实测**轮数与**预测**次数分列；`buildCost` 一次性 vs `recurringCost` 按轮分开；**结构性守恒**可核对（6 轮 × 3 次 = 18）；**失败轮不得算成节省**；`isPerRoundCostStable` 判定"复用是否真的成立"）。**仍未完成**：真实 token/模型请求消耗（**须真实额度**）、真实维护成本与跨平台可比性 ⇒ 不主张整卡通过。 |
 
 推荐先交付 01/02/03 的项目复用纵向切片，证明收益后做 04/05/06；第一阶段完成不把整卡标 done。01 可提前审计；实际启用受 MERGE 权限门禁及 RELIABILITY 关键缺口限制。NODECTX 未落地时不引入新的压缩方案，沿用原文按需读取。
 
@@ -565,3 +565,35 @@ CLI 每次调用都是**独立进程**，因此"停用阻止新运行"与"回滚
 
 实施时冻结实际采用的规范版本；不因在线草案更新自动变更本卡权限与数据边界。
 
+
+### TOOLKIT-01-06 进展（2026-10-10 续）：**更大样本的多轮复用实测**
+
+**缺口（本轮实测）**：`measureBaselineCost()` 只做**单次**结构计量
+（`savedToolCallCount`），**没有任何"多轮复用"的实测记录** ⇒ 卡内 §2 点名的
+"**更大样本**"没有判定点，`PLAN_STATUS` 只能写"缺更大样本收益实测"。
+
+**交付** `measureRecipeReuseAcrossRounds()`（同文件，纯本地、经注入端口执行、不联网）：
+
+| 卡内 §2 要求 | 实现 |
+| --- | --- |
+| "记录**预计复用次数**" | `projectedReuseCount` 与 `completedRoundCount`（**实测**）**分开字段**，预测不得冒充实测 |
+| "**单次节省**" | `toolCallCountPerRound`（各轮不一致时取**最大**值，保守）+ 逐轮 `perRoundToolCallCounts` 供核对 |
+| "**构建/验证成本**" | `buildCost`（`recipeBuildStepCount` + `validationStepCount`，`isOneTimeCost: true`）与 `recurringCost`（`isOneTimeCost: false`）**分开记录** |
+| "及**不确定性**" | `notMeasuredItems` **4 项**（含真实 token/模型请求、人工耗时、维护成本、跨平台可比性） |
+| "**无真实 usage 标为未测，不杜撰节省**" | `measuredSavingMinutes` **恒为 0**；本 harness 只测**结构计量** |
+| "**不设机械重复次数门槛**" | 只**记录**轮数与逐轮调用数，**不对轮数设阈值**、不据此自动批量造工具 |
+
+**结构性守恒（可核对，不是声称）**：实测 6 轮 × 每轮 3 次 = **18 次**
+（`executedToolCallCount === toolCallCountPerRound × completedRoundCount`），
+`isPerRoundCostStable: true`（逐轮 `[3,3,3,3,3,3]`）。
+即：**单轮成本不随轮数增长** —— 这才是"复用成立"的判据；若逐轮调用数递增，
+说明每轮都退化回手工，`isPerRoundCostStable` 会如实为 false。
+
+**失败不得算成节省**：注入失败端口时，失败轮单独计数为 `failedRoundCount`，
+`isReuseFullySuccessful: false`，且失败轮的调用数**不进入**节省统计。
+
+- 反例（先红后绿）：`tests/core/unit/toolkit01-reuse-across-rounds.test.ts` **8 条**。
+- **一处如实记录**：我最初用"故意缺参数"制造失败轮，**实测该轮仍然成功**（缺参数并不
+  必然失败）⇒ 我的假设是错的；已改为**注入失败端口**制造确定性失败。
+- **仍未完成**：真实 token/模型请求消耗（**须真实额度**）；真实维护成本；
+  跨平台可比性 ⇒ **不主张 TOOLKIT-01 整卡通过**。
