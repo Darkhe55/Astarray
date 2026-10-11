@@ -22,8 +22,13 @@ import {
   removeJsonFileWithBackup,
   writeAtomicJson,
 } from "../infra/atomic-json.js";
-import { sanitizePathSegment } from "../orchestration/work-archive-store.js";
 import {
+  decodePathSegment,
+  sanitizePathSegment,
+} from "../orchestration/work-archive-store.js";
+import {
+  SUMMARY_MANIFEST_SCHEMA_VERSION,
+  SUMMARY_SOURCE_KINDS,
   SummaryContractError,
   validateSummaryManifest,
   type SummaryManifest,
@@ -397,6 +402,182 @@ export class SummaryIndexStore {
       }
       return left.sourceIdentifier.localeCompare(right.sourceIdentifier);
     });
+  }
+
+  /**
+   * 从摘要目录名还原 `sourceKind` 与 `sourceIdentifier`。
+   *
+   * 目录名布局为 `sanitize(kind) + "-" + sanitize(identifier)`（见 `summaryDirectoryPath`）。
+   * 清单损坏时字段读不出来，只能从目录名还原 —— 种类在**已知枚举**里逐一匹配，
+   * 标识符用**真实解码器** `decodePathSegment`（编码是单射的）。
+   * 匹配不到已知种类时**不猜**：返回 `null` 种类 + 整体解码的标识符。
+   */
+  private static splitSummaryDirectoryName(directoryName: string): {
+    sourceKind: SummarySourceKind | null;
+    sourceIdentifier: string;
+  } {
+    for (const knownKind of SUMMARY_SOURCE_KINDS) {
+      const prefix = sanitizePathSegment(knownKind) + "-";
+      if (directoryName.startsWith(prefix)) {
+        return {
+          sourceKind: knownKind,
+          sourceIdentifier: decodePathSegment(directoryName.slice(prefix.length)),
+        };
+      }
+    }
+    return {
+      sourceKind: null,
+      sourceIdentifier: decodePathSegment(directoryName),
+    };
+  }
+
+  /**
+   * SUM-01-02：**只读**判定哪些清单是"旧格式"（需要迁移）。   *
+   * 为什么需要它：`summaryManifestSchema` 是 `.strict()` 且要求
+   * `chunkChainHash`/`manifestIntegrityHash` 等字段 ⇒ **历史清单根本读不出来**
+   * （`readManifest()` 抛 `journal-corrupted`），而全仓此前**没有任何迁移判定入口**
+   * ⇒ 卡内点名的"旧文件迁移"没有判定点，用户也不知道哪些清单要迁移。
+   *
+   * 严格遵守卡内纪律：
+   *  - **只读**：不改写、不删除、**不触发任何重摘要**（"读取不触发全文重摘要"）；
+   *  - 逐条独立判定：单条损坏**不让整批失败**，并把原因如实报出；
+   *  - 无 `summaries` 目录 ⇒ 空报告 + `isMigrationNeeded: false`（**不虚构待迁移项**）。
+   *
+   * 注意：本方法**只判定、不迁移**。真正的迁移必须走原子发布路径
+   * （见 `publishManifest` 的 CAS + `withSingleFlight`），以免"崩溃留下新摘要指旧正文"。
+   */
+  async detectLegacyManifests(input: { agentInstanceId: string }): Promise<{
+    entries: Array<{
+      sourceKind: SummarySourceKind | null;
+      sourceIdentifier: string;
+      reason: string;
+    }>;
+    isMigrationNeeded: boolean;
+  }> {
+    const summariesDirectoryPath = path.join(
+      this.options.baseDirectory,
+      "agent-memory",
+      sanitizePathSegment(input.agentInstanceId),
+      "summaries",
+    );
+    let directoryNames: string[];
+    try {
+      const directoryEntries = await fs.readdir(summariesDirectoryPath, {
+        withFileTypes: true,
+      });
+      directoryNames = directoryEntries
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name);
+    } catch {
+      /** 全新安装：没有 summaries 目录 ⇒ 没有任何待迁移项。 */
+      return { entries: [], isMigrationNeeded: false };
+    }
+
+    const entries: Array<{
+      sourceKind: SummarySourceKind | null;
+      sourceIdentifier: string;
+      reason: string;
+    }> = [];
+    for (const directoryName of directoryNames) {
+      const manifestFilePath = path.join(summariesDirectoryPath, directoryName, "manifest.json");
+      let rawContent: string;
+      try {
+        rawContent = await fs.readFile(manifestFilePath, "utf8");
+      } catch {
+        /** 目录在但没有清单：也是需要处理的项（不得静默忽略）。 */
+        entries.push({
+          /**
+           * 目录名是 `sanitize(kind) + "-" + sanitize(identifier)` ⇒ **种类与标识符都能还原**
+           * （种类在已知枚举里逐一匹配，标识符用真实解码器 `decodePathSegment`）。
+           */
+          ...SummaryIndexStore.splitSummaryDirectoryName(directoryName),
+          reason: "目录存在但缺少 manifest.json（半写或未完成发布）",
+        });
+        continue;
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(rawContent);
+      } catch {
+        entries.push({
+          ...SummaryIndexStore.splitSummaryDirectoryName(directoryName),
+          /**
+           * JSON 不可解析 ⇒ 字段读不出来，只能从目录名还原。
+           * 注意：**种类未知时无法确定 `-` 是分隔符还是标识符的一部分**
+           * （编码方案下 `-` 是合法字面字符），故此时标识符是**整段解码后的目录名**
+           * 而非裸标识符 —— 这一点在 reason 中如实说明，不假装精确。
+           */
+          reason:
+            SummaryIndexStore.splitSummaryDirectoryName(directoryName).sourceKind === null
+              ? "manifest.json 不是合法 JSON（解析失败）；目录名种类未知，标识符为整段解码结果"
+              : "manifest.json 不是合法 JSON（解析失败，可能写入被中断）",
+        });
+        continue;
+      }
+      /** 新格式能通过校验 ⇒ 不是待迁移项。 */
+      try {
+        validateSummaryManifest(parsed);
+        continue;
+      } catch (validationError) {
+        const record =
+          parsed !== null && typeof parsed === "object"
+            ? (parsed as Record<string, unknown>)
+            : {};
+        const missingFields = [
+          "chunkChainHash",
+          "manifestIntegrityHash",
+          "generatorVersion",
+          "manifestRevision",
+        ].filter((fieldName) => record[fieldName] === undefined);
+        const schemaVersion = record["schemaVersion"];
+        const reasons: string[] = [];
+        if (missingFields.length > 0) {
+          reasons.push("缺少字段: " + missingFields.join(","));
+        }
+        if (schemaVersion !== SUMMARY_MANIFEST_SCHEMA_VERSION) {
+          reasons.push(
+            "schemaVersion 不符（期望 " +
+              String(SUMMARY_MANIFEST_SCHEMA_VERSION) +
+              "，实际 " +
+              String(schemaVersion) +
+              "）",
+          );
+        }
+        if (reasons.length === 0) {
+          reasons.push(
+            "结构校验未通过: " +
+              String(
+                validationError instanceof Error
+                  ? validationError.message
+                  : validationError,
+              ),
+          );
+        }
+        const sourceKindValue = record["sourceKind"];
+        const isKnownSourceKind =
+          typeof sourceKindValue === "string" &&
+          (SUMMARY_SOURCE_KINDS as readonly string[]).includes(sourceKindValue);
+        entries.push({
+          sourceKind: isKnownSourceKind
+            ? (sourceKindValue as SummarySourceKind)
+            : null,
+          sourceIdentifier:
+            typeof record["sourceIdentifier"] === "string" &&
+            record["sourceIdentifier"] !== ""
+              ? record["sourceIdentifier"]
+              : SummaryIndexStore.splitSummaryDirectoryName(directoryName).sourceIdentifier,
+          reason: "旧格式清单需要迁移（" + reasons.join("；") + "）",
+        });
+        continue;
+      }
+    }
+    entries.sort((left, right) => {
+      if (left.sourceIdentifier !== right.sourceIdentifier) {
+        return left.sourceIdentifier.localeCompare(right.sourceIdentifier);
+      }
+      return left.reason.localeCompare(right.reason);
+    });
+    return { entries, isMigrationNeeded: entries.length > 0 };
   }
 
   /** 同一来源键的生成任务 single-flight：并发请求只执行一次。 */
