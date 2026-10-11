@@ -262,3 +262,39 @@ allow-once / allow-session / deny / modify / Esc 五条决策分支与初始渲�
 >
 > 同轮以 `danger-full-access` 审批后执行 `git push origin main` 成功：`4350261..64626ea main -> main`，本目标累积 8 个提交（`2ac799e`→`64626ea`）已全部上传；
 > `PLAN_STATUS.md` 中属于本次 AR-07 收尾的 2 行说明已单独摘出提交（用户并行的产品接线改动仍保留在工作区，未纳入）。
+
+## 11. 批次 10（2026-10-10）：§7 遗留名单的**重测与收口**
+
+**重要更正：§7 的模块名单是过期的。** 本轮用同一测量方式重测后，名单里绝大多数模块
+**分支覆盖率已达 100%**，无需继续"刷覆盖率"：
+
+| 模块 | 本轮实测分支 |
+| --- | --- |
+| backup-vault | **100%**（40/40） |
+| policy-wrapper | **100%**（41/41） |
+| unbounded-agent-registry | **100%**（9/9） |
+| installation-gate-guard | **100%**（17/17） |
+| current-permission-selection | **100%**（6/6） |
+| read-suppression-ledger | **100%**（17/17） |
+| local-progress-and-cycle-guard | **100%**（25/25） |
+| session-permission-elevation | **100%**（35/35） |
+| permission-profile-store | **100%**（21/21） |
+| local-tool-policy-engine | **100%**（20/20） |
+| permission-capability-catalog | **100%**（7/7） |
+| agent-run-watchdog | **100%**（18/18） |
+
+**当时真实剩余缺口只有两个**，均已收口：
+
+| 模块 | 收口前 | 收口后 | 处置 |
+| --- | --- | --- | --- |
+| `feedback-process/process-supervisor.ts` | 96.7%（29/30，余 L302） | **100%**（29/29） | 按本卡先例**移除不可达的防御性空值回退**：`candidatePaths[0] ?? <兜底>` 的右侧**永不可达**（数组以字面量构造、恒两元素；`noUncheckedIndexedAccess` 只让**类型**含 `undefined`）。改为"模块同目录不存在即直接用 dist 路径"，**语义完全不变** |
+| `tools/configurable-permission-policy-engine.ts` | 95.5%（21/22，余 L152） | **100%**（22/22） | 补**行为**用例：参数规则 `deny` 时必须把该规则的**可读解释**作为拒绝理由（卡内 §1.3"每条规则有可读解释"），不得被兜底文案吞掉 |
+
+- 新增/扩展用例：`tests/core/unit/ar07-process-supervisor-entry-resolution.test.ts` **5 条**
+  （入口路径**必须存在**、**必须绝对路径**、basename 正确、调用稳定、回退分支可用）；
+  `tests/core/integration/merge01-parameter-authorization-settings.test.ts` 增 **⑦**。
+- **生产代码改动仅一处**，且是删除死分支（与 §8 说明的既有口径一致）；
+  typecheck/lint/build 全绿，`npm run check` **exit 0**（**361 文件 / 2718 用例、skipped 0**）。
+- **仍未完成**：平台不可达分支（Windows-only 的非 win32 归一化路径、
+  `sensitive-content-access-policy` L78/L156、`protected-storage-policy` L40）
+  ⇒ **须由 Linux/macOS 平台提供证据**，本会话不得以文字覆盖。

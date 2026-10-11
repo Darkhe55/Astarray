@@ -140,7 +140,45 @@ describe("MERGE-01：参数授权设置入口（校验，fail-closed）", () => 
 });
 
 describe("MERGE-01：设置必须真的被权限引擎消费（不是只存不用）", () => {
-  it("⑥ 关闭总开关后，参数规则不再放行（与引擎裁决一致）", async () => {
+  it("⑦ 参数规则 deny 时，理由必须带上该规则的可读解释（不得吞掉）", async () => {
+    const store = new ParameterAuthorizationSettingsStore({ stateDirectory });
+    const catalog = new PermissionCapabilityCatalog();
+    const profileStore = new PermissionProfileStore({
+      baseDirectory: stateDirectory,
+      catalog,
+    });
+    const profileReference = { kind: "builtin" as const, profileId: "assist" as const };
+    const explainableDenyRule = buildValidRule({
+      ruleIdentifier: "rule-deny-vendor",
+      decision: "deny" as const,
+      explanation: "禁止写入 vendor 目录",
+      match: { kind: "path-prefix" as const, field: "filePath", prefix: "lib/vendor/" },
+    });
+    await store.writeSettings({
+      settings: { isParameterAuthorizationEnabled: true, isParameterRulesEnabled: true },
+      rules: [explainableDenyRule],
+    });
+    const document = await store.readSettings();
+    const engine = new ConfigurablePermissionPolicyEngine({
+      catalog,
+      profileStore,
+      nowUnixSeconds: () => 1_000_000,
+      parameterAuthorization: { settings: document.settings, rules: document.rules },
+    });
+    const outcome = await engine.decide({
+      toolName: "createProjectFile",
+      action: "create",
+      profileReference,
+      argumentsJson: JSON.stringify({ filePath: "lib/vendor/x.md", content: "x" }),
+    });
+    expect(outcome.decision).toBe("deny");
+    /**
+     * 卡内 §1.3 要求"每条规则有**可读解释**"：拒绝时用户必须看到**为什么**，
+     * 因此理由必须来自规则解释，而不是被笼统的兜底文案吞掉。
+     */
+    const denyReason = outcome.decision === "deny" ? outcome.reason : "";
+    expect(denyReason).toContain("禁止写入 vendor 目录");
+  });  it("⑥ 关闭总开关后，参数规则不再放行（与引擎裁决一致）", async () => {
     const store = new ParameterAuthorizationSettingsStore({ stateDirectory });
     const catalog = new PermissionCapabilityCatalog();
     const profileStore = new PermissionProfileStore({

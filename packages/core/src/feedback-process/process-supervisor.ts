@@ -289,17 +289,23 @@ async function waitForProcessExit(
  * 否则会 fork 一个不存在的文件（此前 SDK 路径因此无法启用独立反馈进程）。
  */
 export function resolveFeedbackProcessEntryPath(): string {
-  const candidatePaths = [
-    path.join(path.dirname(fileURLToPath(import.meta.url)), "feedback-process-entry.js"),
-    path.join(process.cwd(), "dist", "feedback-process-entry.js"),
-  ];
-  for (const candidatePath of candidatePaths) {
-    if (existsSync(candidatePath)) {
-      return candidatePath;
-    }
-  }
-  return (
-    candidatePaths[0] ??
-    path.join(process.cwd(), "dist", "feedback-process-entry.js")
+  /**
+   * AR-07：这里**刻意不写** `candidatePaths[0] ?? <兜底>`。
+   *
+   * 该 `??` 右侧是**不可达分支**：候选数组以字面量构造、恒有两个元素
+   * （`noUncheckedIndexedAccess` 只让 `candidatePaths[0]` 的**类型**含 `undefined`，
+   * 运行时它永远有值）。保留它会制造一个永远走不到的防御分支，
+   * 让分支覆盖率无法反映真实行为 —— 与卡内已确立的先例一致
+   * （见 `completion-protocol.ts`、`evidence-search-agent-port.ts` 的"移除不可达空值回退"）。
+   *
+   * 语义**完全不变**：先返回模块同目录入口，不存在则回退到包 `dist` 入口。
+   */
+  const moduleAdjacentEntryPath = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "feedback-process-entry.js",
   );
+  if (existsSync(moduleAdjacentEntryPath)) {
+    return moduleAdjacentEntryPath;
+  }
+  return path.join(process.cwd(), "dist", "feedback-process-entry.js");
 }
