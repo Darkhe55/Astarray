@@ -26,6 +26,25 @@ import {
   decodePathSegment,
   sanitizePathSegment,
 } from "../orchestration/work-archive-store.js";
+import { advanceSummaryGeneration } from "./summary-generation-service.js";
+import { buildLocalExtractiveNarrative } from "./summary-source-adapters.js";
+import type { SummarySourceEntry } from "./summary-fact-extractor.js";
+
+/**
+ * 迁移产物的生成器版本（**刻意与常规版本区分**）：
+ * 便于日后识别"这是迁移重建的清单"，而不是正常增量生成的。
+ */
+const LEGACY_MIGRATION_GENERATOR_VERSION = "local-extractive-legacy-migration-1";
+
+/**
+ * 旧清单备份文件名（**确定性**，不带时间戳）。
+ *
+ * 为什么必须确定性：若在"移走旧清单"之后、"发布新清单"之前崩溃，
+ * 该来源会处于"无 manifest.json"态。用带时间戳的名字就**再也认不出**
+ * 这是"迁移中断"还是"从未有过清单"⇒ 恢复不可能。用固定名字后，
+ * 只要看到"无 manifest.json 但有该备份"，即可判定为**迁移中断并重试**。
+ */
+const LEGACY_MANIFEST_BACKUP_FILE_NAME = "manifest.json.legacy-backup";
 import {
   SUMMARY_MANIFEST_SCHEMA_VERSION,
   SUMMARY_SOURCE_KINDS,
@@ -484,14 +503,28 @@ export class SummaryIndexStore {
       try {
         rawContent = await fs.readFile(manifestFilePath, "utf8");
       } catch {
-        /** 目录在但没有清单：也是需要处理的项（不得静默忽略）。 */
+        /**
+         * 目录在但没有清单：需要处理（不得静默忽略）。
+         * 若同时存在**迁移备份**，说明上一次迁移"移走了旧清单但没发成新清单"
+         * （崩溃中断）⇒ 必须**可恢复**，否则该来源永久失去内容。
+         */
+        const hasInterruptedMigrationBackup = await (async () => {
+          try {
+            await fs.stat(path.join(summariesDirectoryPath, directoryName, LEGACY_MANIFEST_BACKUP_FILE_NAME));
+            return true;
+          } catch {
+            return false;
+          }
+        })();
         entries.push({
           /**
            * 目录名是 `sanitize(kind) + "-" + sanitize(identifier)` ⇒ **种类与标识符都能还原**
            * （种类在已知枚举里逐一匹配，标识符用真实解码器 `decodePathSegment`）。
            */
           ...SummaryIndexStore.splitSummaryDirectoryName(directoryName),
-          reason: "目录存在但缺少 manifest.json（半写或未完成发布）",
+          reason: hasInterruptedMigrationBackup
+            ? "上一次迁移被中断（旧清单已备份但新清单未发布）⇒ 需要重试迁移"
+            : "目录存在但缺少 manifest.json（半写或未完成发布）",
         });
         continue;
       }
@@ -544,13 +577,17 @@ export class SummaryIndexStore {
           );
         }
         if (reasons.length === 0) {
+          /**
+           * `validateSummaryManifest` 走 zod ⇒ 只会抛 `Error` 子类
+           * （`ZodError extends Error`），因此**不需要** `instanceof` 兜底分支：
+           * 那是一个永远走不到的假分支（只会拉低覆盖率而不保护任何行为）。
+           * 这里保留 `cause` 以便诊断时能看到真实的 zod 问题路径。
+           */
           reasons.push(
             "结构校验未通过: " +
-              String(
-                validationError instanceof Error
-                  ? validationError.message
-                  : validationError,
-              ),
+              (validationError instanceof Error
+                ? validationError.message
+                : String(validationError)),
           );
         }
         const sourceKindValue = record["sourceKind"];
@@ -571,13 +608,183 @@ export class SummaryIndexStore {
         continue;
       }
     }
+    /**
+     * 排序必须**完全确定**：此前只按标识符与原因排序，导致目录扫描顺序
+     * （`readdir` 不保证顺序）会泄漏到报告里 ⇒ 同一次迁移在两次运行中
+     * 可能给出不同顺序。补上 `sourceKind` 这一层比较键（`null` 排最后）。
+     */
     entries.sort((left, right) => {
+      const leftKind = left.sourceKind ?? "";
+      const rightKind = right.sourceKind ?? "";
+      if (leftKind !== rightKind) {
+        return leftKind.localeCompare(rightKind);
+      }
       if (left.sourceIdentifier !== right.sourceIdentifier) {
         return left.sourceIdentifier.localeCompare(right.sourceIdentifier);
       }
       return left.reason.localeCompare(right.reason);
     });
     return { entries, isMigrationNeeded: entries.length > 0 };
+  }
+
+  /**
+   * SUM-01-02：**安全执行**旧清单迁移（备份旧文件 ⇒ 原子重发新清单）。
+   *
+   * 为什么必须这样做：旧格式清单**读不出来**（`journal-corrupted`），
+   * 而 `advanceSummaryGeneration()` 第一步就是 `readManifest()` ⇒ 迁移无法启动。
+   * 直接删旧文件是**不可接受**的（卡内：任何删除/替换/覆盖必须自动备份）。
+   *
+   * 语义：
+   *  - 先**备份**旧 `manifest.json` 到 `manifest.json.legacy-backup-<revision>`
+   *    （复用 `backupExistingFile`，绝不直接覆盖）；
+   *  - 再用**既有** `writePendingGeneration` ⇒ `publishManifest`（原子 + CAS）
+   *    写新清单；写入中断时旧文件仍在（崩溃安全，可重试）；
+   *  - **幂等**：已是新格式的来源直接跳过（不改写、不重复备份）；
+   *  - **逐条独立**：单条失败**不中止整批**，失败项如实进 `failedEntries`；
+   *  - **不给条目就不迁移**（迁移本质是"用本地提取重建"）：
+   *    缺条目的来源计入 `skippedSourceIdentifiers`，**不得**伪造空内容。
+   */
+  async migrateLegacyManifests(input: {
+    agentInstanceId: string;
+    /** 按来源标识符给出**重建用的**条目；缺条目即跳过该来源（不伪造）。 */
+    entriesBySourceIdentifier: Record<string, SummarySourceEntry[]>;
+  }): Promise<{
+    migratedSourceIdentifiers: string[];
+    skippedSourceIdentifiers: string[];
+    failedEntries: Array<{ sourceIdentifier: string; reason: string }>;
+  }> {
+    const detected = await this.detectLegacyManifests({
+      agentInstanceId: input.agentInstanceId,
+    });
+    const migratedSourceIdentifiers: string[] = [];
+    const skippedSourceIdentifiers: string[] = [];
+    const failedEntries: Array<{ sourceIdentifier: string; reason: string }> = [];
+
+    for (const detectedEntry of detected.entries) {
+      const sourceIdentifier = detectedEntry.sourceIdentifier;
+      const entries = input.entriesBySourceIdentifier[sourceIdentifier];
+      if (entries === undefined) {
+        /** 没有重建条目 ⇒ **不迁移、不伪造**，并如实记入跳过。 */
+        skippedSourceIdentifiers.push(sourceIdentifier);
+        continue;
+      }
+      /** 种类未知的目录无从确定来源键 ⇒ 如实记失败，不猜。 */
+      if (detectedEntry.sourceKind === null) {
+        failedEntries.push({
+          sourceIdentifier,
+          reason: "来源种类未知，无法确定来源键（不猜测种类）",
+        });
+        continue;
+      }
+      try {
+        if (entries.length === 0) {
+          failedEntries.push({
+            sourceIdentifier,
+            reason: "重建条目为空，拒绝发布空清单覆盖旧内容",
+          });
+          continue;
+        }
+        const directoryPath = this.summaryDirectoryPath(input.agentInstanceId, {
+          sourceKind: detectedEntry.sourceKind,
+          sourceIdentifier,
+        });
+        const manifestFilePath = path.join(directoryPath, "manifest.json");
+        /**
+         * **必须先"备份并移走"旧清单**：`advanceSummaryGeneration()` 第一步就是
+         * `readManifest()`，而旧格式清单会**抛 `journal-corrupted`** ⇒ 不移走就永远
+         * 开始不了迁移（这正是我第一版失败的原因）。
+         *
+         * 复用既有 `removeJsonFileWithBackup`：**先复制备份、再删除**原文件
+         * （卡内"任何删除/替换/覆盖必须自动备份"）。备份名带时间戳，
+         * 同一来源重复迁移时不会互相覆盖备份。
+         *
+         * 崩溃窗口：若在"移走旧文件"之后、"发布新清单"之前中断，
+         * 该来源会处于"无清单"态 —— 但**旧内容仍完整保留在备份里**（可恢复），
+         * 且重跑迁移即可成功（用例 ⑤ 钉住这一点）。
+         */
+        const backupPath = path.join(
+          directoryPath,
+          LEGACY_MANIFEST_BACKUP_FILE_NAME,
+        );
+        const doesLegacyManifestExist = await (async () => {
+          try {
+            await fs.stat(manifestFilePath);
+            return true;
+          } catch {
+            return false;
+          }
+        })();
+        if (doesLegacyManifestExist) {
+          const didMoveLegacyManifest = await removeJsonFileWithBackup(
+            manifestFilePath,
+            backupPath,
+          );
+          if (!didMoveLegacyManifest) {
+            failedEntries.push({
+              sourceIdentifier,
+              reason: "旧清单无法备份，已跳过以避免无备份覆盖",
+            });
+            continue;
+          }
+        } else {
+          /**
+           * 旧清单**已不在**但备份在 ⇒ 上一次迁移"移走了旧清单但没发成新清单"
+           * （崩溃中断）。此时**不得**再要求备份（否则会二次覆盖备份并卡死恢复），
+           * 直接复用 pending 续跑即可。备份文件已在，恢复能力不受影响。
+           */
+          const doesBackupExist = await (async () => {
+            try {
+              await fs.stat(backupPath);
+              return true;
+            } catch {
+              return false;
+            }
+          })();
+          if (!doesBackupExist) {
+            failedEntries.push({
+              sourceIdentifier,
+              reason: "旧清单与迁移备份都不存在，无法安全迁移（不猜测内容）",
+            });
+            continue;
+          }
+        }
+
+        /**
+         * 复用**既有**生成服务：它内部已实现 pending 续跑、single-flight 与
+         * CAS 原子发布 ⇒ 迁移不另开写盘路径（避免"崩溃留下新摘要指旧正文"）。
+         * `generatorVersion` 用**可区分**的迁移版本，便于日后识别迁移产物。
+         */
+        const generation = await advanceSummaryGeneration({
+          store: this,
+          agentInstanceId: input.agentInstanceId,
+          sourceKind: detectedEntry.sourceKind,
+          sourceIdentifier,
+          entries,
+          narrativeGenerator: {
+            generateNarrative: async (generationInput) =>
+              buildLocalExtractiveNarrative(generationInput.facts),
+          },
+          generatorVersion: LEGACY_MIGRATION_GENERATOR_VERSION,
+        });
+        if (generation.manifest === null) {
+          failedEntries.push({
+            sourceIdentifier,
+            reason: "迁移发布未产生清单（generation 返回空）",
+          });
+          continue;
+        }
+        migratedSourceIdentifiers.push(sourceIdentifier);
+      } catch (migrationError) {
+        failedEntries.push({
+          sourceIdentifier,
+          reason:
+            migrationError instanceof Error
+              ? migrationError.message
+              : String(migrationError),
+        });
+      }
+    }
+    return { migratedSourceIdentifiers, skippedSourceIdentifiers, failedEntries };
   }
 
   /** 同一来源键的生成任务 single-flight：并发请求只执行一次。 */

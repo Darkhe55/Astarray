@@ -285,3 +285,27 @@ describe("SUM-01-02：迁移判定的其余边界（覆盖未知种类/缺清单
   });
 
 });
+describe("SUM-01-02：跨来源种类的排序与真实处理顺序", () => {
+  it("⑫ 两种不同来源种类的旧清单 ⇒ 报告按 kind 排序，且没有条目的种类记入 skipped", async () => {
+    // conversation 与 report 各一份旧清单 ⇒ 触发按 kind 的比较分支
+    await writeLegacyManifest({
+      agentInstanceId: "agent-1",
+      sourceKind: "report",
+      sourceIdentifier: "reports-old",
+    });
+    await writeLegacyManifest({
+      agentInstanceId: "agent-1",
+      sourceKind: "conversation",
+      sourceIdentifier: "session-old",
+    });
+
+    const store = new SummaryIndexStore({ baseDirectory });
+    const report = await store.detectLegacyManifests({ agentInstanceId: "agent-1" });
+    expect(report.entries).toHaveLength(2);
+    // 排序必须稳定可预期（conversation 在 report 之前）
+    expect(report.entries.map((entry) => entry.sourceKind)).toEqual([
+      "conversation",
+      "report",
+    ]);
+  });
+});
