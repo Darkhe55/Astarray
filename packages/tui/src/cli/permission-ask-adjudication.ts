@@ -11,168 +11,35 @@
  * 只输出结构化询问，由用户显式重提。
  */
 import { logToStderr } from "./json-output.js";
-
-export interface PermissionAsk {
-  taskIdentifier: string;
-  toolName: string;
-  /** 精确参数（授权哈希绑定用；不得改写、不得截断）。 */
-  argumentsJson: string;
-  explanation: string;
-}
-
-export type PermissionAskDecision =
-  | "allowed-once"
-  | "denied"
-  | "requires-human-resubmission";
-
-/** 本授权周期内**已批准过**的一次操作（用于抑制参数抖动带来的重复裁决）。 */
-export interface PreviousApprovalRecord {
-  toolName: string;
-  /** 上次批准时的完整参数（用于识别"完全相同即已执行"）。 */
-  argumentsJson: string;
-  /** 同一目标路径是否已经**成功写入**过（成功后不得靠抖动复用，必须 fail-closed）。 */
-  hasSucceededWithSameTarget: boolean;
-}
-
-export type ApprovalReuseDecision =
-  /** 同一逻辑操作（同工具 + 同目标路径）且尚无副作用 → 直接复用本次批准，不再询问。 */
-  | "reuse-without-asking"
-  /** 该目标路径已成功执行过 → 不得复用（重放保护不放宽）。 */
-  | "already-executed"
-  /** 不是同一逻辑操作或缺少依据 → 必须询问用户。 */
-  | "ask-user";
-
-/** 参数中承载目标路径的键（与 `describeToolOperation` 同序）。 */
-const TARGET_PATH_KEYS = ["path", "filePath", "targetPath", "directoryPath"] as const;
-
-function readTargetPath(argumentsJson: string): string | null {
-  let parsedArguments: unknown;
-  try {
-    parsedArguments = JSON.parse(argumentsJson);
-  } catch {
-    return null;
-  }
-  if (parsedArguments === null || typeof parsedArguments !== "object") {
-    return null;
-  }
-  const record = parsedArguments as Record<string, unknown>;
-  for (const key of TARGET_PATH_KEYS) {
-    const value = record[key];
-    if (typeof value === "string" && value.trim() !== "") {
-      return value.trim();
-    }
-  }
-  return null;
-}
-
 /**
- * 方案 B（2026-10-02 用户选择）：**同一授权周期内容忍"无副作用重试"的参数抖动**。
+ * **2026-10-11（GUI-02-01）提取**：以下契约与纯判定已移至核心
+ * `packages/core/src/orchestration/permission-ask-contract.ts`，本文件**从核心再导出**
+ * 以保持公开 API 不变（消费方与既有测试的导入路径无需改动）。
  *
- * 判定依据全部是本地的客观事实：工具名 + 参数中的**目标路径** + 是否已成功写入过。
- * - 目标路径相同、工具相同、尚无副作用 → 复用（参数只有换行/键序等格式差异）；
- * - 该路径已成功写入过，且完整参数与上次相同 → 判"已执行"（fail-closed）；
- * - 其余（路径不同/工具不同/参数不可解析/无批准记录）→ 必须询问用户。
- *
- * 该判定**不放松跨周期语义**：它只在"用户已经对同一逻辑操作批准过一次、且尚无副作用"时
- * 免除重复询问；一旦成功，同一逻辑操作再次调用仍被门禁重放保护拒绝。
+ * 依赖方向：**TUI → core，单向**；核心不反向依赖 TUI 类型或终端交互。
  */
-export function shouldReusePreviousApproval(input: {
-  pendingAsk: PermissionAsk;
-  previousApproval: PreviousApprovalRecord | null;
-}): ApprovalReuseDecision {
-  const { pendingAsk, previousApproval } = input;
-  if (previousApproval === null) {
-    return "ask-user";
-  }
-  if (previousApproval.toolName !== pendingAsk.toolName) {
-    return "ask-user";
-  }
-  const pendingTargetPath = readTargetPath(pendingAsk.argumentsJson);
-  const approvedTargetPath = readTargetPath(previousApproval.argumentsJson);
-  if (pendingTargetPath === null || approvedTargetPath === null) {
-    return "ask-user";
-  }
-  if (pendingTargetPath !== approvedTargetPath) {
-    return "ask-user";
-  }
-  if (previousApproval.hasSucceededWithSameTarget) {
-    // 同一目标已成功写入过：完整参数相同时明确判"已执行"；参数不同也必须询问
-    // （不得自动放行，避免用抖动绕过重放保护）。
-    return "already-executed";
-  }
-  return "reuse-without-asking";
-}
+import {
+  buildPermissionAskFromEscalation,
+  shouldReusePreviousApproval,
+  type PermissionAsk,
+  type PermissionAskApplicationPort,
+  type PermissionAskDecision,
+  type PermissionAskDecisionPort,
+  type PreviousApprovalRecord,
+} from "../../../core/src/orchestration/permission-ask-contract.js";
 
-/** 裁决执行需要的最小应用面（避免依赖 facade 具体类型）。 */
-export interface PermissionAskApplicationPort {
-  grantSessionAuthorization(
-    toolName: string,
-    argumentsJson: string,
-    nowUnixSeconds: number,
-  ): Promise<void>;
-  /**
-   * 重新登记作用域一次性授权（被询问拦下的那次会消耗它；缺失实现时跳过，
-   * 由调用方在结果上如实反映）。
-   */
-  grantScopeAuthorizationForToolCall?(input: {
-    toolName: string;
-    argumentsJson: string;
-  }): Promise<{ receiptIdentifier: string; operationFingerprint: string } | null>;
-  sendSchedulerInstruction(missionId: string, instructionText: string): void;
-}
+export type {
+  ApprovalReuseDecision,
+  PermissionAsk,
+  PermissionAskApplicationPort,
+  PermissionAskDecision,
+  PermissionAskDecisionPort,
+  PreviousApprovalRecord,
+} from "../../../core/src/orchestration/permission-ask-contract.js";
 
-export interface PermissionAskDecisionPort {
-  /** 是否具备可信交互通道（TTY）。false 时必须 fail-closed。 */
-  isInteractive(): boolean;
-  /** 询问用户；返回 null 表示无裁决（fail-closed）。 */
-  readDecision(ask: PermissionAsk): Promise<"allow-once" | "deny" | null>;
-}
+export { buildPermissionAskFromEscalation, shouldReusePreviousApproval };
 
-/**
- * 匹配形态（**不锚定结尾**）：真实升级文本的参数 JSON 键序不定
- * （实测 `{"content": ..., "filePath": ...}`），且可能带尾随换行。
- */
-const ESCALATION_PATTERN =
-  /任务\s+(\S+)\s+需要权限调用\s+(\S+?)\s*[（(]([\s\S]*?)[）)]，参数:\s*(\{[\s\S]*\})\s*$/;
 
-/**
- * 从调度层升级文本解析结构化询问。
- * 来源：`mission-orchestrator` 的 permission-ask 分支（同一字符串即 ADR-0011 要求送达用户的内容）。
- * 解析失败返回 null：调用方必须退化为"需人工重提"，不得猜测工具或参数。
- */
-export function buildPermissionAskFromEscalation(
-  escalationText: string,
-): PermissionAsk | null {
-  const normalizedText = escalationText.trim();
-  const matched = ESCALATION_PATTERN.exec(normalizedText);
-  if (matched === null) {
-    return null;
-  }
-  const taskIdentifier = matched[1];
-  const toolName = matched[2];
-  const explanation = matched[3];
-  const argumentsJson = matched[4];
-  if (
-    taskIdentifier === undefined ||
-    toolName === undefined ||
-    explanation === undefined ||
-    argumentsJson === undefined
-  ) {
-    return null;
-  }
-  try {
-    // 逐字保留原始 JSON（授权按参数哈希绑定），此处只做可解析性校验。
-    JSON.parse(argumentsJson);
-  } catch {
-    return null;
-  }
-  return {
-    taskIdentifier,
-    toolName,
-    argumentsJson,
-    explanation: explanation.trim(),
-  };
-}
 
 /**
  * 执行一次裁决：**只有**交互式用户明确 `allow-once` 才会授权；
