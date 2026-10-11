@@ -312,14 +312,33 @@ function isAllowedOriginHeader(
   );
 }
 
-function renderPage(input: { sessionId: string; mode: AgentMode }): string {
+/**
+ * 渲染工作台页面。
+ *
+ * **2026-10-10 真实浏览器修复（用户人工体验发现）**：本函数现在接收并**内嵌**
+ * CSRF token。此前页面脚本从 `document.cookie` 读取 `gui_csrf`，而该 cookie 由服务端
+ * 以 **`HttpOnly`** 下发 ⇒ **JavaScript 永远读不到** ⇒ 前端 token 恒为空 ⇒
+ * 所有状态变更 POST 被 CSRF 门禁 403（用户实测：提交显示 `已受理：undefined`、
+ * 切换权限组显示 `切换失败：csrf-required`）。
+ *
+ * 内嵌是**安全等价**的更优解：跨源页面**读不到**我们的 HTML（同源策略），
+ * 故内嵌 token 不会泄漏给攻击者；同时可**保留 `HttpOnly`**（cookie 仍不被脚本读取），
+ * 比"去掉 HttpOnly 让 JS 读 cookie"更保守。
+ */
+function renderPage(input: {
+  sessionId: string;
+  mode: AgentMode;
+  csrfToken: string;
+}): string {
   const sessionId = escapeHtmlText(input.sessionId);
   const mode = escapeHtmlText(input.mode);
+  const csrfToken = escapeHtmlText(input.csrfToken);
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="gui-csrf-token" content="${csrfToken}" />
 <title>Astarray GUI</title>
 <style>
 :root { color-scheme: light dark; }
@@ -378,9 +397,16 @@ ul { margin: 8px 0 0; padding-left: 20px; }
 </main>
 <script>
 (function () {
-  var csrfToken = document.cookie.split("; ").filter(function (entry) {
-    return entry.indexOf("gui_csrf=") === 0;
-  }).map(function (entry) { return entry.slice("gui_csrf=".length); })[0] || "";
+  /**
+   * CSRF token 来源：**优先读页面内嵌的 meta**（2026-10-10 修复）。
+   * 服务端以 HttpOnly 下发 gui_csrf cookie，脚本**读不到**它；此前只读 cookie
+   * 导致 token 恒为空、所有状态变更 403。保留 cookie 读取作为后备兼容。
+   */
+  var csrfTokenMeta = document.querySelector('meta[name="gui-csrf-token"]');
+  var csrfToken = (csrfTokenMeta && csrfTokenMeta.getAttribute("content")) ||
+    document.cookie.split("; ").filter(function (entry) {
+      return entry.indexOf("gui_csrf=") === 0;
+    }).map(function (entry) { return entry.slice("gui_csrf=".length); })[0] || "";
   var statusElement = document.getElementById("status");
   var tasksElement = document.getElementById("tasks");
   var resultElement = document.getElementById("submit-result");
@@ -405,11 +431,27 @@ ul { margin: 8px 0 0; padding-left: 20px; }
       headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
       body: JSON.stringify({ prompt: prompt, idempotencyKey: "gui-" + Date.now().toString(36) }),
     })
-      .then(function (response) { return response.json(); })
-      .then(function (payload) {
-        resultElement.textContent = payload.isCompleted
+      .then(function (response) {
+        /**
+         * **2026-10-10 修复**：此前**不检查 HTTP 状态**，于是 403 的错误体
+         * （{"error":"csrf-required"}）被当成成功体解析，界面显示
+         * 「已受理：undefined」—— 把**失败**呈现成了**受理**。
+         */
+        return response.json().then(function (payload) {
+          return { isOk: response.ok, payload: payload };
+        });
+      })
+      .then(function (outcome) {
+        if (!outcome.isOk) {
+          resultElement.textContent =
+            "提交失败：" + (outcome.payload && outcome.payload.error
+              ? outcome.payload.error
+              : "未知错误");
+          return;
+        }
+        resultElement.textContent = outcome.payload.isCompleted
           ? "已完成"
-          : "已受理：" + payload.taskIdentifier + "（受理不等于完成）";
+          : "已受理：" + outcome.payload.taskIdentifier + "（受理不等于完成）";
       })
       .catch(function (error) { resultElement.textContent = "提交失败：" + String(error); });
   });
@@ -902,7 +944,13 @@ export async function startGuiServer(
         "set-cookie": `gui_csrf=${csrfToken}; Path=/; SameSite=Strict; HttpOnly`,
         "cache-control": "no-store",
       });
-      response.end(renderPage({ sessionId: options.sessionId, mode: options.mode }));
+      response.end(
+          renderPage({
+            sessionId: options.sessionId,
+            mode: options.mode,
+            csrfToken,
+          }),
+        );
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/state") {
