@@ -2105,6 +2105,21 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
    *  - 空来源 ⇒ `entryCount=0` 且 `manifestRevision=0`（**不发布空清单冒充成功**）；
    *  - 适配器负责确定性排序/哈希与"重复不双计"，本方法不重复实现该逻辑。
    */
+  /**
+   * 发布摘要来源（调用方提供条目）。
+   *
+   * **关于"真实数据源接线"的现状（2026-10-10 核查，如实记录）**：
+   * 本仓**只有两类真实本地来源**可供自动取数 —— **工作存档**（work-archive）
+   * 与**报告存档**（report，见 `publishReportSummarySourceFromArchive()`）。
+   * 而 `conversation` 与 `deferred-file` 虽然**在 schema 里是合法来源种类**
+   * （`summary-index-store.ts` / `summary-manifest.ts` 均接受），
+   * **本仓却没有任何生产它们的本地存储**（全仓搜索无会话轮次持久化、无延后文件内容存储：
+   * `deferred-file` 仅出现在 schema 与适配器里，没有任何写入方）。
+   *
+   * 因此这两类**当前只能由调用方提供条目**（例如宿主自行持久化会话轮次）。
+   * 这是**真实的能力边界**，不是本模块的缺陷；**不得**为了让"接线"看起来完整
+   * 而凭空造一个假数据源（卡内 §2 明令"**无真实 usage 标为未测，不杜撰**"）。
+   */
   async publishSummarySource(input: {
     sourceIdentifier: string;
     detailLevel?: SummaryDetailLevel;
