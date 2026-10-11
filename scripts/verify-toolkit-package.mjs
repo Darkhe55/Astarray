@@ -575,6 +575,8 @@ try {
     isResultMappedBackToOriginalIds: false,
     isSplitBackLimitedToUnexecuted: false,
     isSideEffectReplayed: true,
+    isPartialFailureIsolated: false,
+    isLateArrivalRejected: false,
   };
   try {
     const buildMergeCandidate = (instructionIdentifier, overrides = {}) => ({
@@ -636,6 +638,65 @@ try {
         splitOutcome.splitBackInstructionIdentifiers[0] === "probe-pending",
       isSideEffectReplayed: splitOutcome.isSideEffectReplayed,
     };
+
+    /**
+     * MERGE-01-03：部分失败隔离 + 晚到指令不得并入既有组（真实驱动）。
+     */
+    const settlementController = sdk.createInstructionMergeController({
+      isMergeEnabled: true,
+      windowCapacity: 8,
+    });
+    for (const identifier of ["probe-a", "probe-b"]) {
+      settlementController.appendInstruction({
+        instructionIdentifier: identifier,
+        instructionText: "指令 " + identifier,
+        sourceKind: "user",
+        sourceActorIdentifier: "user-1",
+        revision: 1,
+        priorityTier: 0,
+        cancellationRightHolderIdentifier: "user-1",
+        acceptanceCriteria: ["完成"],
+        isCompleted: false,
+      });
+    }
+    const settlementGroup = settlementController.createExecutionGroup({
+      groupIdentifier: "probe-group",
+      referencedInstructionIdentifiers: ["probe-a", "probe-b"],
+      createdByAgentInstanceId: "agent-probe",
+      mergeCandidates: [
+        buildMergeCandidate("probe-a"),
+        buildMergeCandidate("probe-b"),
+      ],
+    });
+    settlementController.settleGroupMember({
+      groupIdentifier: "probe-group",
+      instructionIdentifier: "probe-a",
+      outcome: "failed",
+      reason: "探针注入的失败",
+    });
+    const settledMembers = settlementController.describeGroupMemberSettlements({
+      groupIdentifier: "probe-group",
+    });
+    const lateArrival = settlementController.createExecutionGroup({
+      groupIdentifier: "probe-group",
+      referencedInstructionIdentifiers: ["probe-a", "probe-b", "probe-c"],
+      createdByAgentInstanceId: "agent-probe",
+      mergeCandidates: [
+        buildMergeCandidate("probe-a"),
+        buildMergeCandidate("probe-b"),
+        buildMergeCandidate("probe-c"),
+      ],
+    });
+    instructionMerge = {
+      ...instructionMerge,
+      isPartialFailureIsolated:
+        settlementGroup.isCreated === true &&
+        settledMembers.find((member) => member.instructionIdentifier === "probe-a")
+          ?.outcome === "failed" &&
+        settledMembers.find((member) => member.instructionIdentifier === "probe-b")
+          ?.outcome === "pending",
+      isLateArrivalRejected: lateArrival.isCreated === false,
+    };
   } catch {
     instructionMerge = {
       isSwitchInitiallyDisabled: false,
@@ -644,6 +705,8 @@ try {
       isResultMappedBackToOriginalIds: false,
       isSplitBackLimitedToUnexecuted: false,
       isSideEffectReplayed: true,
+      isPartialFailureIsolated: false,
+      isLateArrivalRejected: false,
     };
   }
 

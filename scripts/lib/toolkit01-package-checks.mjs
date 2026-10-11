@@ -239,6 +239,12 @@ export function buildToolkitPackageChecks(observation) {
     "配对节点必须同进同出，单个暂存带调用标识即拒绝",
   );
   record(
+    "MERGE-01-03：部分失败只影响对应节点，且晚到指令不得并入既有组",
+    readObservation(observation, "instructionMerge", "isPartialFailureIsolated") === true &&
+      readObservation(observation, "instructionMerge", "isLateArrivalRejected") === true,
+    "逐成员结算、取消与失败互不牵连；成员集合冻结后不得扩大",
+  );
+  record(
     "MERGE-01：合并开关初始关闭，关闭时不合并但不丢原指令",
     readObservation(observation, "instructionMerge", "isSwitchInitiallyDisabled") === true &&
       readObservation(observation, "instructionMerge", "isRetentionKeptWhenDisabled") === true,

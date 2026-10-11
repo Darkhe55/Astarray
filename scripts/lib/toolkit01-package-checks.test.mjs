@@ -102,6 +102,8 @@ function buildPassingObservation() {
       isResultMappedBackToOriginalIds: true,
       isSplitBackLimitedToUnexecuted: true,
       isSideEffectReplayed: false,
+      isPartialFailureIsolated: true,
+      isLateArrivalRejected: true,
     },
     /** MERGE-01 §1.3：参数授权设置变更（放宽须确认）。 */
     parameterAuthorization: {

@@ -239,6 +239,15 @@ export {
   type WindowIntentionCountInput,
   type WindowIntentionCountOutcome,
 } from "./toolkit/instruction-merge-mapping.js";
+export {
+  INSTRUCTION_MERGE_STATE_SCHEMA_VERSION,
+  type GroupMemberOutcome,
+  type GroupMemberSettlement,
+  type InstructionMergePersistenceOutcome,
+  type InstructionMergeRestoreOutcome,
+  type MemberCancellationOutcome,
+  type MemberSettlementOutcome,
+} from "./toolkit/instruction-merge-mapping.js";
 
 // ─── MERGE-01-02：确定性合并**资格判定**（本地纯函数，无模型参与） ───
 // 卡内："只合并同项目、同任务权威、相容目标和权限作用域的 ready 指令"；
