@@ -143,6 +143,49 @@ npx vitest run --coverage --coverage.reporter=json --coverage.reportOnFailure
 
 **仍未取得**：**macOS** 证据（WSL 是 Linux，不是 macOS）。
 
+## 4c. 包级验收脚本的跨平台缺陷（2026-10-10 发现并修复）
+
+把**包级验收脚本**也放到 Linux 上跑，立刻又暴露一个真实缺陷：
+
+| 脚本 | Linux 修复前 | Linux 修复后 | Windows |
+| --- | --- | --- | --- |
+| `verify:observability-entry-package` | **exit 1** | ✅ **exit 0（8/8）** | 8/8 |
+| `verify:instruction-entry-package` | **exit 1** | ✅ **exit 0（17/17）** | 17/17 |
+| `verify:toolkit-package` | **exit 1** | ✅ **exit 0（48/48）** | 48/48 |
+
+**错误**（三者同一根因，来自 `scripts/lib/package-acceptance-runtime.mjs:43`）：
+
+```
+Error: 无法解析 npm-cli.js 路径
+    at resolveNpmCliPath (…:43) → runNpmSync (…:48) → packTarball (…:83)
+```
+
+**根因**：`resolveNpmCliPath()` 只尝试**一种**候选布局 ——
+"`npm` 可执行文件的兄弟目录 `node_modules/npm/bin/npm-cli.js`"，
+该布局只在 npm 装于 `node_modules` 时成立（Windows / npm 官方全局安装）。
+而 **apt 安装的 npm 布局不同**：
+
+```
+/usr/bin/npm  ->  /usr/share/nodejs/npm/bin/npm-cli.js    （符号链接）
+```
+
+于是候选路径 `/usr/bin/node_modules/npm/bin/npm-cli.js` 不存在 ⇒ 抛错，
+**且没有回退、没有诊断信息** ⇒ **"包级验收"这一项在 Linux 上从未真正跑过**。
+
+**修法**（每步都要求真实存在，绝不返回凭空拼接的路径）：
+1. `NPM_CLI_PATH` 环境变量逃生门；
+2. 原有兄弟布局（保持兼容）；
+3. **跟随符号链接**（`realpathSync` 后再找兄弟布局）—— 覆盖 apt 布局；
+4. 常见系统级布局逐个探测。
+   全部失败时抛错并**列出尝试过的候选**，避免再出现"只报一句、无从诊断"。
+
+**反例（先红后绿）**：`scripts/lib/package-acceptance-runtime.test.mjs` **3 条** ——
+Linux 修复前 **2 failed**（①解析到真实文件、③真正执行 npm），修复后 **3/3 通过**；
+Windows 始终 3/3。`npm run test:scripts` 39/39（两侧一致）。
+
+**意义**：包级验收（tarball 隔离安装）此前**只有 Windows 证据**；现在 Linux 侧
+三个脚本的真实判据齐备（8/8 + 17/17 + 48/48），B6R-10 的跨平台矩阵据此再补一块。
+
 ## 5. 复现命令
 
 ```bash

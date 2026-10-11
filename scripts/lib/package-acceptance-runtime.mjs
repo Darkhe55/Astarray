@@ -13,34 +13,101 @@
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 
-/** 解析 npm-cli.js 的绝对路径；解析不到即抛错（不静默降级）。 */
+/**
+ * 解析 `npm-cli.js` 的绝对路径；解析不到即抛错（**不静默降级**）。
+ *
+ * **2026-10-10 跨平台修复（Linux 平台证据发现）**：此前只尝试**一种**候选布局 ——
+ * "`npm` 可执行文件的兄弟目录 `node_modules/npm/bin/npm-cli.js`"。
+ * 该布局只在 npm 装于 `node_modules` 时成立（Windows / npm 官方全局安装）。
+ * **apt 安装的 npm 布局不同**：
+ *
+ * ```
+ * /usr/bin/npm  ->  /usr/share/nodejs/npm/bin/npm-cli.js   （符号链接）
+ * ```
+ *
+ * 于是三个包级验收脚本（toolkit / instruction-entry / observability）在 Linux 上
+ * **全部 exit 1**（`Error: 无法解析 npm-cli.js 路径`），"包级验收"在 Linux 上
+ * **从未真正跑过** —— 这正是"仅 Windows 验证"会漏掉的一类问题。
+ *
+ * 现按以下顺序尝试（每步都要求**真实存在**，绝不返回凭空拼接的路径）：
+ *  1. `NPM_CLI_PATH` 环境变量（换 npm 布局时的逃生门）；
+ *  2. `which`/`where` 结果所在目录的兄弟布局（原有行为，保持兼容）；
+ *  3. **跟随符号链接**：对可执行文件做 `realpathSync` 后再找兄弟布局
+ *     （覆盖 apt 的 `/usr/bin/npm -> …/npm/bin/npm-cli.js`）；
+ *  4. 若干常见系统级布局（非 win32 专用，逐个探测存在性）。
+ *
+ * 全部失败时抛错，并在消息中列出**尝试过的候选**，避免再次出现"只报一句
+ * 无法解析、无从诊断"的情形。
+ */
 export function resolveNpmCliPath() {
+  const candidatePaths = [];
+  const addCandidate = (candidatePath) => {
+    if (candidatePath !== null && candidatePath !== "" && !candidatePaths.includes(candidatePath)) {
+      candidatePaths.push(candidatePath);
+    }
+  };
+
+  /** 由某个"可执行文件路径"推导兄弟布局的 npm-cli.js。 */
+  const siblingCliOf = (executablePath) =>
+    path.join(path.dirname(executablePath), "node_modules", "npm", "bin", "npm-cli.js");
+
+  // 1) 显式环境变量逃生门
+  addCandidate(process.env.NPM_CLI_PATH ?? null);
+
+  // 2) which/where 结果 + 3) 其符号链接真实路径
   const npmExecutableName = process.platform === "win32" ? "npm.cmd" : "npm";
-  const whereOutput = execFileSync(
-    process.platform === "win32" ? "where" : "which",
-    [npmExecutableName],
-    { encoding: "utf8" },
-  );
+  let whereOutput = "";
+  try {
+    whereOutput = execFileSync(
+      process.platform === "win32" ? "where" : "which",
+      [npmExecutableName],
+      { encoding: "utf8" },
+    );
+  } catch {
+    // 找不到可执行文件不致命：下面仍有系统级候选
+    whereOutput = "";
+  }
   for (const candidateLine of whereOutput.split(/\r?\n/)) {
     const candidatePath = candidateLine.trim();
     if (candidatePath === "") {
       continue;
     }
-    const siblingCliPath = path.join(
-      path.dirname(candidatePath),
-      "node_modules",
-      "npm",
-      "bin",
-      "npm-cli.js",
-    );
-    if (existsSync(siblingCliPath)) {
-      return siblingCliPath;
+    addCandidate(siblingCliOf(candidatePath));
+    if (process.platform !== "win32") {
+      try {
+        addCandidate(siblingCliOf(realpathSync(candidatePath)));
+      } catch {
+        // 不是符号链接或不可解析：忽略，继续下一候选
+      }
     }
   }
-  throw new Error("无法解析 npm-cli.js 路径");
+
+  // 4) 常见系统级布局（逐个探测）
+  for (const systemCandidate of [
+    "/usr/share/nodejs/npm/bin/npm-cli.js",
+    "/usr/lib/node_modules/npm/bin/npm-cli.js",
+    "/usr/local/lib/node_modules/npm/bin/npm-cli.js",
+  ]) {
+    addCandidate(systemCandidate);
+  }
+
+  for (const candidatePath of candidatePaths) {
+    if (existsSync(candidatePath)) {
+      return candidatePath;
+    }
+  }
+  throw new Error(
+    "无法解析 npm-cli.js 路径；已尝试: " + candidatePaths.join(" | "),
+  );
 }
 
 /** 用当前 node 执行 npm（避免 shell 与 .cmd 差异）。 */
