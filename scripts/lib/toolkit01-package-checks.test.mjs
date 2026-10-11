@@ -38,6 +38,7 @@ function buildPassingObservation() {
       buildContextVisibilityDisplayRows: true,
       // MERGE-01 §1.3：参数授权设置变更判定
       evaluateParameterAuthorizationSettingChange: true,
+      evaluateInstructionMergeEligibility: true,
       buildGuiToolPackageView: false,
     },
     recipe: {
@@ -92,6 +93,15 @@ function buildPassingObservation() {
       pendingRatificationIsNotShownCompleted: true,
       isStateRestoredAcrossRestart: true,
       isOriginalContentBytesIdenticalAfterRestart: true,
+    },
+    /** MERGE-01-02：确定性合并资格判定。 */
+    instructionMerge: {
+      isSwitchInitiallyDisabled: true,
+      isRetentionKeptWhenDisabled: true,
+      isCrossProjectRejected: true,
+      isResultMappedBackToOriginalIds: true,
+      isSplitBackLimitedToUnexecuted: true,
+      isSideEffectReplayed: false,
     },
     /** MERGE-01 §1.3：参数授权设置变更（放宽须确认）。 */
     parameterAuthorization: {

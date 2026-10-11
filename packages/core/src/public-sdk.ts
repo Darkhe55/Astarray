@@ -240,6 +240,20 @@ export {
   type WindowIntentionCountOutcome,
 } from "./toolkit/instruction-merge-mapping.js";
 
+// ─── MERGE-01-02：确定性合并**资格判定**（本地纯函数，无模型参与） ───
+// 卡内："只合并同项目、同任务权威、相容目标和权限作用域的 ready 指令"；
+// "语义冲突、目标不明、独立授权、跨项目、已产生副作用的在途操作不合并"。
+export {
+  DEFAULT_INSTRUCTION_MERGE_SETTINGS,
+  evaluateInstructionMergeEligibility,
+  splitExecutionGroupAtSafetyPoint,
+  type ExecutionGroupMember,
+  type InstructionMergeCandidate,
+  type InstructionMergeEligibilityOutcome,
+  type InstructionMergeSettings,
+  type SafetyPointSplitOutcome,
+} from "./toolkit/instruction-merge-eligibility.js";
+
 // ─── NODECTX-01-01：有损兜底盘点 与 节点可见性（与业务状态分开） ───
 // 可见性三态；"暂不入提示词"不得当 done；有损处置只能是禁用/改无损/声明不支持。
 export {

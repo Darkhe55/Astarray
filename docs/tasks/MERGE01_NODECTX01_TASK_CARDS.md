@@ -54,7 +54,7 @@ MERGE-01：01 done / 02 部分 / 03 未开始；NODECTX-01：01 done / 02 done /
 | ID | 状态 | 交付与验收 |
 |---|---|---|
 | MERGE-01-01 | **done（2026-10-10）** | 见文末三节进展：① 参数级授权优先规则；② `instruction-merge-mapping.ts` —— 执行组到原指令映射、**合并开关**、原指令追加保存（来源/ID/revision/优先级/**取消权**/验收条件）、引用绑定 revision+内容指纹、**不得覆盖原文/伪装用户指令**、**窗口按原始未完成意图计数**（与组数无关）、**组完成不自动关闭原指令**；③ 映射层**接入真实 `InstructionWindowStore`**（`countUnfinishedIntentionsInWindow`）；④ 两个纵向样本**在派发路径上可达**（统一入口路由同一实现、旧名兼容）。反例 10+3+5 条。 |
-| MERGE-01-02 | **大部分完成**；**不判通过** | 已交付：逐 action 参数校验（未知名拒绝，顺序为"先未知后必需"）、两工具适配（`projectFileRead`/`projectFileWrite`）**在派发路径上可达**、**"关闭细分不得静默扩大权限"**（`evaluateParameterAuthorizationSettingChange`：放宽需**认证用户确认**、被拒**不推进 revision**、收紧无需确认、配置/生效 revision 分开）。**仍未完成**：卡内点名的"确定性合并"与设置入口共用控制器的完整联测。 |
+| MERGE-01-02 | **大部分完成**；**不判通过** | 已交付：逐 action 参数校验（未知名拒绝，顺序为"先未知后必需"）、两工具适配（`projectFileRead`/`projectFileWrite`）**在派发路径上可达**、**"关闭细分不得静默扩大权限"**（放宽需**认证用户确认**、被拒**不推进 revision**、配置/生效 revision 分开）、**确定性合并资格判定**（同项目/同权威/同作用域/相容目标/ready 才合并；语义冲突/目标不明/独立授权/跨项目/在途副作用一律排除；明确 `supersedes` 走取代语义；结果**映射回原 ID**；开关**初始关闭**且**不丢原指令**；安全点拆回**只动未执行项、不重放副作用**）。**仍未完成**：与设置入口共用控制器的完整联测。 |
 | MERGE-01-03 | **大部分完成**；**不判通过** | 已交付：**参数授权设置入口** —— SDK `query/updateParameterAuthorizationSettings`、CLI `settings parameter-authorization`（**CLI 与 SDK 逐字段一致**、未确认的放宽**同样被拒且不写文件**）、**GUI 只读视图**（`GuiSnapshot.parameterAuthorizationSettings`，缺失时**如实报"未知"**而非伪装默认开启，细分关闭提示**可能放宽**，`hasWriteAction` 恒 false）；**包级执行证据**（`verify-toolkit-package` **43/43**）。**仍未完成**：连续输入/部分失败/取消/重启的端到端验证；**TUI 内的设置界面**（当前经 CLI 子命令）。 |
 
 ### MERGE-01-01 进展（2026-10-10）：参数级授权优先规则
@@ -530,3 +530,25 @@ GUI **静默显示"未知"**，看起来就像"根本没有这个能力"。已�
   SDK 写入的设置被 `/state` **如实反映**；能力缺失时如实报未知且 **不 500**）。
 - **仍未完成**：连续输入/部分失败/取消/重启的端到端验证；**TUI 内的设置界面**
   （当前 TUI 经 CLI 子命令）⇒ **MERGE-01-03 不判 done**。
+### MERGE-01-02 进展（2026-10-10 补）：**确定性合并的资格判定**
+
+**缺口（本轮实测）**：检查点 01 只交付了"**执行组容器 + 合并开关**"（能否建组），
+**完全没有**"哪些指令**够格**被合并"的判定 ⇒ §1.1 那串排除规则**没有判定点**。
+
+**交付** `packages/core/src/toolkit/instruction-merge-eligibility.ts`（纯本地确定性、**无模型参与**）：
+
+| 卡内 §1.1 要求 | 实现 |
+| --- | --- |
+| "只合并**同项目、同任务权威、相容目标和权限作用域**的 ready 指令" | 四项逐一核对；任一不符即**整组不合并** |
+| "保留前驱/后继偏序，**不跨依赖障碍**" | 前驱未全部完成 ⇒ 拒绝并**列出未满足的前驱** |
+| "**语义冲突、目标不明、独立授权、跨项目、已产生副作用的在途操作不合并**" | 五类逐一排除，**逐条给出原因** |
+| "用户明确修订走 **supersedes**，**不按'最新文本'猜测**" | 存在明确取代关系即走取代语义并回报被取代项；**绝不比较文本新旧** |
+| "**每个子结果映射回原 ID**" | 可合并时给出 `resultMappingByInstructionIdentifier` |
+| "**独立开关，初始关闭**" | `DEFAULT_INSTRUCTION_MERGE_SETTINGS.isMergeEnabled === false` |
+| "**关闭后不丢组内原指令**，不重放在途操作，**安全点拆回未执行项**" | 关闭时 `retainedInstructionIdentifiers` 保留全部；`splitExecutionGroupAtSafetyPoint()` **只拆"未执行且无在途副作用"**的项，`isSideEffectReplayed` **恒为 false** |
+
+- 反例（先红后绿）：`tests/core/unit/merge01-instruction-merge-eligibility.test.ts` **9 条**。
+- 包级验收：`verify-toolkit-package` 43 → **47** 条（在**隔离安装包**内**真实驱动**四类判定：
+  开关初始关闭且不丢原指令、跨项目被拒、结果映射回原 ID、拆回只动未执行项且不重放副作用）。
+- **仍未完成**：连续输入/部分失败/取消/重启的端到端验证；TUI 内的设置界面
+  ⇒ **MERGE-01 整卡不主张通过**。

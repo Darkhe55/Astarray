@@ -99,6 +99,7 @@ for (const name of [
   "buildContextVisibilityDisplayRows",
   "createLosslessContextManager",
   "evaluateParameterAuthorizationSettingChange",
+  "evaluateInstructionMergeEligibility",
 ]) {
   observation.publicEntryExports[name] = typeof sdk[name] !== "undefined";
 }
@@ -563,6 +564,89 @@ try {
     };
   }
 
+  /**
+   * MERGE-01-02：**真实驱动**确定性合并资格判定 —— 开关初始关闭（不合并但不丢原指令）、
+   * 跨项目被拒、结果映射回原 ID、安全点拆回只动未执行项且不重放副作用。
+   */
+  let instructionMerge = {
+    isSwitchInitiallyDisabled: false,
+    isRetentionKeptWhenDisabled: false,
+    isCrossProjectRejected: false,
+    isResultMappedBackToOriginalIds: false,
+    isSplitBackLimitedToUnexecuted: false,
+    isSideEffectReplayed: true,
+  };
+  try {
+    const buildMergeCandidate = (instructionIdentifier, overrides = {}) => ({
+      instructionIdentifier,
+      revision: 1,
+      instructionText: "指令 " + instructionIdentifier,
+      projectIdentifier: "probe-project",
+      taskAuthorityIdentifier: "probe-authority",
+      permissionScopeIdentifier: "probe-scope",
+      goalIdentifier: "probe-goal",
+      priorityTier: 0,
+      supersedesInstructionIdentifiers: [],
+      dependencyNodeIdentifiers: [],
+      completedDependencyNodeIdentifiers: [],
+      isSemanticallyConflicting: false,
+      isGoalAmbiguous: false,
+      requiresIndependentAuthorization: false,
+      hasSideEffectInFlight: false,
+      ...overrides,
+    });
+    const disabledOutcome = sdk.evaluateInstructionMergeEligibility({
+      candidates: [buildMergeCandidate("probe-1"), buildMergeCandidate("probe-2")],
+      isMergeEnabled: sdk.DEFAULT_INSTRUCTION_MERGE_SETTINGS.isMergeEnabled,
+    });
+    const crossProjectOutcome = sdk.evaluateInstructionMergeEligibility({
+      candidates: [
+        buildMergeCandidate("probe-1"),
+        buildMergeCandidate("probe-2", { projectIdentifier: "other-project" }),
+      ],
+      isMergeEnabled: true,
+    });
+    const eligibleOutcome = sdk.evaluateInstructionMergeEligibility({
+      candidates: [buildMergeCandidate("probe-1"), buildMergeCandidate("probe-2")],
+      isMergeEnabled: true,
+    });
+    const splitOutcome = sdk.splitExecutionGroupAtSafetyPoint({
+      groupIdentifier: "probe-group",
+      members: [
+        { instructionIdentifier: "probe-done", hasExecuted: true, hasSideEffectInFlight: false },
+        { instructionIdentifier: "probe-pending", hasExecuted: false, hasSideEffectInFlight: false },
+        { instructionIdentifier: "probe-inflight", hasExecuted: false, hasSideEffectInFlight: true },
+      ],
+    });
+    instructionMerge = {
+      isSwitchInitiallyDisabled:
+        sdk.DEFAULT_INSTRUCTION_MERGE_SETTINGS.isMergeEnabled === false &&
+        disabledOutcome.canMerge === false,
+      isRetentionKeptWhenDisabled:
+        disabledOutcome.retainedInstructionIdentifiers.length === 2,
+      isCrossProjectRejected:
+        crossProjectOutcome.canMerge === false &&
+        crossProjectOutcome.rejectedInstructionIdentifiers.includes("probe-2"),
+      isResultMappedBackToOriginalIds:
+        eligibleOutcome.canMerge === true &&
+        eligibleOutcome.resultMappingByInstructionIdentifier["probe-1"] === "probe-1" &&
+        eligibleOutcome.resultMappingByInstructionIdentifier["probe-2"] === "probe-2",
+      isSplitBackLimitedToUnexecuted:
+        splitOutcome.splitBackInstructionIdentifiers.length === 1 &&
+        splitOutcome.splitBackInstructionIdentifiers[0] === "probe-pending",
+      isSideEffectReplayed: splitOutcome.isSideEffectReplayed,
+    };
+  } catch {
+    instructionMerge = {
+      isSwitchInitiallyDisabled: false,
+      isRetentionKeptWhenDisabled: false,
+      isCrossProjectRejected: false,
+      isResultMappedBackToOriginalIds: false,
+      isSplitBackLimitedToUnexecuted: false,
+      isSideEffectReplayed: true,
+    };
+  }
+
   const displayRows = sdk.buildContextVisibilityDisplayRows([
     {
       nodeIdentifier: "probe-staged",
@@ -595,6 +679,7 @@ try {
     isOriginalContentBytesIdenticalAfterRestart,
   };
   observation.parameterAuthorization = parameterAuthorization;
+  observation.instructionMerge = instructionMerge;
   /* ── 隔离边界 ── */
   const basePlatform = {
     platformIdentifier: "probe-platform",

@@ -54,6 +54,8 @@ export function buildToolkitPackageChecks(observation) {
     ["createLosslessContextManager", "无损上下文管理器（重启恢复）"],
     // MERGE-01 §1.3：参数授权设置入口（CLI/SDK 一致）。
     ["evaluateParameterAuthorizationSettingChange", "参数授权设置变更判定"],
+    // MERGE-01-02：确定性合并资格判定。
+    ["evaluateInstructionMergeEligibility", "确定性合并资格判定"],
   ];
   for (const [exportName, displayName] of entryNames) {
     const isPresent =
@@ -235,6 +237,25 @@ export function buildToolkitPackageChecks(observation) {
     "NODECTX-01：工具调用与结果不拆散（配对同进同出）",
     readObservation(observation, "losslessContext", "toolPairIsAtomic") === true,
     "配对节点必须同进同出，单个暂存带调用标识即拒绝",
+  );
+  record(
+    "MERGE-01：合并开关初始关闭，关闭时不合并但不丢原指令",
+    readObservation(observation, "instructionMerge", "isSwitchInitiallyDisabled") === true &&
+      readObservation(observation, "instructionMerge", "isRetentionKeptWhenDisabled") === true,
+    "卡内：独立开关初始关闭；关闭后不丢组内原指令",
+  );
+  record(
+    "MERGE-01：确定性合并排除跨项目并逐条给出映射（不跨依赖障碍）",
+    readObservation(observation, "instructionMerge", "isCrossProjectRejected") === true &&
+      readObservation(observation, "instructionMerge", "isResultMappedBackToOriginalIds") ===
+        true,
+    "只合并同项目/同权威/同作用域的 ready 指令，且每个子结果映射回原 ID",
+  );
+  record(
+    "MERGE-01：安全点拆回只动未执行项，绝不重放副作用",
+    readObservation(observation, "instructionMerge", "isSplitBackLimitedToUnexecuted") === true &&
+      readObservation(observation, "instructionMerge", "isSideEffectReplayed") === false,
+    "已执行与在途项保留；不得通过拆回重放副作用",
   );
   record(
     "MERGE-01：关闭参数细分若放宽权限必须拒到确认（不得静默扩大权限）",
