@@ -223,6 +223,32 @@ export const FAULT_INJECTION_MATRIX: readonly FaultInjectionEntry[] = [
       "tests/core/unit/reliability-guidance-journal-integrity.test.ts",
     ],
   },
+  {
+    entryIdentifier: "smart01-continuous-reception-real-run",
+    timing: "inflight",
+    dimension: "permission-revocation",
+    representativeOperation:
+      "SMART-01-04：慢模型/长下级任务在途时**真实运行**下的持续接收（180 秒内派发或如实超时）",
+    verdict: "not-verified",
+    summary:
+      "**离线部分已证**（`instruction-continuous-reception.test.ts` 6 条含真实 120ms 慢任务延迟、" +
+      "`smart01-window-deadline-entry.test.ts` 5 条含期限自接收起计与超期如实报超时），" +
+      "但卡内措辞要求的是『**真实运行**整机实测』。本会话**无真实 Provider 额度**，" +
+      "**不拿离线用例冒充真实运行证据**；须由具备额度者执行后再改判",
+  },
+  {
+    entryIdentifier: "load-sensitive-full-gate-flake",
+    timing: "inflight",
+    dimension: "cancel-complete-race",
+    representativeOperation: "全量门禁并发下与本次改动无关的快速用例偶发失败",
+    verdict: "not-verified",
+    summary:
+      "本会话多次观测：全量并发运行时偶发 1–3 条**与本次改动无关**的用例失败" +
+      "（provider 假服务、e2e01 写探针、gui 快照形状等），**隔离复跑全绿**；" +
+      "根因此前定位到 `%TEMP%` 下大量 `astarray-*` 目录导致清理失败，" +
+      "清洁后连续通过。**未在产品代码中修复**，故**不标为已修**；" +
+      "`run-command-gaps` 曾 60s 超时但本会话**未复现**，同样保持未验证",
+  },
 ];
 
 export interface FaultMatrixAuditEntry extends FaultInjectionEntry {
