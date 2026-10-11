@@ -97,9 +97,20 @@
   为 `parameter-authorization-settings-command.ts` 补**进程内**用例（该文件此前只由
   **子进程**驱动、v8 看不见 ⇒ 长期 **0%**、20 个分支全缺），新增
   `tests/tui/unit/merge01-parameter-authorization-settings-command.test.ts` **9 条**。
-  **剩余最大缺口**（按绝对缺失分支排序）：`cli/commands.ts` **90/430**、
-  `cli/run-command.ts` **16/39**、`orchestration/diagnostic-event-store.ts` 8/68、
-  `cli/permission-ask-adjudication.ts` 6/41。差距约 **58 个分支（约 1.1%）**，
-  仍需后续轮次继续；**不得**以"接近门槛"当作通过；
+  **后续同一轮继续推进**：再补三片后分支升到 **84.24%**（仍差约 40 个分支）——
+  · `tests/tui/unit/b6r10-wait-for-task-terminal.test.ts` **10 条**（等待终态：done/cancelled
+    原样、blocked/failed 归 blocked、给上限耗尽如实返回 running、`timeoutMilliseconds: null`
+    不设上限、**进入前/等待中**两个时机的待裁决询问、可选能力缺省不报错）；
+  · `tests/core/unit/b6r10-diagnostic-merge-branches.test.ts` **7 条**（诊断同指纹归并：
+    次数累计、乱序时间取真实 first/last、agent/request/mission/task 证据**去重累积**、
+    null 不留空串、文本不进指纹）；
+  · **把 `waitForPermissionAsk` 从 `run-command.ts` 提取到 `cli/permission-ask-wait.ts` 并导出**
+    （原为未导出函数 ⇒ 只能经 CLI 子进程间接覆盖、v8 看不见 ⇒ 其承载的**两处产品修复长期零覆盖**），
+    新增 `tests/tui/unit/b6r10-permission-ask-wait.test.ts` **8 条**：已消费文本不得重复触发询问、
+    **推进窗口内 running 不立即收口**（否则授权后重跑从未被等待）、窗口内出现新询问立即返回、
+    终态失败立即返回、blocked 且仅非询问类升级立即返回、超时如实返回 null。提取**不改语义**，
+    `run-command.ts` 导入同一实现。
+  **剩余最大缺口**：`cli/commands.ts` **90/430**（单文件即占全部缺失的约 40%）。
+  **不得**以"接近门槛"当作通过；
 - 本卡记录的历史命令（`npm pack`、`smoke-install`）已由后续 TOOLKIT-01-06 的
   **tarball 隔离安装验收（`verify:toolkit-package` 48/48）**覆盖并超越。

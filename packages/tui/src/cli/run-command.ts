@@ -15,6 +15,7 @@ import {
   type PermissionAskDecisionPort,
   type PreviousApprovalRecord,
 } from "./permission-ask-adjudication.js";
+import { waitForPermissionAsk } from "./permission-ask-wait.js";
 import {
   RuntimeSelectionError,
   buildRuntimeSelection,
@@ -35,65 +36,6 @@ const PERMISSION_ASK_WAIT_MILLISECONDS = 30_000;
  * 否则 CLI 会在工具真正执行之前收口（正向闭环失败）。
  */
 const AUTHORIZATION_RETRY_WINDOW_MILLISECONDS = 15_000;
-async function waitForPermissionAsk(
-  escalationMessages: string[],
-  timeoutMilliseconds: number,
-  queryTask: () => Promise<{ status: string }>,
-  startIndex = 0,
-  isTerminalFailure: () => boolean = () => false,
-  /**
-   * 任务已重新推进（running）时的等待窗口（毫秒，2026-10-02 修复）：
-   * `allow-once` 后的重跑会先进入 running；此期间**不得**立即收口，
-   * 否则授权后的重跑从未被等待（正向闭环失败）。窗口内出现新询问或终态即返回；
-   * 窗口耗尽仍未出现则如实返回 null（由调用方按 blocked 收口）。
-   */
-  advancementWindowMilliseconds = 0,
-): Promise<ReturnType<typeof buildPermissionAskFromEscalation>> {
-  const deadline = Date.now() + timeoutMilliseconds;
-  let advancementWindowDeadline: number | null =
-    advancementWindowMilliseconds > 0 ? Date.now() + advancementWindowMilliseconds : null;
-  while (Date.now() < deadline) {
-    // 任务已**终态失败**（例如门禁判失败）：不会再有裁决需求，立即返回。
-    if (isTerminalFailure()) {
-      return null;
-    }
-    // 只看**尚未裁决**的升级文本（已消费的不得重复触发询问）。
-    const pendingEscalations = escalationMessages.slice(startIndex);
-    const permissionAsk = pendingEscalations
-      .map((escalationText) => buildPermissionAskFromEscalation(escalationText))
-      .find((ask) => ask !== null);
-    if (permissionAsk !== undefined) {
-      return permissionAsk;
-    }
-    // 任务已不是 blocked（完成/失败/取消）时无需再等待裁决。
-    const currentStatus = (await queryTask()).status;
-    if (currentStatus !== "blocked") {
-      // 处于推进窗口内：继续等新询问（不立即收口）。
-      if (
-        advancementWindowDeadline !== null &&
-        Date.now() < advancementWindowDeadline
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, 25));
-        continue;
-      }
-      return null;
-    }
-    // 一旦回到 blocked，推进窗口结束。
-    advancementWindowDeadline = null;
-    // blocked 且**已收到非询问类升级**（例如门禁判失败）→ 不会再有裁决需求，立即返回。
-    if (
-      pendingEscalations.length > 0 &&
-      pendingEscalations.every(
-        (escalationText) => buildPermissionAskFromEscalation(escalationText) === null,
-      )
-    ) {
-      return null;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  return null;
-}
-
 export interface RunCommandOptions {
   prompt: string;
   mode: string | undefined;
