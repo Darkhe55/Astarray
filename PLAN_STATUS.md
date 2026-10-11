@@ -237,7 +237,7 @@ provider + 权限询问路径下，CLI 打印结果后**不自然退出**（实�
 
 | 任务 | 状态 | 前驱 |
 |---|---|---|
-| SUM-01 动态摘要索引与展开 | pending | T09A-R1/T07D-R1相关接线 |
+| SUM-01 动态摘要索引与展开 | **本地可证范围大幅推进（2026-10-10）**；**不判通过** | 三类来源适配器 + 公开发布入口 + **报告来源真实存档接线** + **旧清单迁移的只读判定与安全执行**（含崩溃恢复）；**仍未完成**：`conversation`/`deferred-file` 的真实数据源（宿主侧持久化决定待用户）、触发阈值测量、多设备重复测量 |
 | SUM-02 跨模型预算与可靠性 | pending | SUM-01 |
 | GUIDE-01 运行中引导 | pending | SUM-02、T07D-R2-02及T12A-R1相关路径 |
 | EVENT-01 紧急仲裁与恢复 | pending（**2026-10-10 复核：全仓无 `EVENT-01` 独立卡文件，仅在 `SESSION_SUMMARY_AND_STEERING_TASK_CARDS.md` 与 ADR-0038 中被定义**） | 本会话**未取得**任何完成证据；**不凭 GUIDE-01/SUM-01 的进展推断其完成**（卡内纪律）。若要推进，需先把它从"SESSSION 卡组第 4 组"落实为带检查点的可执行卡 |
@@ -257,8 +257,8 @@ provider + 权限询问路径下，CLI 打印结果后**不自然退出**（实�
 | T09A-R1 上下文运行接线 | pending | T07D-R1；入口联测需T07D-R2-02 |
 | T12A-R1 恢复产品接线 | pending | T07D-R1；最终联测需T07D-R2-02、T09A-R1 |
 | E2E-01 独立工作助手验收 | pending | 上述四张返修卡通过 |
-| BRIDGE-01 外部接入MVP | pending | T07D-R1；交付需E2E-01 |
-| GUI-01-R GUI产品接线 | pending | T07D-R1；联测需上下文/恢复返修；交付需E2E-01 |
+| BRIDGE-01 外部接入MVP | **done（2026-10-10）** | 脚本化 stdio 闭环 20/20 + **真实第三方客户端（opencode/pi）消费已完成**；仅缺 macOS/Linux 平台验证。详见 `docs/reports/BRIDGE01_04_REAL_CLIENT_EVIDENCE_2026-10-10.md` |
+| GUI-01-R GUI产品接线 | **本地可证部分 done（2026-10-10 逐项核对）** | 01/02/03a/03b/04a/04b 全部交付（含安装产物级 SSE 契约校验 27 项、从隔离包启动 GUI 冒烟）；**仅缺真实用户人工体验与 Linux/macOS 平台证据** |
 | WB-00 细节微淘原型 | pending | GUI-01-R；未来探索 |
 
 ## Batch OBS/SMART/PROJECT（OBS-01、SMART-01、PROJECT-01 三卡）检查点记录
