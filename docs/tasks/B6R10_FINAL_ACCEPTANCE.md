@@ -110,7 +110,18 @@
     **推进窗口内 running 不立即收口**（否则授权后重跑从未被等待）、窗口内出现新询问立即返回、
     终态失败立即返回、blocked 且仅非询问类升级立即返回、超时如实返回 null。提取**不改语义**，
     `run-command.ts` 导入同一实现。
-  **剩余最大缺口**：`cli/commands.ts` **90/430**（单文件即占全部缺失的约 40%）。
+  · 进一步主攻 `cli/commands.ts`（单文件占全部缺失约 40%，成因同上：**导出命令只由子进程驱动 ⇒
+    v8 不可见**），新增 `tests/tui/unit/b6r10-commands-in-process-branches.test.ts` **22 条**：
+    在**本进程内**调用导出命令，覆盖参数校验分支（`perf overview` 的 --detail/--page-size、
+    `tool-package describe` 缺 --from/--to）与**真实锁定状态**分支（先 `registerVersions` +
+    `lockProjectToVersion` 播种，再覆盖 status/describe/change(upgrade/rollback/disable)/
+    cancel/feedback 的 JSON 与人类可读两条输出路径）。
+  => 分支升到 **84.96%**（仍差约 3 个分支）。
+  **测试基建注意**：`failWith` 的真实语义是"写诊断 + `process.exit`"，测试内须
+  `vi.spyOn(process,"exit")` 拦截，并断言**可观察的诊断输出**而非被 mock 的退出码。
+  **本轮两次按实测修正自身错误假设**（未为凑覆盖率改产品行为）：① "空状态目录下
+  describe/status 应失败" —— 实测**成功**（空注册表是合法回答）；② "disable 后 enable 应成功" ——
+  实测返回**未应用**（产品保守语义：重新启用需重新授权）。已分别改为断言真实契约。
   **不得**以"接近门槛"当作通过；
 - 本卡记录的历史命令（`npm pack`、`smoke-install`）已由后续 TOOLKIT-01-06 的
   **tarball 隔离安装验收（`verify:toolkit-package` 48/48）**覆盖并超越。
