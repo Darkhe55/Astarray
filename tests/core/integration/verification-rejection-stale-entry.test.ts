@@ -248,4 +248,49 @@ describe("否定裁决后的待追认条目不得变成死条目（stale-revisio
       "节点已是 reopened（非关闭态）却仍列出条目 ⇒ 界面提供的裁决按钮点了必然失败",
     ).toEqual([]);
   });
+
+  /**
+   * **2026-10-10 第三个面（真实用户追认后发现）**：追认成功写入签收记录后，
+   * 条目**仍留在待追认列表**，于是可以**重复追认**，界面也不反映"已验收"。
+   *
+   * 实测证据：用户追认返回
+   * `accept-worker~003amission-ea8d2dbb~003aT-001~003a1-4-mv3vpssz`，
+   * 签收文件确实落盘（`acceptances/<id>.json`），
+   * 但节点 state 仍是 `deferred-review-closed`、`/verifications` 仍返回该条目。
+   *
+   * 根因：`recordUserAcceptance` **只写签收记录，不推进上下文图节点状态**；
+   * 而列表过滤若按"任一已关闭态"判断，`deferred-review-closed` 仍算关闭 ⇒ 继续列出。
+   *
+   * 本用例钉住：**已签收（存在绑定同一节点与 revision 的签收记录）后，条目不得再列出**。
+   */
+  it("④ 已签收的条目不得继续出现在待追认列表中（否则可重复追认）", async () => {
+    const graphRevision = await seedGraph();
+    const capsuleHash = "sha256:" + "b".repeat(64);
+    await controller.createDeferredVerificationTask({
+      taskIdentifier: "verify-T-001",
+      ownerAgentInstanceId: OWNER,
+      contextNodeIdentifier: "node-T-001",
+      contextGraphRevision: graphRevision,
+      closureCapsuleHash: capsuleHash,
+      humanSteps: "人工复核后再追认",
+      priorityTier: 1,
+    });
+    expect(await controller.listDeferredVerificationTasks(OWNER)).toHaveLength(1);
+
+    const acceptance = await controller.recordUserAcceptance({
+      ownerAgentInstanceId: OWNER,
+      contextGraphRevision: graphRevision,
+      currentContextGraphRevision: graphRevision,
+      nodeIdentifiers: ["node-T-001"],
+      summaryHash: capsuleHash,
+      userId: "authenticated-user",
+    });
+    expect(acceptance.acceptanceIdentifier).toMatch(/^accept-/);
+
+    const afterAcceptance = await controller.listDeferredVerificationTasks(OWNER);
+    expect(
+      afterAcceptance.filter((task) => task.contextNodeIdentifier === "node-T-001"),
+      "已签收却仍列出条目 ⇒ 用户可对同一节点重复追认，界面也不反映已验收",
+    ).toEqual([]);
+  });
 });

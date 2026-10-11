@@ -358,6 +358,59 @@ export class HumanVerificationController {
   }
 
   /**
+   * 列出该 owner 已签收的 `<nodeIdentifier>@<contextGraphRevision>` 组合（只读）。
+   *
+   * **2026-10-10 新增**：`recordUserAcceptance` 不推进节点状态，故"是否已验收"只能由
+   * 签收记录回答。条目（节点, revision）已有签收 ⇒ 不再是待追认。
+   * 损坏的签收文件**跳过**（不因单个坏文件让整个列表不可用），但读取失败不静默吞异常。
+   */
+  private async listAcceptedNodeRevisions(
+    ownerAgentInstanceId: string,
+  ): Promise<Set<string>> {
+    const acceptancesDirectoryPath = path.join(
+      this.baseDirectory,
+      "agent-memory",
+      sanitizePathSegment(ownerAgentInstanceId),
+      "acceptances",
+    );
+    let fileNames: string[];
+    try {
+      fileNames = await fs.readdir(acceptancesDirectoryPath);
+    } catch {
+      return new Set<string>();
+    }
+    const acceptedNodeRevisions = new Set<string>();
+    for (const fileName of fileNames.filter((name) => name.endsWith(".json"))) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(
+          await fs.readFile(path.join(acceptancesDirectoryPath, fileName), "utf8"),
+        );
+      } catch {
+        continue;
+      }
+      const record = parsed as {
+        contextGraphRevision?: unknown;
+        nodeIdentifiers?: unknown;
+      };
+      if (
+        typeof record.contextGraphRevision !== "number" ||
+        !Array.isArray(record.nodeIdentifiers)
+      ) {
+        continue;
+      }
+      for (const nodeIdentifier of record.nodeIdentifiers) {
+        if (typeof nodeIdentifier === "string") {
+          acceptedNodeRevisions.add(
+            nodeIdentifier + "@" + String(record.contextGraphRevision),
+          );
+        }
+      }
+    }
+    return acceptedNodeRevisions;
+  }
+
+  /**
    * 清除某节点**全部**待追认条目（否决导致节点重开时调用）。
    *
    * 返回被清除的 taskIdentifier 列表，便于调用方/测试断言（不静默）。
@@ -435,7 +488,16 @@ export class HumanVerificationController {
      * 故按节点当前状态过滤：**只有节点仍处于已关闭态的条目才算待追认**。
      * 无法在任一图中定位到该节点时同样不列出（fail-closed）。
      */
-    const closedNodeIdentifiers = new Set<string>();
+    /**
+     * **2026-10-10 修复（真实用户报告「追认后条目仍在」）**：
+     * `recordUserAcceptance` 只写签收记录、**不推进上下文图节点状态**，故节点会一直停在
+     * `deferred-review-closed`。若只看节点状态，已签收的条目会继续列出 ⇒ 用户可**重复追认**、
+     * 界面也不反映"已验收"（实测：签收文件已落盘，`/verifications` 仍返回该条目）。
+     *
+     * 故除节点状态外，还要排除**已有签收记录**的（节点, revision）组合。
+     */
+    const acceptedNodeRevisions = await this.listAcceptedNodeRevisions(ownerAgentInstanceId);
+    const pendingReviewNodeIdentifiers = new Set<string>();
     if (this.graphStore !== null) {
       for (const graphIdentifier of await this.graphStore.listGraphIdentifiers(
         ownerAgentInstanceId,
@@ -445,8 +507,15 @@ export class HumanVerificationController {
           graphIdentifier,
         );
         for (const node of graph?.nodes ?? []) {
-          if ((CLOSED_CONTEXT_NODE_STATES as readonly string[]).includes(node.state)) {
-            closedNodeIdentifiers.add(node.contextNodeIdentifier);
+          /**
+           * **只认 `deferred-review-closed`**（待人工验收）—— 不能用"任一已关闭态"：
+           * `accepted-closed` 表示**已验收**，此时条目**必须消失**（否则用户可重复追认、
+           * 界面也不反映已验收）。实测：追认成功写入签收后，节点仍停在
+           * `deferred-review-closed`（`recordUserAcceptance` 只写签收记录、不推进节点），
+           * 若按"任一关闭态"过滤，条目会继续列出。
+           */
+          if (node.state === "deferred-review-closed") {
+            pendingReviewNodeIdentifiers.add(node.contextNodeIdentifier);
           }
         }
       }
@@ -458,7 +527,13 @@ export class HumanVerificationController {
         ownerAgentInstanceId,
         fileName.slice(0, -".json".length),
       );
-      if (task !== null && closedNodeIdentifiers.has(task.contextNodeIdentifier)) {
+      if (
+        task !== null &&
+        pendingReviewNodeIdentifiers.has(task.contextNodeIdentifier) &&
+        !acceptedNodeRevisions.has(
+          task.contextNodeIdentifier + "@" + String(task.contextGraphRevision),
+        )
+      ) {
         tasks.push(task);
       }
     }
