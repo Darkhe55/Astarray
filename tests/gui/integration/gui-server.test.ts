@@ -562,6 +562,131 @@ describe("GUI-01-R-02 按钮触发真实任务（公共应用服务）", () => {
    * 卡内 §11 要求用户"能看懂升级权限差异并拒绝"——若该视图只在 CLI 可见，
    * 界面上就无法做出"拒绝"的决定。能力缺失时必须回落为空视图且**不 500**。
    */
+  /**
+   * MERGE-01-03：卡内要求"CLI/TUI/GUI/SDK 设置一致"。
+   * GUI 只读呈现参数授权设置；**缺失时必须如实报"未知"**（不得显示成默认开启）。
+   */
+  it("/state 必须携带参数授权设置（只读；缺失时空视图不 500）", async () => {
+    const handle = await startServer({
+      applicationService: {
+        ...createFakeApplicationPort(),
+        async queryParameterAuthorizationSettings() {
+          return {
+            isParameterAuthorizationEnabled: true,
+            isParameterRulesEnabled: false,
+            configurationRevision: 4,
+            ruleCount: 2,
+          };
+        },
+      },
+    });
+    try {
+      const response = await request({ port: handle.port, method: "GET", path: "/state" });
+      expect(response.statusCode).toBe(200);
+      const snapshot = JSON.parse(response.body) as {
+        parameterAuthorizationSettings?: {
+          isAvailable: boolean;
+          isParameterRulesEnabled: boolean | null;
+          mayWidenPermissions: boolean;
+          isReadOnly: boolean;
+          hasWriteAction: boolean;
+          displayText: string;
+        };
+      };
+      const view = snapshot.parameterAuthorizationSettings;
+      expect(view).toBeDefined();
+      expect(view?.isAvailable).toBe(true);
+      expect(view?.isParameterRulesEnabled).toBe(false);
+      // 细分关闭 ⇒ 必须提示可能放宽，而不是中性的"已关闭"
+      expect(view?.mayWidenPermissions).toBe(true);
+      expect(String(view?.displayText)).toMatch(/放宽/);
+      // GUI 只读：不得提供写入动作（放宽需认证用户确认）
+      expect(view?.isReadOnly).toBe(true);
+      expect(view?.hasWriteAction).toBe(false);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("真实 SDK 门面接入 GUI：SDK 写入的设置必须被 /state 如实反映（四入口一致的 GUI+SDK 环节）", async () => {
+    const { AstarrayApplicationFacade } = await import(
+      "../../../packages/core/src/public-sdk.js"
+    );
+    const { promises: fsPromises } = await import("node:fs");
+    const osModule = await import("node:os");
+    const pathModule = await import("node:path");
+    const stateDirectory = await fsPromises.mkdtemp(
+      pathModule.join(osModule.tmpdir(), "astarray-gui-settings-e2e-"),
+    );
+    const application = await AstarrayApplicationFacade.create({
+      stateDirectory,
+      mode: "assist",
+      runtime: "mock",
+      statusPollIntervalMilliseconds: 25,
+    });
+    const handle = await startGuiServer({
+      applicationService: application,
+      sessionId: "session-gui-settings",
+      mode: "assist",
+    });
+    try {
+      // 确认真实门面确实暴露该只读方法（否则 GUI 会如实报"未知"）
+      expect(typeof (application as unknown as Record<string, unknown>)[
+        "queryParameterAuthorizationSettings"
+      ]).toBe("function");
+      // 经 SDK 写入"关闭细分"（已确认），GUI 必须看到同一结论
+      const writeOutcome = await application.updateParameterAuthorizationSettings({
+        isParameterAuthorizationEnabled: true,
+        isParameterRulesEnabled: false,
+        toolAuthorizationShapes: [],
+        isConfirmedByAuthenticatedUser: true,
+      });
+      expect(writeOutcome.isAccepted).toBe(true);
+
+      const response = await request({ port: handle.port, method: "GET", path: "/state" });
+      expect(response.statusCode).toBe(200);
+      const snapshot = JSON.parse(response.body) as {
+        parameterAuthorizationSettings?: {
+          isAvailable: boolean;
+          isParameterRulesEnabled: boolean | null;
+          mayWidenPermissions: boolean;
+          isReadOnly: boolean;
+        };
+      };
+      const view = snapshot.parameterAuthorizationSettings;
+      expect(view?.isAvailable).toBe(true);
+      // 与 SDK 读到的**同一结论**（不得两套口径）
+      expect(view?.isParameterRulesEnabled).toBe(false);
+      expect(view?.mayWidenPermissions).toBe(true);
+      // GUI 仍只读：放宽必须走确认门禁
+      expect(view?.isReadOnly).toBe(true);
+    } finally {
+      await handle.close();
+      await application.shutdown();
+      await fsPromises.rm(stateDirectory, { recursive: true, force: true, maxRetries: 10 });
+    }
+  });
+  it("/state 在缺少参数授权设置能力时如实报未知（不 500、不伪装默认开启）", async () => {
+    const handle = await startServer();
+    try {
+      const response = await request({ port: handle.port, method: "GET", path: "/state" });
+      expect(response.statusCode).toBe(200);
+      const snapshot = JSON.parse(response.body) as {
+        parameterAuthorizationSettings?: {
+          isAvailable: boolean;
+          isParameterAuthorizationEnabled: boolean | null;
+          displayText: string;
+        };
+      };
+      const view = snapshot.parameterAuthorizationSettings;
+      expect(view?.isAvailable).toBe(false);
+      // 关键：不得退化成 true/false（那会被读成"默认开启/已关闭"）
+      expect(view?.isParameterAuthorizationEnabled).toBeNull();
+      expect(String(view?.displayText)).toMatch(/未知/);
+    } finally {
+      await handle.close();
+    }
+  });
   it("/state 必须携带工具包版本与升级差异（含是否需重新授权），缺失时空视图不 500", async () => {
     const handle = await startServer({
       applicationService: {

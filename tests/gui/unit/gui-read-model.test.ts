@@ -100,6 +100,22 @@ describe("gui-read-model", () => {
       toolPackages: { versions: [], upgradeDifferences: [] },
       // NODECTX-01-03：快照始终携带上下文可见性视图（未提供时为空列表；不伪造行）。
       contextVisibility: [],
+      /**
+       * MERGE-01-03：快照始终携带参数授权设置视图。
+       * 未提供时必须是**如实"未知"**（`null`），不得伪装成默认开启/已关闭。
+       */
+      parameterAuthorizationSettings: {
+        isAvailable: false,
+        isParameterAuthorizationEnabled: null,
+        isParameterRulesEnabled: null,
+        configurationRevision: null,
+        ruleCount: null,
+        mayWidenPermissions: false,
+        isReadOnly: true,
+        hasWriteAction: false,
+        displayText:
+          "参数授权设置未知（来源不可用；不假定默认开启）——只读，修改需经 SDK/CLI 确认门禁",
+      },
     });
     expect(JSON.stringify(snapshot)).not.toContain("stateDirectory");
   });

@@ -102,8 +102,7 @@ export interface GuiApplicationPort {
    * 缺失时视图回落为空（**不伪造**条目），且**不阻塞**既有 `/state` 与 SSE 快照。
    * 卡内 §11 要求用户"能看懂升级权限差异并拒绝"，因此该能力必须可被界面取到。
    */
-  listToolPackages?(): Promise<{
-    versions: Array<{
+  listToolPackages?(): Promise<{    versions: Array<{
       toolPackageId: string;
       version: number;
       contentHash: string;
@@ -124,6 +123,18 @@ export interface GuiApplicationPort {
       permissionDifferences: string[];
       requiresReauthorization: boolean;
     }>;
+  }>;
+  /**
+   * MERGE-01-03：参数授权设置**只读**快照（可选能力）。
+   *
+   * 卡内检查点 03 要求"CLI/TUI/GUI/SDK 设置一致"。GUI **只读**：
+   * "扩大权限需既有认证用户确认"，故此处**不提供写入**，缺失时视图如实报"未知"。
+   */
+  queryParameterAuthorizationSettings?(): Promise<{
+    isParameterAuthorizationEnabled: boolean;
+    isParameterRulesEnabled: boolean;
+    configurationRevision: number;
+    ruleCount: number;
   }>;
   updateContextBudget?(input: {
     expectedRevision: number;
@@ -791,6 +802,38 @@ export async function startGuiServer(
     }
   }
 
+  /**
+   * MERGE-01-03：读取参数授权设置（**只读、失败即返回 undefined**）。
+   *
+   * 为什么失败要回落成 `undefined` 而不是默认值：卡内要求 GUI/TUI/CLI/SDK 一致，
+   * 而"默认开启"会被误读成"用户没改过"。缺失时视图如实显示"未知"。
+   */
+  async function readParameterAuthorizationSettingsOrUndefined(): Promise<
+    | {
+        isParameterAuthorizationEnabled: boolean;
+        isParameterRulesEnabled: boolean;
+        configurationRevision: number;
+        ruleCount: number;
+      }
+    | undefined
+  > {
+    const readSettings = options.applicationService.queryParameterAuthorizationSettings;
+    if (readSettings === undefined) {
+      return undefined;
+    }
+    try {
+      /**
+       * **必须绑定接收者**：`readSettings` 是从对象上取下的方法，
+       * 直接 `readSettings()` 会让 `this` 变成 undefined
+       * （实测症状：门面方法内部访问 `this.stateDirectory` 抛错被吞掉，
+       * GUI 于是**静默显示"未知"**，看起来像"没有这个能力"）。
+       */
+      return await readSettings.call(options.applicationService);
+    } catch {
+      return undefined;
+    }
+  }
+
   function writeJsonResponse(
     response: http.ServerResponse,
     statusCode: number,
@@ -875,7 +918,9 @@ export async function startGuiServer(
             tracker,
             ...(await readInstructionWindowOrDefault()),
             ...(await readCrossProjectOrDefault()),
-        ...(await readToolPackagesOrDefault()),
+            ...(await readToolPackagesOrDefault()),
+            parameterAuthorizationSettings:
+              await readParameterAuthorizationSettingsOrUndefined(),
           }),
         ),
       );
@@ -900,7 +945,9 @@ export async function startGuiServer(
             tracker,
             ...(await readInstructionWindowOrDefault()),
             ...(await readCrossProjectOrDefault()),
-        ...(await readToolPackagesOrDefault()),
+            ...(await readToolPackagesOrDefault()),
+            parameterAuthorizationSettings:
+              await readParameterAuthorizationSettingsOrUndefined(),
           }),
           isReconnect: typeof lastEventId === "string",
         })}\n\n`,

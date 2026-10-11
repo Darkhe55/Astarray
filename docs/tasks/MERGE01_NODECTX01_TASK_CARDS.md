@@ -55,7 +55,7 @@ MERGE-01：01 done / 02 部分 / 03 未开始；NODECTX-01：01 done / 02 done /
 |---|---|---|
 | MERGE-01-01 | **done（2026-10-10）** | 见文末三节进展：① 参数级授权优先规则；② `instruction-merge-mapping.ts` —— 执行组到原指令映射、**合并开关**、原指令追加保存（来源/ID/revision/优先级/**取消权**/验收条件）、引用绑定 revision+内容指纹、**不得覆盖原文/伪装用户指令**、**窗口按原始未完成意图计数**（与组数无关）、**组完成不自动关闭原指令**；③ 映射层**接入真实 `InstructionWindowStore`**（`countUnfinishedIntentionsInWindow`）；④ 两个纵向样本**在派发路径上可达**（统一入口路由同一实现、旧名兼容）。反例 10+3+5 条。 |
 | MERGE-01-02 | **大部分完成**；**不判通过** | 已交付：逐 action 参数校验（未知名拒绝，顺序为"先未知后必需"）、两工具适配（`projectFileRead`/`projectFileWrite`）**在派发路径上可达**、**"关闭细分不得静默扩大权限"**（`evaluateParameterAuthorizationSettingChange`：放宽需**认证用户确认**、被拒**不推进 revision**、收紧无需确认、配置/生效 revision 分开）。**仍未完成**：卡内点名的"确定性合并"与设置入口共用控制器的完整联测。 |
-| MERGE-01-03 | **部分完成**；**不判通过** | 已交付：**参数授权设置入口**（SDK `query/updateParameterAuthorizationSettings` + CLI `settings parameter-authorization`，**CLI 与 SDK 逐字段一致**、未确认的放宽**同样被拒且不写文件**）；**包级执行证据**（`verify-toolkit-package` **43/43**，在隔离安装包内**真实驱动**判定函数与两个新公开入口）。**仍未完成**：连续输入/部分失败/取消/重启的端到端验证；**TUI/GUI 内的设置界面**（当前 TUI 走 CLI 子命令、GUI 未暴露该设置）。 |
+| MERGE-01-03 | **大部分完成**；**不判通过** | 已交付：**参数授权设置入口** —— SDK `query/updateParameterAuthorizationSettings`、CLI `settings parameter-authorization`（**CLI 与 SDK 逐字段一致**、未确认的放宽**同样被拒且不写文件**）、**GUI 只读视图**（`GuiSnapshot.parameterAuthorizationSettings`，缺失时**如实报"未知"**而非伪装默认开启，细分关闭提示**可能放宽**，`hasWriteAction` 恒 false）；**包级执行证据**（`verify-toolkit-package` **43/43**）。**仍未完成**：连续输入/部分失败/取消/重启的端到端验证；**TUI 内的设置界面**（当前经 CLI 子命令）。 |
 
 ### MERGE-01-01 进展（2026-10-10）：参数级授权优先规则
 
@@ -503,3 +503,30 @@ summary/outline。因此上一轮枚举里的 `code`/`markup`/`data` 与 `view`�
   CLI 未确认的放宽**同样被拒**且不写文件）。
 - **仍未完成**：连续输入/部分失败/取消/重启的端到端验证；**TUI/GUI 内的设置界面**
   （当前 TUI 走 CLI 子命令、GUI 尚未暴露该设置）⇒ **MERGE-01-03 不判 done**。
+### MERGE-01-03 进展（2026-10-10 续）：**GUI 也可读该设置**（四入口一致的 GUI 环节）
+
+**实测缺口**：上一轮交付了 SDK 与 CLI 入口，但 **GUI 快照完全没有该设置** ⇒
+"四入口一致"里的 GUI 环节不成立（用户无法在 GUI 看出当前是否关了参数细分，
+也就无法在"关闭会放宽权限"时被正确提示）。
+
+**交付**：
+
+- `buildGuiParameterAuthorizationSettingsView()` + `GuiSnapshot.parameterAuthorizationSettings`
+  （**始终存在**，缺省为空视图）；
+- **三态语义**：来源不可用时用 `null` + `isAvailable: false` **如实表示"未知"**，
+  **不得**退化成 `false`（会被读成"已关闭"）或 `true`（会被读成"默认开启"）；
+- 细分关闭 ⇒ `mayWidenPermissions: true` 且文案**明确提示可能放宽**（不是中性的"已关闭"）；
+- **GUI 只读**：`isReadOnly` 恒 true、`hasWriteAction` 恒 false —— 放宽权限**必须**走
+  SDK/CLI 的既有确认门禁。
+
+**本轮抓到一个真实缺陷（值得单列）**：GUI 服务取用门面方法时写成
+`const readSettings = options.applicationService.queryParameterAuthorizationSettings`，
+调用时**没有绑定接收者** ⇒ 门面方法内部访问 `this.stateDirectory` 抛错被 `catch` 吞掉，
+GUI **静默显示"未知"**，看起来就像"根本没有这个能力"。已改为
+`readSettings.call(options.applicationService)` 并在代码内注明缘由。
+
+- 反例（先红后绿）：`tests/gui/unit/merge01-parameter-authorization-settings-view.test.ts` **7 条**；
+  `tests/gui/integration/gui-server.test.ts` 新增 **3 条**（含**真实 SDK 门面接入 GUI**：
+  SDK 写入的设置被 `/state` **如实反映**；能力缺失时如实报未知且 **不 500**）。
+- **仍未完成**：连续输入/部分失败/取消/重启的端到端验证；**TUI 内的设置界面**
+  （当前 TUI 经 CLI 子命令）⇒ **MERGE-01-03 不判 done**。

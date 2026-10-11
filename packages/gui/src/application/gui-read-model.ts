@@ -14,6 +14,58 @@ export interface GuiTaskView {
   revision: number;
 }
 
+/**
+ * MERGE-01-03：构造参数授权设置的 **GUI 只读视图**。
+ *
+ * 三态语义要点：来源不可用时用 `null` + `isAvailable: false` 如实表示"未知"，
+ * **不得**退化成 `false`（会被读成"已关闭"）或 `true`（会被读成"默认开启"）。
+ */
+export function buildGuiParameterAuthorizationSettingsView(
+  input:
+    | {
+        isParameterAuthorizationEnabled: boolean;
+        isParameterRulesEnabled: boolean;
+        configurationRevision: number;
+        ruleCount: number;
+      }
+    | undefined,
+): GuiParameterAuthorizationSettingsView {
+  if (input === undefined) {
+    return {
+      isAvailable: false,
+      isParameterAuthorizationEnabled: null,
+      isParameterRulesEnabled: null,
+      configurationRevision: null,
+      ruleCount: null,
+      mayWidenPermissions: false,
+      isReadOnly: true,
+      hasWriteAction: false,
+      displayText: "参数授权设置未知（来源不可用；不假定默认开启）——只读，修改需经 SDK/CLI 确认门禁",
+    };
+  }
+  /**
+   * 细分关闭（或总开关关闭）⇒ 原先被 deny/ask 拦截的参数会回退 allow
+   * ⇒ 必须提示"可能放宽"，而不是中性的"功能已关闭"。
+   */
+  const mayWidenPermissions =
+    !input.isParameterAuthorizationEnabled || !input.isParameterRulesEnabled;
+  const displayText = mayWidenPermissions
+    ? "参数授权细分已关闭：被 deny/ask 拦截的参数将回退 allow（**可能放宽权限**）；" +
+      "只读视图，放宽需既有认证用户确认后经 SDK/CLI 生效"
+    : "参数授权总开关已启用、每工具细分已启用（未放宽）；只读视图";
+  return {
+    isAvailable: true,
+    isParameterAuthorizationEnabled: input.isParameterAuthorizationEnabled,
+    isParameterRulesEnabled: input.isParameterRulesEnabled,
+    configurationRevision: input.configurationRevision,
+    ruleCount: input.ruleCount,
+    mayWidenPermissions,
+    isReadOnly: true,
+    hasWriteAction: false,
+    displayText,
+  };
+}
+
 export interface GuiSnapshot {
   sessionId: string;
   mode: AgentMode;
@@ -45,6 +97,36 @@ export interface GuiSnapshot {
    * `isShownAsDeleted: false` 与"原文完整保留、可回访"的文案。
    */
   contextVisibility: GuiContextVisibilityRowView[];
+  /**
+   * MERGE-01-03：参数授权设置视图（**始终存在**，缺省为空视图）。
+   *
+   * 卡内检查点 03 要求"CLI/TUI/GUI/SDK 设置一致"。GUI 只读：
+   * **扩大权限需既有认证用户确认**，故 GUI **不提供写入路径**。
+   */
+  parameterAuthorizationSettings: GuiParameterAuthorizationSettingsView;
+}
+
+/** MERGE-01-03：参数授权设置的 **GUI 只读视图**。 */
+export interface GuiParameterAuthorizationSettingsView {
+  /** 来源是否可用（**不可用时不得显示成"默认开启"**）。 */
+  isAvailable: boolean;
+  /** 不可用时为 null（而不是 false —— false 会被误读成"已关闭"）。 */
+  isParameterAuthorizationEnabled: boolean | null;
+  isParameterRulesEnabled: boolean | null;
+  configurationRevision: number | null;
+  ruleCount: number | null;
+  /**
+   * 该配置**可能放宽**权限（细分已关闭时，原先被 deny/ask 拦截的参数会回退 allow）。
+   *
+   * 卡内："**关闭细分若会从 deny/ask 回退 allow，必须明确提示放宽范围，
+   * 不以'关闭功能'静默扩大权限**"。
+   */
+  mayWidenPermissions: boolean;
+  /** GUI 视图恒为只读。 */
+  isReadOnly: true;
+  /** GUI **没有**写入动作（不得成为放宽权限的旁路）。 */
+  hasWriteAction: false;
+  displayText: string;
 }
 
 export interface GuiCrossProjectAuthorizationView {
@@ -263,6 +345,10 @@ export function buildGuiSnapshot(input: {
   crossProject?: Parameters<typeof buildGuiCrossProjectView>[0];
   /** NODECTX-01-03：上下文可见性展示输入（缺省为空列表；**不伪造行**）。 */
   contextVisibility?: Parameters<typeof buildContextVisibilityDisplayRows>[0];
+  /** MERGE-01-03：参数授权设置（缺省 ⇒ 空视图，**不伪造默认开启**）。 */
+  parameterAuthorizationSettings?: Parameters<
+    typeof buildGuiParameterAuthorizationSettingsView
+  >[0];
   /**
    * TOOLKIT-01-04：工具包版本与升级差异（缺省为空视图；**不伪造**条目）。
    *
@@ -292,6 +378,9 @@ export function buildGuiSnapshot(input: {
         ? { versions: [], upgradeDifferences: [] }
         : buildGuiToolPackageView(input.toolPackages),
     contextVisibility: buildContextVisibilityDisplayRows(input.contextVisibility ?? []),
+    parameterAuthorizationSettings: buildGuiParameterAuthorizationSettingsView(
+      input.parameterAuthorizationSettings,
+    ),
   };
 }
 
