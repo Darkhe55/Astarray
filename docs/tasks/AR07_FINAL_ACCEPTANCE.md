@@ -294,6 +294,9 @@ allow-once / allow-session / deny / modify / Esc 五条决策分支与初始渲�
   （入口路径**必须存在**、**必须绝对路径**、basename 正确、调用稳定、回退分支可用）；
   `tests/core/integration/merge01-parameter-authorization-settings.test.ts` 增 **⑦**。
 - **生产代码改动仅一处**，且是删除死分支（与 §8 说明的既有口径一致）；
+- **全局覆盖率门槛（同轮）：已清除** —— `npm run test:coverage` **exit 0**，
+  `All files | 92.46 | 85.02 | 93.18 | 92.49`（branches 85.02% ≥ 85%，见 B6R-10 §复核）；
+  该项原为分支 83.56% 的**失败门禁**，经四批**行为测试**（非硬凑）补齐；
   typecheck/lint/build 全绿，`npm run check` **exit 0**（**361 文件 / 2718 用例、skipped 0**）。
 - **仍未完成**：平台不可达分支（Windows-only 的非 win32 归一化路径、
   `sensitive-content-access-policy` L78/L156、`protected-storage-policy` L40）
