@@ -122,6 +122,12 @@
   **本轮两次按实测修正自身错误假设**（未为凑覆盖率改产品行为）：① "空状态目录下
   describe/status 应失败" —— 实测**成功**（空注册表是合法回答）；② "disable 后 enable 应成功" ——
   实测返回**未应用**（产品保守语义：重新启用需重新授权）。已分别改为断言真实契约。
-  **不得**以"接近门槛"当作通过；
+  · **最后一轮补齐（同轮）**：再加 `tests/tui/unit/b6r10-commands-single-branch-gaps.test.ts` **8 条**
+    逐一覆盖仅差一个分支的函数（`provider register --verified-at` 非法 ⇒ 用法错误且**不写目录**；
+    `guide history` **无历史**时非 JSON 输出 `no-history`；`tool-package describe` 的 catch 分支；
+    preserve show/create/restore 的空状态分支）⇒ 分支 **85.02%**。
+  **`npm run test:coverage` 现已 exit 0（门槛清除）**：
+  `All files | 92.46 | 85.02 | 93.18 | 92.49`（branches 85.02% ≥ 85%）。
+  **本轮全程按实测修正自身错误假设，未为凑覆盖率改产品行为**；
 - 本卡记录的历史命令（`npm pack`、`smoke-install`）已由后续 TOOLKIT-01-06 的
   **tarball 隔离安装验收（`verify:toolkit-package` 48/48）**覆盖并超越。
