@@ -302,7 +302,19 @@ provider + 权限询问路径下，CLI 打印结果后**不自然退出**（实�
 - **SMART-01-04 入口与包验收**：已补做完成，见下节「入口与包级验收补做」。
 - **SMART-01-04 持续接收（模拟慢模型/长下级任务）**：**真实运行已通过（2026-10-10）** —— `node scripts/verify-u2-flash-continuous-reception.mjs`（云之声 u2-flash）**exit 0、判据 8/8**：派发 18ms、接收 13ms、派发≠完成、关闭回收、**凭据零写入**且运行前后 sha256 一致。报告 `docs/reports/SMART01_04_LIVE_U2_FLASH_EVIDENCE_2026-10-10.md`；可移植门禁 `tests/tui/integration/smart01-04-live-u2-flash-verdict.test.ts`。**仍未取得**：macOS 平台证据；另 `--probe-only` 在 Windows+Node24 退出路径有 libuv 断言（已登记未修）。
 - **负载检查（明确延后）**：满载门禁中 `summary-cli`、`cli-commands`、`context-runtime-cache-events`、`application-sdk-task-events`、`provider-fake-server`、`provider-tool-loop`、`e2e01-vertical-rework` 等偶发超时失败，独立运行均通过。经用户决定，**负载/并发预算检查留到正式上线前进行**，本批不处理。
-- 计划外未动项：T07D-R2-04 正向闭环、`auth-scope-replay-rejected`（已收窄至 CLI 接线未修；门禁层正确性由 `tests/core/integration/scope-authorization-regrant.test.ts` 3/3 通过证明）、CLI 结果后进程滞留（`it.skip`）、Anthropic 离线端到端用例（`it.skip`）、BRIDGE-01 / GUI-01-R / WB-00。
+- **计划外未动项（2026-10-10 逐项复核后订正 —— 本节原列的两处 `it.skip` 已不成立）**：
+  · ~~CLI 结果后进程滞留（`it.skip`）~~ ⇒ **已修**：
+    `tests/tui/integration/cli-exit-linger.test.ts` ② 已是 **live `it`**（第 163 行），
+    由「>60s 滞留失败」变为 **36.177s 自然退出通过**，2/2 exit 0；
+  · ~~Anthropic 离线端到端用例（`it.skip`）~~ ⇒ **全仓 `it.skip` / `describe.skip` = 0**
+    （仅余 5 处 `skipIf` 产物门禁，属仓内既有惯例，不构成未完成项）；
+  · T07D-R2-04 正向闭环：已由 `verify:u2-flash-continuous-reception` 真实运行
+    **exit 0、8/8** 覆盖（见 SMART-01-04 记录）；
+  · `auth-scope-replay-rejected`：门禁层正确性由
+    `tests/core/integration/scope-authorization-regrant.test.ts` 3/3 通过证明，
+    剩余为 CLI 接线未修；
+  · BRIDGE-01 / GUI-01-R / WB-00：见各自状态行（BRIDGE-01 脚本化闭环 20/20、
+    GUI-01-R 本地子项全交付，两者仅缺人工/平台证据；WB-00 仍 pending）。
 
 本批真实 Provider 额度消耗：**0**（全程离线）。
 
