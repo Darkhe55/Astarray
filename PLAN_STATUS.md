@@ -1,11 +1,25 @@
 # PLAN_STATUS — Astarray 实施状态
 
-> **2026-10-10 第 40 轮收束**：跨卡对账见 `docs/reports/CROSS_CARD_RECONCILIATION_2026-10-10.md`
-> （逐卡归入"本地已证实 / 仍未完成（附卡点）/ 仅用户或平台可提供"三类）。
-> 收束时硬事实：`HEAD == origin/main == fe9bc3f`，工作区干净，
-> `npm run check` **exit 0**（**351 文件 / 2653 用例、skipped 0**），
-> `test:scripts` exit 0，`verify:toolkit-package` **39/39**，全仓 `it.skip` = **0**。
-> **未满足门禁的项一律未标完成。**
+> **2026-10-10 第 60 轮收束（本会话最后核对）**：跨卡对账见
+> `docs/reports/CROSS_CARD_RECONCILIATION_2026-10-10.md`
+> （逐卡归入"本地已证实 / 仍未完成（附卡点）/ 仅用户或平台可提供"三类），
+> 逐项核对结论见 `docs/reports/SESSION_HANDOFF_2026-10-10.md`。
+>
+> **本会话末次核对硬事实**：`HEAD == origin/main == 63d1473`，工作区干净，
+> 全仓 `it.skip` = **0**。门禁真实退出码：
+> `typecheck` 0 ｜ `lint` 0 ｜ `build` 0 ｜ **`check` 0**
+> （**374 文件 / 2829 用例、skipped 0**）｜ `test:scripts` 0 ｜
+> **`test:coverage` 0**（stmts 92.6 / **branch 85.06** / funcs 93.45 / lines 92.63）｜
+> `verify:toolkit-package` **48/48** ｜ `verify:instruction-entry-package` **17/17** ｜
+> `verify-mcp-bridge-loop` **20/20**。
+>
+> **注意（如实记录）**：同一批门禁在**负载下偶发** 1–3 条**与改动无关**的用例失败，
+> **隔离复跑全绿**（本会话多次观测，含本轮 `check` 先失败后通过）。该抖动已登记进
+> 可执行故障矩阵（`load-sensitive-full-gate-flake`，verdict `not-verified`），
+> **未在产品代码中修复，故不标为已修**。
+>
+> **未满足门禁的项一律未标完成**；剩余项**全部依赖外部条件**
+> （Linux/macOS 平台、真实 Provider 额度、用户人工体验、宿主侧持久化）。
 
 ## 2026-10-10 当前有效状态（覆盖下方历史快照）
 

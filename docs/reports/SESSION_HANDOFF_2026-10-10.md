@@ -188,3 +188,38 @@ RELIABILITY-01、MERGE-01/NODECTX-01、TOOLKIT-01，并收口 GUI-01-R、BRIDGE-
 
 > 建议 `max_goal_rounds` 取 **20–60**：数值小便于阶段性复核（每轮结束都能看到真实进展），
 > 数值大则减少"中途需要用户再恢复"的次数。上不封顶不是目的，**每轮有实测证据**才是。
+
+---
+
+## 2026-10-10 第 60 轮收束（本会话终版）—— 后续接手者请先读本节
+
+**当前基线**：`HEAD == origin/main == 63d1473`，工作区干净，全仓 `it.skip` = **0**。
+逐卡对账见 `docs/reports/CROSS_CARD_RECONCILIATION_2026-10-10_SESSION_END.md`。
+
+**门禁真实退出码（末次核对）**：`typecheck` 0 ｜ `lint` 0 ｜ `build` 0 ｜ `check` 0
+（**374 文件 / 2829 用例、skipped 0**）｜ `test:scripts` 0 ｜ `test:coverage` 0
+（branch **85.06%**）｜ `verify:toolkit-package` **48/48** ｜
+`verify:instruction-entry-package` **17/17** ｜ `verify-mcp-bridge-loop` **20/20**。
+
+**接手者必须知道的三件事**
+
+1. **负载抖动是真实现象，不要当作被测缺陷**：同一批门禁在负载下偶发 1–3 条与改动
+   无关的用例失败，**隔离复跑全绿**。它登记为 `load-sensitive-full-gate-flake`
+   （`not-verified`）——**未在产品代码中修复，也不得为了让门禁好看而放宽断言**。
+2. **`npm run test:coverage` 的分支门槛长期贴线**（本会话末次 85.06%，门槛 85%）。
+   新增任何分支都可能让它跌破；本会话曾连续四轮在 84.96–84.98% 反复。**补分支前先
+   用 JSON reporter 定位缺口**，且**只补行为、不靠排除文件或调低门槛**。
+3. **不要为"接线看起来完整"而造假数据源**：`conversation` 与 `deferred-file` 在
+   schema 里合法，但**本仓没有生产它们的本地存储**（已全仓核查并就地记录）。
+   卡内明令"无真实 usage 标为未测，不杜撰"。
+
+**仍未完成项与卡点**：见上述对账文档第 2 节（逐卡附**具体条件**）；
+**仅用户或平台可提供**的清单见第 3 节。
+
+**本会话遗留的可复用资产**
+- 故障注入矩阵（可执行审计，15 条、覆盖 10/10 维度，`unverifiedEntryIdentifiers` 可见）；
+- 覆盖率测量配方：`npx vitest run --coverage --coverage.reporter=json --coverage.reportOnFailure`
+  后用 Node 解析 `coverage/coverage-final.json` 的 `branchMap` 逐行定位缺口
+  （**文本报告与 JSON reporter 口径不同，以 `test:coverage` 的门禁输出为准**）；
+- 旧清单迁移的**判定 + 安全执行**（含崩溃恢复与确定性排序）与对应反例；
+- 多轮复用实测（结构性守恒可核对）。
