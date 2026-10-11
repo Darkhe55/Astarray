@@ -208,7 +208,7 @@ describe("BRIDGE-01-02 MCP stdio 会话", () => {
   });
 });
 describe("BRIDGE-01-02 stdio 会话边界", () => {
-  it("请求版本不一致时回报支持的版本并标注未支持", async () => {
+  it("请求版本在兼容集内时协商到该版本并标注已支持", async () => {
     const messages = await runSession([
       JSON.stringify({
         jsonrpc: "2.0",
@@ -220,8 +220,24 @@ describe("BRIDGE-01-02 stdio 会话边界", () => {
     ]);
     expect(messages).toHaveLength(1);
     const initializeResult = resultOf(messages[0]!);
-    expect(initializeResult["protocolVersion"]).toBe(MCP_SUPPORTED_PROTOCOL_VERSION);
-    expect(initializeResult["isRequestedVersionSupported"]).toBe(false);
+    /**
+     * **2026-10-10 语义修正（真实客户端验证发现）**：本用例原先断言
+     * "请求 `2024-11-05` ⇒ 回 `MCP_SUPPORTED_PROTOCOL_VERSION`（2026-07-28）
+     * 且 `isRequestedVersionSupported: false`"。
+     *
+     * 那条断言**正是互操作缺陷本身**：只支持到 `2024-11-05` 的客户端收到
+     * "请用 2026-07-28、我不支持你的请求"后**只能断开** —— 实测 `opencode`
+     * 与 `pi` 都因此拒绝本桥接
+     * （`Server's protocol version is not supported: 2026-07-28`）。
+     *
+     * 按 MCP 规范：**服务端若支持客户端请求的版本，就必须回该版本**。
+     * 本桥接实际兼容 `2024-11-05`（工具面与所用协议方法在这些修订间稳定），
+     * 故现在回 `2024-11-05` 并如实标注已支持。
+     * "完全不兼容的版本"仍回首选版本并报 `false`
+     * （见 `bridge01-04-mcp-version-negotiation.test.ts` ④）。
+     */
+    expect(initializeResult["protocolVersion"]).toBe("2024-11-05");
+    expect(initializeResult["isRequestedVersionSupported"]).toBe(true);
   });
 
   it("缺少 name 或非对象消息返回稳定 JSON-RPC 错误", async () => {

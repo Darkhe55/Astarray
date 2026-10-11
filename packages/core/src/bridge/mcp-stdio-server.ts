@@ -11,8 +11,58 @@ import type {
   McpToolBridge,
 } from "./mcp-tool-bridge.js";
 
-/** 冻结的协议修订（ADR-0032）。 */
+/**
+ * 首选（最新）协议修订。
+ *
+ * **2026-10-10 真实客户端验证修正（重要）**：本仓原先只有这一个版本常量，且
+ * `initialize` **无条件**回它 ⇒ 真实客户端（`opencode` 与 `pi`）都直接拒绝：
+ *
+ * ```
+ * astarray failed — Server's protocol version is not supported: 2026-07-28
+ * ```
+ *
+ * 实测两个客户端的支持集（从其实现读出，非猜测）：
+ *  - `@earendil-works/pi-mcp`：`SUPPORTED_PROTOCOL_VERSIONS =`
+ *    `["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]`
+ *    （`LATEST_PROTOCOL_VERSION = "2025-11-25"`，它按此值发起请求）；
+ *  - `opencode`：同样不接受 `2026-07-28`。
+ *
+ * ⇒ 按 MCP 规范，服务端若支持客户端请求的版本就**必须回该版本**；
+ * 只在完全无交集时才回自己的首选版本（由客户端决定是否断开）。
+ * 这正是"脚本化自证"漏掉、只有真实客户端才能暴露的缺陷。
+ */
 export const MCP_SUPPORTED_PROTOCOL_VERSION = "2026-07-28";
+
+/**
+ * 本服务端**实际兼容**的协议修订集合（新→旧）。
+ *
+ * 前四项取自真实客户端实测支持集，确保互操作；
+ * 末项保持本仓既有（也是 ADR-0032 冻结的）首选版本。
+ */
+export const MCP_COMPATIBLE_PROTOCOL_VERSIONS: readonly string[] = [
+  "2026-07-28",
+  "2025-11-25",
+  "2025-06-18",
+  "2025-03-26",
+  "2024-11-05",
+];
+
+/**
+ * 选择要回给客户端的协议修订（MCP `initialize` 协商）。
+ *
+ * 规则：**客户端请求的版本若在本服务端兼容集内，就回该版本**（规范要求）；
+ * 否则回首选版本，并让 `isRequestedVersionSupported` 如实为 `false`
+ * ——调用方据此决定是否断开，而**不是**由服务端单方面宣称"支持"。
+ */
+export function selectNegotiatedProtocolVersion(requestedVersion: string | null): string {
+  if (
+    requestedVersion !== null &&
+    MCP_COMPATIBLE_PROTOCOL_VERSIONS.includes(requestedVersion)
+  ) {
+    return requestedVersion;
+  }
+  return MCP_SUPPORTED_PROTOCOL_VERSION;
+}
 
 const JSONRPC_PARSE_ERROR = -32700;
 const JSONRPC_INVALID_REQUEST = -32600;
@@ -104,11 +154,17 @@ export async function runMcpStdioSession(
         typeof params["protocolVersion"] === "string"
           ? params["protocolVersion"]
           : null;
+      const negotiatedVersion = selectNegotiatedProtocolVersion(requestedVersion);
       writeResult(identifier, {
-        protocolVersion: MCP_SUPPORTED_PROTOCOL_VERSION,
+        protocolVersion: negotiatedVersion,
+        /**
+         * 只有当**回给客户端的版本就是它请求的版本**时才算"支持其请求"。
+         * 此前用 `requestedVersion === MCP_SUPPORTED_PROTOCOL_VERSION` 判断，
+         * 会让"请求 2025-11-25、我们回 2025-11-25"这种**成功协商**被误报为
+         * `isRequestedVersionSupported: false`（自相矛盾）。
+         */
         isRequestedVersionSupported:
-          requestedVersion === null ||
-          requestedVersion === MCP_SUPPORTED_PROTOCOL_VERSION,
+          requestedVersion === null || requestedVersion === negotiatedVersion,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: serverName, version: serverVersion },
       });
