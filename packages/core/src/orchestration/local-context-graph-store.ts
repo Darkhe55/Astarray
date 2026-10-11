@@ -11,6 +11,8 @@
  * - 新增必要分支/重开时递增祖先计数（重新开放受影响节点）；
  * - 环、未知锚点、自环、缺失豁免一律 fail-closed。
  */
+import { promises as fs } from "node:fs";
+import type { Dirent } from "node:fs";
 import path from "node:path";
 
 import { DomainError } from "../core/errors.js";
@@ -112,6 +114,37 @@ export class LocalContextGraphStore {
 
   private graphFilePath(ownerAgentInstanceId: string, graphIdentifier: string): string {
     return path.join(this.graphDirectoryPath(ownerAgentInstanceId, graphIdentifier), "context-graph.json");
+  }
+
+  /**
+   * 列出某 owner 名下**已落盘**的上下文图标识（目录枚举，只读）。
+   *
+   * **2026-10-10 新增**：待追认条目只带 `contextNodeIdentifier`，**不带** mission/图标识；
+   * 而"该条目是否还能被裁决"取决于其节点当前是否仍为**已关闭态**。要在**列出待追认**时
+   * 就过滤掉注定失败的条目，必须先能枚举该 owner 的图。此前无此能力，故只能把死条目
+   * 一并列出、等用户点了才报错（实测：`internal-error`）。
+   *
+   * 目录不存在返回空数组（尚无图不是错误）。
+   */
+  async listGraphIdentifiers(ownerAgentInstanceId: string): Promise<string[]> {
+    const graphsRoot = path.join(
+      this.agentMemoryDirectoryPath,
+      sanitizePathSegment(ownerAgentInstanceId),
+      "context-graphs",
+    );
+    let entries: Dirent[];
+    try {
+      entries = await fs.readdir(graphsRoot, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return [];
+      }
+      throw error;
+    }
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
   }
 
   private graphBackupFilePath(ownerAgentInstanceId: string, graphIdentifier: string): string {

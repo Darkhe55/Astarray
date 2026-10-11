@@ -11,6 +11,7 @@ import path from "node:path";
 
 // 装配层内部使用（不是再导出）：把真实用量观测接到账目存储上（2026-10-06 接线）。
 import { createProviderUsageLedgerObserver } from "./orchestration/provider-usage-ledger-observer.js";
+import { CLOSED_CONTEXT_NODE_STATES } from "./orchestration/local-context-graph-store.js";
 import { UsageLedgerStore } from "./orchestration/usage-ledger-store.js";
 // SMART-01-04：指令窗口与三分钟期限必须由**产品入口**真实驱动（此前只有 re-export 的独立组件）。
 import { InstructionWindowStore } from "./orchestration/instruction-window-store.js";
@@ -1835,6 +1836,30 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       throw new PublicApplicationError(
         "context-graph-not-found",
         "上下文图不存在，拒绝裁决: " + capsule.missionId,
+      );
+    }
+    /**
+     * **2026-10-10 修复（真实用户报告「裁决失败：internal-error」）**：
+     * 条目可能**已不可能被裁决** —— 例如它在**修复前**的服务器上被否决过，
+     * 陈旧条目残留在磁盘，而节点早已是 `reopened`（非关闭态）。此时：
+     *  - 否决会走到 `reopenNode` 并抛 `context-node-not-closable`
+     *    （"只有已关闭节点可以重新开放"），GUI 路由未映射该码 ⇒ 500 `internal-error`；
+     *  - 追认会因 revision 过期抛 `stale-revision`。
+     * 两者对用户都应是**明确的业务失败**，不是 500。故在裁决前显式判定并给稳定错误码。
+     */
+    const decisionNode = graph.nodes.find(
+      (node) => node.contextNodeIdentifier === task.contextNodeIdentifier,
+    );
+    if (
+      decisionNode === undefined ||
+      !CLOSED_CONTEXT_NODE_STATES.includes(decisionNode.state)
+    ) {
+      throw new PublicApplicationError(
+        "verification-entry-stale",
+        "该待追认项已失效（节点当前状态为 " +
+          (decisionNode?.state ?? "不存在") +
+          "，非已关闭态，无法再裁决）: " +
+          input.taskIdentifier,
       );
     }
     try {

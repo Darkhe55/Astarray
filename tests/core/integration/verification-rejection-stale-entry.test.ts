@@ -153,9 +153,27 @@ describe("否定裁决后的待追认条目不得变成死条目（stale-revisio
       reason: "产物不合格，返修",
     });
 
-    // 模拟"返修后在**新 revision** 上重新完成"，复用同一 taskIdentifier
-    const graphNow = await graphStore.readGraph(OWNER, "mission-reject-test");
-    const currentRevision = graphNow?.revision ?? 0;
+    /**
+     * 模拟真实返修流程：**重新完成并关闭节点**（关闭态），再用**当前** revision 写入条目。
+     * 注意不能只写条目就断言可见 —— 节点仍是 `reopened` 时，条目**本就不该**被列出
+     * （见用例 ③）。
+     */
+    const afterReopen = await graphStore.readGraph(OWNER, "mission-reject-test");
+    const reVerified = await graphStore.markNodeState({
+      ownerAgentInstanceId: OWNER,
+      graphIdentifier: "mission-reject-test",
+      expectedGraphRevision: afterReopen?.revision ?? 0,
+      contextNodeIdentifier: "node-T-001",
+      state: "locally-verified",
+    });
+    const reClosed = await graphStore.closeNode({
+      ownerAgentInstanceId: OWNER,
+      graphIdentifier: "mission-reject-test",
+      expectedGraphRevision: reVerified.revision,
+      contextNodeIdentifier: "node-T-001",
+      targetState: "deferred-review-closed",
+    });
+    const currentRevision = reClosed.revision;
     await controller.createDeferredVerificationTask({
       taskIdentifier: "verify-T-001",
       ownerAgentInstanceId: OWNER,
@@ -173,5 +191,61 @@ describe("否定裁决后的待追认条目不得变成死条目（stale-revisio
       entry?.contextGraphRevision,
       "重新完成后的条目仍绑定旧 revision ⇒ 追认必然 stale-revision（缺陷不会自愈）",
     ).toBe(currentRevision);
+  });
+
+  /**
+   * **2026-10-10 第二个面（同一缺陷，真实用户报告 `裁决失败：internal-error`）**：
+   *
+   * 用户此前在**修复前**的服务器上否决过，那条陈旧条目就**留在了磁盘上**。
+   * 修复后的服务器**照样把它列出来并给出「否决」按钮**，可节点早已是 `reopened`
+   * （非关闭态），于是 `reopenNode` 必然抛
+   * `context-node-not-closable`（"只有已关闭节点可以重新开放"）；
+   * 而 GUI 路由只映射 `stale-revision` / `verification-not-found` /
+   * `verification-context-missing`，其余**直接 rethrow** ⇒ 500 `internal-error`。
+   *
+   * 实测证据（生产状态目录 + 服务端日志）：
+   *   条目 verify-T-001 绑定 revision 4；图当前 revision 5；节点 state=`reopened`。
+   *   POST /commands/verification-decision ⇒ HTTP 500 {"error":"internal-error"}；
+   *   服务端日志 `PROBE-DECISION-ERROR code=context-node-not-closable`。
+   *
+   * 本用例钉住：**不可执行（节点非关闭态）的条目不得出现在待追认列表里** ——
+   * 否则界面必然提供一个点了就失败的按钮。
+   */
+  it("③ 节点已非关闭态时，陈旧条目不得出现在待追认列表中", async () => {
+    const graphRevision = await seedGraph();
+    await controller.createDeferredVerificationTask({
+      taskIdentifier: "verify-T-001",
+      ownerAgentInstanceId: OWNER,
+      contextNodeIdentifier: "node-T-001",
+      contextGraphRevision: graphRevision,
+      closureCapsuleHash: "sha256:" + "b".repeat(64),
+      humanSteps: "人工复核后再追认",
+      priorityTier: 1,
+    });
+    // 直接重开节点（模拟"修复前的旧服务器已否决过，条目却残留"的历史现场）
+    const graph = await graphStore.readGraph(OWNER, "mission-reject-test");
+    await graphStore.reopenNode({
+      ownerAgentInstanceId: OWNER,
+      graphIdentifier: "mission-reject-test",
+      expectedGraphRevision: graph?.revision ?? 0,
+      contextNodeIdentifier: "node-T-001",
+    });
+
+    const nodeNow = (await graphStore.readGraph(OWNER, "mission-reject-test"))?.nodes.find(
+      (node) => node.contextNodeIdentifier === "node-T-001",
+    );
+    expect(nodeNow?.state).toBe("reopened");
+
+    /**
+     * 该条目已不可能被裁决（否决会因节点非关闭态失败，追认会因 revision 过期失败）。
+     * 列出它 = 给用户一个必然失败的按钮。
+     */
+    const entriesForNode = (
+      await controller.listDeferredVerificationTasks(OWNER)
+    ).filter((task) => task.contextNodeIdentifier === "node-T-001");
+    expect(
+      entriesForNode,
+      "节点已是 reopened（非关闭态）却仍列出条目 ⇒ 界面提供的裁决按钮点了必然失败",
+    ).toEqual([]);
   });
 });

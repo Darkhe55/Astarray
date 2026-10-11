@@ -1158,6 +1158,15 @@ export async function startGuiServer(
           writeJsonResponse(response, 409, { error: "stale-revision" });
           return;
         }
+        /**
+         * **2026-10-10 修复**：条目已失效（节点非关闭态）属**业务冲突**，
+         * 此前未映射 ⇒ 直接 rethrow ⇒ 用户看到 HTTP 500 `internal-error`。
+         * 与 `stale-revision` 同为 409（状态冲突），并给出稳定错误码供界面显示。
+         */
+        if (errorCode === "verification-entry-stale") {
+          writeJsonResponse(response, 409, { error: "verification-entry-stale" });
+          return;
+        }
         if (
           errorCode === "verification-not-found" ||
           errorCode === "verification-context-missing"

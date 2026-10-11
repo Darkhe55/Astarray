@@ -25,6 +25,7 @@ import {
   type DeferredHumanVerificationTask,
   type HumanVerificationContinuationPolicy,
 } from "./context-closure-schemas.js";
+import { CLOSED_CONTEXT_NODE_STATES } from "./local-context-graph-store.js";
 import type { LocalContextGraphStore } from "./local-context-graph-store.js";
 import type { GlobalDecisionStore } from "./global-decision-store.js";
 
@@ -424,6 +425,32 @@ export class HumanVerificationController {
       return [];
     }
     const tasks: DeferredHumanVerificationTask[] = [];
+    /**
+     * **2026-10-10 修复（真实用户报告「裁决失败：internal-error」）**：
+     * 待追认条目只带 `contextNodeIdentifier`，不带 mission/图标识；而"该条目是否
+     * 仍可裁决"取决于其节点**当前是否仍为已关闭态**。列出注定失败的条目，
+     * 界面就必然给出一个点了必失败的按钮（实测：否决 ⇒ `context-node-not-closable`
+     * ⇒ 路由未映射 ⇒ HTTP 500 `internal-error`）。
+     *
+     * 故按节点当前状态过滤：**只有节点仍处于已关闭态的条目才算待追认**。
+     * 无法在任一图中定位到该节点时同样不列出（fail-closed）。
+     */
+    const closedNodeIdentifiers = new Set<string>();
+    if (this.graphStore !== null) {
+      for (const graphIdentifier of await this.graphStore.listGraphIdentifiers(
+        ownerAgentInstanceId,
+      )) {
+        const graph = await this.graphStore.readGraph(
+          ownerAgentInstanceId,
+          graphIdentifier,
+        );
+        for (const node of graph?.nodes ?? []) {
+          if ((CLOSED_CONTEXT_NODE_STATES as readonly string[]).includes(node.state)) {
+            closedNodeIdentifiers.add(node.contextNodeIdentifier);
+          }
+        }
+      }
+    }
     for (const fileName of fileNames
       .filter((name) => name.endsWith(".json"))
       .sort()) {
@@ -431,7 +458,7 @@ export class HumanVerificationController {
         ownerAgentInstanceId,
         fileName.slice(0, -".json".length),
       );
-      if (task !== null) {
+      if (task !== null && closedNodeIdentifiers.has(task.contextNodeIdentifier)) {
         tasks.push(task);
       }
     }
@@ -490,12 +517,31 @@ export class HumanVerificationController {
         if (currentGraph === null) {
           break;
         }
-        await this.graphStore.reopenNode({
-          ownerAgentInstanceId: input.ownerAgentInstanceId,
-          graphIdentifier: input.graphIdentifier,
-          expectedGraphRevision: currentGraph.revision,
-          contextNodeIdentifier: nodeIdentifier,
-        });
+        const targetNode = currentGraph.nodes.find(
+          (node) => node.contextNodeIdentifier === nodeIdentifier,
+        );
+        /**
+         * **2026-10-10 修复（真实用户报告「裁决失败：internal-error」）**：
+         * 只有**已关闭**节点可以重新开放。若节点已非关闭态（例如本条目是**修复前**
+         * 的旧服务器否决后残留的陈旧条目，节点早已 `reopened`），直接 `reopenNode`
+         * 会抛 `context-node-not-closable`，GUI 未映射该码 ⇒ 500 `internal-error`。
+         *
+         * 语义上该条目已无意义（对应的关闭早已作废）⇒ **不重开、不报错**，
+         * 仍记入 `reopenedNodeIdentifiers` 以便下方清除这条陈旧条目；
+         * 至于"节点已非关闭态"这一事实，调用方（公共 SDK）另行显式判定并给出
+         * 稳定业务错误码，不在本控制器里静默吞掉。
+         */
+        const isClosed =
+          targetNode !== undefined &&
+          (CLOSED_CONTEXT_NODE_STATES as readonly string[]).includes(targetNode.state);
+        if (isClosed) {
+          await this.graphStore.reopenNode({
+            ownerAgentInstanceId: input.ownerAgentInstanceId,
+            graphIdentifier: input.graphIdentifier,
+            expectedGraphRevision: currentGraph.revision,
+            contextNodeIdentifier: nodeIdentifier,
+          });
+        }
         reopenedNodeIdentifiers.push(nodeIdentifier);
       }
     }
