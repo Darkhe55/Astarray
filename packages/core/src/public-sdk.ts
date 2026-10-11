@@ -39,6 +39,22 @@ export {
   type ParameterAuthorizationSettings,
   type ParameterRuleMatch,
 } from "./tools/parameter-authorization.js";
+
+// ─── MERGE-01 §1.3：参数授权**设置入口**与"关闭细分不得静默扩大权限" ───
+// 卡内："关闭细分若会从 deny/ask 回退 allow，必须明确提示放宽范围，
+// 不以'关闭功能'静默扩大权限"；"扩大权限需既有认证用户确认"。
+export {
+  PARAMETER_AUTHORIZATION_SETTINGS_SCHEMA_VERSION,
+  ParameterAuthorizationSettingsStore,
+  evaluateParameterAuthorizationSettingChange,
+  validateSettingsDocument,
+  type ParameterAuthorizationSettingChangeOutcome,
+  type ParameterAuthorizationSettingsDocument,
+  type ParameterAuthorizationSettingsWriteResult,
+  type PermissionChangeEntry,
+  type PermissionEffect,
+  type ToolAuthorizationShape,
+} from "./tools/parameter-authorization-settings-store.js";
 // ─── MERGE-01：能力族 + action 统一（纵向样本与只读投影）公开入口 ───
 // 只读投影由本入口导出，保证 Ponder/主 Agent 视图不会因统一族名而暴露隐藏写动作。
 export {
