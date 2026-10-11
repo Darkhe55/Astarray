@@ -127,9 +127,25 @@ backup-vault（88.1% → 需 +6）、policy-wrapper、sensitive-content（92.7%�
 
 ### 8.1 未覆盖分支的确定性归类（非降低门槛）
 
+> **2026-10-10 更新（Linux 平台证据，WSL2 Ubuntu 26.04 / Node 22.22.1）**：
+> 上表"平台不可达"一类**已实测消除**。在 Linux 侧用同一套测试跑覆盖率后，
+> 三个被点名的模块在**全仓测试**下分支覆盖**全部 100%**：
+>
+> | 模块 | Windows（本卡原记录） | **Linux 实测** |
+> |---|---|---|
+> | `tools/protected-storage-policy.ts` | 22/23（余 1 个非 win32 分支） | **12/12 = 100%** |
+> | `tools/sensitive-content-access-policy.ts` | 53/55（余 2 个非 win32 分支） | **28/28 = 100%** |
+> | `orchestration/process-supervisor.ts` | 有缺口 | **29/29 = 100%** |
+>
+> **结论**：这些分支**确实是"仅非 win32 可达"的真实分支，而不是死代码** ——
+> 换到 Linux 后被**真实执行**。因此"平台不可达"这一归类从
+> **"无法验证的缺口"** 变为 **"已由 Linux 平台证据验证"**。
+> 证据与复现命令见 `docs/reports/LINUX_PLATFORM_EVIDENCE_2026-10-10.md`。
+> **仍未取得**：**macOS** 证据（WSL 不是 macOS；其信号/权限/进程终止语义不同）。
+
 | 类别 | 位置 | 依据 |
 |---|---|---|
-| 平台不可达 | sensitive-content-access-policy L78/L156、protected-storage-policy L40 | 仅在非 win32 分支成立；本机 Windows-only |
+| ~~平台不可达~~ **已由 Linux 证据验证** | ~~sensitive-content-access-policy L78/L156、protected-storage-policy L40~~ | 2026-10-10 Linux 侧实测三模块分支 **100%**（见上方更新块）；**macOS 仍未验证** |
 | 防御性死代码 | process-supervisor L79、local-tool-policy-engine L101、backup-vault L319、entrypoint L143、session-permission-elevation L103/L112 | 前置守卫或 `fs.rm(force)` 语义保证不可达；保留防御不回退语义 |
 | 需 mock 初始化失败 | entrypoint L244 双分支 | 需 mock MailboxJournal 构造抛错；本轮未引入该 mock |
 | 零散 | local-progress L85、agent-run-watchdog L75、mailbox-journal L143/L167、backup-vault L396/L404、process-supervisor L173 | 单一 `??` 操作数 / 符号链接（Windows junction 不报 isSymbolicLink）/ 非文件 dirent |

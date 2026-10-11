@@ -119,6 +119,30 @@ astarray: 需要权限的调用已阻断，但未能确认被请求的工具与�
 **不是**裸机 Linux，也**没有 macOS 证据**。macOS 的进程终止语义与信号/权限模型
 和 Linux 不完全相同 ⇒ **macOS 项仍未取得证据**。
 
+## 4b. AR-07 平台分支的 Linux 逐分支核算（2026-10-10）
+
+AR-07 卡内 §8.1 把三个模块的分支缺口归类为"**平台不可达**（仅非 win32 成立）"。
+本轮在 Linux 侧用**同一套全仓测试**跑覆盖率，结论是**这三个模块分支全部 100%**：
+
+| 模块 | Windows（AR-07 原记录） | **Linux 实测** | 判定 |
+| --- | --- | --- | --- |
+| `packages/core/src/tools/protected-storage-policy.ts` | 22/23（余 1 个非 win32 分支） | **12/12 = 100%** | 该分支**真实可达**，已执行 |
+| `packages/core/src/tools/sensitive-content-access-policy.ts` | 53/55（余 2 个非 win32 分支） | **28/28 = 100%** | 同上 |
+| `packages/core/src/orchestration/process-supervisor.ts` | 有缺口 | **29/29 = 100%** | 同上 |
+
+**意义**：原归类是"**无法在 Windows 验证的缺口**"，现在变成
+"**已由 Linux 平台证据验证的真实分支**" —— 且证明它们**不是死代码**。
+即 AR-07 的"平台不可达"一项**可以关闭**（macOS 除外）。
+
+复现：
+```bash
+cd /home/darkh/astarray-linux
+npx vitest run --coverage --coverage.reporter=json --coverage.reportOnFailure
+# 再用 node 解析 coverage/coverage-final.json 的 branchMap，按文件名过滤上述三个模块
+```
+
+**仍未取得**：**macOS** 证据（WSL 是 Linux，不是 macOS）。
+
 ## 5. 复现命令
 
 ```bash
