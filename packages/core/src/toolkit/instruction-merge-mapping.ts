@@ -18,6 +18,14 @@
 
 import { createHash } from "node:crypto";
 
+import {
+  evaluateInstructionMergeEligibility,
+  type InstructionMergeCandidate,
+} from "./instruction-merge-eligibility.js";
+
+/** 重新导出资格候选类型：调用方经本模块即可拿到建组所需的完整入参类型。 */
+export type { InstructionMergeCandidate };
+
 export interface OriginalInstructionRecord {
   instructionIdentifier: string;
   instructionText: string;
@@ -69,6 +77,13 @@ export interface InstructionMergeController {
     groupIdentifier: string;
     referencedInstructionIdentifiers: string[];
     createdByAgentInstanceId: string;
+    /**
+     * 建组**必须**附带的资格候选（MERGE-01-02）。
+     *
+     * 缺省 ⇒ **fail-closed 拒绝**：卡内要求"**本地检查后才采纳**"，
+     * 没有资格数据就无法检查，"没数据就当通过"等于取消该门禁。
+     */
+    mergeCandidates?: readonly InstructionMergeCandidate[];
   }): { isCreated: boolean; reason: string | null };
   describeGroupMapping(input: { groupIdentifier: string }): ExecutionGroupMappingEntry[];
   isGroupReferenceStillValid(input: {
@@ -181,6 +196,43 @@ export function createInstructionMergeController(options: {
         return {
           isCreated: false,
           reason: "执行组必须映射到至少一条原指令（空映射不得存在）",
+        };
+      }
+      /**
+       * **资格判定门禁**（MERGE-01-02）：卡内"只合并同项目、同任务权威、相容目标和
+       * 权限作用域的 ready 指令"，且"**本地检查后才采纳**"。
+       *
+       * 这一层此前缺失 ⇒ 判定层与建组层各自成立却互不相识，
+       * 跨项目/语义冲突/目标不明/在途副作用/依赖未 ready 的指令**照样能建组**。
+       */
+      if (input.mergeCandidates === undefined) {
+        return {
+          isCreated: false,
+          reason:
+            "未提供合并资格候选（mergeCandidates）：无法执行本地资格判定，" +
+            "按 fail-closed 拒绝建组（不得「没数据就当通过」）",
+        };
+      }
+      const eligibilityOutcome = evaluateInstructionMergeEligibility({
+        candidates: input.mergeCandidates,
+        isMergeEnabled: options.isMergeEnabled,
+      });
+      if (!eligibilityOutcome.canMerge) {
+        return {
+          isCreated: false,
+          reason: "合并资格判定未通过: " + String(eligibilityOutcome.reason),
+        };
+      }
+      /** 资格判定通过的候选必须与实际引用**一致**（不得用无关候选蒙混过关）。 */
+      const eligibleIdentifiers = new Set(eligibilityOutcome.mergedInstructionIdentifiers);
+      const isReferenceConsistent = input.referencedInstructionIdentifiers.every(
+        (instructionIdentifier) => eligibleIdentifiers.has(instructionIdentifier),
+      );
+      if (!isReferenceConsistent) {
+        return {
+          isCreated: false,
+          reason:
+            "引用的指令不在通过资格判定的集合内（判定与建组引用必须一致）",
         };
       }
       const missingIdentifiers = input.referencedInstructionIdentifiers.filter(

@@ -99,15 +99,21 @@ export function evaluateInstructionMergeEligibility(input: {
     };
   }
 
-  if (input.candidates.length < 2) {
+  /**
+   * **单条**指令：没有"合并对象"，但它本身可以构成一个退化组
+   * （单元素组在语义上是恒等合并）。此时逐项核对它自身的资格，
+   * 而不是直接以"少于两条"拒绝 —— 否则"引用不存在的原指令"这类**建组**语义
+   * 会被资格判定抢先掩盖成"无可合并对象"（实测中确实掩盖了原有断言）。
+   */
+  if (input.candidates.length === 0) {
     return {
       canMerge: false,
-      reason: "少于两条指令，无可合并对象",
+      reason: "没有候选指令",
       mergedInstructionIdentifiers: [],
       rejectedInstructionIdentifiers: [],
       resultMappingByInstructionIdentifier: {},
       supersededInstructionIdentifiers: [],
-      retainedInstructionIdentifiers: candidateIdentifiers,
+      retainedInstructionIdentifiers: [],
     };
   }
 

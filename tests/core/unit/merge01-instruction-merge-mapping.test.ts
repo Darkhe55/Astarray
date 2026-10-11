@@ -29,6 +29,33 @@ import {
   type OriginalInstructionRecord,
 } from "../../../packages/core/src/toolkit/instruction-merge-mapping.js";
 
+/**
+ * 构造"够格的合并候选"（MERGE-01-02 起建组**必须**附带资格候选）。
+ *
+ * 这些既有用例关注**映射/窗口/关闭**语义，因此这里给出**一律够格**的候选，
+ * 使资格门禁不干扰原有断言；资格门禁本身由
+ * `tests/core/unit/merge01-merge-eligibility-gate.test.ts` 专门覆盖。
+ */
+function buildEligibleMergeCandidates(instructionIdentifiers: readonly string[]) {
+  return instructionIdentifiers.map((instructionIdentifier) => ({
+    instructionIdentifier,
+    revision: 1,
+    instructionText: "指令 " + instructionIdentifier,
+    projectIdentifier: "project-alpha",
+    taskAuthorityIdentifier: "authority-1",
+    permissionScopeIdentifier: "scope-1",
+    goalIdentifier: "goal-1",
+    priorityTier: 0,
+    supersedesInstructionIdentifiers: [],
+    dependencyNodeIdentifiers: [],
+    completedDependencyNodeIdentifiers: [],
+    isSemanticallyConflicting: false,
+    isGoalAmbiguous: false,
+    requiresIndependentAuthorization: false,
+    hasSideEffectInFlight: false,
+  }));
+}
+
 function buildInstruction(
   overrides: Partial<OriginalInstructionRecord> = {},
 ): OriginalInstructionRecord {
@@ -61,6 +88,7 @@ describe("MERGE-01：执行组必须有原指令映射", () => {
       groupIdentifier: "group-1",
       referencedInstructionIdentifiers: [],
       createdByAgentInstanceId: "agent-1",
+        mergeCandidates: buildEligibleMergeCandidates([]),
     });
     expect(outcome.isCreated).toBe(false);
     expect(String(outcome.reason)).toMatch(/映射|原指令|空/);
@@ -73,6 +101,7 @@ describe("MERGE-01：执行组必须有原指令映射", () => {
       groupIdentifier: "group-1",
       referencedInstructionIdentifiers: ["ins-does-not-exist"],
       createdByAgentInstanceId: "agent-1",
+        mergeCandidates: buildEligibleMergeCandidates(["ins-does-not-exist"]),
     });
     expect(outcome.isCreated).toBe(false);
     expect(String(outcome.reason)).toMatch(/不存在|未找到/);
@@ -93,6 +122,7 @@ describe("MERGE-01：执行组必须有原指令映射", () => {
       groupIdentifier: "group-1",
       referencedInstructionIdentifiers: ["ins-1", "ins-2"],
       createdByAgentInstanceId: "agent-1",
+        mergeCandidates: buildEligibleMergeCandidates(["ins-1", "ins-2"]),
     });
     expect(outcome.isCreated).toBe(true);
     const mapping = controller.describeGroupMapping({ groupIdentifier: "group-1" });
@@ -117,6 +147,7 @@ describe("MERGE-01：不得覆盖原文、不得伪装用户指令", () => {
       groupIdentifier: "group-1",
       referencedInstructionIdentifiers: ["ins-1"],
       createdByAgentInstanceId: "agent-1",
+        mergeCandidates: buildEligibleMergeCandidates(["ins-1"]),
     });
     // 原指令被追加为新 revision（内容变化）
     controller.appendInstruction(
@@ -134,6 +165,7 @@ describe("MERGE-01：不得覆盖原文、不得伪装用户指令", () => {
       groupIdentifier: "group-1",
       referencedInstructionIdentifiers: ["ins-1"],
       createdByAgentInstanceId: "agent-1",
+        mergeCandidates: buildEligibleMergeCandidates(["ins-1"]),
     });
     const derived = controller.createDerivedWorkItem({
       groupIdentifier: "group-1",
@@ -156,6 +188,7 @@ describe("MERGE-01：合并开关与窗口计数", () => {
       groupIdentifier: "group-1",
       referencedInstructionIdentifiers: ["ins-1"],
       createdByAgentInstanceId: "agent-1",
+        mergeCandidates: buildEligibleMergeCandidates(["ins-1"]),
     });
     expect(outcome.isCreated).toBe(false);
     expect(String(outcome.reason)).toMatch(/合并开关|关闭|未启用/);
@@ -175,6 +208,7 @@ describe("MERGE-01：合并开关与窗口计数", () => {
       groupIdentifier: "group-1",
       referencedInstructionIdentifiers: ["ins-1", "ins-2", "ins-3"],
       createdByAgentInstanceId: "agent-1",
+        mergeCandidates: buildEligibleMergeCandidates(["ins-1", "ins-2", "ins-3"]),
     });
     expect(controller.countUnfinishedOriginalIntentions()).toBe(4);
     expect(controller.isWindowCapacityExceeded()).toBe(true);
@@ -203,6 +237,7 @@ describe("MERGE-01：组完成不自动关闭原指令", () => {
       groupIdentifier: "group-1",
       referencedInstructionIdentifiers: ["ins-1", "ins-2"],
       createdByAgentInstanceId: "agent-1",
+        mergeCandidates: buildEligibleMergeCandidates(["ins-1", "ins-2"]),
     });
     controller.markGroupCompleted({ groupIdentifier: "group-1" });
     expect(controller.isInstructionCompleted("ins-1")).toBe(false);
@@ -228,6 +263,7 @@ describe("MERGE-01：组完成不自动关闭原指令", () => {
       groupIdentifier: "group-1",
       referencedInstructionIdentifiers: ["ins-1"],
       createdByAgentInstanceId: "agent-1",
+        mergeCandidates: buildEligibleMergeCandidates(["ins-1"]),
     });
     controller.markGroupCompleted({ groupIdentifier: "group-1" });
     const verification = controller.verifyInstructionCompletion({

@@ -38,6 +38,32 @@ afterEach(async () => {
   await fs.rm(stateDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
+/**
+ * 构造"够格的合并候选"（MERGE-01-02 起建组**必须**附带资格候选）。
+ *
+ * 本套件关注**窗口计数**语义，故给出**一律够格**的候选，
+ * 使资格门禁不干扰原断言。
+ */
+function buildEligibleMergeCandidates(instructionIdentifiers: readonly string[]) {
+  return instructionIdentifiers.map((instructionIdentifier) => ({
+    instructionIdentifier,
+    revision: 1,
+    instructionText: "指令 " + instructionIdentifier,
+    projectIdentifier: "project-alpha",
+    taskAuthorityIdentifier: "authority-1",
+    permissionScopeIdentifier: "scope-1",
+    goalIdentifier: "goal-1",
+    priorityTier: 0,
+    supersedesInstructionIdentifiers: [],
+    dependencyNodeIdentifiers: [],
+    completedDependencyNodeIdentifiers: [],
+    isSemanticallyConflicting: false,
+    isGoalAmbiguous: false,
+    requiresIndependentAuthorization: false,
+    hasSideEffectInFlight: false,
+  }));
+}
+
 function buildInstruction(instructionIdentifier: string) {
   return {
     instructionIdentifier,
@@ -82,6 +108,7 @@ describe("MERGE-01：窗口计数必须由原指令逐项状态决定", () => {
       groupIdentifier: "group-1",
       referencedInstructionIdentifiers: ["ins-1", "ins-2", "ins-3"],
       createdByAgentInstanceId: "agent-1",
+        mergeCandidates: buildEligibleMergeCandidates(["ins-1", "ins-2", "ins-3"]),
     });
 
     const counted = countUnfinishedIntentionsInWindow({
@@ -132,6 +159,7 @@ describe("MERGE-01：窗口计数必须由原指令逐项状态决定", () => {
       groupIdentifier: "group-1",
       referencedInstructionIdentifiers: ["ins-1", "ins-2", "ins-3"],
       createdByAgentInstanceId: "agent-1",
+        mergeCandidates: buildEligibleMergeCandidates(["ins-1", "ins-2", "ins-3"]),
     });
 
     const snapshot = await store.snapshot();
@@ -173,6 +201,7 @@ describe("MERGE-01：窗口计数必须由原指令逐项状态决定", () => {
       groupIdentifier: "group-1",
       referencedInstructionIdentifiers: ["ins-1", "ins-2"],
       createdByAgentInstanceId: "agent-1",
+        mergeCandidates: buildEligibleMergeCandidates(["ins-1", "ins-2"]),
     });
     mergeController.markGroupCompleted({ groupIdentifier: "group-1" });
 
