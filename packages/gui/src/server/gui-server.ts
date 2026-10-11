@@ -631,7 +631,18 @@ ul { margin: 8px 0 0; padding-left: 20px; }
   source.onmessage = function (messageEvent) {
     try {
       var parsed = JSON.parse(messageEvent.data);
-      if (parsed.eventType === "task-status" || parsed.eventType === "task-finished") {
+      // 2026-10-10 修复（真实用户人工体验发现）：重连后服务端先回**完整快照**
+      // （eventType "snapshot"，内含 snapshot.tasks）。此前只处理 task-status /
+      // task-finished，于是 snapshot 被**静默丢弃** ⇒ 断线重连后任务列表
+      // **保留旧会话的陈旧内容**、既不清空也不更新
+      // （用户实测："任务列表未清空，也没有显示重连等提示"）。
+      // 修法：收到 snapshot 立即 refreshState()，以 /state 的**权威快照替换**界面内容
+      // （refreshState 是幂等替换、不是追加 ⇒ 不会产生重复条目）。
+      if (
+        parsed.eventType === "snapshot" ||
+        parsed.eventType === "task-status" ||
+        parsed.eventType === "task-finished"
+      ) {
         refreshState();
       }
     } catch (error) { /* 忽略非 JSON 事件 */ }
