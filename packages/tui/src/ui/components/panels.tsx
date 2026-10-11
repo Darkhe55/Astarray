@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 
 import type {
   UiInstructionWindowView,
+  UiParameterAuthorizationSettingsView,
   UiToolPackageView,
 } from "../state/app-state.js";
 
@@ -313,6 +314,33 @@ export function HelpModal(): ReactNode {
  * 并**看懂升级权限差异以决定是否拒绝** —— 因此这里把状态标签、作用域标签、
  * 是否需要重新授权与可读摘要都直接画出，而不是只显示内部枚举。
  */
+/**
+ * MERGE-01-03：参数授权设置**只读**面板。
+ *
+ * 卡内要求 GUI/TUI/CLI/SDK 一致，且 TUI 中必须能看懂"细分关闭**可能放宽权限**"。
+ * 本面板**不提供任何写入入口**（放宽需认证用户确认，走 SDK/CLI）。
+ */
+export function ParameterAuthorizationSettingsPanel({
+  view,
+}: {
+  view: UiParameterAuthorizationSettingsView;
+}): ReactNode {
+  return (
+    <Box flexDirection="column" borderStyle="single" paddingX={1}>
+      <Text bold>Parameter authorization</Text>
+      <Text>{view.displayText}</Text>
+      {view.isAvailable ? (
+        <Text dimColor>
+          总开关 {String(view.isParameterAuthorizationEnabled)} · 细分{" "}
+          {String(view.isParameterRulesEnabled)} · 规则 {String(view.ruleCount)} · revision{" "}
+          {String(view.configurationRevision)}
+        </Text>
+      ) : null}
+      <Text dimColor>只读：修改需经 SDK/CLI 确认门禁</Text>
+    </Box>
+  );
+}
+
 export function ToolPackagePanel({ view }: { view: UiToolPackageView }): ReactNode {
   return (
     <Box flexDirection="column" borderStyle="single" paddingX={1}>

@@ -19,6 +19,7 @@ import {
   HelpModal,
   InputBox,
   InstructionWindowPanel,
+  ParameterAuthorizationSettingsPanel,
   ToolPackagePanel,
   PermissionModal,
   PermissionProfilePanel,
@@ -162,6 +163,14 @@ export function AstarrayApp(props: AstarrayAppProps): ReactNode {
       state.getToolPackageView().upgradeDifferences.length > 0 ? (
         <ToolPackagePanel view={state.getToolPackageView()} />
       ) : null}
+      {/*
+        MERGE-01-03：参数授权设置**只读**面板。
+        不可用（`isAvailable === false`）时**仍然渲染** —— 它必须如实显示"未知"，
+        而不是像工具包那样"没有数据就不显示"（后者会让用户误以为不存在该设置）。
+      */}
+      <ParameterAuthorizationSettingsPanel
+        view={state.getParameterAuthorizationSettingsView()}
+      />
       <InputBox
         value={state.inputText}
         placeholder="输入任务（Enter 提交）"

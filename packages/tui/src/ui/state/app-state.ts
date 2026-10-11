@@ -83,6 +83,19 @@ export interface UiInstructionWindowView {
 
 /* ────────── TOOLKIT-01-04：工具包版本与升级差异（TUI 只读） ────────── */
 
+/** MERGE-01-03：参数授权设置的 **TUI 只读视图**（与 GUI 同口径）。 */
+export interface UiParameterAuthorizationSettingsView {
+  isAvailable: boolean;
+  isParameterAuthorizationEnabled: boolean | null;
+  isParameterRulesEnabled: boolean | null;
+  configurationRevision: number | null;
+  ruleCount: number | null;
+  mayWidenPermissions: boolean;
+  isReadOnly: true;
+  hasWriteAction: false;
+  displayText: string;
+}
+
 export interface UiToolPackageVersionRecord {
   toolPackageId: string;
   version: number;
@@ -239,6 +252,12 @@ export class AppState {
   /** SMART-01-04：排队区指令（与窗口内可分辨）。 */
   private queuedInstructions: UiInstructionWindowRecord[] = [];
   /** TOOLKIT-01-04：工具包版本与升级差异快照（未写入时为空视图）。 */
+  private parameterAuthorizationSettings: {
+    isParameterAuthorizationEnabled: boolean;
+    isParameterRulesEnabled: boolean;
+    configurationRevision: number;
+    ruleCount: number;
+  } | null = null;
   private toolPackageVersions: UiToolPackageVersionRecord[] = [];
   private toolPackageUpgradeDifferences: UiToolPackageUpgradeDifferenceRecord[] = [];
   metrics: UiMetricsSnapshot = {
@@ -404,6 +423,68 @@ export class AppState {
   clearToolPackages(): void {
     this.toolPackageVersions = [];
     this.toolPackageUpgradeDifferences = [];
+  }
+
+  // ─── MERGE-01-03：参数授权设置（**只读**，与 GUI 同口径） ───
+
+  /**
+   * 设置参数授权视图（MERGE-01-03）。
+   *
+   * 与 GUI 视图**同口径**（同字段集、同"未知"语义），避免出现两套说法。
+   */
+  setParameterAuthorizationSettings(input: {
+    isParameterAuthorizationEnabled: boolean;
+    isParameterRulesEnabled: boolean;
+    configurationRevision: number;
+    ruleCount: number;
+  }): void {
+    this.parameterAuthorizationSettings = { ...input };
+  }
+
+  /** 清空 ⇒ 必须回到**未知**（不得残留上一份数据）。 */
+  clearParameterAuthorizationSettings(): void {
+    this.parameterAuthorizationSettings = null;
+  }
+
+  /**
+   * 只读渲染视图。
+   *
+   * 三态语义：来源不可用时用 `null` + `isAvailable: false` **如实表示"未知"**，
+   * **不得**退化成 `false`（会被读成"已关闭"）或 `true`（会被读成"默认开启"）。
+   * **只读**：`hasWriteAction` 恒为 false（放宽权限需认证用户确认，走 SDK/CLI）。
+   */
+  getParameterAuthorizationSettingsView(): UiParameterAuthorizationSettingsView {
+    const settings = this.parameterAuthorizationSettings;
+    if (settings === null) {
+      return {
+        isAvailable: false,
+        isParameterAuthorizationEnabled: null,
+        isParameterRulesEnabled: null,
+        configurationRevision: null,
+        ruleCount: null,
+        mayWidenPermissions: false,
+        isReadOnly: true,
+        hasWriteAction: false,
+        displayText:
+          "参数授权设置未知（来源不可用；不假定默认开启）——只读，修改需经 SDK/CLI 确认门禁",
+      };
+    }
+    const mayWidenPermissions =
+      !settings.isParameterAuthorizationEnabled || !settings.isParameterRulesEnabled;
+    return {
+      isAvailable: true,
+      isParameterAuthorizationEnabled: settings.isParameterAuthorizationEnabled,
+      isParameterRulesEnabled: settings.isParameterRulesEnabled,
+      configurationRevision: settings.configurationRevision,
+      ruleCount: settings.ruleCount,
+      mayWidenPermissions,
+      isReadOnly: true,
+      hasWriteAction: false,
+      displayText: mayWidenPermissions
+        ? "参数授权细分已关闭：被 deny/ask 拦截的参数将回退 allow（**可能放宽权限**）；" +
+          "只读视图，放宽需既有认证用户确认后经 SDK/CLI 生效"
+        : "参数授权总开关已启用、每工具细分已启用（未放宽）；只读视图",
+    };
   }
 
   /** 只读渲染视图：状态/作用域给出可渲染标签，差异给出可读摘要。 */

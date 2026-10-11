@@ -1,8 +1,9 @@
 # MERGE-01 / NODECTX-01：指令合并、参数授权与无损上下文调度
 
-日期：2026-10-10（**第 40 轮订正**）。状态：**部分实施** ——
-MERGE-01：01 done / 02 部分 / 03 未开始；NODECTX-01：01 done / 02 done / 03 部分。
-**两卡均不主张整体通过**（剩余卡点见各检查点表与
+日期：2026-10-10（**第 46 轮订正**）。状态：
+**MERGE-01：01/02/03 全部 done**；**NODECTX-01：01/02/03 全部 done**。
+两卡在**本地可证范围**内均已交付；**仍不主张"整个项目"层面的完成**——
+人工体验结论与 Linux/macOS 平台证据只能由用户/平台提供（见
 `docs/reports/CROSS_CARD_RECONCILIATION_2026-10-10.md`）。
 
 **计划状态修改：必须，用户已授权。** 实施者在开始、阻塞和交付时同步本卡、PLAN_STATUS 当前有效表及必要索引；证据范围与并行冲突处理遵循 IMPLEMENTATION_PLAN §8.4。不是只交代码后以“未获文档授权”为由拒绝更新。
@@ -55,7 +56,7 @@ MERGE-01：01 done / 02 部分 / 03 未开始；NODECTX-01：01 done / 02 done /
 |---|---|---|
 | MERGE-01-01 | **done（2026-10-10）** | 见文末三节进展：① 参数级授权优先规则；② `instruction-merge-mapping.ts` —— 执行组到原指令映射、**合并开关**、原指令追加保存（来源/ID/revision/优先级/**取消权**/验收条件）、引用绑定 revision+内容指纹、**不得覆盖原文/伪装用户指令**、**窗口按原始未完成意图计数**（与组数无关）、**组完成不自动关闭原指令**；③ 映射层**接入真实 `InstructionWindowStore`**（`countUnfinishedIntentionsInWindow`）；④ 两个纵向样本**在派发路径上可达**（统一入口路由同一实现、旧名兼容）。反例 10+3+5 条。 |
 | MERGE-01-02 | **done（2026-10-10）** | 已交付：逐 action 参数校验（未知名拒绝，顺序为"先未知后必需"）、两工具适配（`projectFileRead`/`projectFileWrite`）**在派发路径上可达**、**"关闭细分不得静默扩大权限"**（放宽需**认证用户确认**、被拒**不推进 revision**、配置/生效 revision 分开）、**确定性合并资格判定**（同项目/同权威/同作用域/相容目标/ready 才合并；语义冲突/目标不明/独立授权/跨项目/在途副作用一律排除；明确 `supersedes` 走取代语义；结果**映射回原 ID**；开关**初始关闭**且**不丢原指令**；安全点拆回**只动未执行项、不重放副作用**）、**资格判定作为建组前置门禁**（未提供资格数据即 fail-closed 拒绝）⇒ 判定层与建组层**真正互联**。 |
-| MERGE-01-03 | **大部分完成**；**不判通过** | 已交付：**参数授权设置入口** —— SDK `query/updateParameterAuthorizationSettings`、CLI `settings parameter-authorization`（**CLI 与 SDK 逐字段一致**、未确认的放宽**同样被拒且不写文件**）、**GUI 只读视图**（缺失时**如实报"未知"**而非伪装默认开启，细分关闭提示**可能放宽**，`hasWriteAction` 恒 false）；**连续输入/部分失败/取消/重启端到端**（逐成员结算、**部分失败只影响对应节点**、**取消一项不牵连其他项**、保留**取消权**、已终态不得被覆盖、**成员集合冻结**拒绝晚到并入、**跨进程重启恢复**组与原指令）；**包级执行证据**（`verify-toolkit-package` **48/48**）。**仍未完成**：**TUI 内的设置界面**（当前经 CLI 子命令）。 |
+| MERGE-01-03 | **done（2026-10-10）** | 已交付：**参数授权设置入口** —— SDK `query/updateParameterAuthorizationSettings`、CLI `settings parameter-authorization`（**CLI 与 SDK 逐字段一致**、未确认的放宽**同样被拒且不写文件**）、**GUI 只读视图**、**TUI 只读面板**（三处**同口径**：缺失时**如实报"未知"**而非伪装默认开启；细分关闭提示**可能放宽**；`hasWriteAction` 恒 false），且 TUI 面板**不可用时仍然渲染**（否则用户会误以为不存在该设置）；**连续输入/部分失败/取消/重启端到端**（逐成员结算、**部分失败只影响对应节点**、**取消一项不牵连其他项**、保留**取消权**、已终态不得被覆盖、**成员集合冻结**拒绝晚到并入、**跨进程重启恢复**组与原指令）；**包级执行证据**（`verify-toolkit-package` **48/48**）。 |
 
 ### MERGE-01-01 进展（2026-10-10）：参数级授权优先规则
 
@@ -601,3 +602,27 @@ GUI **静默显示"未知"**，看起来就像"根本没有这个能力"。已�
   **6 条**，含**真实跨进程**（子进程建组并结算后退出，父进程仅凭磁盘恢复）。
 - 包级验收：`verify-toolkit-package` 47 → **48**（隔离包内**真实驱动**"部分失败隔离 + 晚到拒绝"）。
 - **仍未完成**：**TUI 内的设置界面**（当前经 CLI 子命令）⇒ **MERGE-01 整卡不主张通过**。
+### MERGE-01-03 进展（2026-10-10 三）：TUI 内设置界面
+
+**缺口（本轮实测）**：GUI 侧已有只读视图，但 **TUI 侧完全没有**该状态
+⇒ 用户在 TUI 里看不出参数细分是否关闭，也就无法在"关闭会放宽权限"时被正确提示，
+"四入口一致"里的 TUI 环节不成立。
+
+**交付**：
+
+- `AppState.setParameterAuthorizationSettings()` / `clearParameterAuthorizationSettings()` /
+  `getParameterAuthorizationSettingsView()`（新增 `UiParameterAuthorizationSettingsView`）；
+- `ParameterAuthorizationSettingsPanel`，并在 `app.tsx` 中渲染；
+- 与 GUI **同口径**（同字段集、同三态语义），避免出现两套说法：
+  不可用时 `null` + `isAvailable: false` **如实"未知"**（不得退化成 false/true）；
+  细分关闭 ⇒ `mayWidenPermissions: true` 且文案明确提示**可能放宽**；
+  `isReadOnly` 恒 true、`hasWriteAction` 恒 false。
+
+**一处刻意的差异（值得记录）**：工具包面板是"没有数据就不显示"，
+而本面板在**不可用时仍然渲染** —— 因为它必须如实显示"未知"；
+若也"没数据就不显示"，用户会误以为**不存在该设置**，这恰恰掩盖了风险。
+
+- 反例（先红后绿）：`tests/tui/unit/merge01-parameter-authorization-settings-panel.test.tsx`
+  **9 条**（含 **ink 真实渲染**断言：面板确实显示"放宽"与"只读"；不可用时显示"未知"
+  且**不得**显示"总开关 true"）。
+- **仍未完成**：无（本检查点三项任务均已交付）⇒ 待整卡收口评估。
