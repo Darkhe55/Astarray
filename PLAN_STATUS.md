@@ -33,6 +33,10 @@
 `Connection reset by 20.205.243.166 port 22`（SSH 通道不稳）⇒ 记为"本阶段跳过"，
 **下一轮优先把 `a8611b8` 与后续提交一并重试**；`origin/main` 此时停在 `88b61c5`。
 （该次随后已清偿：`a8611b8`+`7610a96` 于下一轮第 5 次尝试推送成功。）
+**第四次（2026-10-10 第 41 轮）**：`76a4459`（NODECTX-01-03 完成）首轮 8 次失败，
+探针（`git ls-remote --heads origin`）亦报 `Connection reset ... port 22`；
+**累计第 14 次尝试推送成功**（`e8d23b2..76a4459`），`origin/main` 已追平。
+**纪律执行**：提交始终先落在本地（推送失败不会丢提交），失败仅记为跳过并在随后优先重试。
 **第四次（本轮末）**：`525d0c8`（TOOLKIT-01-02 配方引擎）**连续 11 次推送失败**。
 `git push --verbose` 的完整错误为：
 `Connection reset by 20.205.243.166 port 22` → `fatal: Could not read from remote repository.`
