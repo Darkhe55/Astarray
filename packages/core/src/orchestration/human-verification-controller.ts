@@ -356,6 +356,30 @@ export class HumanVerificationController {
     return parsed.data;
   }
 
+  /**
+   * 清除某节点**全部**待追认条目（否决导致节点重开时调用）。
+   *
+   * 返回被清除的 taskIdentifier 列表，便于调用方/测试断言（不静默）。
+   * 逐个删除而非通配：只删该节点名下的条目，不触碰其他节点的待追认。
+   */
+  private async removeDeferredVerificationTasksForNode(
+    ownerAgentInstanceId: string,
+    contextNodeIdentifier: string,
+  ): Promise<string[]> {
+    const removedTaskIdentifiers: string[] = [];
+    for (const task of await this.listDeferredVerificationTasks(ownerAgentInstanceId)) {
+      if (task.contextNodeIdentifier !== contextNodeIdentifier) {
+        continue;
+      }
+      await fs.rm(
+        this.deferredVerificationTaskFilePath(ownerAgentInstanceId, task.taskIdentifier),
+        { force: true },
+      );
+      removedTaskIdentifiers.push(task.taskIdentifier);
+    }
+    return removedTaskIdentifiers;
+  }
+
   /** 读取单个延迟核验任务（不存在返回 null；损坏 fail-closed）。 */
   async readDeferredVerificationTask(
     ownerAgentInstanceId: string,
@@ -474,6 +498,22 @@ export class HumanVerificationController {
         });
         reopenedNodeIdentifiers.push(nodeIdentifier);
       }
+    }
+    /**
+     * **2026-10-10 修复（真实用户人工体验发现）**：节点被重开 ⇒ 图 revision 前进 ⇒
+     * 已有的待追认条目**绑定的是旧 revision**，而 `recordUserAcceptance` 要求
+     * `contextGraphRevision === currentContextGraphRevision` ⇒ 那条条目**永远追认不了**
+     * （用户实测："点否决显示节点重开，条目未消失，再点追认显示裁决失败：stale-revision"）。
+     *
+     * 语义上，被否决的关闭已经作废，针对它的待追认也就**失效**：这里把它清掉，
+     * 让返修后**在新 revision 上重新完成**时再产生新条目。清除是安全的 ——
+     * 若不清除，条目会以旧 revision 永久滞留且必然 `stale-revision`（死条目）。
+     */
+    for (const nodeIdentifier of reopenedNodeIdentifiers) {
+      await this.removeDeferredVerificationTasksForNode(
+        input.ownerAgentInstanceId,
+        nodeIdentifier,
+      );
     }
     const disputedGlobalDecisionIdentifiers: string[] = [];
     if (this.globalDecisionStore !== null) {

@@ -97,6 +97,13 @@ const ALLOWED_MODULES: Record<string, { tokens: AllowedTokens; reason: string }>
     tokens: ["writeFile"],
     reason: "人工变化 journal 写入",
   },
+  "core/src/orchestration/human-verification-controller.ts": {
+    tokens: ["writeFile", "rm"],
+    reason:
+      "待追认条目的落盘（writeFile）与**失效条目的清除**（rm）：" +
+      "否决重开节点使图 revision 前进后，原条目绑定的是旧 revision，追认必然 stale-revision，" +
+      "故必须清除以免留下死条目；只删该节点名下的 deferred 条目，不触碰产物与用户文件",
+  },
   "core/src/orchestration/recovery-checkpoint-store.ts": {
     tokens: ["writeFile", "copyFile", "rename"],
     reason: "检查点原子写（临时文件→rename）+ 损坏回退 .bak copy",

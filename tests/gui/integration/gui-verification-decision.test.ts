@@ -313,8 +313,21 @@ describe("GUI-01-R-03b 待追认与人工裁决", () => {
         (node) => node.contextNodeIdentifier === task.contextNodeIdentifier,
       )?.state,
     ).toBe("reopened");
-    // 否决只重开节点，不删除产物；再次列表仍可见该待追认项（未伪造成已签收）。
+    /**
+     * **2026-10-10 语义修正（真实用户人工体验发现）**：本行原为
+     * `expect(list.body).toContain(task.taskIdentifier)`，注释为"否决只重开节点，
+     * 不删除产物；再次列表仍可见该待追认项（未伪造成已签收）"。
+     *
+     * 那条断言**正是缺陷本身**：否决使图 revision 前进，而条目的
+     * `contextGraphRevision` 仍是旧值，`recordUserAcceptance` 要求两者相等
+     * ⇒ 用户再点「追认」必然 `stale-revision`（已实测复现）。"仍然可见"= **死条目**，
+     * 并不能作为"未伪造签收"的证据。
+     *
+     * 正确语义：被否决的关闭已作废 ⇒ 针对它的待追认随之失效并被清除；
+     * 返修后在**新 revision** 上重新完成时会再产生新条目。
+     * "未伪造成已签收"由上方**图节点状态为 `reopened`** 证明（那才是有力证据）。
+     */
     const list = await request({ port, method: "GET", path: "/verifications" });
-    expect(list.body).toContain(task.taskIdentifier);
+    expect(list.body).not.toContain(task.taskIdentifier);
   });
 });
