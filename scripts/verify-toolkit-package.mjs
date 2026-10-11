@@ -97,6 +97,7 @@ for (const name of [
   // NODECTX-01（与 MERGE-01 同卡）：无损上下文与可见性展示必须同样可达。
   "createLosslessContextManager",
   "buildContextVisibilityDisplayRows",
+  "createLosslessContextManager",
 ]) {
   observation.publicEntryExports[name] = typeof sdk[name] !== "undefined";
 }
@@ -474,6 +475,48 @@ try {
     toolPairIsAtomic = false;
   }
 
+  /**
+   * NODECTX-01：**重启恢复**实测 —— 同一暂存目录下另建管理器（不共享内存）后仅凭磁盘恢复，
+   * 可见性与原文都必须回来。
+   */
+  let isStateRestoredAcrossRestart = false;
+  let isOriginalContentBytesIdenticalAfterRestart = false;
+  try {
+    const restartStagingDirectory = path.join(stateDirectory, "nodectx-restart");
+    const stagingManager = sdk.createLosslessContextManager({
+      stagingDirectory: restartStagingDirectory,
+      maximumMigrationsPerRound: 4,
+    });
+    await stagingManager.stageNode({
+      nodeIdentifier: "probe-restart-node",
+      revision: 7,
+      sourceKind: "agent",
+      priorityTier: 1,
+      contentText: "跨重启必须逐字节保留的原文",
+      isUrgent: false,
+      isImportant: false,
+      isNeededForCurrentExecution: false,
+      toolCallIdentifier: null,
+      dependencyNodeIdentifiers: [],
+    });
+    // 全新管理器（不共享任何内存状态），仅凭磁盘恢复。
+    const restartedManager = sdk.createLosslessContextManager({
+      stagingDirectory: restartStagingDirectory,
+      maximumMigrationsPerRound: 4,
+    });
+    const restoreOutcome = await restartedManager.restoreFromDisk();
+    const restoredContent = await restartedManager.readStagedContent("probe-restart-node");
+    isStateRestoredAcrossRestart =
+      restoreOutcome.isRestored === true &&
+      restoreOutcome.restoredNodeCount === 1 &&
+      restartedManager.getVisibilityState("probe-restart-node") === "temporarily-closed";
+    isOriginalContentBytesIdenticalAfterRestart =
+      restoredContent === "跨重启必须逐字节保留的原文";
+  } catch {
+    isStateRestoredAcrossRestart = false;
+    isOriginalContentBytesIdenticalAfterRestart = false;
+  }
+
   const displayRows = sdk.buildContextVisibilityDisplayRows([
     {
       nodeIdentifier: "probe-staged",
@@ -502,6 +545,8 @@ try {
     pendingRatificationIsNotShownCompleted:
       displayRows.find((row) => row.nodeIdentifier === "probe-pending")?.isShownAsCompleted ===
       false,
+    isStateRestoredAcrossRestart,
+    isOriginalContentBytesIdenticalAfterRestart,
   };
   /* ── 隔离边界 ── */
   const basePlatform = {

@@ -229,11 +229,13 @@ export {
 
 // ─── NODECTX-01-02：无损暂存 / 自动补回 / 永久关闭与显式回访 ───
 export {
+  LOSSLESS_CONTEXT_STATE_SCHEMA_VERSION,
   createLosslessContextManager,
   type ExplicitRecallOutcome,
   type LosslessContextManager,
   type LosslessContextManagerOptions,
   type LosslessContextNode,
+  type LosslessContextRestoreOutcome,
   type PermanentClosureOutcome,
   type ReclaimOutcome,
   type StageOutcome,

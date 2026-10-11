@@ -36,6 +36,7 @@ function buildPassingObservation() {
       // NODECTX-01（与 MERGE-01 同卡）
       createLosslessContextManager: true,
       buildContextVisibilityDisplayRows: true,
+      createLosslessContextManager: true,
       buildGuiToolPackageView: false,
     },
     recipe: {
@@ -88,6 +89,8 @@ function buildPassingObservation() {
       diskFailureKeepsStateUnchanged: true,
       toolPairIsAtomic: true,
       pendingRatificationIsNotShownCompleted: true,
+      isStateRestoredAcrossRestart: true,
+      isOriginalContentBytesIdenticalAfterRestart: true,
     },
   };
 }

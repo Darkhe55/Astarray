@@ -24,6 +24,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import type { ContextVisibilityState, NodeBusinessStatus } from "./context-lossless-visibility.js";
+import { writeAtomicJson } from "../infra/atomic-json.js";
 
 export interface LosslessContextNode {
   nodeIdentifier: string;
@@ -48,6 +49,57 @@ export interface LosslessContextManagerOptions {
   stagingDirectory: string;
   /** 每轮迁移（补回）上限。 */
   maximumMigrationsPerRound: number;
+}
+
+interface LosslessContextIndexDocument {
+  schemaVersion: number;
+  reclaimedActivationKeys: string[];
+  migrationCountByNodeRevision: Record<string, number>;
+  stalledNodeRevisionKeys: string[];
+  revisionByNodeIdentifier: Record<string, number>;
+  /** 可见性权威来源（恢复时优先于"按原文文件推断"）。 */
+  visibilityStateByNodeIdentifier: Record<string, ContextVisibilityState>;
+  businessStatusByNodeIdentifier: Record<string, NodeBusinessStatus>;
+  completedPredecessorNodeIdentifiers: string[];
+  nodeByNodeIdentifier: Record<
+    string,
+    {
+      revision: number;
+      sourceKind: "user" | "agent" | "tool";
+      priorityTier: number;
+      isUrgent: boolean;
+      isImportant: boolean;
+      isNeededForCurrentExecution: boolean;
+      toolCallIdentifier: string | null;
+      dependencyNodeIdentifiers: string[];
+    }
+  >;
+}
+
+/**
+ * 读取索引（缺失或损坏 ⇒ 返回 null）。
+ *
+ * 为什么损坏**不抛**：原文仍在暂存目录里，可见性可以**仅凭原文文件名重建**
+ * （见 `restoreFromDisk`）—— 索引是加速/补充，不是唯一真相。
+ * 但这属于"部分恢复"，调用方可通过 `isIndexPresent: false` 得知。
+ */
+async function readIndexDocumentIfPresent(
+  indexFilePath: string,
+): Promise<LosslessContextIndexDocument | null> {
+  try {
+    const parsed = JSON.parse(
+      await fs.readFile(indexFilePath, "utf8"),
+    ) as LosslessContextIndexDocument;
+    if (
+      parsed.schemaVersion !== LOSSLESS_CONTEXT_STATE_SCHEMA_VERSION ||
+      !Array.isArray(parsed.reclaimedActivationKeys)
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
 }
 
 /** 写入端口（可注入以测试磁盘失败）。 */
@@ -85,8 +137,7 @@ export interface ExplicitRecallOutcome {
 export interface LosslessContextManager {
   setStagingWriterForTesting(writer: StagingWriterPort): void;
   /** 登记节点（配对暂存需要两侧都已登记）。 */
-  registerNode(node: LosslessContextNode): void;
-  registerKnownRevision(input: {
+  registerNode(node: LosslessContextNode): void;  registerKnownRevision(input: {
     nodeIdentifier: string;
     revision: number;
     contentHash: string;
@@ -114,10 +165,40 @@ export interface LosslessContextManager {
   listStagedNodeIdentifiers(): string[];
   readStagedContent(nodeIdentifier: string): Promise<string | null>;
   markPredecessorCompleted(input: { nodeIdentifier: string }): void;
+  /** 把"不可从原文重建"的状态（幂等键/迁移计数）落盘。 */
+  persistToDisk(): Promise<void>;
+  /** 从磁盘恢复状态（卡内"恢复时从磁盘索引对账"）。 */
+  restoreFromDisk(): Promise<LosslessContextRestoreOutcome>;
+}
+
+export interface LosslessContextRestoreOutcome {
+  isRestored: boolean;
+  /** 从暂存目录恢复的原文份数。 */
+  restoredNodeCount: number;
+  /** 索引文件是否存在（原文仍在但索引丢失时为 false，此时仍可重建可见性）。 */
+  isIndexPresent: boolean;
 }
 
 function computeContentHash(contentText: string): string {
   return "sha256:" + createHash("sha256").update(contentText, "utf8").digest("hex");
+}
+
+export const LOSSLESS_CONTEXT_STATE_SCHEMA_VERSION = 1;
+
+/** 从暂存文件名反解 `nodeIdentifier` 与 `revision`（恢复时对账用）。 */
+function parseStagingFileName(
+  fileName: string,
+): { nodeIdentifier: string; revision: number } | null {
+  const match = /^(.*)@r(\d+)\.txt$/.exec(fileName);
+  if (match === null) {
+    return null;
+  }
+  const nodeIdentifier = match[1];
+  const revisionText = match[2];
+  if (nodeIdentifier === undefined || revisionText === undefined) {
+    return null;
+  }
+  return { nodeIdentifier, revision: Number(revisionText) };
 }
 
 function stagingFileName(nodeIdentifier: string, revision: number): string {
@@ -129,6 +210,15 @@ function stagingFileName(nodeIdentifier: string, revision: number): string {
 export function createLosslessContextManager(
   options: LosslessContextManagerOptions,
 ): LosslessContextManager {
+
+  /**
+   * 索引文件与暂存目录**同级**：暂存目录只放原文（内容为真相），
+   * 索引只放不可从原文重建的状态。
+   */
+  const indexFilePath = path.join(
+    path.dirname(options.stagingDirectory),
+    "lossless-context-index.json",
+  );
   const visibilityStateByNodeIdentifier = new Map<string, ContextVisibilityState>();
   const businessStatusByNodeIdentifier = new Map<string, NodeBusinessStatus>();
   const nodeByNodeIdentifier = new Map<string, LosslessContextNode>();
@@ -196,6 +286,46 @@ export function createLosslessContextManager(
     });
   };
 
+  /**
+   * 落盘索引：**幂等键、迁移计数、可见性**等"不可从原文重建"的状态
+   * （卡内"恢复时从磁盘索引对账，防止重复注入与丢节点"）。
+   *
+   * 提取为工厂内函数（而非仅作为返回对象的方法），以便**箭头函数内部**也能调用
+   * （箭头函数没有自己的 `this`）。
+   */
+  const persistStateToDisk = async (): Promise<void> => {
+    await writeAtomicJson(indexFilePath, {
+      schemaVersion: LOSSLESS_CONTEXT_STATE_SCHEMA_VERSION,
+      reclaimedActivationKeys: [...reclaimedActivationKeys],
+      migrationCountByNodeRevision: Object.fromEntries(migrationCountByNodeRevision),
+      stalledNodeRevisionKeys: [...stalledNodeRevisionKeys],
+      revisionByNodeIdentifier: Object.fromEntries(revisionByNodeIdentifier),
+      /** 可见性以索引为**权威**（原文文件可能在补回后仍留在磁盘上）。 */
+      visibilityStateByNodeIdentifier: Object.fromEntries(
+        visibilityStateByNodeIdentifier,
+      ),
+      businessStatusByNodeIdentifier: Object.fromEntries(
+        businessStatusByNodeIdentifier,
+      ),
+      completedPredecessorNodeIdentifiers: [...completedPredecessorNodeIdentifiers],
+      nodeByNodeIdentifier: Object.fromEntries(
+        [...nodeByNodeIdentifier.entries()].map(([nodeIdentifier, node]) => [
+          nodeIdentifier,
+          {
+            revision: node.revision,
+            sourceKind: node.sourceKind,
+            priorityTier: node.priorityTier,
+            isUrgent: node.isUrgent,
+            isImportant: node.isImportant,
+            isNeededForCurrentExecution: node.isNeededForCurrentExecution,
+            toolCallIdentifier: node.toolCallIdentifier,
+            dependencyNodeIdentifiers: node.dependencyNodeIdentifiers,
+          },
+        ]),
+      ),
+    });
+  };
+
   const stageSingleNode = async (node: LosslessContextNode): Promise<StageOutcome> => {
     const protection = isProtectedFromStaging(node);
     if (protection.isProtected) {
@@ -241,6 +371,11 @@ export function createLosslessContextManager(
     if (!businessStatusByNodeIdentifier.has(node.nodeIdentifier)) {
       businessStatusByNodeIdentifier.set(node.nodeIdentifier, "pending");
     }
+    /**
+     * 直接写盘（**不用 `this`**）：`stageSingleNode` 是工厂内的箭头函数，
+     * 而"暂存成功即落盘"这件事本身是幂等的，重复写不会有副作用。
+     */
+    await persistStateToDisk();
     return { isStaged: true, reason: null };
   };
 
@@ -333,6 +468,7 @@ export function createLosslessContextManager(
       }
       visibilityStateByNodeIdentifier.set(callNode.nodeIdentifier, "temporarily-closed");
       visibilityStateByNodeIdentifier.set(resultNode.nodeIdentifier, "temporarily-closed");
+      await this.persistToDisk();
       return { isStaged: true, reason: null };
     },
 
@@ -419,6 +555,8 @@ export function createLosslessContextManager(
 
       const isIdempotentSkip =
         reclaimedNodeIdentifiers.length === 0 && !isOscillationDetected;
+      /** 补回改变了可见性与幂等键 ⇒ **必须落盘**，否则重启后会重复注入。 */
+      await this.persistToDisk();
       return {
         reclaimedNodeIdentifiers,
         isMigrationsCapped,
@@ -444,6 +582,7 @@ export function createLosslessContextManager(
       }
       visibilityStateByNodeIdentifier.set(input.nodeIdentifier, "permanently-closed");
       businessStatusByNodeIdentifier.set(input.nodeIdentifier, "completed");
+      await this.persistToDisk();
       return { isClosed: true, reason: null };
     },
 
@@ -499,6 +638,113 @@ export function createLosslessContextManager(
 
     markPredecessorCompleted(input) {
       completedPredecessorNodeIdentifiers.add(input.nodeIdentifier);
+      void persistStateToDisk();
     },
+
+    persistToDisk: persistStateToDisk,
+
+    async restoreFromDisk() {
+      const indexDocument = await readIndexDocumentIfPresent(indexFilePath);
+      let restoredNodeCount = 0;
+      /** 以**磁盘原文**为准重建可见性（出现原文文件即视为暂存）。 */
+      let fileNameList: string[];
+      try {
+        fileNameList = await fs.readdir(options.stagingDirectory);
+      } catch {
+        fileNameList = [];
+      }
+      const stagedNodeIdentifiers = new Set<string>();
+      for (const fileName of fileNameList) {
+        if (!fileName.endsWith(".txt")) {
+          continue;
+        }
+        const parsedFileName = parseStagingFileName(fileName);
+        if (parsedFileName === null) {
+          continue;
+        }
+        revisionByNodeIdentifier.set(
+          parsedFileName.nodeIdentifier,
+          parsedFileName.revision,
+        );
+        stagedNodeIdentifiers.add(parsedFileName.nodeIdentifier);
+        restoredNodeCount += 1;
+      }
+      if (indexDocument !== null) {
+        for (const key of indexDocument.reclaimedActivationKeys) {
+          reclaimedActivationKeys.add(key);
+        }
+        for (const [key, value] of Object.entries(
+          indexDocument.migrationCountByNodeRevision,
+        )) {
+          migrationCountByNodeRevision.set(key, value);
+        }
+        for (const key of indexDocument.stalledNodeRevisionKeys) {
+          stalledNodeRevisionKeys.add(key);
+        }
+        for (const predecessorNodeIdentifier of indexDocument.completedPredecessorNodeIdentifiers) {
+          completedPredecessorNodeIdentifiers.add(predecessorNodeIdentifier);
+        }
+        /**
+         * **可见性以索引为准**（不是"有原文文件就算暂存"）。
+         *
+         * 为什么：节点被补回后原文文件**仍然留在磁盘上**（无损要求不删原文），
+         * 若按文件推断就会在每次重启时把已补回的节点**重新算成暂存** ⇒
+         * 重启后重复注入（卡内明令防止）。
+         */
+        for (const [nodeIdentifier, visibilityState] of Object.entries(
+          indexDocument.visibilityStateByNodeIdentifier,
+        )) {
+          visibilityStateByNodeIdentifier.set(nodeIdentifier, visibilityState);
+        }
+        for (const [nodeIdentifier, businessStatus] of Object.entries(
+          indexDocument.businessStatusByNodeIdentifier,
+        )) {
+          businessStatusByNodeIdentifier.set(nodeIdentifier, businessStatus);
+        }
+        for (const [nodeIdentifier, persistedNode] of Object.entries(
+          indexDocument.nodeByNodeIdentifier,
+        )) {
+          revisionByNodeIdentifier.set(nodeIdentifier, persistedNode.revision);
+          dependenciesByNodeIdentifier.set(
+            nodeIdentifier,
+            persistedNode.dependencyNodeIdentifiers,
+          );
+          nodeByNodeIdentifier.set(nodeIdentifier, {
+            nodeIdentifier,
+            revision: persistedNode.revision,
+            sourceKind: persistedNode.sourceKind,
+            priorityTier: persistedNode.priorityTier,
+            /**
+             * 原文**从磁盘回读**（内容为真相）。索引里**不存原文**，
+             * 避免出现"索引与暂存原文两份真相"。
+             */
+            contentText: (await this.readStagedContent(nodeIdentifier)) ?? "",
+            isUrgent: persistedNode.isUrgent,
+            isImportant: persistedNode.isImportant,
+            isNeededForCurrentExecution: persistedNode.isNeededForCurrentExecution,
+            toolCallIdentifier: persistedNode.toolCallIdentifier,
+            dependencyNodeIdentifiers: persistedNode.dependencyNodeIdentifiers,
+          });
+        }
+      } else {
+        /**
+         * **索引缺失**（首次运行或索引损坏）：退回"按原文文件推断可见性"。
+         * 这是**部分恢复**：无法区分"已补回"与"仍暂存"，故一律保守视为暂存
+         * （宁可多补回一次并由幂等/滞回兜底，也不丢节点），并通过
+         * `isIndexPresent: false` 让调用方知情。
+         */
+        for (const nodeIdentifier of stagedNodeIdentifiers) {
+          if (!visibilityStateByNodeIdentifier.has(nodeIdentifier)) {
+            visibilityStateByNodeIdentifier.set(nodeIdentifier, "temporarily-closed");
+          }
+        }
+      }
+      return {
+        isRestored: true,
+        restoredNodeCount,
+        isIndexPresent: indexDocument !== null,
+      };
+    },
+
   };
 }

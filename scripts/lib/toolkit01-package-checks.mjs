@@ -51,6 +51,7 @@ export function buildToolkitPackageChecks(observation) {
     // NODECTX-01（MERGE-01/NODECTX-01 同卡）：无损上下文与可见性展示必须同样可达。
     ["createLosslessContextManager", "无损上下文管理器"],
     ["buildContextVisibilityDisplayRows", "上下文可见性展示"],
+    ["createLosslessContextManager", "无损上下文管理器（重启恢复）"],
   ];
   for (const [exportName, displayName] of entryNames) {
     const isPresent =
@@ -232,6 +233,13 @@ export function buildToolkitPackageChecks(observation) {
     "NODECTX-01：工具调用与结果不拆散（配对同进同出）",
     readObservation(observation, "losslessContext", "toolPairIsAtomic") === true,
     "配对节点必须同进同出，单个暂存带调用标识即拒绝",
+  );
+  record(
+    "NODECTX-01：暂存状态与原文必须能跨进程重启恢复（不得丢节点）",
+    readObservation(observation, "losslessContext", "isStateRestoredAcrossRestart") === true &&
+      readObservation(observation, "losslessContext", "isOriginalContentBytesIdenticalAfterRestart") ===
+        true,
+    "重启后可见性必须恢复为暂存、原文必须逐字节可读",
   );
   record(
     "NODECTX-01：待追认不被显示为已完成成果",
