@@ -63,7 +63,7 @@
 要得到它必须**在同一 fixture 下把原流程也真实跑一遍**并逐项对比，
 本轮**未做**该对照。卡内"不杜撰节省"的纪律据此保持。
 
-## 4. 附带发现（如实记录，未改）
+## 4. 附带发现 —— **已修复（2026-10-10 同一会话）**
 
 `--provider-credential-reference` + `--provider-protocol anthropic-messages` 的组合
 在本仓**当前不可用**：`runtime-selection.ts:141` 把 `baseUrl` 取自**凭据条目**
@@ -71,8 +71,21 @@
 `anthropic-messages-runtime.ts:166` 都把 `baseUrl` 当作**完整端点**使用，
 且该分支下 `--provider-endpoint` **被忽略** ⇒ 必然 404。
 两处不一致（"凭据里 baseUrl 的形态" vs "运行时把 baseUrl 当完整端点"）
-**属真实可用性缺口**，但修它会改变凭据语义与 CLI 契约，
-**本会话未改**，如实登记为后续入口。
+**属真实可用性缺口。**
+
+**已修复（`4e8c52d`）**：显式给出的端点现在**优先**（显式输入胜过存储默认值），
+未给出或空串时才回退凭据 `baseUrl`（保住"引用存在 ⇒ 无需 `--provider-endpoint`"
+的原契约）；并新增 `isEndpointFromCredential` 标明来源，使诊断能回答
+"我用的到底是谁的端点"。
+
+**端到端验证**：同一条此前必然 404 的命令，修复后 **exit 0、`{"status":"done"}`**：
+```bash
+node dist/cli.js run "只回答两个字：可用" --runtime openai-compatible \
+  --provider-endpoint https://maas-api.unisound.com/anthropic/v1/messages \
+  --provider-model u2-flash --provider-protocol anthropic-messages \
+  --provider-credential-reference prov-unisound-1
+```
+反例先红后绿：`tests/tui/unit/runtime-endpoint-priority.test.ts` **4 条**（实现前 ①③ 红）。
 
 ## 5. 复现
 
