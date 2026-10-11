@@ -70,10 +70,23 @@ describe("GitProcess 超时的进程树收口（R2）", () => {
       executableArgumentsPrefix: ["-e", buildParentScript(heartbeatPath)],
     });
 
-    // 让夹具运行 1.2s 后主动放弃等待（不依赖超时），确认孙进程已写入心跳。
+    /**
+     * 让夹具运行一段时间后主动放弃等待（不依赖超时），确认孙进程已写入心跳。
+     *
+     * **2026-10-10 修复（负载下的假失败）**：此前这个窗口是 **1.2s**，
+     * 而本用例要求的是"**生成**一棵进程树（parent 再 spawn grandchild，各自启动一个
+     * Node 运行时）并在窗口内写出 **>3** 行心跳（每 50ms 一行 ⇒ 至少 150ms）"。
+     * 在全量并发（`npm run check`，几百个用例抢 CPU）下，仅 **Node 进程启动**
+     * 就可能吃掉 1.2s 的大部分 ⇒ 心跳行数 <3 ⇒ **假失败**。
+     * 孤立复跑该文件是 2/2 通过（⓪ 实际耗时约 4.1s，说明树生成确实慢），
+     * 证实是**窗口预算不足**，不是产品缺陷、也不是本文件断言的缺陷。
+     *
+     * 故把活性窗口放宽到 **6s**：这只影响"是否给夹具足够时间**证明自己活着**"，
+     * **不触及任何断言强度** —— `>3` 的门槛与 ① 的"心跳停止增长"判定都原样保留。
+     */
     await Promise.race([
       gitProcess.run(workingDirectoryPath, [], "夹具命令（活性）").catch(() => null),
-      new Promise((resolve) => setTimeout(resolve, 1_200)),
+      new Promise((resolve) => setTimeout(resolve, 6_000)),
     ]);
     expect(countHeartbeatLines(heartbeatPath)).toBeGreaterThan(3);
   });

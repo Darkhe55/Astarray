@@ -151,7 +151,15 @@ describe("B6R-10：waitForPermissionAsk 的等待与收口语义", () => {
     let queryCount = 0;
     const ask = await waitForPermissionAsk(
       [],
-      40,
+      /**
+       * **2026-10-10 修复（负载下的假失败）**：此前窗口是 **40ms**，而断言要求
+       * `queryCount > 1`，即至少完成 **2 轮**查询。轮询间隔是 **25ms**：
+       * 第一次查询立即发生，第二次最早在 ~25ms 后 —— 全量并发（几百用例抢 CPU）下
+       * 40ms 内跑不完第二轮 ⇒ **假失败**（本用例在全量 `check` 中偶发失败、孤立复跑全绿）。
+       * 放宽到 120ms 只影响"**是否给到至少两轮**"，**不降断言强度**：
+       * 仍要求"超时耗尽 ⇒ 返回 null"，且仍要求**确实轮询过多次**（不是一次就放弃）。
+       */
+      120,
       async () => {
         queryCount += 1;
         return { status: "blocked" };
