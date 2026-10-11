@@ -81,7 +81,7 @@
 | SMART-01-01 | 现有 GUIDE/完成/恢复链路审计、ADR、指令状态和窗口契约 | 明确计数/关闭/部分处理/期限语义，与 task done 区别清楚；不新建任务调度器 |
 | SMART-01-02 | 持久队列、原子准入/回执/补位、模式及窗口设置 | 上限3时第4条排队；重复/乱序回执、降上限、同键异参、并发连发和重启无重复投递 |
 | SMART-01-03 | 早停分类、漏回执兜底及澄清参考 | 早停不注入新工作；无答案保持等待；仅抽取答案；混合信封保留剩余任务；停止/休息/授权不被绕过 |
-| SMART-01-04 | 主 Agent 期限监督、持续接收、SDK/CLI/TUI/GUI入口和包验收 | 模拟慢模型/长下级任务仍能接收新指令；180秒内派发或如实超时/待澄清；关闭回收，UI状态不冒充成果完成 |
+| SMART-01-04 | **done（本地可证 + 真实运行范围）**；仅剩 macOS 平台证据 | 模拟慢模型/长下级任务仍能接收新指令 —— **真实运行已通过**（u2-flash，exit 0、判据 8/8：派发 18ms、接收 13ms、派发≠完成、关闭回收、凭据零写入）；180 秒内派发或如实超时/待澄清（离线 5+6 条反例）；关闭回收；UI 状态不冒充成果完成。**仍未取得**：macOS 平台证据 |
 
 **SMART-01-04 进展（2026-10-10，本轮）**：指令窗口与三分钟期限此前只有"**被 re-export 的独立组件**"
 （`InstructionWindowStore`、`evaluateInstructionDeadline`、`buildBackfillPlan`），
@@ -97,10 +97,26 @@
   `isGatedByExistingGate=true` 且 `canAcceptNewInstruction=false`、未知幂等键**响亮拒绝**。
 - 反例（先红后绿）：`tests/core/integration/smart01-window-deadline-entry.test.ts` 5 条，
   实现前 `acceptUserInstruction is not a function` / 5 failed。
-- **尚未完成（如实保留，不主张 SMART-01-04 通过）**：
-  "模拟慢模型/长下级任务仍能接收新指令"的**真实运行**证据（此前只用离线探针；
-  该路径需真实 Provider 凭据与费用授权，属用户/外部依赖）。
-  四入口（SDK/CLI/TUI/GUI）接线与**包级 tarball 验收**本轮**均已落地**。
+- **原先未完成项已补齐（2026-10-10，取得真实额度后）**：
+  "模拟慢模型/长下级任务仍能接收新指令"的**真实运行**证据**已取得** ——
+  `node scripts/verify-u2-flash-continuous-reception.mjs`（云之声 **u2-flash**，
+  真实慢模型单次约 4.6–5s）**退出码 0、判据 8/8 通过**：
+  - ① 长只读任务 180 秒内受理并派发（派发 **18 ms**）；
+  - ② 任务 A 提交后处于**在途**（`running`）；
+  - ③ **在途期间仍能接收新指令**（接收 **13 ms**）；
+  - ④ 派发状态与成果完成**可区分**（提交时 `accepted`、终态 `done`）——对应
+    "**UI 状态不冒充成果完成**"；
+  - ⑤ 两条指令均收敛到终态（**关闭回收**）；
+  - ⑥⑦ 真实运行确实产出成果（A=`done` B=`done`）；
+  - ⑧ **未写入受保护凭据**（运行前后 sha256 一致）。
+  人类可读报告：`docs/reports/SMART01_04_LIVE_U2_FLASH_EVIDENCE_2026-10-10.md`。
+  可移植门禁：`tests/tui/integration/smart01-04-live-u2-flash-verdict.test.ts`
+  （无条件校验验证脚本契约；判据产物存在时逐条核对）。
+  ⇒ **SMART-01-04 本地可证范围 + 真实运行范围均已交付**。
+  **仍未取得**：macOS 平台证据（本项仅 Windows）；`--probe-only` 模式在
+  Windows + Node v24.18.0 上退出路径触发 libuv 断言（已如实登记、未修，
+  全量模式不受影响）。
+  四入口（SDK/CLI/TUI/GUI）接线与**包级 tarball 验收**均已落地。
 
 **SMART-01-04 包级 tarball 验收（2026-10-10，本轮续）**：
 

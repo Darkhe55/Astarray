@@ -229,24 +229,43 @@ export const FAULT_INJECTION_MATRIX: readonly FaultInjectionEntry[] = [
     dimension: "permission-revocation",
     representativeOperation:
       "SMART-01-04：慢模型/长下级任务在途时**真实运行**下的持续接收（180 秒内派发或如实超时）",
-    verdict: "not-verified",
+    verdict: "confirmed",
     summary:
-      "**离线部分已证**（`instruction-continuous-reception.test.ts` 6 条含真实 120ms 慢任务延迟、" +
-      "`smart01-window-deadline-entry.test.ts` 5 条含期限自接收起计与超期如实报超时），" +
-      "但卡内措辞要求的是『**真实运行**整机实测』。本会话**无真实 Provider 额度**，" +
-      "**不拿离线用例冒充真实运行证据**；须由具备额度者执行后再改判",
+      "**真实运行已通过（2026-10-10，云之声 u2-flash）**：`verify:u2-flash-continuous-reception` " +
+      "**退出码 0、判据 8/8 通过** —— 真实慢模型（单次约 4.6–5s）在途期间仍能接收新指令" +
+      "（派发 18ms、接收 13ms，均远低于 180 秒上限）；派发状态与成果完成**可区分**" +
+      "（提交时 accepted、终态 done）；两条指令均收敛到终态（关闭回收）；" +
+      "且专门断言**运行前后受保护凭据文件 sha256 一致**（未写入凭据）。" +
+      "此前该条为 `not-verified`（无额度）；本轮取得额度后改判。" +
+      "**附注**：`--probe-only` 模式在 Windows + Node v24.18.0 上连通检查通过但退出路径" +
+      "触发 libuv 断言 `UV_HANDLE_CLOSING`（3/3 复现、非管道问题），全量模式不受影响，已如实记录未修",
+    /**
+     * 证据引用必须**仓库相对且以 `tests/` 开头**（见
+     * `tests/core/unit/reliability-fault-injection-matrix.test.ts` ⑨）。
+     * 真实运行判据本体在 `.tmp/live-u2-flash/acceptance-verdict.json`（**产物**，
+     * 已 gitignore 不进版本库），故这里引用**可移植门禁**：它校验验证脚本的契约，
+     * 并在产物存在时逐条核对判据。人类可读实测报告见
+     * `docs/reports/SMART01_04_LIVE_U2_FLASH_EVIDENCE_2026-10-10.md`。
+     */
+    evidenceFilePaths: [
+      "tests/tui/integration/smart01-04-live-u2-flash-verdict.test.ts",
+      "tests/tui/unit/smart01-instruction-cli-entry.test.ts",
+    ],
   },
   {
     entryIdentifier: "load-sensitive-full-gate-flake",
     timing: "inflight",
     dimension: "cancel-complete-race",
-    representativeOperation: "全量门禁并发下与本次改动无关的快速用例偶发失败",
+    representativeOperation:
+      "全量门禁并发下与本次改动无关的用例偶发失败（**已定位到具体用例**）",
     verdict: "not-verified",
     summary:
-      "本会话多次观测：全量并发运行时偶发 1–3 条**与本次改动无关**的用例失败" +
-      "（provider 假服务、e2e01 写探针、gui 快照形状等），**隔离复跑全绿**；" +
-      "根因此前定位到 `%TEMP%` 下大量 `astarray-*` 目录导致清理失败，" +
-      "清洁后连续通过。**未在产品代码中修复**，故**不标为已修**；" +
+      "**已定位到具体用例**（此前只笼统记为『负载抖动』）：" +
+      "`tests/core/integration/reliability-r4-ledger-concurrency.test.ts` ④" +
+      "（多轮交错并发 4×6 幂等账目追平，有界 20s 等待）在本会话至少 2 次全量运行中" +
+      "失败，而**隔离单跑 3/3 通过**；另有少量 provider/gui 用例。" +
+      "根因此前定位到 `%TEMP%` 下大量 `astarray-*` 目录导致清理失败，清洁后连续通过。" +
+      "**未在产品代码中修复**，故**不标为已修**；" +
       "`run-command-gaps` 曾 60s 超时但本会话**未复现**，同样保持未验证",
   },
 ];
