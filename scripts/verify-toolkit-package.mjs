@@ -98,6 +98,7 @@ for (const name of [
   "createLosslessContextManager",
   "buildContextVisibilityDisplayRows",
   "createLosslessContextManager",
+  "evaluateParameterAuthorizationSettingChange",
 ]) {
   observation.publicEntryExports[name] = typeof sdk[name] !== "undefined";
 }
@@ -517,6 +518,51 @@ try {
     isOriginalContentBytesIdenticalAfterRestart = false;
   }
 
+  /**
+   * MERGE-01 §1.3：**真实驱动**设置变更判定 —— 关闭细分使 deny 规则失效即为放宽，
+   * 未确认必须被拒；判定本身不得产生副作用。
+   */
+  let parameterAuthorization = {
+    isWideningDetected: false,
+    isUnconfirmedWideningRejected: false,
+    isRejectionSideEffectFree: false,
+  };
+  try {
+    const wideningOutcome = sdk.evaluateParameterAuthorizationSettingChange({
+      previousSettings: {
+        isParameterAuthorizationEnabled: true,
+        isParameterRulesEnabled: true,
+      },
+      nextSettings: {
+        isParameterAuthorizationEnabled: true,
+        isParameterRulesEnabled: false,
+      },
+      tools: [
+        {
+          toolName: "readFile",
+          unifiedEffect: "allow",
+          ruleEffects: [{ ruleIdentifier: "rule-deny-secrets", effect: "deny" }],
+        },
+      ],
+      isConfirmedByAuthenticatedUser: false,
+      configurationRevision: 3,
+      effectiveRevision: 3,
+    });
+    parameterAuthorization = {
+      isWideningDetected: wideningOutcome.widenedPermissions.length > 0,
+      isUnconfirmedWideningRejected: wideningOutcome.isAccepted === false,
+      /** 被拒时**不得推进任何 revision**（不得半生效）。 */
+      isRejectionSideEffectFree:
+        wideningOutcome.configurationRevision === 3 && wideningOutcome.effectiveRevision === 3,
+    };
+  } catch {
+    parameterAuthorization = {
+      isWideningDetected: false,
+      isUnconfirmedWideningRejected: false,
+      isRejectionSideEffectFree: false,
+    };
+  }
+
   const displayRows = sdk.buildContextVisibilityDisplayRows([
     {
       nodeIdentifier: "probe-staged",
@@ -548,6 +594,7 @@ try {
     isStateRestoredAcrossRestart,
     isOriginalContentBytesIdenticalAfterRestart,
   };
+  observation.parameterAuthorization = parameterAuthorization;
   /* ── 隔离边界 ── */
   const basePlatform = {
     platformIdentifier: "probe-platform",

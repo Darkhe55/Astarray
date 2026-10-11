@@ -5155,3 +5155,5 @@ export async function executeToolPackageFeedbackCommand(
     failWith(error instanceof Error ? error : new Error(String(error)));
   }
 }
+export { executeParameterAuthorizationSettingsCommand } from "./parameter-authorization-settings-command.js";
+export type { ParameterAuthorizationSettingsCommandOptions } from "./parameter-authorization-settings-command.js";

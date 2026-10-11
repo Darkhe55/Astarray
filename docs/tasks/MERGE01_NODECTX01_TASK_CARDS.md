@@ -55,7 +55,7 @@ MERGE-01：01 done / 02 部分 / 03 未开始；NODECTX-01：01 done / 02 done /
 |---|---|---|
 | MERGE-01-01 | **done（2026-10-10）** | 见文末三节进展：① 参数级授权优先规则；② `instruction-merge-mapping.ts` —— 执行组到原指令映射、**合并开关**、原指令追加保存（来源/ID/revision/优先级/**取消权**/验收条件）、引用绑定 revision+内容指纹、**不得覆盖原文/伪装用户指令**、**窗口按原始未完成意图计数**（与组数无关）、**组完成不自动关闭原指令**；③ 映射层**接入真实 `InstructionWindowStore`**（`countUnfinishedIntentionsInWindow`）；④ 两个纵向样本**在派发路径上可达**（统一入口路由同一实现、旧名兼容）。反例 10+3+5 条。 |
 | MERGE-01-02 | **大部分完成**；**不判通过** | 已交付：逐 action 参数校验（未知名拒绝，顺序为"先未知后必需"）、两工具适配（`projectFileRead`/`projectFileWrite`）**在派发路径上可达**、**"关闭细分不得静默扩大权限"**（`evaluateParameterAuthorizationSettingChange`：放宽需**认证用户确认**、被拒**不推进 revision**、收紧无需确认、配置/生效 revision 分开）。**仍未完成**：卡内点名的"确定性合并"与设置入口共用控制器的完整联测。 |
-| MERGE-01-03 | pending | 在已接通 SMART 路径上验证连续输入、部分失败/取消/重启；CLI/TUI/GUI/SDK 设置一致与包级执行证据；更新真实支持范围。**未开始**。 |
+| MERGE-01-03 | **部分完成**；**不判通过** | 已交付：**参数授权设置入口**（SDK `query/updateParameterAuthorizationSettings` + CLI `settings parameter-authorization`，**CLI 与 SDK 逐字段一致**、未确认的放宽**同样被拒且不写文件**）；**包级执行证据**（`verify-toolkit-package` **43/43**，在隔离安装包内**真实驱动**判定函数与两个新公开入口）。**仍未完成**：连续输入/部分失败/取消/重启的端到端验证；**TUI/GUI 内的设置界面**（当前 TUI 走 CLI 子命令、GUI 未暴露该设置）。 |
 
 ### MERGE-01-01 进展（2026-10-10）：参数级授权优先规则
 
@@ -481,3 +481,25 @@ summary/outline。因此上一轮枚举里的 `code`/`markup`/`data` 与 `view`�
 - 设置层与判定层均已由 `public-sdk` 公开导出。
 - **仍未完成**：MERGE-01-03（连续输入/部分失败/取消/重启、四入口设置一致与包级执行证据）
   ⇒ **MERGE-01 整卡不主张通过**。
+### MERGE-01-03 进展（2026-10-10）：参数授权设置**真的可达**（CLI/SDK 一致）
+
+**实测缺口（重要）**：`ParameterAuthorizationSettingsStore` 虽存在并被 `public-sdk` 导出，
+但**全仓从未被构造**（`new ParameterAuthorizationSettingsStore` 零命中），CLI 也**没有任何
+设置子命令** ⇒ §1.3 要求的"设置入口"在产品层面**完全不成立**，"四入口一致"更无从谈起。
+
+**交付**：
+
+- **SDK**：`queryParameterAuthorizationSettings()` / `updateParameterAuthorizationSettings()`；
+  读取**零副作用**（不为"看一次设置"而创建文件）；写入把**放宽判定**放在**真实写入路径**上 ——
+  未确认即拒绝且**不落地任何文件**；写入保留 `configurationRevision`（配置/生效 revision 分开）。
+- **CLI**：`settings parameter-authorization`（`--state-dir` / `--disable-granularity` /
+  `--disable-parameter-authorization` / `--tool 工具名:统一效果[:规则ID=效果,...]` /
+  `--confirm` / `--json`）。**CLI 不做自己的判定**，一律走 SDK 同一实现 ⇒ 结构性保证两入口一致。
+- **包级**：`verify-toolkit-package` 41 → **43** 条（新增"放宽必须拒到确认"与两个新公开入口，
+  在**隔离安装包**内**真实驱动**判定函数）。
+
+- 反例（先红后绿）：`tests/tui/integration/merge01-parameter-authorization-settings-entry.test.ts`
+  **5 条**（含**真实 `dist/cli.js` 子进程**：CLI 读到的设置与 SDK **逐字段一致**、
+  CLI 未确认的放宽**同样被拒**且不写文件）。
+- **仍未完成**：连续输入/部分失败/取消/重启的端到端验证；**TUI/GUI 内的设置界面**
+  （当前 TUI 走 CLI 子命令、GUI 尚未暴露该设置）⇒ **MERGE-01-03 不判 done**。

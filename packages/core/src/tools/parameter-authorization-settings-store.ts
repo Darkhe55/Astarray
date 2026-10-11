@@ -31,6 +31,12 @@ export interface ParameterAuthorizationSettingsDocument {
     isParameterRulesEnabled: boolean;
   };
   rules: ParameterAuthorizationRule[];
+  /**
+   * 配置 revision（MERGE-01 §1.3："**配置保存和生效 revision 分开**"）。
+   *
+   * 可选以兼容旧文件；缺省视为 0。
+   */
+  configurationRevision?: number;
 }
 
 export interface ParameterAuthorizationSettingsStoreOptions {
@@ -106,6 +112,8 @@ export class ParameterAuthorizationSettingsStore {
         document.schemaVersion ?? PARAMETER_AUTHORIZATION_SETTINGS_SCHEMA_VERSION,
       settings: document.settings,
       rules: document.rules,
+      /** 保留调用方提供的配置 revision（缺省 0），不静默丢弃。 */
+      configurationRevision: document.configurationRevision ?? 0,
     };
     const validation = validateSettingsDocument(candidate);
     if (!validation.isValid) {

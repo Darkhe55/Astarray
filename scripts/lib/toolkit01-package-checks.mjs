@@ -52,6 +52,8 @@ export function buildToolkitPackageChecks(observation) {
     ["createLosslessContextManager", "无损上下文管理器"],
     ["buildContextVisibilityDisplayRows", "上下文可见性展示"],
     ["createLosslessContextManager", "无损上下文管理器（重启恢复）"],
+    // MERGE-01 §1.3：参数授权设置入口（CLI/SDK 一致）。
+    ["evaluateParameterAuthorizationSettingChange", "参数授权设置变更判定"],
   ];
   for (const [exportName, displayName] of entryNames) {
     const isPresent =
@@ -233,6 +235,14 @@ export function buildToolkitPackageChecks(observation) {
     "NODECTX-01：工具调用与结果不拆散（配对同进同出）",
     readObservation(observation, "losslessContext", "toolPairIsAtomic") === true,
     "配对节点必须同进同出，单个暂存带调用标识即拒绝",
+  );
+  record(
+    "MERGE-01：关闭参数细分若放宽权限必须拒到确认（不得静默扩大权限）",
+    readObservation(observation, "parameterAuthorization", "isWideningDetected") === true &&
+      readObservation(observation, "parameterAuthorization", "isUnconfirmedWideningRejected") ===
+        true &&
+      readObservation(observation, "parameterAuthorization", "isRejectionSideEffectFree") === true,
+    "deny/ask 回退 allow 必须被识别，未确认即拒绝且不落地任何文件变更",
   );
   record(
     "NODECTX-01：暂存状态与原文必须能跨进程重启恢复（不得丢节点）",

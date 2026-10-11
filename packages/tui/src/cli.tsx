@@ -69,6 +69,7 @@ import {
   executeToolPackageDescribeCommand,
   executeToolPackageFeedbackCommand,
   executeToolPackageListCommand,
+  executeParameterAuthorizationSettingsCommand,
   executeToolPackageRecoverCommand,
   executeToolPackageStatusCommand,
   executeUsageOverviewCommand,
@@ -497,6 +498,51 @@ toolPackageCommand
       isJsonOutput: options.json === true,
     });
   });
+
+/**
+ * MERGE-01 §1.3 第 4 项：参数授权**设置入口**（CLI 侧）。
+ *
+ * 卡内："**关闭细分若会从 deny/ask 回退 allow，必须明确提示放宽范围，
+ * 不以'关闭功能'静默扩大权限**"；"扩大权限需既有认证用户确认"。
+ * 本命令不自行判定，一律走 SDK 的同一实现（保证 CLI/SDK 结论一致）。
+ */
+const settingsCommand = program
+  .command("settings")
+  .description("设置入口（参数授权总开关与每工具细分）");
+
+settingsCommand
+  .command("parameter-authorization")
+  .description("读取或写入参数授权设置（放宽权限需 --confirm）")
+  .option("--state-dir <dir>", "状态目录")
+  .option("--disable-granularity", "关闭每工具参数细分（可能放宽权限）")
+  .option("--disable-parameter-authorization", "关闭参数授权总开关（可能放宽权限）")
+  .option(
+    "--tool <spec>",
+    "工具授权形态：工具名:统一效果[:规则ID=效果,...]（可重复）",
+    (value: string, previous: string[] | undefined) => [...(previous ?? []), value],
+  )
+  .option("--confirm", "已获认证用户确认（放宽权限时必需）")
+  .option("--json", "JSON 输出")
+  .action(
+    async (options: {
+      stateDir?: string;
+      disableGranularity?: boolean;
+      disableParameterAuthorization?: boolean;
+      tool?: string[];
+      confirm?: boolean;
+      json?: boolean;
+    }) => {
+      process.exitCode = await executeParameterAuthorizationSettingsCommand({
+        stateDirectory: options.stateDir ?? defaultStateDirectory(),
+        isJsonOutput: options.json === true,
+        shouldDisableGranularity: options.disableGranularity === true,
+        shouldDisableParameterAuthorization:
+          options.disableParameterAuthorization === true,
+        toolAuthorizationShapeSpecifications: options.tool ?? [],
+        isConfirmedByAuthenticatedUser: options.confirm === true,
+      });
+    },
+  );
 
 /**
  * PROJECT-01-04：跨项目授权与副本的公开只读入口。

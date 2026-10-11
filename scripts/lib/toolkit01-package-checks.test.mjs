@@ -36,7 +36,8 @@ function buildPassingObservation() {
       // NODECTX-01（与 MERGE-01 同卡）
       createLosslessContextManager: true,
       buildContextVisibilityDisplayRows: true,
-      createLosslessContextManager: true,
+      // MERGE-01 §1.3：参数授权设置变更判定
+      evaluateParameterAuthorizationSettingChange: true,
       buildGuiToolPackageView: false,
     },
     recipe: {
@@ -91,6 +92,12 @@ function buildPassingObservation() {
       pendingRatificationIsNotShownCompleted: true,
       isStateRestoredAcrossRestart: true,
       isOriginalContentBytesIdenticalAfterRestart: true,
+    },
+    /** MERGE-01 §1.3：参数授权设置变更（放宽须确认）。 */
+    parameterAuthorization: {
+      isWideningDetected: true,
+      isUnconfirmedWideningRejected: true,
+      isRejectionSideEffectFree: true,
     },
   };
 }

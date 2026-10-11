@@ -39,6 +39,12 @@ export {
   type ParameterAuthorizationSettings,
   type ParameterRuleMatch,
 } from "./tools/parameter-authorization.js";
+import {
+  ParameterAuthorizationSettingsStore,
+  evaluateParameterAuthorizationSettingChange,
+  type ParameterAuthorizationSettingChangeOutcome,
+  type ToolAuthorizationShape,
+} from "./tools/parameter-authorization-settings-store.js";
 
 // ─── MERGE-01 §1.3：参数授权**设置入口**与"关闭细分不得静默扩大权限" ───
 // 卡内："关闭细分若会从 deny/ask 回退 allow，必须明确提示放宽范围，
@@ -55,6 +61,14 @@ export {
   type PermissionEffect,
   type ToolAuthorizationShape,
 } from "./tools/parameter-authorization-settings-store.js";
+
+/** 参数授权设置的**公开只读视图**（SDK 消费者用）。 */
+export interface PublicParameterAuthorizationSettings {
+  isParameterAuthorizationEnabled: boolean;
+  isParameterRulesEnabled: boolean;
+  configurationRevision: number;
+  ruleCount: number;
+}
 // ─── MERGE-01：能力族 + action 统一（纵向样本与只读投影）公开入口 ───
 // 只读投影由本入口导出，保证 Ponder/主 Agent 视图不会因统一族名而暴露隐藏写动作。
 export {
@@ -1821,6 +1835,91 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       }
       throw error;
     }
+  }
+
+  // ─── MERGE-01 §1.3 第 4 项：参数授权**设置入口**（SDK 侧） ───
+
+  /**
+   * 读取参数授权设置（**只读、零副作用**）。
+   *
+   * 卡内要求该设置是"设置入口"：此前 `ParameterAuthorizationSettingsStore` 虽被导出，
+   * 但**全仓从未被构造** ⇒ 入口在产品层面不成立。这里把它接到真实状态目录上。
+   */
+  async queryParameterAuthorizationSettings(): Promise<PublicParameterAuthorizationSettings> {
+    this.assertOpen();
+    const store = this.createParameterAuthorizationSettingsStore();
+    const settingsDocument = await store.readSettings();
+    return {
+      isParameterAuthorizationEnabled:
+        settingsDocument.settings.isParameterAuthorizationEnabled,
+      isParameterRulesEnabled: settingsDocument.settings.isParameterRulesEnabled,
+      configurationRevision: settingsDocument.configurationRevision ?? 0,
+      ruleCount: settingsDocument.rules.length,
+    };
+  }
+
+  /**
+   * 写入参数授权设置。
+   *
+   * 卡内 §1.3："**关闭细分若会从 deny/ask 回退 allow，必须明确提示放宽范围，
+   * 不以'关闭功能'静默扩大权限**"；"扩大权限需既有认证用户确认"。
+   * 因此这里把**放宽判定**放在真实写入路径上：未确认即拒绝，且**不写任何文件**。
+   */
+  async updateParameterAuthorizationSettings(input: {
+    isParameterAuthorizationEnabled: boolean;
+    isParameterRulesEnabled: boolean;
+    toolAuthorizationShapes: ToolAuthorizationShape[];
+    isConfirmedByAuthenticatedUser: boolean;
+  }): Promise<ParameterAuthorizationSettingChangeOutcome> {
+    this.assertOpen();
+    const store = this.createParameterAuthorizationSettingsStore();
+    const settingsDocument = await store.readSettings();
+    const changeOutcome = evaluateParameterAuthorizationSettingChange({
+      previousSettings: {
+        isParameterAuthorizationEnabled:
+          settingsDocument.settings.isParameterAuthorizationEnabled,
+        isParameterRulesEnabled: settingsDocument.settings.isParameterRulesEnabled,
+      },
+      nextSettings: {
+        isParameterAuthorizationEnabled: input.isParameterAuthorizationEnabled,
+        isParameterRulesEnabled: input.isParameterRulesEnabled,
+      },
+      tools: input.toolAuthorizationShapes,
+      isConfirmedByAuthenticatedUser: input.isConfirmedByAuthenticatedUser,
+      configurationRevision: settingsDocument.configurationRevision ?? 0,
+      effectiveRevision: settingsDocument.configurationRevision ?? 0,
+    });
+    if (!changeOutcome.isAccepted) {
+      /** 拒绝 ⇒ **不落地任何文件变更**（不得半生效）。 */
+      return changeOutcome;
+    }
+    const writeResult = await store.writeSettings({
+      settings: {
+        isParameterAuthorizationEnabled: input.isParameterAuthorizationEnabled,
+        isParameterRulesEnabled: input.isParameterRulesEnabled,
+      },
+      rules: settingsDocument.rules,
+      configurationRevision: changeOutcome.configurationRevision,
+    });
+    if (!writeResult.isValid) {
+      throw new PublicApplicationError(
+        "settings-write-rejected",
+        "参数授权设置写入被拒绝: " + String(writeResult.reason),
+      );
+    }
+    return changeOutcome;
+  }
+
+  private createParameterAuthorizationSettingsStore(): ParameterAuthorizationSettingsStore {
+    if (this.stateDirectory === null) {
+      throw new PublicApplicationError(
+        "settings-unavailable",
+        "应用未绑定状态目录，无法读写参数授权设置",
+      );
+    }
+    return new ParameterAuthorizationSettingsStore({
+      stateDirectory: this.stateDirectory,
+    });
   }
 
   /** 本地存档中的 Agent 目录名（每 Agent 独立存档域；失败即空，不猜测）。 */
