@@ -1124,6 +1124,15 @@ export interface PublicProviderConfiguration {
   baseUrl?: string | null;
   protectedCredentialReferenceId?: string | null;
   requestTimeoutMilliseconds?: number;
+  /**
+   * `baseUrl` 的来源：`true` = 取自受保护凭据条目，`false` = 取自调用方显式给出的端点。
+   *
+   * 为什么需要它（2026-10-10 真实 Provider 实测）：显式端点与凭据端点**可能不同形态**
+   * （例如凭据存的是 OpenAI 形态 `…/v1`，而 `anthropic-messages` 需要完整端点
+   * `…/anthropic/v1/messages`）。两者混用时，一个 404 会有**多种**可能解释；
+   * 标明来源后，诊断能立刻回答"**我用的到底是谁的端点**"。
+   */
+  isEndpointFromCredential?: boolean;
 }
 
 /** 公开应用错误：稳定 errorCode，便于消费者分支处理。 */

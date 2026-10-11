@@ -127,6 +127,29 @@ export async function buildRuntimeSelection(
     } else {
       registryFromReference.register(createOpenAiCompatibleProviderRegistration());
     }
+    /**
+     * **2026-10-10 修复（真实 Provider 实测发现）：显式端点不得被静默忽略。**
+     *
+     * 此前该分支**一律**取 `credentialEntry.baseUrl`，把调用方显式给出的
+     * `--provider-endpoint` **直接丢弃**。后果不是报错而是**毫无线索的 404**：
+     * 用户会去怀疑端点、协议、模型或凭据，而真正原因是**参数根本没被读**。
+     *
+     * 具体触发（本仓真实数据）：凭据 `prov-unisound-1` 的 `baseUrl` 是
+     * `https://maas-api.unisound.com/v1`（**OpenAI 形态、不含路径**），
+     * 而两个 runtime 都把 `baseUrl` 当**完整端点**逐字 POST
+     * （`openai-compatible-runtime.ts:149` / `anthropic-messages-runtime.ts:166`）
+     * ⇒ `--provider-protocol anthropic-messages` 必然 404。
+     *
+     * 语义：**显式给出的端点优先**（显式输入胜过存储默认值）；
+     * 未给出（或为空串）时才回退凭据里的 `baseUrl` —— 这保住了
+     * "引用存在 ⇒ 无需 --provider-endpoint" 的原有契约
+     * （见 `tests/tui/unit/runtime-credential-selection.test.ts` 第一条）。
+     * 同时用 `isEndpointFromCredential` 标明来源，使诊断可回答
+     * "我用的到底是谁的端点"。
+     */
+    const explicitEndpoint = options.providerEndpoint;
+    const isExplicitEndpointGiven =
+      explicitEndpoint !== undefined && explicitEndpoint !== "";
     return {
       runtime: "provider",
       providerRuntimeRegistry: registryFromReference,
@@ -138,7 +161,8 @@ export async function buildRuntimeSelection(
         modelIdentifier,
         allowedModelIdentifiers: [modelIdentifier],
         requiredCapabilities: ["streaming", "tool-calling"],
-        baseUrl: credentialEntry.baseUrl,
+        baseUrl: isExplicitEndpointGiven ? explicitEndpoint : credentialEntry.baseUrl,
+        isEndpointFromCredential: !isExplicitEndpointGiven,
         protectedCredentialReferenceId: credentialReference,
         ...(options.providerRequestTimeoutMilliseconds === undefined
           ? {}
