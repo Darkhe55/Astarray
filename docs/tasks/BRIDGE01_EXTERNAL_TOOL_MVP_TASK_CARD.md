@@ -1,6 +1,6 @@
 # BRIDGE-01：外部工具接入 MVP
 
-> 状态：in_progress（BRIDGE-01-01/02/03 done；-04 待真实客户端）
+> 状态：**done（2026-10-10）**：01/02/03 done，-04 真实第三方客户端消费已完成（仅缺 macOS/Linux 平台验证）
 > 创建日期：2026-09-10
 > 类型：后续扩展；高风险工作按检查点执行
 > 来源：用户授权布置；本文件为Agent派生实施方案，运行态节点默认层级1或以下，不冒充用户层级0
@@ -39,7 +39,23 @@
 
 ### BRIDGE-01-04：真实客户端消费
 
-- 状态：in_progress（脚本化 stdio 闭环已在 tarball 安装产物上 13/13 通过；第三方客户端消费待用户授权）。
+- 状态：**done（2026-10-10，用户授权后完成真实第三方客户端消费）**。
+  真实客户端闭环与协议/业务失败可区分均已取得证据，见
+  `docs/reports/BRIDGE01_04_REAL_CLIENT_EVIDENCE_2026-10-10.md`：
+  - `pi` 1.1.0（模型 云之声 `u2-flash`）经 `codemode` 调用 `submit_task` ⇒ `accepted`、
+    `isCompleted=false`，`provenance.actorId="external-harness:pi"`（**主体本地注入**）；
+  - `opencode` 1.18.35（模型 `stepfun/step-3.7-flash`）完成 **submit→query→cancel**
+    全闭环，`actorId="external-harness:opencode"`；
+  - **跨主体隔离生效**：opencode 访问 pi 的任务返回**业务级**失败
+    `task-not-accessible`（`isError:true`，非 JSON-RPC 协议错误）；
+  - **协议失败 vs 业务失败可区分**：未知方法 `-32601`、非法 JSON `-32700`
+    走 JSON-RPC `error`；越权/未知任务走 `result.isError=true` + `errorCode`；
+  - **身份注入防护真实生效**：参数携带 `sourceKind` 被拒
+    （`bridge-identity-injection-rejected`）。
+  **过程中发现并修复一个阻断性缺陷**：MCP 协议版本 `2026-07-28` 不被任何真实客户端
+  接受 ⇒ 两家**直接拒连**；已按规范改为**协商到客户端请求的版本**（见该报告 §2）。
+  **仍未验证**：macOS/Linux 平台上的真实客户端消费；仅 stdio 传输（其余按 ADR-0032
+  不在本批范围）；`read_result` 未在**已完成**任务上由真实客户端取回正文。
 - 工作：从tarball启动桥接，目标客户端提交任务、查询结果并取消另一任务。
 - 验收：真实客户端完整闭环证据；协议失败与业务失败可区分；对外支持声明绑定版本和平台。
 - 前驱：BRIDGE-01-03。先通过前驱，再执行本节点。
