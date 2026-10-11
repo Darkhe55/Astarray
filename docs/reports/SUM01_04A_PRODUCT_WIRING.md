@@ -57,3 +57,34 @@
 - CLI/TUI 接线：`astarray summary list|build|show` 与现有 TUI 入口（本轮只到公共门面）。
 - 安装包消费：从 tarball 隔离安装读取**大历史摘要**再展开，并记录磁盘 I/O、模型返回量与资源不足时的诚实状态。
 - 会话历史/报告/延后文件来源适配器；旧文件迁移与触发阈值测量。
+
+## 增补（2026-10-10）：**报告来源的真实数据源接线**
+
+**缺口（本轮实测）**：`publishSummarySource()` 要求调用方**直接把条目数组传进来**
+（`turns`/`reports`/`deferredFiles`）⇒ **没有任何路径能从已落盘的真实存档取数**，
+于是"报告来源"在生产上不可达：调用方要么自己读盘再拼装（重复实现），要么无法发布。
+这正是 `PLAN_STATUS` 长期如实标注的"**三类来源的真实数据源接线**"未完成。
+
+**本轮交付** `AstarrayApplicationFacade.publishReportSummarySourceFromArchive()`：
+
+- 读**真实**报告存档（`stateDirectory/main-agent-reports`）的索引与报告正文；
+- 映射为可回溯条目（`报告#任务`）后**复用**既有 `publishSummarySource()` 发布
+  （不新造发布通道，避免两套口径）；
+- **空任务** ⇒ `entryCount: 0` / `manifestRevision: 0`（**不发布空清单冒充成功**）；
+- 索引有而**正文不可读**的报告 ⇒ **逐条跳过**，不让整批失败。
+
+- 反例（先红后绿）：`tests/core/integration/sum01-report-archive-wiring.test.ts` **4 条**
+  （实现前 4 红）：
+  ① 先 `ingestReport` 两条真实报告再发布 ⇒ `entryCount` 必须为 **2**；
+  ② 无报告的任务 ⇒ `entryCount: 0` 且 `manifestRevision: 0`；
+  ③ **跨重启**：全新 facade 仍能读到同一批条目（证明**真的从磁盘取数**，不是内存传参）；
+  ④ 发布后可从**公开读取入口** `listSummarySources()` 查到（发布不是只写盘不读）。
+
+**过程中我按实测纠正了两处自身错误假设**（未让产品迁就测试）：
+① 存档根是 `stateDirectory/main-agent-reports`（由 ingestor 内部拼接），
+最初我把测试的 `baseDirectory` 指向了子目录 `reports/`；
+② `PublicSummarySourceSummary` **没有 `entryCount` 字段**，
+且不存在 `querySummaryIndex()` 方法 —— 已改用真实字段与 `listSummarySources()`。
+
+**仍未完成**：会话历史与延后文件两类来源的真实数据源接线、旧文件迁移、
+触发阈值测量、多设备重复测量 ⇒ **不主张 SUM-01 通过**。

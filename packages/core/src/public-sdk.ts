@@ -2194,6 +2194,73 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
   }
 
   /** 列出当前会话 Agent 已发布的摘要来源（不含路径与正文）。 */
+  /**
+   * SUM-01-04：**从真实报告存档取数**并发布报告来源摘要（补上"真实数据源接线"）。
+   *
+   * 为什么需要它：`publishSummarySource()` 要求调用方**直接把条目数组传进来**
+   * ⇒ 没有任何路径能**从已落盘的真实存档取数**，于是"报告来源"在生产上不可达
+   * （调用方要么自己读盘再拼装，要么根本无法发布）。
+   *
+   * 语义：
+   *  - 读**真实**报告存档（`stateDirectory/main-agent-reports`）的索引与报告正文；
+   *  - 映射为可回溯条目（`报告#任务`），交由既有 `publishSummarySource` 发布；
+   *  - **空任务** ⇒ `entryCount: 0`/`manifestRevision: 0`（不发布空清单冒充成功）；
+   *  - 存档中缺字段/不可读的报告**逐条跳过**，不让整批失败。
+   */
+  async publishReportSummarySourceFromArchive(input: {
+    missionId: string;
+    sourceIdentifier: string;
+    detailLevel?: SummaryDetailLevel;
+  }): Promise<{
+    sourceKind: PublicSummarySourceSummary["sourceKind"];
+    sourceIdentifier: string;
+    manifestRevision: number;
+    chunkCount: number;
+    coveredThroughSourceRevision: number;
+    entryCount: number;
+    generatorVersion: string;
+  }> {
+    this.assertOpen();
+    if (this.stateDirectory === null) {
+      throw new PublicApplicationError(
+        "summary-unavailable",
+        "应用未绑定状态目录，无法读取报告存档",
+      );
+    }
+    const { MainAgentReportArchiveIngestor } = await import(
+      "./orchestration/main-agent-report-archive.js"
+    );
+    const ingestor = new MainAgentReportArchiveIngestor({
+      baseDirectory: this.stateDirectory,
+    });
+    const indexEntries = await ingestor.readIndex(input.missionId);
+    const reports: Array<{
+      reportIdentifier: string;
+      taskIdentifier: string;
+      summaryText: string;
+      recordedAtIso: string;
+    }> = [];
+    for (const indexEntry of indexEntries) {
+      const report = await ingestor.readReport(input.missionId, indexEntry.reportId);
+      if (report === null) {
+        /** 索引有、正文不可读 ⇒ **跳过该条**，不让整批失败。 */
+        continue;
+      }
+      reports.push({
+        reportIdentifier: report.reportId,
+        taskIdentifier: report.taskBundleId,
+        summaryText: report.summary,
+        recordedAtIso: report.createdAtIso,
+      });
+    }
+    return await this.publishSummarySource({
+      sourceKind: "report",
+      sourceIdentifier: input.sourceIdentifier,
+      reports,
+      ...(input.detailLevel === undefined ? {} : { detailLevel: input.detailLevel }),
+    });
+  }
+
   async listSummarySources(): Promise<PublicSummarySourceSummary[]> {
     this.assertOpen();
     const store = await this.createSummaryIndexStore();
