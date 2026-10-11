@@ -59,7 +59,7 @@ tar 复制时排除了 `.git` ⇒ `git status` 非 0。
 **补齐 `.git` 后该用例通过**（另需 `git config --global --add safe.directory` 处理
 跨属主所有权检查）。**这不是产品缺陷，故未改任何产品代码。**
 
-## 3. 仍未修复：C（**已定位、未改**）
+## 3. 已修复：C（迟到的 unblock 降级正在运行的任务）
 
 **现象**（Linux 确定性复现，stderr 原文）：
 
@@ -86,19 +86,34 @@ astarray: 需要权限的调用已阻断，但未能确认被请求的工具与�
 放宽它会破坏一条**有意为之**的状态机不变量（且该不变量由架构守卫保护）。
 ⇒ **已完整回退**，未把该改动留在代码里。
 
-**结论**：这是**真实缺陷**，但正确修法在**调度侧的
-`claimedTaskIds` 与图状态一致性**（或权限裁决路径的重新领取逻辑），
-而不是放宽状态机。**本会话末段不再改动该核心不变量**，如实记录如下一步的入口。
+**最终修法（不放宽状态机）**：把 `DagScheduler.unblockTask` **幂等化** ——
+只有 `pending`（已是目标态）与 `blocked`（真正等待裁决）需要处理；
+`running`/`done`/`failed` 下这是**冗余的迟到指令**，一律**无操作**。
+这样既保住 `blocked → pending` 的原有语义，又不再破坏
+"领取集合含此任务 ⇔ 图节点 `running`" 的一致性；
+`pending → done` 继续非法（不变量未被削弱）。
+
+**验证**：
+- 新增 `tests/core/unit/dag-scheduler-late-unblock-race.test.ts` **5 条**（先红后绿，
+  实现前 3 红），其中②**直接复现** `DomainError: 非法状态迁移: t1 pending → done`；
+- Linux：`authorization-retry-closure` ① 修复前失败 ⇒ 修复后**连跑 4 次全通过**；
+- Linux 全量：**375 文件 / 2834 用例全部通过（exit 0）**；
+- Windows 全量：**376 文件 / 2840 用例通过**；`test:coverage` 达标（branches 85.08%）。
+
+**一处语义收口**：`tests/core/unit/dag-scheduler.test.ts` 的
+"unblockTask 将人工裁决的任务重新加入可运行集合"原本用 `unblockTask` 重试一个
+**失败终态**任务，而生产侧 `AssistScheduler` 把 retry/reassign 都路由到
+`reassignTask`；已改用 `reassignTask`（并调整同一用例内 agent 序号断言）。
 
 ## 4. 平台项的当前状态（如实更新）
 
 | 卡 | 平台项 | 状态 |
 | --- | --- | --- |
 | RELIABILITY-01-02（进程树收口） | Linux 平台分支 | ✅ **已取得证据并修复** |
-| B6R-10 跨平台矩阵 | Linux 侧 | ⚠️ **部分**：Linux 侧全量 374 文件跑通，除缺陷 C 外 2828/2829 通过 |
+| B6R-10 跨平台矩阵 | Linux 侧 | ✅ **Linux 侧全量通过**：375 文件 / **2834 用例全绿**（Windows 376 文件 / 2840，含 1 处产物门禁 `skipIf`） |
 | AR-07 平台不可达分支 | 非 win32 归一化等 | ⚠️ **尚未单独核算**（本轮聚焦全量门禁，未逐分支统计 Linux 覆盖率） |
 | RELIABILITY-01-03 | 跨平台矩阵 | ⚠️ 同 B6R-10 |
-| 缺陷 C | 授权后重跑闭环（Linux） | ❌ **未修复**（已定位，见 §3） |
+| 缺陷 C | 授权后重跑闭环（Linux） | ✅ **已修复**（`unblockTask` 幂等化，见 §3）；Linux 全量 2834/2834 通过 |
 
 **必须同时说明**：本证据来自 **WSL2**（Linux 内核 + 官方 Ubuntu 用户态），
 **不是**裸机 Linux，也**没有 macOS 证据**。macOS 的进程终止语义与信号/权限模型
