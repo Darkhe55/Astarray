@@ -65,6 +65,20 @@ export class GitProcess {
         {
           cwd: workingDirectoryPath,
           windowsHide: true,
+          /**
+           * RELIABILITY-01-02（2026-10-10 Linux 实测修复）：在 POSIX 上让子进程
+           * **自成一个进程组**，超时才可能**整组收口**。
+           *
+           * 此前只 `childProcess.kill("SIGKILL")` 杀**直接子进程**，它派生的孙进程
+           * 会被 init 收养并**继续运行**（继续写盘/占句柄）。该缺陷在 Windows 上
+           * 观察不到（Windows 无进程组语义、且树形终止方式不同），
+           * 因此**只有 Linux/macOS 证据才能发现** —— 本会话在 WSL 中复现：
+           * `reliability-git-process-tree.test.ts` ① 确定性失败（心跳持续增长）。
+           *
+           * `detached: true` 只影响进程组归属，**不** detach 生命周期：
+           * 未调用 `unref()`，stdio 仍是管道，父进程照常等 `close`。
+           */
+          detached: process.platform !== "win32",
           env: {
             ...process.env,
             GIT_TERMINAL_PROMPT: "0",
@@ -87,6 +101,30 @@ export class GitProcess {
       let didTimeOut = false;
       const timeoutHandle = setTimeout(() => {
         didTimeOut = true;
+        /**
+         * **整棵进程树**收口，而不是只杀直接子进程（见上方 spawn 处说明）。
+         *
+         * - POSIX：子进程已是进程组首进程 ⇒ 用 `process.kill(-pid)` 对**整组**发
+         *   SIGKILL，孙进程一并收口。若进程已退出（`ESRCH`）则忽略。
+         * - Windows：用 `taskkill /T /F` 递归终止（无进程组语义）。
+         */
+        if (process.platform !== "win32") {
+          try {
+            process.kill(-childProcess.pid!, "SIGKILL");
+          } catch {
+            /** 进程组已不存在（`ESRCH`）⇒ 已经收口，无需处理。 */
+          }
+        } else {
+          try {
+            spawn("taskkill", ["/pid", String(childProcess.pid), "/T", "/F"], {
+              windowsHide: true,
+              stdio: "ignore",
+            });
+          } catch {
+            /** taskkill 不可用时退回仅杀直接子进程（下方仍会执行）。 */
+          }
+        }
+        /** 兜底：即便整组收口失败，也要保证直接子进程被终止。 */
         childProcess.kill("SIGKILL");
       }, timeoutMs);
       childProcess.on("error", (error) => {
