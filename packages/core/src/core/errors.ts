@@ -13,6 +13,20 @@ export type DomainErrorCode =
   | "tool-not-found"
   | "tool-permission-denied"
   | "permission-ask-pending"
+  /**
+   * GUI-02-01（2026-10-11）请求实体相关错误码。
+   * 语义：`not-found` 未登记；`not-authorized` 无裁决权（知道 ID/指纹不构成批准权）；
+   * `expired` 超期（不得复用批准）；`already-decided` 重复裁决（幂等失败）；
+   * `stale-revision` 陈旧裁决；`fingerprint-mismatch` 参数变化不得复用批准；
+   * `invalid` 登记参数非法。
+   */
+  | "permission-ask-not-found"
+  | "permission-ask-not-authorized"
+  | "permission-ask-expired"
+  | "permission-ask-already-decided"
+  | "permission-ask-stale-revision"
+  | "permission-ask-fingerprint-mismatch"
+  | "permission-ask-invalid"
   | "permission-profile-not-found"
   | "backup-deletion-authorization-pending"
   | "backup-deletion-authorization-invalid"
