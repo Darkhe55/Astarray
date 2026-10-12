@@ -27,6 +27,10 @@ export type DomainErrorCode =
   | "permission-ask-stale-revision"
   | "permission-ask-fingerprint-mismatch"
   | "permission-ask-invalid"
+  /** 裁决入口的准入类错误（GUI-02-01）：CSRF / 认证主体 / 项目会话可见性。 */
+  | "permission-ask-csrf-required"
+  | "permission-ask-unauthenticated"
+  | "permission-ask-not-visible"
   | "permission-profile-not-found"
   | "backup-deletion-authorization-pending"
   | "backup-deletion-authorization-invalid"
