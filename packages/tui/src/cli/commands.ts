@@ -3910,6 +3910,15 @@ export async function executeGuiServeCommand(
     mode: sessionMode,
     ...runtimeSelection,
     statusPollIntervalMilliseconds: 25,
+    /**
+     * GUI-02-02 专用流程（2026-10-12）：**由界面承载安装询问**。
+     *
+     * 安装门禁自带完整判定（询问已有资源 → 独立开关 → askAllowOnce → 授权 → 执行前复检），
+     * 普通权限询问的批准**不参与**该判定 ⇒ 必须给它一条**独立**的界面通道；
+     * 此前 GUI 侧 `installationUserPort` 为 null ⇒ 安装一律被判
+     * 「无可信交互通道」而**走不通**。
+     */
+    isInstallationGateOnInterface: true,
   });
   await writeRuntimeDiagnosticsReport({
     reportFilePath: options.runtimeDiagnosticsFilePath,
@@ -3983,6 +3992,67 @@ export async function executeGuiServeCommand(
             askIdentifier: decided.record.askIdentifier,
             status: decided.record.status,
             requestRevision: decided.record.requestRevision,
+          };
+        },
+        /**
+         * GUI-02-02 **专用流程**（2026-10-12）：安装询问的界面映射。
+         *
+         * **独立于普通授权卡**：安装门禁自带完整判定，此处的映射只让界面
+         * 「看到待决询问」与「回答该询问」，**不代替门禁做授权决定**。
+         */
+        listPendingInstallationInquiries: async () =>
+          (await application.listPendingInstallationInquiries()).map((entry) => ({
+            inquiryIdentifier: entry.inquiryIdentifier,
+            stage: entry.stage,
+            summary: entry.summary,
+            revision: entry.revision,
+            createdAtIso: entry.createdAtIso,
+            installationPlan:
+              entry.installationPlan === null
+                ? null
+                : {
+                    packageOrRepositoryIdentifier:
+                      entry.installationPlan.packageOrRepositoryIdentifier,
+                    pinnedVersionOrCommit: entry.installationPlan.pinnedVersionOrCommit,
+                    targetPathOrScope: entry.installationPlan.targetPathOrScope,
+                    packageManager: entry.installationPlan.packageManager,
+                    expectedChangesSummary:
+                      entry.installationPlan.expectedChangesSummary,
+                    requiresNetwork: entry.installationPlan.requiresNetwork,
+                    hasInstallScripts: entry.installationPlan.hasInstallScripts,
+                  },
+          })),
+        decideInstallationInquiry: async (input: {
+          inquiryIdentifier: string;
+          expectedRevision: number;
+          stage: "existing-resource" | "allow-once";
+          answerKind?: "has-resource" | "no-resource";
+          resourceReference?: string;
+          allowOnceDecision?: "allow-once" | "deny";
+        }) => {
+          const record =
+            input.stage === "existing-resource"
+              ? await application.answerInstallationInquiry({
+                  inquiryIdentifier: input.inquiryIdentifier,
+                  expectedRevision: input.expectedRevision,
+                  answer:
+                    input.answerKind === "has-resource"
+                      ? {
+                          answer: "has-resource",
+                          resourceReference: input.resourceReference ?? "",
+                          providedResourceType: "user-provided",
+                        }
+                      : { answer: "no-resource" },
+                })
+              : await application.decideInstallationAllowOnce({
+                  inquiryIdentifier: input.inquiryIdentifier,
+                  expectedRevision: input.expectedRevision,
+                  decision: input.allowOnceDecision ?? "deny",
+                });
+          return {
+            inquiryIdentifier: record.inquiryIdentifier,
+            status: record.status,
+            revision: record.revision,
           };
         },
       }),

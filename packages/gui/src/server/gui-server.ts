@@ -180,6 +180,56 @@ export interface GuiApplicationPort {
     expectedRequestRevision: number;
     expectedOperationFingerprint: string;
   }): Promise<GuiPermissionAskDecisionView>;
+  /**
+   * GUI-02-02 **专用流程**（2026-10-12）：**待决安装询问**列表。
+   *
+   * 安装**不走**普通权限询问（门禁自带完整判定：询问已有资源 → 独立开关 →
+   * `askAllowOnce` → 授权 → 执行前复检）⇒ 这是**独立只读入口**；
+   * 未开启界面安装通道时返回空数组（**不是**"已授权"）。
+   */
+  listPendingInstallationInquiries?(): Promise<GuiInstallationInquiryView[]>;
+  /**
+   * GUI-02-02 **专用流程**：回答安装询问（**独立裁决入口**，不与权限询问混用）。
+   *
+   * 阶段 1 回答"是否已有资源"；阶段 2 回答"是否允许本次安装"。
+   * 必须带 `expectedRevision`（过期/重复回答被拒 ⇒ **不复用旧回答**）。
+   */
+  decideInstallationInquiry?(input: {
+    inquiryIdentifier: string;
+    expectedRevision: number;
+    stage: "existing-resource" | "allow-once";
+    /** 阶段 1：是否有资源（`has-resource` 时必须给引用）。 */
+    answerKind?: "has-resource" | "no-resource";
+    resourceReference?: string;
+    /** 阶段 2：是否允许本次安装。 */
+    allowOnceDecision?: "allow-once" | "deny";
+  }): Promise<GuiInstallationInquiryDecisionView>;
+}
+
+/** GUI-02-02 专用流程：待决安装询问视图（只含界面判断所需字段）。 */
+export interface GuiInstallationInquiryView {
+  inquiryIdentifier: string;
+  stage: "existing-resource" | "allow-once";
+  summary: string;
+  revision: number;
+  createdAtIso: string;
+  /** 阶段 2 的精确安装计划（供用户判断；阶段 1 为 null）。 */
+  installationPlan: {
+    packageOrRepositoryIdentifier: string;
+    pinnedVersionOrCommit: string | null;
+    targetPathOrScope: string;
+    packageManager: string;
+    expectedChangesSummary: string;
+    requiresNetwork: boolean;
+    hasInstallScripts: boolean;
+  } | null;
+}
+
+/** GUI-02-02 专用流程：安装询问裁决结果视图。 */
+export interface GuiInstallationInquiryDecisionView {
+  inquiryIdentifier: string;
+  status: string;
+  revision: number;
 }
 
 /**
@@ -1484,6 +1534,119 @@ export async function startGuiServer(
           return;
         }
         if (errorCode === "permission-ask-invalid") {
+          writeJsonResponse(response, 400, { error: errorCode });
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
+    /**
+     * GUI-02-02 专用流程（2026-10-12）：**待决安装询问**（只读）。
+     *
+     * 与 `/permission-asks` **并列但独立** —— 安装门禁自带完整判定，
+     * 普通授权卡的裁决**不会**替代它；此端点只让界面看到"门禁正在等用户回答什么"。
+     */
+    if (request.method === "GET" && requestUrl.pathname === "/installation-inquiries") {
+      const applicationService = options.applicationService;
+      if (applicationService.listPendingInstallationInquiries === undefined) {
+        writeCapabilityUnavailable(response);
+        return;
+      }
+      writeJsonResponse(response, 200, {
+        entries: await applicationService.listPendingInstallationInquiries(),
+      });
+      return;
+    }
+    /**
+     * GUI-02-02 专用流程（2026-10-12）：**安装询问的独立裁决入口**。
+     *
+     * 只接受**询问锚点 + revision + 回答**；不接受前端提交的新参数
+     * （安装计划由门禁生成并已登记，界面只能对它作答）。
+     * CSRF 由**全局状态变更门禁**先行校验，此处不重复实现授权规则。
+     */
+    if (
+      request.method === "POST" &&
+      requestUrl.pathname === "/commands/installation-inquiry-decision"
+    ) {
+      const applicationService = options.applicationService;
+      if (applicationService.decideInstallationInquiry === undefined) {
+        writeCapabilityUnavailable(response);
+        return;
+      }
+      const parsedBody = JSON.parse((await readBody(request)) || "{}") as {
+        inquiryIdentifier?: unknown;
+        expectedRevision?: unknown;
+        stage?: unknown;
+        answerKind?: unknown;
+        resourceReference?: unknown;
+        allowOnceDecision?: unknown;
+      };
+      const inquiryIdentifier = parsedBody.inquiryIdentifier;
+      const expectedRevision = parsedBody.expectedRevision;
+      const stage = parsedBody.stage;
+      const answerKind = parsedBody.answerKind;
+      const allowOnceDecision = parsedBody.allowOnceDecision;
+      if (
+        typeof inquiryIdentifier !== "string" ||
+        inquiryIdentifier === "" ||
+        typeof expectedRevision !== "number" ||
+        !Number.isInteger(expectedRevision) ||
+        (stage !== "existing-resource" && stage !== "allow-once")
+      ) {
+        writeJsonResponse(response, 400, { error: "invalid-arguments" });
+        return;
+      }
+      if (stage === "existing-resource") {
+        if (answerKind !== "has-resource" && answerKind !== "no-resource") {
+          writeJsonResponse(response, 400, { error: "invalid-arguments" });
+          return;
+        }
+        // 声称"已有资源"却不给引用 ⇒ 无意义回答，拒绝（避免形成空授权凭据）。
+        if (
+          answerKind === "has-resource" &&
+          (typeof parsedBody.resourceReference !== "string" ||
+            parsedBody.resourceReference === "")
+        ) {
+          writeJsonResponse(response, 400, { error: "invalid-arguments" });
+          return;
+        }
+      } else if (allowOnceDecision !== "allow-once" && allowOnceDecision !== "deny") {
+        writeJsonResponse(response, 400, { error: "invalid-arguments" });
+        return;
+      }
+      try {
+        const result = await applicationService.decideInstallationInquiry({
+          inquiryIdentifier,
+          expectedRevision,
+          stage,
+          ...(typeof answerKind === "string"
+            ? { answerKind: answerKind as "has-resource" | "no-resource" }
+            : {}),
+          ...(typeof parsedBody.resourceReference === "string"
+            ? { resourceReference: parsedBody.resourceReference }
+            : {}),
+          ...(typeof allowOnceDecision === "string"
+            ? { allowOnceDecision: allowOnceDecision as "allow-once" | "deny" }
+            : {}),
+        });
+        writeJsonResponse(response, 200, result);
+      } catch (error) {
+        const errorCode = readApplicationErrorCode(error);
+        if (errorCode === "installation-inquiry-not-found") {
+          writeJsonResponse(response, 404, { error: errorCode });
+          return;
+        }
+        // 状态冲突（已变化/已回答/阶段不符）→ 409，供界面提示刷新。
+        if (
+          errorCode === "installation-inquiry-stale-revision" ||
+          errorCode === "installation-inquiry-already-answered" ||
+          errorCode === "installation-inquiry-stage-mismatch"
+        ) {
+          writeJsonResponse(response, 409, { error: errorCode });
+          return;
+        }
+        if (errorCode === "installation-inquiry-invalid") {
           writeJsonResponse(response, 400, { error: errorCode });
           return;
         }
