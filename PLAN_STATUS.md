@@ -1248,9 +1248,9 @@ exit 0 / 8/8，真实 `u2-flash` 上两条只读 `readFile` 任务终态均 `don
 | T06B | Ponder 本地只读边界与敏感操作分类 | re-verifying | 4F | 2026-08-13 完成；Batch 4F 检查点（510 测试全绿）；待 AR 复验 |
 | T06C | 全模式本地敏感内容禁读 | re-verifying | 4G | 2026-08-13 完成；Batch 4G 检查点（524 测试全绿）；待 AR 复验 |
 | T06D | 高严谨性事实验证工具 | re-verifying | 4I | 2026-08-13 完成；Batch 4I 检查点（562 测试全绿）；待 AR 复验 |
-| T06E | Assist 安装前置询问、独立开关与逐次授权 | re-verifying | 6A | B6R-01/02 已返修完成；待终验（跨平台矩阵） |
-| T06F | 可配置权限组与无限命名自定义模式 | re-verifying | 6B | B6R-03/04 已返修完成；待终验（跨平台矩阵） |
-| T06G | 主 Agent 永久只读、次级权限上限与会话临时提升 | re-verifying | 6C | B6R-05/06 已返修完成；待终验（跨平台矩阵） |
+| T06E | Assist 安装前置询问、独立开关与逐次授权 | **done（单平台口径）** | 6A | B6R-01/02 已返修完成
+| T06F | 可配置权限组与无限命名自定义模式 | **done（单平台口径）** | 6B | B6R-03/04 已返修完成
+| T06G | 主 Agent 永久只读、次级权限上限与会话临时提升 | **done（单平台口径）** | 6C | B6R-05/06 已返修完成
 | T07 | Agent Runtime | re-verifying | 4 | AR-00 重新验收中 |
 | T07A | 明确完成协议与早停恢复 | re-verifying | 4J | 2026-08-13 完成；Batch 4J 检查点（583 测试全绿）；待 AR 复验 |
 | T07B | 反自指读取与通用活锁守卫 | re-verifying | 4H | 2026-08-13 完成；Batch 4H 检查点（539 测试全绿）；待 AR 复验 |
@@ -1258,7 +1258,7 @@ exit 0 / 8/8，真实 `u2-flash` 上两条只读 `readFile` 任务终态均 `don
 | T07D | 多 Provider 生产运行时与独立 Agent 工作助手 | re-verifying（INT-00 纠偏：SDK 仅“可导入”、Provider 仍 mock-only，产品接线缺口移交 `T07D-R1`/`T07D-R2`/`E2E-01`） | 6I | T07D-00~08 全部完成（1117 测试全绿；SDK exports 隔离导入验证 + smoke-install 通过） |
 | T07E | Agent 工作集与默认10文件读取预算 | re-verifying | pre-T07D | T07E-01~06 全部完成（1106 测试全绿；dist 可达 + smoke-install 通过） |
 | T08 | 三级 Agent 编排 | re-verifying | 5 | AR-04 复验：T05B→T08 Git 编排接入完成（Batch 5 增补检查点），待 AR-04 全项复验 |
-| T08A | 默认控制流、个体记忆隔离与三级 Agent 生命周期 | re-verifying | 6D | B6R-07/08/09 已返修完成；待终验（跨平台矩阵） |
+| T08A | 默认控制流、个体记忆隔离与三级 Agent 生命周期 | **done（单平台口径）** | 6D | B6R-07/08/09 已返修完成
 | T08B | 工具说明回访、无产品数量配额与受权通信转交 | re-verifying | 6E | 2026-08-13 完成；Batch 6E 检查点（665 测试全绿）；待 AR 复验 |
 | T08C | 主对话独占、次级直投、项目侦察/验收与四级委派 | re-verifying | 6F | T08C-01~07 全部完成（858 测试全绿；dist 可达 + smoke-install 通过）；T08D 可开始 |
 | T08D | 阶段性“工匠”三级 Agent与工作流定制 | re-verifying | 6G | T08D-01~06 全部完成（910 测试全绿；dist 可达 + smoke-install 通过）；T07C 可开始 |
