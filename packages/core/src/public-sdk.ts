@@ -19,6 +19,12 @@ import {
   PermissionAskRequestStore,
   type PermissionAskRequestRecord,
 } from "./orchestration/permission-ask-request-store.js";
+import type {
+  InstallationInquiryAnswer,
+  InstallationInquiryRecord,
+} from "./tools/installation-inquiry-registry.js";
+import { InstallationInquiryRegistry } from "./tools/installation-inquiry-registry.js";
+import { InstallationGateInterfacePort } from "./tools/installation-gate-interface-port.js";
 import { buildPermissionAskEvent } from "./orchestration/permission-ask-event.js";
 // GUI-02-02：界面所需的安全预览由核心本地生成（脱敏 + 限长 + 敏感路径回退受控详情）。
 import { buildPermissionAskSafePreview } from "./orchestration/permission-ask-safe-preview.js";
@@ -1123,6 +1129,19 @@ export interface PublicApplicationOptions {
   /** 检查点 B：安装交互端口（询问已有资源 + 精确计划逐次授权；缺端口即拒绝且不等待）。 */
   installationUserPort?: InstallationGateUserPort | null;
   /**
+   * GUI-02-02 专用流程（2026-10-12）：**由界面承载安装询问**（独立于普通授权卡）。
+   *
+   * 置为 `true` 时，门面**自建** `InstallationInquiryRegistry` 与界面侧通道，
+   * 并由 `listPendingInstallationInquiries()` / `answerInstallationInquiry()` /
+   * `decideInstallationAllowOnce()` 供界面读取与回答。
+   *
+   * **与 `installationUserPort` 互斥**：两者都提供时以 `installationUserPort` 为准
+   * （显式注入的宿主实现优先）。**未开启任一者 ⇒ 安装 fail-closed**（维持既有语义）。
+   */
+  isInstallationGateOnInterface?: boolean;
+  /** 界面承载安装询问时的等待上限（毫秒；必须为正数）。缺省 15 分钟。 */
+  installationInquiryTimeoutMilliseconds?: number;
+  /**
    * PROJECT-01-04：跨项目传输的资源 I/O 端口。
    *
    * 未注入时跨项目只读/导入会**如实失败**（不伪装成功）——SDK 消费者必须显式提供
@@ -1435,6 +1454,31 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
         "不支持的运行时: " + String(runtimeKind),
       );
     }
+    /**
+     * GUI-02-02 专用流程（2026-10-12）：界面承载安装询问时，**门面自建**注册表与通道。
+     *
+     * **互斥**：显式注入的 `installationUserPort` **优先**（宿主实现可覆盖）。
+     * 两者皆无 ⇒ 为 null ⇒ 安装 fail-closed（维持既有语义）。
+     */
+    const installationInquiryRegistry =
+      options.isInstallationGateOnInterface === true &&
+      options.installationUserPort === undefined
+        ? new InstallationInquiryRegistry()
+        : null;
+    const effectiveInstallationUserPort =
+      options.installationUserPort ??
+      (installationInquiryRegistry === null
+        ? null
+        : new InstallationGateInterfacePort({
+            registry: installationInquiryRegistry,
+            inquiryTimeoutMilliseconds:
+              options.installationInquiryTimeoutMilliseconds ?? 15 * 60 * 1000,
+            /**
+             * 界面承载时**视为具备可信交互通道**：真正的"用户是否在场"由界面的
+             * 裁决动作体现（未回答 ⇒ 超时 ⇒ `null` ⇒ fail-closed）。
+             */
+            isInteractive: () => true,
+          }));
     const runtime = await createApplicationRuntime({
       mode: options.mode,
       stateDirectory: options.stateDirectory,
@@ -1451,7 +1495,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
         ? {}
         : { onPermissionAskWithIdentity: options.onPermissionAskWithIdentity }),
       backupDeletionControlPort: options.backupDeletionControlPort ?? null,
-      installationUserPort: options.installationUserPort ?? null,
+      installationUserPort: effectiveInstallationUserPort,
       authenticatedUserId: options.authenticatedUserId,
       mainAgentInstanceId: options.mainAgentInstanceId,
       feedbackProcessModulePath: options.feedbackProcessModulePath ?? null,
@@ -1478,6 +1522,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       // PROJECT-01-04：跨项目传输的真实 I/O 与人工改动守卫（未注入 ⇒ 如实失败，不伪装）。
       crossProjectResourceIo: options.crossProjectResourceIo ?? null,
       crossProjectHumanEditGuard: options.crossProjectHumanEditGuard ?? null,
+      installationInquiryRegistry,
     });
   }
 
@@ -1489,6 +1534,8 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       idempotencyLedgerEntries?: TaskIdempotencyLedgerEntry[];
       crossProjectResourceIo?: CrossProjectResourceIoPort | null;
       crossProjectHumanEditGuard?: CrossProjectTargetHumanEditGuardPort | null;
+      /** GUI-02-02 专用流程：界面承载安装询问时的待决注册表（未开启则为 null）。 */
+      installationInquiryRegistry?: InstallationInquiryRegistry | null;
     } = {},
   ) {
     this.statusPollIntervalMilliseconds =
@@ -1496,6 +1543,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     this.stateDirectory = options.stateDirectory ?? null;
     this.crossProjectResourceIo = options.crossProjectResourceIo ?? null;
     this.crossProjectHumanEditGuard = options.crossProjectHumanEditGuard ?? null;
+    this.installationInquiryRegistry = options.installationInquiryRegistry ?? null;
     this.idempotencyLedgerFilePath =
       this.stateDirectory === null
         ? null
@@ -2202,6 +2250,47 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     this.permissionAskAuthorityPort = input.authorityPort;
     this.permissionAskCsrfToken = input.csrfToken;
     this.permissionAskProjectRootPath = input.projectRootPath;
+  }
+
+  /**
+   * GUI-02-02 专用流程（2026-10-12）：列出**待决的安装询问**（只读）。
+   *
+   * 说明：安装**不走**普通权限询问的授权卡，故这是**独立入口**；
+   * 未开启界面安装通道时返回空列表（**不是**"已授权"）。
+   */
+  listPendingInstallationInquiries(): Array<InstallationInquiryRecord> {
+    return this.installationInquiryRegistry?.listPending() ?? [];
+  }
+
+  /** GUI-02-02 专用流程：回答**阶段 1**「是否已有资源」（必须匹配 revision）。 */
+  answerInstallationInquiry(input: {
+    inquiryIdentifier: string;
+    expectedRevision: number;
+    answer: InstallationInquiryAnswer;
+  }): InstallationInquiryRecord {
+    return this.requireInstallationInquiryRegistry().answerInquiry(input);
+  }
+
+  /** GUI-02-02 专用流程：回答**阶段 2**「是否允许本次安装」（必须匹配 revision）。 */
+  decideInstallationAllowOnce(input: {
+    inquiryIdentifier: string;
+    expectedRevision: number;
+    decision: "allow-once" | "deny";
+  }): InstallationInquiryRecord {
+    return this.requireInstallationInquiryRegistry().decideAllowOnce(input);
+  }
+
+  /**
+   * 未开启界面安装通道却试图回答 ⇒ **稳定失败**（不得静默忽略，避免"以为批准了"）。
+   */
+  private requireInstallationInquiryRegistry(): InstallationInquiryRegistry {
+    if (this.installationInquiryRegistry === null) {
+      throw new PublicApplicationError(
+        "installation-inquiry-not-found",
+        "未开启界面安装通道，无法回答安装询问",
+      );
+    }
+    return this.installationInquiryRegistry;
   }
 
   /** GUI-02-01 片②：权限询问请求实体存储（与 CLI/GUI 共用同一状态目录）。 */
@@ -4228,6 +4317,14 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
   private crossProjectAuthorizationStore: CrossProjectAuthorizationStore | null = null;
   private readonly crossProjectResourceIo: CrossProjectResourceIoPort | null;
   private readonly crossProjectHumanEditGuard: CrossProjectTargetHumanEditGuardPort | null;
+  /**
+   * GUI-02-02 专用流程（2026-10-12）：界面承载安装询问时的**待决注册表**。
+   *
+   * `null` 表示**未开启界面安装通道** ⇒ 安装门禁无用户端口 ⇒ fail-closed
+   * （与改动前语义一致）。本字段只把界面的读取/回答动作转给注册表，
+   * **门面不代替界面做授权决定**。
+   */
+  private readonly installationInquiryRegistry: InstallationInquiryRegistry | null;
 
   private nextEventIdempotencyId(): string {
     this.eventCounter += 1;
