@@ -133,6 +133,17 @@ export interface MainControllerOptions {
   buildPermissionExplanation: (toolName: string) => string;
   /** 流式输出到 UI 的回调。 */
   streamOutput: (missionId: string | null, text: string) => void;
+  /**
+   * GUI-02-01 片①（2026-10-11）：权限询问**携带绝对身份**的上报口。
+   *
+   * 可选；未提供时行为与之前**逐字一致**（既有 `streamOutput` 路径不变）。
+   * 两条调度路径（assist / devolve）在此汇合后转发给宿主。
+   */
+  onPermissionAskWithIdentity?: (input: {
+    ownerAgentInstanceId: string;
+    taskId: string;
+    message: string;
+  }) => void;
   /** 权限询问弹窗回调（Assist）。 */
   onPermissionAsk?: (ask: {
     missionId: string;
@@ -811,6 +822,18 @@ export class MainController {
         }
         this.options.streamOutput(missionId, `[需要用户] ${message.payload.instructionText}`);
       },
+      // GUI-02-01 片①：assist 路径同样把权限询问的**绝对身份**转发给宿主（可选）。
+      ...(this.options.onPermissionAskWithIdentity === undefined
+        ? {}
+        : {
+            onPermissionAskWithIdentity: (input: {
+              ownerAgentInstanceId: string;
+              taskId: string;
+              message: string;
+            }) => {
+              this.options.onPermissionAskWithIdentity?.(input);
+            },
+          }),
       missionLeaseStore: this.options.missionLeaseStore ?? null,
       processInstanceId: this.options.processInstanceId,
     });
@@ -862,6 +885,18 @@ export class MainController {
       onUserEscalation: (message) => {
         this.options.streamOutput(missionId, `[需要用户] ${message}`);
       },
+      // GUI-02-01 片①：把权限询问的**绝对身份**转发给宿主（可选；未提供则不接线）。
+      ...(this.options.onPermissionAskWithIdentity === undefined
+        ? {}
+        : {
+            onPermissionAskWithIdentity: (input: {
+              ownerAgentInstanceId: string;
+              taskId: string;
+              message: string;
+            }) => {
+              this.options.onPermissionAskWithIdentity?.(input);
+            },
+          }),
       missionLeaseStore: this.options.missionLeaseStore ?? null,
       processInstanceId: this.options.processInstanceId,
     });
