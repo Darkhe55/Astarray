@@ -17,6 +17,8 @@
  * （B1–B8、文案逐字基线、批准复用三态、目标路径键序）。
  */
 
+import { hashToolArguments } from "../core/permission-policy.js";
+
 /** 结构化权限询问：**精确参数不得改写、不得截断**（授权按参数哈希绑定）。 */
 export interface PermissionAsk {
   taskIdentifier: string;
@@ -38,6 +40,14 @@ export interface PreviousApprovalRecord {
   argumentsJson: string;
   /** 同一目标路径是否已经**成功写入**过（成功后不得靠抖动复用，必须 fail-closed）。 */
   hasSucceededWithSameTarget: boolean;
+  /**
+   * 该批准的**有效期**（ISO 时间点）。
+   *
+   * GUI-02-01 R1（2026-10-11）：用户 S3 要求"**过期**…不得复用批准"。
+   * 缺省 `null` 表示不设期限（保持既有调用方行为不变）；
+   * 一旦提供且已过期 ⇒ 判定为 `ask-user`（必须重新询问）。
+   */
+  expiresAtIso?: string | null;
 }
 
 export type ApprovalReuseDecision =
@@ -93,18 +103,49 @@ export function shouldReusePreviousApproval(input: {
   if (previousApproval.toolName !== pendingAsk.toolName) {
     return "ask-user";
   }
+  /**
+   * **R1（2026-10-11 用户批准）**：改为比较**完整规范化参数指纹**。
+   *
+   * 旧实现只比"工具名 + 目标路径"，导致**同一路径、内容不同**也复用批准，
+   * 与 S3"绑定完整参数指纹"冲突。
+   *
+   * 复用 `hashToolArguments`（`core/permission-policy.ts`）：它**先递归键序规范化再 sha256**，
+   * 因而同时满足两条要求：
+   *  - **内容变化 ⇒ 指纹变化** ⇒ `ask-user`（消除缺陷）；
+   *  - **仅键序/空白差异 ⇒ 同一指纹** ⇒ 仍复用（**保住** 2026-10-02 方案 B 的格式抖动容忍）。
+   *
+   * 目标路径的比较**保留**：它给出更明确的"路径不同"信号，且与门禁的作用域判定同源。
+   */
   const pendingTargetPath = readTargetPath(pendingAsk.argumentsJson);
   const approvedTargetPath = readTargetPath(previousApproval.argumentsJson);
   if (pendingTargetPath === null || approvedTargetPath === null) {
+    // 参数不可解析或无可判定路径 ⇒ 保守询问。
     return "ask-user";
   }
   if (pendingTargetPath !== approvedTargetPath) {
     return "ask-user";
   }
+  /**
+   * **有效期（R1）**：S3 要求"过期…不得复用批准"。
+   * 缺省不设期限（保持既有调用方行为不变）；已过期 ⇒ 必须重新询问。
+   */
+  const expiresAtIso = previousApproval.expiresAtIso ?? null;
+  if (expiresAtIso !== null && Date.parse(expiresAtIso) <= Date.now()) {
+    return "ask-user";
+  }
+  /**
+   * 完整规范化参数指纹比较：**这是 R1 的核心**。
+   * 注意顺序 —— 先判"已成功写入"（fail-closed），再判指纹：
+   * 已成功写入时无论指纹是否相同都不得复用（重放保护不放宽）。
+   */
   if (previousApproval.hasSucceededWithSameTarget) {
-    // 同一目标已成功写入过：完整参数相同时明确判"已执行"；参数不同也必须询问
-    // （不得自动放行，避免用抖动绕过重放保护）。
     return "already-executed";
+  }
+  if (
+    hashToolArguments(pendingAsk.argumentsJson) !==
+    hashToolArguments(previousApproval.argumentsJson)
+  ) {
+    return "ask-user";
   }
   return "reuse-without-asking";
 }

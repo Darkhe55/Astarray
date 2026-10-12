@@ -41,7 +41,7 @@ function ask(toolName: string, argumentsJson: string): PermissionAsk {
 }
 
 describe("GUI-02-01 N4：批准复用与『完整参数指纹』的差距（记录现状，非已修）", () => {
-  it("① 【记录现状】同一目标路径、**内容不同**时，当前判定仍为 reuse-without-asking（与 S3 不符）", () => {
+  it("① 【R1 已修】同一目标路径、**内容不同**时 ⇒ 必须 ask-user（原为记录现状，R1 后改写为期望行为）", () => {
     const previousApproval: PreviousApprovalRecord = {
       toolName: "createProjectFile",
       argumentsJson: '{"filePath":"a/b.txt","content":"第一版内容"}',
@@ -55,14 +55,13 @@ describe("GUI-02-01 N4：批准复用与『完整参数指纹』的差距（记�
     const decision = shouldReusePreviousApproval({ pendingAsk, previousApproval });
 
     /**
-     * 现象：**内容已变、批准仍被复用**。
-     * 这正是 S3 要求"完整参数指纹"要消除的情况 —— 本断言把差距固定下来，
-     * 返修时应改为期望 `"ask-user"`（或引入规范化指纹后按指纹判定）。
+     * **R1（2026-10-11 用户批准）已修**：本用例原为"记录现状"（断言
+     * `reuse-without-asking`），现改写为**期望行为** —— 内容变化必须重新询问。
      */
     expect(
       decision,
-      "当前只比工具名+目标路径 ⇒ 内容变化也复用批准（与 S3『完整参数指纹』不符）",
-    ).toBe("reuse-without-asking");
+      "内容已变必须重新询问（S3『完整参数指纹』）",
+    ).toBe("ask-user");
   });
 
   it("② 目标路径变化 ⇒ 必须重新询问（现有行为已正确）", () => {
