@@ -132,6 +132,58 @@ describe("headless 裁决执行", () => {
     expect(decision).toBe("requires-human-resubmission");
     expect(spies.grantSessionAuthorization).not.toHaveBeenCalled();
   });
+
+  /**
+   * GUI-02-01 返修（2026-10-12，用户真实人工验收暴露）：
+   *
+   * `ask === null` 曾被**一律**当成"无法确认被请求的工具与参数"并打印告警。
+   * 但它涵盖两种性质完全不同的情形：
+   * - (a) 收到过升级文本却**解析不出**受控询问 ⇒ 确实应告警（需人工检查）；
+   * - (b) 本授权周期内**已无新的询问**（正常终点，例如用户刚拒绝、
+   *       任务保持阻塞）⇒ **什么错都没有**，不得告警。
+   *
+   * 实测现象（用户环境）：拒绝后输出 `permissionAsk: "denied"` +
+   * `status: "blocked"`，**却又**打印该告警 ⇒ 用户误以为产品出错。
+   */
+  it("无新询问（hasUnparsedEscalation=false）→ 不授权，且**不打印误导性告警**", async () => {
+    const spies = makeApplicationSpies();
+    const printed: string[] = [];
+    const decision = await runPermissionAskAdjudication({
+      ask: null,
+      missionIdentifier: "mission-1",
+      isInteractive: true,
+      readDecision: async () => "allow-once",
+      application: spies.application,
+      interactOutput: (message) => printed.push(message),
+      hasUnparsedEscalation: false,
+    });
+    expect(decision).toBe("requires-human-resubmission");
+    expect(spies.grantSessionAuthorization).not.toHaveBeenCalled();
+    expect(
+      printed.join("\n").includes("未能确认被请求的工具与参数"),
+      "本周期已无新询问属正常终点，不得打印『未能确认』告警",
+    ).toBe(false);
+  });
+
+  it("解析不出的升级文本（hasUnparsedEscalation=true）→ 仍然告警（不静默）", async () => {
+    const spies = makeApplicationSpies();
+    const printed: string[] = [];
+    const decision = await runPermissionAskAdjudication({
+      ask: null,
+      missionIdentifier: "mission-1",
+      isInteractive: true,
+      readDecision: async () => "allow-once",
+      application: spies.application,
+      interactOutput: (message) => printed.push(message),
+      hasUnparsedEscalation: true,
+    });
+    expect(decision).toBe("requires-human-resubmission");
+    expect(spies.grantSessionAuthorization).not.toHaveBeenCalled();
+    expect(
+      printed.join("\n").includes("未能确认被请求的工具与参数"),
+      "确实存在解析不出的升级文本时必须告警（不得静默）",
+    ).toBe(true);
+  });
 });
 
 describe("裁决输入通道判定", () => {
