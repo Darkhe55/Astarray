@@ -293,6 +293,15 @@ const application = await AstarrayApplicationFacade.create({
         readDecision: (ask) => decisionPort.readDecision(ask),
         application,
         previousApproval,
+        /**
+         * **2026-10-12 修复**：把"是否存在**解析不出**的升级文本"如实告知裁决层 ——
+         * 否则 `ask === null` 时（本周期已无新询问，属正常终点）会打印
+         * "未能确认被请求的工具与参数…"的误导性告警（实测：用户刚拒绝后即出现）。
+         * 这里 `escalationMessages` 中**已无**可解析询问 ⇒ 未解析项为 0 ⇒ 不告警。
+         */
+        hasUnparsedEscalation: escalationMessages.some(
+          (message) => buildPermissionAskFromEscalation(message) === null,
+        ),
       });
       permissionAskOutcome = decision;
       /**

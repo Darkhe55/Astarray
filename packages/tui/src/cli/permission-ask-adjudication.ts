@@ -59,13 +59,33 @@ export async function runPermissionAskAdjudication(options: {
    * 该路径已成功写入过 → 判 `requires-human-resubmission`（重放保护不放宽）。
    */
   previousApproval?: PreviousApprovalRecord | null;
+  /**
+   * **2026-10-12 修复（真实人工验收暴露）**：是否存在**未能解析**的升级文本。
+   *
+   * 背景：`ask === null` 曾被一律当作"无法确认被请求的工具与参数"，
+   * 但它其实涵盖两种**性质完全不同**的情形：
+   * - (a) 收到过升级文本、却**解析不出**受控询问 ⇒ 确实应告警（需人工检查）；
+   * - (b) 本授权周期内**已经没有新的询问**（正常终点，例如用户刚拒绝、
+   *       任务保持阻塞）⇒ **什么错都没有**，不应告警。
+   *
+   * 此前 (b) 会打印"未能确认被请求的工具与参数…"，让用户以为自己**明明已拒绝**
+   * 却又出了故障（实测：拒绝后输出 `permissionAsk: "denied"` + 该告警）。
+   * 故改为：**只有 (a) 才告警**；未提供本标志时保持旧告警（保守，避免静默）。
+   */
+  hasUnparsedEscalation?: boolean;
 }): Promise<PermissionAskDecision> {
   const ask = options.ask;
   const writePrompt = options.interactOutput ?? logToStderr;
   if (ask === null || options.missionIdentifier === null) {
-    writePrompt(
-      "需要权限的调用已阻断，但未能确认被请求的工具与参数：请人工检查并重新提交任务。",
-    );
+    /**
+     * 只有"确实有解析不出的升级文本"才告警（情形 a）；否则（情形 b：无新询问）
+     * **保持安静** —— 此时既没有待裁决的请求，也没有任何异常。
+     */
+    if (options.hasUnparsedEscalation === true) {
+      writePrompt(
+        "需要权限的调用已阻断，但未能确认被请求的工具与参数：请人工检查并重新提交任务。",
+      );
+    }
     return "requires-human-resubmission";
   }
   // 方案 B：同一次授权周期内，参数抖动（结尾换行/键序）不重复打扰用户。
