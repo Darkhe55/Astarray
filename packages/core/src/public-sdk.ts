@@ -20,6 +20,8 @@ import {
   type PermissionAskRequestRecord,
 } from "./orchestration/permission-ask-request-store.js";
 import { buildPermissionAskEvent } from "./orchestration/permission-ask-event.js";
+// GUI-02-02：界面所需的安全预览由核心本地生成（脱敏 + 限长 + 敏感路径回退受控详情）。
+import { buildPermissionAskSafePreview } from "./orchestration/permission-ask-safe-preview.js";
 import {
   PermissionAskDecisionEntryService,
   type PermissionAskAuthorityPort,
@@ -2066,11 +2068,25 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
    * 不自动恢复任何任务。
    */
   async listPendingPermissionAskRequests(): Promise<
-    Array<PermissionAskRequestRecord & { ownerAgentInstanceId: string }>
+    Array<
+      PermissionAskRequestRecord & {
+        ownerAgentInstanceId: string;
+        /** 结构化安全预览（白名单字段；**绝不含原始 `argumentsJson`**）。 */
+        preview: Record<string, unknown>;
+        /** 由工具名推导的动作（create/overwrite/delete/read/…）。 */
+        action: string;
+      }
+    >
   > {
     this.assertOpen();
     const store = this.createPermissionAskRequestStore();
-    const results: Array<PermissionAskRequestRecord & { ownerAgentInstanceId: string }> = [];
+    const results: Array<
+      PermissionAskRequestRecord & {
+        ownerAgentInstanceId: string;
+        preview: Record<string, unknown>;
+        action: string;
+      }
+    > = [];
     for (const ownerDirectoryName of await this.listAgentMemoryOwners()) {
       /**
        * **必须解码**：存档域目录名是 `sanitizePathSegment(agentInstanceId)` 的**转义形式**
@@ -2079,9 +2095,25 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
        */
       const ownerAgentInstanceId = decodePathSegment(ownerDirectoryName);
       for (const record of await store.listRequestsForOwner(ownerAgentInstanceId)) {
-        if (record.status === "pending") {
-          results.push({ ...record, ownerAgentInstanceId });
+        if (record.status !== "pending") {
+          continue;
         }
+        /**
+         * 界面所需的安全预览在**核心**本地生成（脱敏 + 限长 + 敏感路径回退受控详情），
+         * 调用方（GUI/CLI）**不得**自行拼装或回传原始参数。
+         */
+        const safePreview = buildPermissionAskSafePreview({
+          toolName: record.toolName,
+          argumentsJson: record.argumentsJson,
+          explanation: record.explanation,
+          projectRootPath: this.permissionAskProjectRootPath,
+        });
+        results.push({
+          ...record,
+          ownerAgentInstanceId,
+          preview: safePreview as unknown as Record<string, unknown>,
+          action: safePreview.action,
+        });
       }
     }
     return results;

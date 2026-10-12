@@ -161,6 +161,53 @@ export interface GuiApplicationPort {
     decision: "accepted" | "rejected";
     reason?: string;
   }): Promise<GuiVerificationDecisionView>;
+  /**
+   * GUI-02-02（2026-10-11）：**待授权列表**。
+   *
+   * 只读：不得触发模型调用、不得注入上下文、不得自动恢复任务（用户明确要求）。
+   */
+  listPendingPermissionAsks?(): Promise<GuiPendingPermissionAskView[]>;
+  /**
+   * GUI-02-02（2026-10-11）：**裁决入口**。
+   *
+   * 只接受**请求锚点与裁决**，不接受前端提交的新参数；服务器从本地权威记录
+   * 取原始参数并重新校验主体、权限、期限与当前状态（用户明确要求）。
+   */
+  decidePermissionAsk?(input: {
+    ownerAgentInstanceId: string;
+    askIdentifier: string;
+    decision: "allowed-once" | "denied";
+    expectedRequestRevision: number;
+    expectedOperationFingerprint: string;
+  }): Promise<GuiPermissionAskDecisionView>;
+}
+
+/**
+ * GUI-02-02：待授权条目视图（**只含界面所需字段**）。
+ *
+ * **不得携带原始 `argumentsJson`** —— 长内容与敏感值经核心的安全预览
+ * （脱敏 + 限长 + 敏感路径回退受控详情）后才可出现在界面上。
+ */
+export interface GuiPendingPermissionAskView {
+  ownerAgentInstanceId: string;
+  askIdentifier: string;
+  taskIdentifier: string;
+  toolName: string;
+  action: string;
+  operationFingerprint: string;
+  requestRevision: number;
+  status: string;
+  createdAtIso: string;
+  expiresAtIso: string | null;
+  /** 结构化安全预览（与公共事件同源，白名单字段）。 */
+  preview: Record<string, unknown>;
+}
+
+/** GUI-02-02：裁决结果视图。 */
+export interface GuiPermissionAskDecisionView {
+  askIdentifier: string;
+  status: string;
+  requestRevision: number;
 }
 
 /** GUI-01-R-03：上下文预算 DTO（结构兼容 PublicContextSettings，无内部字段）。 */
@@ -1183,6 +1230,109 @@ export async function startGuiServer(
           errorCode === "verification-context-missing"
         ) {
           writeJsonResponse(response, 404, { error: errorCode });
+          return;
+        }
+        throw error;
+      }
+      return;
+    }
+    /**
+     * GUI-02-02 片2（2026-10-11）：**待授权列表**。
+     *
+     * 只读端点：不触发模型调用、不注入上下文、不自动恢复任务；查看不等于裁决。
+     * 视图**不含原始 `argumentsJson`**（只给安全预览），避免长内容/敏感值进入前端。
+     */
+    if (request.method === "GET" && requestUrl.pathname === "/permission-asks") {
+      const applicationService = options.applicationService;
+      if (applicationService.listPendingPermissionAsks === undefined) {
+        writeCapabilityUnavailable(response);
+        return;
+      }
+      writeJsonResponse(response, 200, {
+        entries: await applicationService.listPendingPermissionAsks(),
+      });
+      return;
+    }
+    /**
+     * GUI-02-02 片2（2026-10-11）：**裁决入口**。
+     *
+     * **只接受请求锚点与裁决**：不接受前端提交的新参数（工具名/路径/参数一律由服务器
+     * 从本地权威记录取）。CSRF 由**全局状态变更门禁**（`x-csrf-token`）先行校验，
+     * 此处不再重复实现授权规则 —— 授权判定复用核心同一服务。
+     */
+    if (
+      request.method === "POST" &&
+      requestUrl.pathname === "/commands/permission-ask-decision"
+    ) {
+      const applicationService = options.applicationService;
+      if (applicationService.decidePermissionAsk === undefined) {
+        writeCapabilityUnavailable(response);
+        return;
+      }
+      const parsedBody = JSON.parse((await readBody(request)) || "{}") as {
+        ownerAgentInstanceId?: unknown;
+        askIdentifier?: unknown;
+        decision?: unknown;
+        expectedRequestRevision?: unknown;
+        expectedOperationFingerprint?: unknown;
+      };
+      const ownerAgentInstanceId = parsedBody.ownerAgentInstanceId;
+      const askIdentifier = parsedBody.askIdentifier;
+      const decision = parsedBody.decision;
+      const expectedRequestRevision = parsedBody.expectedRequestRevision;
+      const expectedOperationFingerprint = parsedBody.expectedOperationFingerprint;
+      if (
+        typeof ownerAgentInstanceId !== "string" ||
+        ownerAgentInstanceId === "" ||
+        typeof askIdentifier !== "string" ||
+        askIdentifier === "" ||
+        (decision !== "allowed-once" && decision !== "denied") ||
+        typeof expectedRequestRevision !== "number" ||
+        !Number.isInteger(expectedRequestRevision) ||
+        typeof expectedOperationFingerprint !== "string" ||
+        expectedOperationFingerprint === ""
+      ) {
+        writeJsonResponse(response, 400, { error: "invalid-arguments" });
+        return;
+      }
+      try {
+        const result = await applicationService.decidePermissionAsk({
+          ownerAgentInstanceId,
+          askIdentifier,
+          decision,
+          expectedRequestRevision,
+          expectedOperationFingerprint,
+        });
+        writeJsonResponse(response, 200, result);
+      } catch (error) {
+        const errorCode = readApplicationErrorCode(error);
+        // 状态冲突（陈旧 revision / 指纹不符 / 已裁决 / 已过期）→ 409，供界面提示刷新。
+        if (
+          errorCode === "permission-ask-stale-revision" ||
+          errorCode === "permission-ask-fingerprint-mismatch" ||
+          errorCode === "permission-ask-already-decided" ||
+          errorCode === "permission-ask-expired" ||
+          errorCode === "permission-ask-revoked"
+        ) {
+          writeJsonResponse(response, 409, { error: errorCode });
+          return;
+        }
+        if (errorCode === "permission-ask-not-found") {
+          writeJsonResponse(response, 404, { error: errorCode });
+          return;
+        }
+        // 鉴权类失败（CSRF / 未认证 / 不可见 / 无裁决权）→ 403。
+        if (
+          errorCode === "permission-ask-csrf-required" ||
+          errorCode === "permission-ask-unauthenticated" ||
+          errorCode === "permission-ask-not-visible" ||
+          errorCode === "permission-ask-not-authorized"
+        ) {
+          writeJsonResponse(response, 403, { error: errorCode });
+          return;
+        }
+        if (errorCode === "permission-ask-invalid") {
+          writeJsonResponse(response, 400, { error: errorCode });
           return;
         }
         throw error;

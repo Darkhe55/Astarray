@@ -2,7 +2,7 @@
  * status / resume / cancel / doctor / config init 命令（T11）。
  */
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -3921,12 +3921,74 @@ export async function executeGuiServeCommand(
     application,
   });
   application.createSession({ sessionId, mode: sessionMode });
+  /**
+   * GUI-02-02（2026-10-11）：权限询问裁决所需的**本地权威事实**与 **CSRF**。
+   *
+   * 为什么在这里生成 CSRF：`startGuiServer` 未显式提供 `csrfTokenFactory` 时会**内部**
+   * 生成 token，门面拿不到同一值 ⇒ 裁决入口的 CSRF 期望值与浏览器提交值不一致。
+   * 故在此**预生成**并同时交给两边，保证**同一来源**。
+   *
+   * 权威端口语义（本地控制面）：认证用户即当前会话/项目的裁决者。
+   * 这是**本地控制面**能力，**不扩大任何 Agent 的运行权限**。
+   */
+  const guiCsrfToken = randomBytes(32).toString("hex");
+  application.configurePermissionAskAdjudication({
+    authorityPort: {
+      // 本地控制面：认证用户即当前会话/项目的裁决者（空身份一律拒绝）。
+      isProjectVisibleTo: async (agentInstanceId) => agentInstanceId !== "",
+      isSessionVisibleTo: async (agentInstanceId) => agentInstanceId !== "",
+      hasAdjudicationAuthority: async (agentInstanceId) => agentInstanceId !== "",
+    },
+    csrfToken: guiCsrfToken,
+    projectRootPath: process.cwd(),
+  });
   let guiHandle: Awaited<ReturnType<typeof startGuiServer>> | undefined;
   try {
     guiHandle = await startGuiServer({
-      applicationService: application,
+      applicationService: Object.assign(application, {
+        /**
+         * 门面本已满足 `GuiApplicationPort`（此前即如此传入）；此处**追加**两个
+         * GUI-02-02 映射：只暴露界面所需字段（不含原始参数），
+         * 裁决调用**注入服务器侧 CSRF 与本地主体**（不接受前端提交的新参数）。
+         */
+        listPendingPermissionAsks: async () =>
+          (await application.listPendingPermissionAskRequests()).map((entry) => ({
+            ownerAgentInstanceId: entry.ownerAgentInstanceId,
+            askIdentifier: entry.askIdentifier,
+            taskIdentifier: entry.taskIdentifier,
+            toolName: entry.toolName,
+            action: entry.action,
+            operationFingerprint: entry.operationFingerprint,
+            requestRevision: entry.requestRevision,
+            status: entry.status,
+            createdAtIso: entry.createdAtIso,
+            expiresAtIso: entry.expiresAtIso,
+            preview: entry.preview,
+          })),
+        decidePermissionAsk: async (input: {
+          ownerAgentInstanceId: string;
+          askIdentifier: string;
+          decision: "allowed-once" | "denied";
+          expectedRequestRevision: number;
+          expectedOperationFingerprint: string;
+        }) => {
+          const decided = await application.decidePermissionAskRequest({
+            ...input,
+            csrfToken: guiCsrfToken,
+            authenticatedAgentInstanceId: `gui-session:${sessionId}`,
+            projectIdentifier: path.basename(process.cwd()) || "astarray",
+            sessionIdentifier: sessionId,
+          });
+          return {
+            askIdentifier: decided.record.askIdentifier,
+            status: decided.record.status,
+            requestRevision: decided.record.requestRevision,
+          };
+        },
+      }),
       sessionId,
       mode: sessionMode,
+      csrfTokenFactory: () => guiCsrfToken,
       ...(options.port !== undefined ? { port: options.port } : {}),
     });
     process.stdout.write(
