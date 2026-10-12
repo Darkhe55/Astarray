@@ -16,6 +16,17 @@ import {
   type PreviousApprovalRecord,
 } from "./permission-ask-adjudication.js";
 import { waitForPermissionAsk } from "./permission-ask-wait.js";
+import { PermissionAskDecisionEntryService } from "../../../core/src/orchestration/permission-ask-decision-entry.js";
+import { PermissionAskRequestStore } from "../../../core/src/orchestration/permission-ask-request-store.js";
+
+/**
+ * GUI-02-01 片③：CLI 作为本地控制面的**会话内 CSRF 事实**。
+ *
+ * CLI 不是浏览器、无跨站请求面，故裁决入口的 CSRF 校验在这里由固定值满足；
+ * 该值**不是秘密、不可复用为执行令牌**，仅用于满足同一服务的统一入口形态
+ * （浏览器侧的真实 CSRF 由 GUI 生成并随页面下发）。
+ */
+const CLI_LOCAL_CSRF_TOKEN = "cli-local-control-plane";
 import {
   RuntimeSelectionError,
   buildRuntimeSelection,
@@ -107,7 +118,25 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
   const streamedAnswerChunks: string[] = [];
   // permission-ask 的结构化询问随升级文本到达（ADR-0011），单独留档供裁决解析。
   const escalationMessages: string[] = [];
-  const application = await AstarrayApplicationFacade.create({
+  /**
+ * GUI-02-01 片③：最近一次**已登记**权限询问的锚点（由 `onPermissionAskWithIdentity` 写入）。
+ * 裁决时用它经**同一服务**（`PermissionAskDecisionEntryService`）完成状态迁移 ——
+ * 该服务亦为 GUI 所用，以此兑现"GUI 使用同一服务、不复制授权规则"。
+ */
+interface RegisteredPermissionAskAnchor {
+  ownerAgentInstanceId: string;
+  askIdentifier: string;
+  requestRevision: number;
+  operationFingerprint: string;
+}
+let registeredPermissionAsk: RegisteredPermissionAskAnchor | null = null;
+/**
+ * GUI-02-01 片③（时序修复，2026-10-11）：登记是**异步**的，而裁决发生在同一轮循环内
+ * ⇒ 二者存在竞态（实测：走到裁决块时实体常**尚未登记**，状态迁移遂不执行）。
+ * 保留最后一次登记的 promise，供裁决前**显式等待**，消除该竞态。
+ */
+let pendingRegistration: Promise<void> | null = null;
+const application = await AstarrayApplicationFacade.create({
     stateDirectory: options.stateDirectory,
     // GUI-02-01 片②：显式传入工作区根，使"项目标识"由**真实根目录名**推导，
     // 而不是在 CLI 里硬编码；运行时亦以此作为产物对账根（避免写入宿主仓库）。
@@ -141,7 +170,8 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
      * 只把失败如实写入 stderr 供排查。
      */
     onPermissionAskWithIdentity: (input) => {
-      void (async () => {
+      // 供裁决前等待（时序修复）：见 pendingRegistration 声明处说明。
+      pendingRegistration = (async () => {
         try {
           const parsed = buildPermissionAskFromEscalation(input.message);
           if (parsed === null) {
@@ -150,7 +180,7 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
             );
             return;
           }
-          await application.registerPermissionAskRequest({
+          const record = await application.registerPermissionAskRequest({
             ownerAgentInstanceId: input.ownerAgentInstanceId,
             taskIdentifier: parsed.taskIdentifier,
             toolName: parsed.toolName,
@@ -159,6 +189,16 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
             projectIdentifier: path.basename(process.cwd()) || "astarray",
             sessionIdentifier: "cli-run",
           });
+          /**
+           * GUI-02-01 片③：记住**已登记实体**的锚点，供裁决时经**同一服务**做状态迁移
+           * （`PermissionAskDecisionEntryService`，GUI 亦用它）。
+           */
+          registeredPermissionAsk = {
+            ownerAgentInstanceId: input.ownerAgentInstanceId,
+            askIdentifier: record.askIdentifier,
+            requestRevision: record.requestRevision,
+            operationFingerprint: record.operationFingerprint,
+          };
         } catch (error) {
           logToStderr(
             "[权限请求登记] 登记失败（裁决路径不受影响）: " +
@@ -210,6 +250,7 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
     });
     await refreshTerminalTaskFailure();
     let permissionAskOutcome: string | null = null;
+
     /**
      * 方案 B（2026-10-02）：记录本授权周期内上一次已批准的操作，
      * 使模型重发时只发生格式抖动（结尾换行/键序）的情形**不再重复询问用户**。
@@ -254,6 +295,55 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
         previousApproval,
       });
       permissionAskOutcome = decision;
+      /**
+       * GUI-02-01 片③：把用户裁决**经同一服务**落到请求实体上（状态迁移 + revision 递增）。
+       *
+       * 复用 `PermissionAskDecisionEntryService`（GUI 亦用它）⇒ 授权规则与状态机**只有一份**。
+       * **不改变既有行为**：本块只在"已登记实体存在"时补一次实体状态迁移；
+       * 授权判定、unblock 与续跑语义仍由既有 `runPermissionAskAdjudication` 负责。
+       * **失败不阻断**：实体迁移失败只如实记 stderr（授权结论已由既有判定给出）。
+       */
+      /**
+       * **时序修复**：先等待"登记"完成，再读锚点 —— 否则裁决块常看到 `null`
+       * （登记是异步的），状态迁移便不会执行。
+       */
+      if (pendingRegistration !== null) {
+        await pendingRegistration;
+        pendingRegistration = null;
+      }
+      const anchor = registeredPermissionAsk as RegisteredPermissionAskAnchor | null;
+      if (anchor !== null) {
+        try {
+          const decisionService = new PermissionAskDecisionEntryService({
+            requestStore: new PermissionAskRequestStore({
+              baseDirectory: options.stateDirectory,
+            }),
+            authorityPort: {
+              // CLI 即本地控制面：主体为已认证用户，作用域限当前会话/项目。
+              isProjectVisibleTo: async () => true,
+              isSessionVisibleTo: async () => true,
+              hasAdjudicationAuthority: async () => true,
+            },
+            projectRootPath: process.cwd(),
+          });
+          await decisionService.decidePermissionAsk({
+            askIdentifier: anchor.askIdentifier,
+            decision: decision === "allowed-once" ? "allowed-once" : "denied",
+            expectedRequestRevision: anchor.requestRevision,
+            expectedOperationFingerprint: anchor.operationFingerprint,
+            csrfToken: CLI_LOCAL_CSRF_TOKEN,
+            expectedCsrfToken: CLI_LOCAL_CSRF_TOKEN,
+            authenticatedAgentInstanceId: anchor.ownerAgentInstanceId,
+            projectIdentifier: path.basename(process.cwd()) || "astarray",
+            sessionIdentifier: "cli-run",
+          });
+        } catch (error) {
+          logToStderr(
+            "[权限请求裁决] 实体状态迁移失败（不影响既有裁决结论）: " +
+              (error instanceof Error ? error.message : String(error)),
+          );
+        }
+      }
       if (decision !== "allowed-once") {
         break;
       }

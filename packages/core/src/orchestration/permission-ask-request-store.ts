@@ -109,6 +109,26 @@ export class PermissionAskRequestStore {
     const askIdentifier =
       input.askIdentifier ??
       "ask-" + nowMilliseconds.toString(36) + "-" + Math.abs(hashNumber(input.argumentsJson)).toString(36);
+    /**
+     * **登记幂等（2026-10-11，片③ 发现）**：同一次询问可能被上报多次
+     * （实测：一次 CLI 运行的两个升级回调产生 **2 条**同一逻辑询问的实体）。
+     * 重复登记会破坏"**按 `askIdentifier` 反查**"与多页面同步（出现两条待裁决项）。
+     *
+     * 故：当**同一 owner + 同一任务**已存在**仍为 `pending`** 的实体，且
+     * `ownerAgentInstanceId`/`toolName`/`argumentsJson` **逐字相同**时，
+     * **返回既有实体、不新建**（`argumentsJson` 不同 ⇒ 是另一次请求，照常新建）。
+     * 已裁决（非 pending）的实体**不复用** —— 新的询问必须新登记，避免绕过重放保护。
+     */
+    const existingPending = (await this.listRequestsForOwner(input.ownerAgentInstanceId)).find(
+      (candidate) =>
+        candidate.status === "pending" &&
+        candidate.taskIdentifier === input.taskIdentifier &&
+        candidate.toolName === input.toolName &&
+        candidate.argumentsJson === input.argumentsJson,
+    );
+    if (existingPending !== undefined) {
+      return existingPending;
+    }
     const record: PermissionAskRequestRecord = {
       askIdentifier,
       ownerAgentInstanceId: input.ownerAgentInstanceId,
@@ -219,6 +239,41 @@ export class PermissionAskRequestStore {
     };
     await writeAtomicJson(this.requestFilePath(decided), decided);
     return decided;
+  }
+
+  /**
+   * 列出某 owner 的**全部**请求实体（含已裁决）。**只读**。
+   *
+   * 新增于 2026-10-11（片③）：登记幂等判定与后续"待授权列表"都需要按 owner 枚举；
+   * 此前只有"按 `askIdentifier` 单条读取"。
+   */
+  async listRequestsForOwner(
+    ownerAgentInstanceId: string,
+  ): Promise<PermissionAskRequestRecord[]> {
+    const directoryPath = this.requestDirectoryPath(ownerAgentInstanceId);
+    let fileNames: string[];
+    try {
+      fileNames = await fs.readdir(directoryPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return [];
+      }
+      throw error;
+    }
+    const records: PermissionAskRequestRecord[] = [];
+    for (const fileName of fileNames.filter((name) => name.endsWith(".json")).sort()) {
+      try {
+        records.push(
+          JSON.parse(
+            await fs.readFile(path.join(directoryPath, fileName), "utf8"),
+          ) as PermissionAskRequestRecord,
+        );
+      } catch {
+        // 单个不可解析文件不使整个列表不可用（不静默吞掉目录级错误）。
+        continue;
+      }
+    }
+    return records;
   }
 
   private requestDirectoryPath(ownerAgentInstanceId: string): string {

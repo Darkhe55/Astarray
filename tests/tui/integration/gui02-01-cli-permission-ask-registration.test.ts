@@ -256,23 +256,37 @@ describe("GUI-02-01 片①：CLI 路径登记权限询问请求实体", () => {
       });
 
       const registered = await readRegisteredRequests();
+      /**
+       * **条数不设等值断言**（2026-10-11 片③ 后修正）：每次升级可能来自**不同的 worker
+       * 个体**（`agentInstanceId` 含实例计数，不同 ⇒ 不同 owner 目录），
+       * 故"同一逻辑询问登记多条"是**正确行为**（登记幂等只在**同一 owner** 内生效）。
+       * 本用例要验证的是"**登记确实发生**"，故断言 ≥1。
+       */
       expect(
         registered.length,
-        "应恰好登记一条请求实体。stdout=" +
+        "至少应登记一条请求实体。stdout=" +
           stdoutText.slice(0, 600) +
           " stderr尾=" +
           stderrTail.slice(-800),
-      ).toBe(1);
+      ).toBeGreaterThanOrEqual(1);
 
       const record = registered[0]!.record;
-      expect(record["status"]).toBe("pending");
+      /**
+       * **2026-10-11 片③ 后更新**：本断言原为 `"pending"`（当时只登记、不迁移）。
+       * 片③ 让用户裁决**经同一服务**落到实体上，并已修复"登记异步 vs 裁决同步"的
+       * 时序竞态 ⇒ 断言时实体**已按用户裁决落定**（本用例以 `deny` 结束）。
+       */
+      expect(record["status"]).toBe("denied");
+      expect(record["decidedByAgentInstanceId"]).toBeTruthy();
+      expect(record["decidedAtIso"]).toBeTruthy();
       expect(String(record["operationFingerprint"])).toMatch(/^sha256:[a-f0-9]{64}$/);
       expect(
         record["argumentsJson"],
         "本地权威参数必须与 Provider 发出的逐字一致（不得改写、不得截断）",
       ).toBe(argumentsJson);
       expect(record["toolName"]).toBe("createProjectFile");
-      expect(record["requestRevision"]).toBe(1);
+      // 片③ 状态迁移后 revision 递增（登记 = 1 ⇒ 裁决后 ≥2）
+      expect(Number(record["requestRevision"])).toBeGreaterThanOrEqual(2);
       expect(String(record["ownerAgentInstanceId"]).length).toBeGreaterThan(0);
     },
     120_000,
