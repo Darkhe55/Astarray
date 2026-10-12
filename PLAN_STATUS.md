@@ -277,7 +277,7 @@ provider + 权限询问路径下，CLI 打印结果后**不自然退出**（实�
 | E2E-01 独立工作助手验收 | pending | 上述四张返修卡通过 |
 | BRIDGE-01 外部接入MVP | **done（2026-10-10）** | 脚本化 stdio 闭环 20/20 + **真实第三方客户端（opencode/pi）消费已完成**；仅缺 macOS/Linux 平台验证。详见 `docs/reports/BRIDGE01_04_REAL_CLIENT_EVIDENCE_2026-10-10.md` |
 | GUI-01-R GUI产品接线 | **本地可证 + 单平台（Windows）口径收口（2026-10-11）** | 01/02/03a/03b/04a/04b 全部交付；**人工体验第 2 轮已完成**（十项定论、6 个真实缺陷均已修）；§1-5 授权与「重启后列表为空」转出至 GUI-02 |
-| GUI-02 授权呈现闭环与历史任务视图 | **in_progress（GUI-02-01：核心契约/请求实体/事件/裁决入口/安全预览/R1 返修 均已落地）** | 检查点：01 公共授权契约与安全反例 / 02 GUI 授权闭环 / 03 历史列表及详情 / 04 重启与包级验收；**每轮一个检查点**。**提取边界已确认**：授权登记·状态迁移·裁决校验提取到**核心应用服务层**，CLI 仅留终端 I/O 适配，GUI 复用同一服务、不复制规则，**核心不得反向依赖 TUI**；"CLI 行为不变"= 公开可观察行为兼容。基线：`docs/reports/GUI02_01_EXISTING_PERMISSION_ASK_BEHAVIOR_BASELINE_2026-10-11.md`。卡：docs/tasks/GUI02_AUTHORIZATION_AND_HISTORY_VIEW_TASK_CARD.md |
+| GUI-02 授权呈现闭环与历史任务视图 | **in_progress（GUI-02-01：核心契约/请求实体/事件/裁决入口/安全预览/R1 返修 **＋ 片①②③ 已交付**）** | 检查点：01 公共授权契约与安全反例 / 02 GUI 授权闭环 / 03 历史列表 / 04 重启与包级验收。**GUI-02-01 片①②③ 已交付（2026-10-11，均有独立提交与门禁）**：① CLI 登记请求实体（身份通路 `a0c59b6`/`d6740fe`/`841e9f4`/`0e7bedd`，反例 `9d498e9`）；② 门面统一"登记+广播事件"、并修正片① 越层 import（`27ed9fa`）；③ CLI 裁决经同一服务 + **登记幂等** + **修掉"登记异步 vs 裁决同步"时序竞态**（`01d472e`）；片②③ 均复跑 **6 套授权回归 36/36** ⇒ 行为不变。**GUI-02-01 剩余**：片④ 基线两项（退出码代码级已定、TTY 逐字输出需真实 TTY ⇒ 未实测）。**GUI 侧展示与裁决路由**属 GUI-02-02及详情 / 04 重启与包级验收；**每轮一个检查点**。**提取边界已确认**：授权登记·状态迁移·裁决校验提取到**核心应用服务层**，CLI 仅留终端 I/O 适配，GUI 复用同一服务、不复制规则，**核心不得反向依赖 TUI**；"CLI 行为不变"= 公开可观察行为兼容。基线：`docs/reports/GUI02_01_EXISTING_PERMISSION_ASK_BEHAVIOR_BASELINE_2026-10-11.md`。卡：docs/tasks/GUI02_AUTHORIZATION_AND_HISTORY_VIEW_TASK_CARD.md |
 | WB-00 细节微淘原型 | pending | GUI-01-R；未来探索 |
 
 ## Batch OBS/SMART/PROJECT（OBS-01、SMART-01、PROJECT-01 三卡）检查点记录
