@@ -157,3 +157,50 @@ if (permissionAsk !== null) {
   `authorization-retry-closure` / `run-command-gaps`）。
 - **失败模式**：若注册失败，**不得**因此放行或阻断裁决 —— 需明确该失败对
   `runPermissionAskAdjudication` 的影响（建议 fail-closed 并如实上报）。
+
+---
+
+## 6. 片 ① 反例的可复用 harness（2026-10-11 第二轮侦察，**未实施**）
+
+> 这消除了片 ① 最大的成本项：**不必自建"触发权限询问"的场景**。
+
+| 项 | 值 |
+| --- | --- |
+| **复用文件** | `tests/tui/integration/authorization-retry-closure.test.ts` |
+| **手法** | `spawn` 真实 CLI 子进程 + 本地 **HTTP 假 Provider** |
+| **关键行** | 该文件第 **51** 行返回工具调用：`{ name: "createProjectFile", arguments: argumentsJson }` |
+| **为何可用** | 它**已经**端到端走到 `run-command.ts:207` 的权限询问分支（本会话曾据它发现 unblock 竞态缺陷） |
+| **依赖** | `node:child_process.spawn`、`node:http`、`node:fs`、`node:os`、`node:path`（该文件已 import） |
+
+### 6.1 片 ① 该写进该文件的断言
+
+1. **正向（新行为）**：CLI 运行结束后，`<stateDirectory>/agent-memory/<owner>/permission-ask-requests/`
+   下**存在一条记录**，且：
+
+   - `status === "pending"`
+   - `operationFingerprint` 匹配 `/^sha256:[a-f0-9]{64}$/`
+   - `argumentsJson` 与假 Provider 发出的**逐字一致**（不得改写、不得截断）
+
+2. **行为不变（关键）**：同一次运行中既有裁决行为不变 —— 即**授权回归 6 套仍全绿**：
+   `permission-ask-reuse`(7) / `adjudication`(10) / `timeout`(5) /
+   `b6r10-permission-ask-wait`(8) / `authorization-retry-closure` / `run-command-gaps`。
+
+3. **失败模式**：若 `registerRequest` 失败（磁盘满/权限），**必须 fail-closed 且如实上报**，
+   **不得**因此静默放行（放宽授权）或静默阻断裁决（改变行为）。
+
+### 6.2 仍需先定的开放点（同 §5.3，勿跳过）
+
+- `ownerAgentInstanceId` 取哪个值 —— 该路径目前是 worker 伪个体；store 的布局是
+  `agent-memory/<owner>/permission-ask-requests/`，**填错会写出与"按 `askIdentifier` 反查"
+  不匹配的目录**；
+- 片 ① 只求"落盘 + 行为不变"⇒ `registerRequest` 返回值可丢弃；片 ③ 才需把
+  `askIdentifier` 传给裁决入口。
+
+### 6.3 成本估计（供排期）
+
+| 步骤 | 说明 |
+| --- | --- |
+| 反例 | 在既有文件内**新增用例**（复用 harness）⇒ 小 |
+| 实现 | `run-command.ts` **一处 import + 一处调用**（§5.2 草案）⇒ 小 |
+| 验证 | 6 套授权回归 + `check` + `test:coverage`（branch 门槛 85，余量约 16 分支） |
+| 提交 | 单独提交；暂存前确认**不含 `README.md`** |
