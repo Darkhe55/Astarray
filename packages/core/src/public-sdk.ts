@@ -12,12 +12,18 @@ import path from "node:path";
 // 装配层内部使用（不是再导出）：把真实用量观测接到账目存储上（2026-10-06 接线）。
 import { createProviderUsageLedgerObserver } from "./orchestration/provider-usage-ledger-observer.js";
 import { CLOSED_CONTEXT_NODE_STATES } from "./orchestration/local-context-graph-store.js";
+// GUI-02-02：存档域目录名是 `sanitizePathSegment` 的转义形式，列表返回时必须解码回身份。
+import { decodePathSegment } from "./orchestration/work-archive-store.js";
 // GUI-02-01 片②：权限询问的请求实体与公共事件（门面统一负责"登记 + 广播"）。
 import {
   PermissionAskRequestStore,
   type PermissionAskRequestRecord,
 } from "./orchestration/permission-ask-request-store.js";
 import { buildPermissionAskEvent } from "./orchestration/permission-ask-event.js";
+import {
+  PermissionAskDecisionEntryService,
+  type PermissionAskAuthorityPort,
+} from "./orchestration/permission-ask-decision-entry.js";
 import { UsageLedgerStore } from "./orchestration/usage-ledger-store.js";
 // SMART-01-04：指令窗口与三分钟期限必须由**产品入口**真实驱动（此前只有 re-export 的独立组件）。
 import { InstructionWindowStore } from "./orchestration/instruction-window-store.js";
@@ -2051,6 +2057,119 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     });
     this.emit(event as unknown as PublicAstarrayEvent);
     return record;
+  }
+
+  /**
+   * GUI-02-02（2026-10-11）：列出**待授权**（`pending`）的权限询问请求。
+   *
+   * 供 GUI「待授权列表」视图消费。**只读**：不触发模型调用、不注入上下文、
+   * 不自动恢复任何任务。
+   */
+  async listPendingPermissionAskRequests(): Promise<
+    Array<PermissionAskRequestRecord & { ownerAgentInstanceId: string }>
+  > {
+    this.assertOpen();
+    const store = this.createPermissionAskRequestStore();
+    const results: Array<PermissionAskRequestRecord & { ownerAgentInstanceId: string }> = [];
+    for (const ownerDirectoryName of await this.listAgentMemoryOwners()) {
+      /**
+       * **必须解码**：存档域目录名是 `sanitizePathSegment(agentInstanceId)` 的**转义形式**
+       * （`:` → `~003a`）。若把目录名原样当 `agentInstanceId` 返回，
+       * GUI 拿它去裁决会**找不到该 Agent 的存档域**（身份不能往返）。
+       */
+      const ownerAgentInstanceId = decodePathSegment(ownerDirectoryName);
+      for (const record of await store.listRequestsForOwner(ownerAgentInstanceId)) {
+        if (record.status === "pending") {
+          results.push({ ...record, ownerAgentInstanceId });
+        }
+      }
+    }
+    return results;
+  }
+
+  /**
+   * GUI-02-02（2026-10-11）：裁决一条权限询问请求（**经同一服务**，与 CLI 共用规则）。
+   *
+   * 入口**只接受请求锚点与裁决**，**不接受任何新参数** —— 服务器从本地权威记录取原始
+   * 参数并重新校验主体、权限、期限与当前状态（用户明确要求）。
+   */
+  async decidePermissionAskRequest(input: {
+    ownerAgentInstanceId: string;
+    askIdentifier: string;
+    decision: "allowed-once" | "denied";
+    expectedRequestRevision: number;
+    expectedOperationFingerprint: string;
+    csrfToken: string;
+    authenticatedAgentInstanceId: string;
+    projectIdentifier: string;
+    sessionIdentifier: string;
+  }): Promise<{ record: PermissionAskRequestRecord }> {
+    this.assertOpen();
+    if (this.stateDirectory === null) {
+      throw new PublicApplicationError(
+        "permission-ask-unavailable",
+        "应用未绑定状态目录，无法裁决权限询问",
+      );
+    }
+    const store = new PermissionAskRequestStore({ baseDirectory: this.stateDirectory });
+    // 本地权威记录：`askIdentifier` 反查发生在**同一 owner 的独立存档域**内。
+    const requests = await store.listRequestsForOwner(input.ownerAgentInstanceId);
+    const target = requests.find((record) => record.askIdentifier === input.askIdentifier);
+    if (target === undefined) {
+      throw new PublicApplicationError(
+        "permission-ask-not-found",
+        "未找到该权限询问请求，可能已被撤销或不属于该 Agent 的存档域",
+      );
+    }
+    const service = new PermissionAskDecisionEntryService({
+      requestStore: store,
+      authorityPort: this.permissionAskAuthorityPort,
+      projectRootPath: this.permissionAskProjectRootPath,
+    });
+    const outcome = await service.decidePermissionAsk({
+      askIdentifier: input.askIdentifier,
+      decision: input.decision,
+      expectedRequestRevision: input.expectedRequestRevision,
+      expectedOperationFingerprint: input.expectedOperationFingerprint,
+      csrfToken: input.csrfToken,
+      expectedCsrfToken: this.permissionAskCsrfToken,
+      authenticatedAgentInstanceId: input.authenticatedAgentInstanceId,
+      projectIdentifier: input.projectIdentifier,
+      sessionIdentifier: input.sessionIdentifier,
+    });
+    return { record: outcome.record };
+  }
+
+  /**
+   * GUI-02-02（2026-10-11）：权限询问裁决的**本地权威**事实来源。
+   *
+   * 默认值取**最窄**语义：项目/会话可见性与裁决权都交给宿主显式注入；
+   * 未注入时一律**拒绝**（fail-closed），不允许"未配置即放行"。
+   */
+  private permissionAskAuthorityPort: PermissionAskAuthorityPort = {
+    isProjectVisibleTo: async () => false,
+    isSessionVisibleTo: async () => false,
+    hasAdjudicationAuthority: async () => false,
+  };
+  /** 权限询问裁决的 CSRF 期望值（由宿主注入；未注入时任何请求都不通过）。 */
+  private permissionAskCsrfToken = "";
+  /** 项目根（用于安全预览中"目标路径相对化"）。 */
+  private permissionAskProjectRootPath = process.cwd();
+
+  /**
+   * GUI-02-02：注入权限询问裁决所需的本地权威事实（可见性、裁决权、CSRF、项目根）。
+   *
+   * **必须显式调用**：未调用时上述默认值为 fail-closed（可见性/裁决权恒 false、
+   * CSRF 期望空串），任何裁决都不会通过 —— 不允许"未配置即放行"。
+   */
+  configurePermissionAskAdjudication(input: {
+    authorityPort: PermissionAskAuthorityPort;
+    csrfToken: string;
+    projectRootPath: string;
+  }): void {
+    this.permissionAskAuthorityPort = input.authorityPort;
+    this.permissionAskCsrfToken = input.csrfToken;
+    this.permissionAskProjectRootPath = input.projectRootPath;
   }
 
   /** GUI-02-01 片②：权限询问请求实体存储（与 CLI/GUI 共用同一状态目录）。 */
