@@ -441,6 +441,16 @@ ul { margin: 8px 0 0; padding-left: 20px; }
     <ul id="verifications" aria-live="polite"></ul>
     <p id="verification-result" role="status" aria-live="polite"></p>
   </section>
+  <section aria-labelledby="permission-asks-heading">
+    <h2 id="permission-asks-heading">待授权（按 Agent 隔离）</h2>
+    <p>
+      以下请求需要你本人裁决。默认不会选中任何选项；系统不提供一键批准全部。
+      裁决只对本次这一条、当前这一版有效。
+    </p>
+    <button id="refresh-permission-asks" type="button">刷新</button>
+    <ul id="permission-asks" aria-live="polite"></ul>
+    <p id="permission-ask-result" role="status" aria-live="polite"></p>
+  </section>
 </main>
 <script>
 (function () {
@@ -669,9 +679,151 @@ ul { margin: 8px 0 0; padding-left: 20px; }
       .catch(function () {});
   }
   document.getElementById("refresh-verifications").addEventListener("click", refreshVerifications);
+  /**
+   * GUI-02-02 片3（2026-10-11）：**待授权**的呈现与裁决。
+   *
+   * 设计要点（用户明确要求）：
+   * - **独立详情卡**：每条请求一张卡，逐卡给出"批准本次/拒绝"；
+   * - **不默认选中批准**：卡片里没有任何预选控件，必须用户**主动点击**某个按钮；
+   * - **不提供一键批准全部**：界面没有任何"全部批准"入口；
+   * - 卡片展示**本地生成的安全预览**（脱敏 + 限长），**不展示原始参数**；
+   * - 批准按钮文案明确带期限语义（"仅本次"），避免被理解为长期授权；
+   * - 裁决携带 requestRevision 与 operationFingerprint ⇒ 过期或参数变化时
+   *   服务端返回 **409**，界面提示"该请求已变化，请刷新后重新裁决"（**不复用**旧批准）。
+   */
+  var permissionAsksElement = document.getElementById("permission-asks");
+  var permissionAskResultElement = document.getElementById("permission-ask-result");
+  function renderPermissionAsks(entries) {
+    permissionAsksElement.textContent = "";
+    if (entries.length === 0) {
+      var emptyItem = document.createElement("li");
+      emptyItem.textContent = "无待授权请求";
+      permissionAsksElement.appendChild(emptyItem);
+      return;
+    }
+    entries.forEach(function (entry) {
+      var item = document.createElement("li");
+      var card = document.createElement("article");
+      card.setAttribute("aria-label", "待授权请求 " + entry.askIdentifier);
+
+      var title = document.createElement("h3");
+      title.textContent = "请求：" + entry.action + " " + entry.toolName;
+      card.appendChild(title);
+
+      var identity = document.createElement("p");
+      identity.textContent = "发起 Agent：" + entry.ownerAgentInstanceId +
+        "｜任务：" + entry.taskIdentifier +
+        "｜当前版本 r" + entry.requestRevision;
+      card.appendChild(identity);
+
+      var preview = entry.preview || {};
+      var details = document.createElement("dl");
+      function appendDetail(labelText, valueText) {
+        if (valueText === undefined || valueText === null || valueText === "") {
+          return;
+        }
+        var term = document.createElement("dt");
+        term.textContent = labelText;
+        var description = document.createElement("dd");
+        description.textContent = String(valueText);
+        details.appendChild(term);
+        details.appendChild(description);
+      }
+      appendDetail("目标", preview.targetPathRelative);
+      appendDetail("影响范围", preview.impactScope);
+      appendDetail("内容长度", preview.contentLength);
+      appendDetail("文件数", preview.fileCount);
+      appendDetail("差异预览", preview.diffPreview);
+      appendDetail("说明", preview.explanation || entry.toolName);
+      card.appendChild(details);
+
+      if (preview.requiresControlledDetail === true) {
+        var controlled = document.createElement("p");
+        controlled.setAttribute("role", "note");
+        controlled.textContent =
+          "该操作涉及敏感路径：界面只显示受控摘要，不显示内容与差异。" +
+          "如无法据此判断，请改用受控详情流程，不要盲目批准。";
+        card.appendChild(controlled);
+      }
+
+      var expiry = document.createElement("p");
+      expiry.textContent = entry.expiresAtIso
+        ? "有效期至：" + entry.expiresAtIso
+        : "有效期：未设置";
+      card.appendChild(expiry);
+
+      var actions = document.createElement("div");
+      [["allowed-once", "批准本次（仅这一次）"], ["denied", "拒绝"]].forEach(function (pair) {
+        var button = document.createElement("button");
+        button.type = "button";
+        button.textContent = pair[1];
+        button.addEventListener("click", function () {
+          decidePermissionAsk(entry, pair[0], button);
+        });
+        actions.appendChild(button);
+      });
+      card.appendChild(actions);
+
+      item.appendChild(card);
+      permissionAsksElement.appendChild(item);
+    });
+  }
+  function refreshPermissionAsks() {
+    fetch("/permission-asks", { headers: { accept: "application/json" } })
+      .then(function (response) { return response.json(); })
+      .then(function (payload) { renderPermissionAsks(payload.entries || []); })
+      .catch(function () {});
+  }
+  function decidePermissionAsk(entry, decision, button) {
+    button.disabled = true;
+    fetch("/commands/permission-ask-decision", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-csrf-token": csrfToken,
+      },
+      body: JSON.stringify({
+        ownerAgentInstanceId: entry.ownerAgentInstanceId,
+        askIdentifier: entry.askIdentifier,
+        decision: decision,
+        expectedRequestRevision: entry.requestRevision,
+        expectedOperationFingerprint: entry.operationFingerprint,
+      }),
+    })
+      .then(function (response) {
+        return response.json().then(function (payload) {
+          return { isOk: response.ok, status: response.status, payload: payload };
+        });
+      })
+      .then(function (outcome) {
+        button.disabled = false;
+        if (outcome.isOk) {
+          permissionAskResultElement.textContent =
+            decision === "allowed-once"
+              ? "已批准本次请求（仅这一次）。"
+              : "已拒绝该请求。";
+        } else if (outcome.status === 409) {
+          permissionAskResultElement.textContent =
+            "该请求已变化或已被处理，请刷新后重新裁决（" + outcome.payload.error + "）。";
+        } else if (outcome.status === 403) {
+          permissionAskResultElement.textContent =
+            "裁决未被接受：" + outcome.payload.error;
+        } else {
+          permissionAskResultElement.textContent =
+            "裁决失败：" + (outcome.payload.error || String(outcome.status));
+        }
+        refreshPermissionAsks();
+      })
+      .catch(function () {
+        button.disabled = false;
+        permissionAskResultElement.textContent = "裁决失败：无法连接本地服务。";
+      });
+  }
+  document.getElementById("refresh-permission-asks").addEventListener("click", refreshPermissionAsks);
   refreshSettings();
   refreshRecovery();
   refreshVerifications();
+  refreshPermissionAsks();
   var source = new EventSource("/events");
   source.onopen = function () { statusElement.textContent = "已连接"; };
   source.onerror = function () { statusElement.textContent = "重连中…"; };
