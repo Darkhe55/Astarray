@@ -98,3 +98,62 @@
 - GUI CSRF / `undefined` / 死条目 / `internal-error` / 追认后仍列出 / 重连丢快照（6 个缺陷）
 - COMM-01-01 审计（`49352ae`）
 - BRIDGE-01-04 真实客户端消费（`e364228`）
+
+---
+
+## 5. 片 ① 的精确补丁草案（2026-10-11 侦察所得，**未实施**）
+
+> 目的：把下一片的改动点缩小到**一处 import + 一处调用**，免去再次侦察。
+> **本草案未经实施与验证**，应用后必须按 §2 片① 的流程跑反例与门禁。
+
+### 5.1 接入点（已核对）
+
+| 项 | 值 |
+| --- | --- |
+| 文件 | `packages/tui/src/cli/run-command.ts` |
+| 导入区 | 第 **11–17** 行（`./permission-ask-adjudication.js` 的具名导入） |
+| 注册点 | 第 **207** 行：`const decision = await runPermissionAskAdjudication({` **之前** |
+| 现成依赖 | `RunCommandOptions.stateDirectory: string`（第 **44** 行）—— **无需新增注入** |
+| 上游事实 | `permissionAsk`（含 `taskIdentifier` / `toolName` / `argumentsJson` / `explanation`）为该处已有变量；`escalationMessages`（第 109 行）是其来源 |
+
+### 5.2 草案（示意，非最终）
+
+```ts
+// 导入区（在 ./permission-ask-adjudication.js 导入之后）
+import { PermissionAskRequestStore } from "../../../core/src/orchestration/permission-ask-request-store.js";
+
+// 注册点：第 207 行 runPermissionAskAdjudication 调用**之前**
+if (permissionAsk !== null) {
+  const requestStore = new PermissionAskRequestStore({
+    baseDirectory: options.stateDirectory,
+  });
+  await requestStore.registerRequest({
+    ownerAgentInstanceId: /* 该 CLI 路径的 owner 事实 */,
+    taskIdentifier: permissionAsk.taskIdentifier,
+    toolName: permissionAsk.toolName,
+    argumentsJson: permissionAsk.argumentsJson,
+    explanation: permissionAsk.explanation,
+  });
+}
+```
+
+### 5.3 必须先解决的两个开放点（下一片要定，勿跳过）
+
+1. **`ownerAgentInstanceId` 取哪个值？**
+   该 CLI 路径目前是 worker 伪个体（`worker:${missionId}:${taskId}` 形态）。
+   需**先确认**它与 `PermissionAskRequestStore` 的 owner 语义一致
+   （store 的磁盘布局是 `agent-memory/<owner>/permission-ask-requests/`）。
+   **若不确认就填，会写出与后续裁决入口（按 `askIdentifier` 反查）不匹配的目录。**
+2. **是否要保留 `registerRequest` 的返回值？**
+   片 ① 的目标只是"**落盘实体、行为不变**"，故草案**丢弃返回值**；
+   片 ③ 才需要把 `askIdentifier` 传给裁决入口。
+
+### 5.4 反例（片 ① 该先写的）
+
+- **正向**：经 CLI 路径请求受限工具 ⇒ `agent-memory/<owner>/permission-ask-requests/` 下**出现一条
+  `status: "pending"`** 记录，且 `operationFingerprint` 为 `sha256:` + 64 hex。
+- **行为不变**（关键）：既有授权回归 **6 套全绿**（`permission-ask-reuse` 7 /
+  `adjudication` 10 / `timeout` 5 / `b6r10-permission-ask-wait` 8 /
+  `authorization-retry-closure` / `run-command-gaps`）。
+- **失败模式**：若注册失败，**不得**因此放行或阻断裁决 —— 需明确该失败对
+  `runPermissionAskAdjudication` 的影响（建议 fail-closed 并如实上报）。
