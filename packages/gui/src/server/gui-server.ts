@@ -501,6 +501,17 @@ ul { margin: 8px 0 0; padding-left: 20px; }
     <ul id="permission-asks" aria-live="polite"></ul>
     <p id="permission-ask-result" role="status" aria-live="polite"></p>
   </section>
+  <section aria-labelledby="installation-inquiries-heading">
+    <h2 id="installation-inquiries-heading">待安装询问（专用流程，独立于上方授权卡）</h2>
+    <p>
+      安装不走上方的普通授权卡：安装门禁会先问"是否已有可用资源"，
+      再展示精确安装计划请你逐次确认。默认不会选中任何选项。
+      未回答即视为拒绝（不会自动安装）。
+    </p>
+    <button id="refresh-installation-inquiries" type="button">刷新</button>
+    <ul id="installation-inquiries" aria-live="polite"></ul>
+    <p id="installation-inquiry-result" role="status" aria-live="polite"></p>
+  </section>
 </main>
 <script>
 (function () {
@@ -870,6 +881,161 @@ ul { margin: 8px 0 0; padding-left: 20px; }
       });
   }
   document.getElementById("refresh-permission-asks").addEventListener("click", refreshPermissionAsks);
+  /**
+   * GUI-02-02 专用流程（2026-10-12）：**待安装询问**的呈现与回答。
+   *
+   * 与上方权限询问**并列但独立** —— 安装门禁自带完整判定，普通授权卡**不能**替代它。
+   * 设计要点：**不默认选中**；两阶段分别作答；展示**精确安装计划**供判断；
+   * 未回答 ⇒ 超时 ⇒ 门禁 fail-closed（界面无需也不应"默认同意"）。
+   */
+  var installationInquiriesElement = document.getElementById("installation-inquiries");
+  var installationInquiryResultElement = document.getElementById("installation-inquiry-result");
+  function renderInstallationInquiries(entries) {
+    installationInquiriesElement.textContent = "";
+    if (entries.length === 0) {
+      var emptyItem = document.createElement("li");
+      emptyItem.textContent = "无待决安装询问";
+      installationInquiriesElement.appendChild(emptyItem);
+      return;
+    }
+    entries.forEach(function (entry) {
+      var item = document.createElement("li");
+      var card = document.createElement("article");
+      card.setAttribute("aria-label", "安装询问 " + entry.inquiryIdentifier);
+
+      var title = document.createElement("h3");
+      title.textContent =
+        entry.stage === "existing-resource" ? "阶段 1：是否已有可用资源" : "阶段 2：是否允许本次安装";
+      card.appendChild(title);
+
+      var summary = document.createElement("p");
+      summary.textContent = entry.summary + "｜当前版本 r" + entry.revision;
+      card.appendChild(summary);
+
+      if (entry.installationPlan) {
+        var plan = document.createElement("dl");
+        var planFields = [
+          ["包/仓库", entry.installationPlan.packageOrRepositoryIdentifier],
+          ["版本", entry.installationPlan.pinnedVersionOrCommit || "未固定"],
+          ["目标", entry.installationPlan.targetPathOrScope],
+          ["包管理器", entry.installationPlan.packageManager],
+          ["预计变更", entry.installationPlan.expectedChangesSummary],
+          ["需要网络", entry.installationPlan.requiresNetwork ? "是" : "否"],
+          ["含安装脚本", entry.installationPlan.hasInstallScripts ? "是" : "否"],
+        ];
+        planFields.forEach(function (pair) {
+          var term = document.createElement("dt");
+          term.textContent = pair[0];
+          var description = document.createElement("dd");
+          description.textContent = String(pair[1]);
+          plan.appendChild(term);
+          plan.appendChild(description);
+        });
+        card.appendChild(plan);
+      }
+
+      if (entry.stage === "existing-resource") {
+        var referenceInput = document.createElement("input");
+        referenceInput.type = "text";
+        referenceInput.setAttribute("aria-label", "已有资源引用");
+        referenceInput.placeholder = "已有资源引用（选择「已有」时必填）";
+        card.appendChild(referenceInput);
+
+        var hasResourceButton = document.createElement("button");
+        hasResourceButton.type = "button";
+        hasResourceButton.textContent = "已有资源（填上面的引用）";
+        hasResourceButton.addEventListener("click", function () {
+          decideInstallationInquiry(
+            entry,
+            { answerKind: "has-resource", resourceReference: referenceInput.value },
+            hasResourceButton,
+          );
+        });
+        card.appendChild(hasResourceButton);
+
+        var noResourceButton = document.createElement("button");
+        noResourceButton.type = "button";
+        noResourceButton.textContent = "没有，需要安装";
+        noResourceButton.addEventListener("click", function () {
+          decideInstallationInquiry(entry, { answerKind: "no-resource" }, noResourceButton);
+        });
+        card.appendChild(noResourceButton);
+      } else {
+        var allowButton = document.createElement("button");
+        allowButton.type = "button";
+        allowButton.textContent = "允许本次安装（仅这一次）";
+        allowButton.addEventListener("click", function () {
+          decideInstallationInquiry(
+            entry,
+            { allowOnceDecision: "allow-once" },
+            allowButton,
+          );
+        });
+        card.appendChild(allowButton);
+
+        var denyButton = document.createElement("button");
+        denyButton.type = "button";
+        denyButton.textContent = "拒绝安装";
+        denyButton.addEventListener("click", function () {
+          decideInstallationInquiry(entry, { allowOnceDecision: "deny" }, denyButton);
+        });
+        card.appendChild(denyButton);
+      }
+
+      var actions = document.createElement("p");
+      actions.textContent = "未回答即视为拒绝（不会自动安装）。";
+      card.appendChild(actions);
+      item.appendChild(card);
+      installationInquiriesElement.appendChild(item);
+    });
+  }
+  function refreshInstallationInquiries() {
+    fetch("/installation-inquiries", { headers: { accept: "application/json" } })
+      .then(function (response) { return response.json(); })
+      .then(function (payload) { renderInstallationInquiries(payload.entries || []); })
+      .catch(function () {});
+  }
+  function decideInstallationInquiry(entry, answer, button) {
+    button.disabled = true;
+    fetch("/commands/installation-inquiry-decision", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-csrf-token": csrfToken,
+      },
+      body: JSON.stringify({
+        inquiryIdentifier: entry.inquiryIdentifier,
+        expectedRevision: entry.revision,
+        stage: entry.stage,
+        ...answer,
+      }),
+    })
+      .then(function (response) {
+        return response.json().then(function (payload) {
+          return { isOk: response.ok, status: response.status, payload: payload };
+        });
+      })
+      .then(function (outcome) {
+        button.disabled = false;
+        if (outcome.isOk) {
+          installationInquiryResultElement.textContent = "已记录你的回答。";
+        } else if (outcome.status === 409) {
+          installationInquiryResultElement.textContent =
+            "该询问已变化或已被处理，请刷新后重新回答（" + outcome.payload.error + "）。";
+        } else {
+          installationInquiryResultElement.textContent =
+            "回答失败：" + (outcome.payload.error || String(outcome.status));
+        }
+        refreshInstallationInquiries();
+      })
+      .catch(function () {
+        button.disabled = false;
+        installationInquiryResultElement.textContent = "回答失败：无法连接本地服务。";
+      });
+  }
+  document
+    .getElementById("refresh-installation-inquiries")
+    .addEventListener("click", refreshInstallationInquiries);
   refreshSettings();
   refreshRecovery();
   refreshVerifications();

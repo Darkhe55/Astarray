@@ -262,4 +262,82 @@ describe("GUI-02-02 专用流程：待决安装询问注册表", () => {
     await expect(waiting).resolves.toBeNull();
     expect(registry.listPending().length).toBe(0);
   });
+
+  it("⑪ **取消未知锚点 ⇒ 静默无操作**（不抛错、不影响其它记录）", () => {
+    const registry = buildRegistry();
+    const record = registry.register({
+      stage: "existing-resource",
+      requestingAgentInstanceId: "worker:mission-install:T-001:1",
+      taskExecutionId: "task-exec:T-001",
+      summary: "安装 package-x",
+    });
+    expect(() => registry.cancel("install-inquiry-unknown")).not.toThrow();
+    // 既有记录**不受影响**（仍在待决）
+    expect(registry.read(record.inquiryIdentifier)?.status).toBe("pending");
+    expect(registry.listPending().length).toBe(1);
+  });
+
+  it("⑫ **等待非待决记录**（已回答）⇒ 立即 null（不挂起、不复用旧回答）", async () => {
+    const registry = buildRegistry();
+    const record = registry.register({
+      stage: "allow-once",
+      requestingAgentInstanceId: "worker:mission-install:T-001:1",
+      taskExecutionId: "task-exec:T-001",
+      summary: "安装 package-x",
+    });
+    registry.decideAllowOnce({
+      inquiryIdentifier: record.inquiryIdentifier,
+      expectedRevision: record.revision,
+      decision: "allow-once",
+    });
+    // 已回答之后再等待：不得再拿到那次回答（**不复用**），而是立即 null
+    await expect(
+      registry.waitForAnswer(record.inquiryIdentifier, 5_000),
+    ).resolves.toBeNull();
+  });
+
+  it("⑬ **无等待方时回答**（界面先答、门禁尚未开始等）⇒ 不抛错且记录已落定", () => {
+    const registry = buildRegistry();
+    const record = registry.register({
+      stage: "existing-resource",
+      requestingAgentInstanceId: "worker:mission-install:T-001:1",
+      taskExecutionId: "task-exec:T-001",
+      summary: "安装 package-x",
+    });
+    // 没有调用 waitForAnswer（模拟无等待方的边界）
+    expect(() =>
+      registry.answerInquiry({
+        inquiryIdentifier: record.inquiryIdentifier,
+        expectedRevision: record.revision,
+        answer: { answer: "no-resource" },
+      }),
+    ).not.toThrow();
+    expect(registry.read(record.inquiryIdentifier)?.status).toBe("answered");
+  });
+
+  it("⑭ **已有等待方的记录被取消后再等待** ⇒ 等待方得 null，后续回答不复用", async () => {
+    const registry = buildRegistry();
+    const record = registry.register({
+      stage: "allow-once",
+      requestingAgentInstanceId: "worker:mission-install:T-001:1",
+      taskExecutionId: "task-exec:T-001",
+      summary: "安装 package-x",
+    });
+    const waiting = registry.waitForAnswer(record.inquiryIdentifier, 5_000);
+    registry.cancel(record.inquiryIdentifier);
+    // 等待方已拿到 null（fail-closed）
+    await expect(waiting).resolves.toBeNull();
+    // 取消后记录为 cancelled ⇒ 再等待**立即 null**（外部可观察：不挂起、不复用）
+    await expect(
+      registry.waitForAnswer(record.inquiryIdentifier, 5_000),
+    ).resolves.toBeNull();
+    // 且不得再用该记录回答（状态已非 pending）
+    expect(() =>
+      registry.decideAllowOnce({
+        inquiryIdentifier: record.inquiryIdentifier,
+        expectedRevision: record.revision,
+        decision: "allow-once",
+      }),
+    ).toThrow();
+  });
 });
