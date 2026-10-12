@@ -161,7 +161,25 @@ GUI 若要复用，只能**复制规则**（用户明确禁止）。
 ### 6.4 未实测项（如实标注）
 
 - `run-command.ts` 中 `requires-human-resubmission` / `denied` 对应的**退出码**：
-  本轮**未实测**（需真实 TTY 与非 TTY 两条路径），**列为提取前的补充项**；
+### 6.5 退出码：代码级确定（运行时未实测）
+
+**结论（可核对）**：权限裁决结果 **不影响退出码**。
+
+| 证据 | 内容 |
+| --- | --- |
+| `run-command.ts:215` | `permissionAskOutcome = decision;`（记录裁决结果） |
+| `run-command.ts:240` | `...(permissionAskOutcome === null ? {} : { permissionAsk: permissionAskOutcome })` —— **只写进 JSON 载荷** |
+| `run-command.ts` | 全文**没有**依据 `permissionAskOutcome` 设置退出码的分支（检索 `process.exitCode` 无命中） |
+| `commands.ts` | run 路径统一返回 `EXIT_CODES.SUCCESS`；**仅**用法错误走 `EXIT_CODES.USAGE_ERROR`（`:116`） |
+
+⇒ 因此 `denied` 与 `requires-human-resubmission` **都返回成功退出码**，
+状态通过 JSON 载荷的 `permissionAsk` 字段与任务状态（保持阻塞）表达。
+
+**为何未做运行时实测（如实说明）**：要走到该分支需让任务**请求受限工具**并产生升级文本；
+在 mock 运行时下无法确定性地触发（mock 执行器是否请求 `createProjectFile` 未经验证）。
+**硬写一个依赖不确定行为的测试会引入假绿/假红，故不写**；
+本项以**代码级证据**记录，**运行时退出码仍标为未实测**。
+
 - TTY / 非 TTY 两条路径的**逐字输出**（含 stdout/stderr 分离）：本轮**未实测**。
 
 > **结论**：baseline 已足以界定 B1–B8 的兼容边界与 `action` 取值；
