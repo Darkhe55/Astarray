@@ -72,24 +72,39 @@ function sseCompletion() {
   );
 }
 
-let requestIndex = 0;
+/**
+ * **2026-10-12 修复（真实人工验收暴露的缺陷）**：原实现用全局 `requestIndex === 1`
+ * 决定"第一次返回工具调用"，但该计数**跨多次 CLI 运行不会重置** ——
+ * 于是批准路径跑过一次后，第二次运行（本想测拒绝路径）会被判为"第 N 次请求"，
+ * **直接返回完成事件、压根不产生权限询问**，让人误以为拒绝路径"没有提示"。
+ *
+ * 修法：以**会话**为单位计数 —— 每次收到**首个不含工具结果的请求**即视为新一轮
+ * （即每次新的 CLI 运行）。这样"批准"与"拒绝"两次实验**都能看到权限询问**。
+ */
+const toolCallArguments = JSON.stringify({ filePath, content });
+
+function isNewRun(rawBody) {
+  /**
+   * 工具被拦下时不会产生工具结果文本；而一旦工具真的执行过，
+   * 后续请求体会带上工具返回内容。以此判断"是否同一轮内的重试"。
+   */
+  return !rawBody.includes("已新建项目文件") && !rawBody.includes("tool_call_id");
+}
+
+let runCounter = 0;
 const server = http.createServer((request, response) => {
-  request.on("data", () => {});
+  let rawBody = "";
+  request.on("data", (chunk) => {
+    rawBody += String(chunk);
+  });
   request.on("end", () => {
-    requestIndex += 1;
     response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
-    /**
-     * 只**第一次**返回受限工具调用：随后给出完成事件，避免无限重调同一工具
-     * （与既有 harness 的夹具行为一致）。
-     */
-    if (requestIndex === 1) {
-      response.write(
-        sseToolCall(
-          JSON.stringify({ filePath, content }),
-          "manual-call-1",
-        ),
-      );
+    if (isNewRun(rawBody)) {
+      runCounter += 1;
+      process.stdout.write(`[假 Provider] 第 ${runCounter} 轮：返回 createProjectFile 调用\n`);
+      response.write(sseToolCall(toolCallArguments, `manual-call-${runCounter}`));
     } else {
+      process.stdout.write(`[假 Provider] 第 ${runCounter} 轮内重试：返回完成事件（无控制事件）\n`);
       response.write(sseCompletion());
     }
     response.end();
