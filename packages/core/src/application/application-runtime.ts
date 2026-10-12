@@ -204,6 +204,18 @@ export interface ApplicationRuntimeOptions {
   /** 是否启动独立反馈进程（headless 单命令场景可关闭）。 */
   useFeedbackProcess: boolean;
   streamOutput: (missionId: string | null, text: string) => void;
+  /**
+   * GUI-02-01 片①（2026-10-11）：权限询问**携带绝对身份**的上报口（可选）。
+   *
+   * 未提供时行为与之前**逐字一致**；提供后由 CLI 侧据
+   * `ownerAgentInstanceId` 注册 `PermissionAskRequestStore` 的请求实体
+   * （该 store 按 `agent-memory/<owner>/permission-ask-requests/` 落盘，故 owner 必填）。
+   */
+  onPermissionAskWithIdentity?: (input: {
+    ownerAgentInstanceId: string;
+    taskId: string;
+    message: string;
+  }) => void;
   /** 备份删除交互端口（界面层注入；null 表示无交互通道，fail-closed）。 */
   backupDeletionControlPort?: BackupDeletionAuthorizationControlPort | null;
   /** 安装门禁交互端口（界面层注入；null 表示无交互通道，fail-closed）。 */
@@ -975,6 +987,10 @@ export async function createApplicationRuntime(
     guidanceControlQueue,
     contextNodeLifecycle,
     streamOutput: options.streamOutput,
+    // GUI-02-01 片①：把权限询问的绝对身份透传给宿主（可选；未提供则不传该字段）。
+    ...(options.onPermissionAskWithIdentity === undefined
+      ? {}
+      : { onPermissionAskWithIdentity: options.onPermissionAskWithIdentity }),
   });
 
   const shutdown = async (): Promise<void> => {
