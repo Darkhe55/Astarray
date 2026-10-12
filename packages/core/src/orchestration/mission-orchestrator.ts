@@ -107,6 +107,30 @@ export interface MissionOrchestratorOptions {
   onMissionFinished: (status: "done" | "cancelled") => void | Promise<void>;
   /** 无法由调度层裁决、需要用户输入时回调（ambiguity / 裁决指令无法解析）。 */
   onUserEscalation: (message: string) => void;
+  /**
+   * GUI-02-01 片①（2026-10-11）：**权限询问**的升级回调，**额外携带发起方绝对身份**。
+   *
+   * 为什么需要它：`PermissionAskRequestStore` 按
+   * `agent-memory/<ownerAgentInstanceId>/permission-ask-requests/` 落盘 ⇒ 注册请求实体
+   * **必须有 owner**。而 `onUserEscalation(message)` 只有文本，升级文本的正则也只捕获
+   * `taskIdentifier`/`toolName`/`explanation`/`argumentsJson` ⇒ **身份在到达调用方前就已丢失**，
+   * 调用方无法可靠构造 owner（worker 绝对 ID 形如
+   * `worker:<missionId>:<taskId>:<instanceCounter>`，末段 counter 不在文本里）。
+   *
+   * 设计选择（**加法式，不动既有契约**）：
+   * - 既有 `onUserEscalation` 及其全部调用点、以及三层转发
+   *   （`mission-orchestrator` → `assist/devolve-scheduler` → `main-controller`）**完全不动**；
+   * - 本回调**可选**：未提供时行为与之前**逐字一致**；
+   * - **不改升级文本格式**（ADR-0011 的公开载荷形态保持不变）；
+   * - 仅 `case "permission-ask"` 额外调用本回调（其余升级仍只走 `onUserEscalation`）。
+   */
+  onPermissionAskWithIdentity?: (input: {
+    /** 该次权限询问所属任务的权威身份（不可复用个体 ID）。 */
+    ownerAgentInstanceId: string;
+    taskId: string;
+    /** 与传给 `onUserEscalation` 的文本**逐字相同**（保持单一事实来源）。 */
+    message: string;
+  }) => void;
   /** T05A：Agent 工作存档（可选；缺失时 Worker 不写存档、不附加上下文）。 */
   workArchiveStore?: AgentWorkArchiveStore | null;
   /**
@@ -483,7 +507,7 @@ export class MissionOrchestrator {
       try {
         const outcome = await worker.run();
         this.inFlightTaskIds.delete(action.taskId);
-        await this.handleWorkerOutcome(action.taskId, outcome);
+        await this.handleWorkerOutcome(action.taskId, outcome, agentInstanceId);
       } catch (error) {
         // 运行时/工具异常必须收敛为任务失败，不得变成未处理拒绝（T07D-R2-02）。
         this.inFlightTaskIds.delete(action.taskId);
@@ -493,7 +517,7 @@ export class MissionOrchestrator {
           failureReason:
             error instanceof Error ? error.message : "运行时异常",
           stateSummary: "运行时异常终止",
-        });
+        }, agentInstanceId);
       }
     })();
     this.inFlightWorkerPromises.add(workerPromise);
@@ -569,6 +593,11 @@ export class MissionOrchestrator {
   private async handleWorkerOutcome(
     taskId: string,
     outcome: WorkerOutcome,
+    /**
+     * GUI-02-01 片①：该任务的**权威个体身份**（与 `new WorkerAgent({ agentInstanceId })`
+     * 同源，在同一作用域内取得）—— 权限询问的身份传递依赖它。
+     */
+    ownerAgentInstanceId: string,
   ): Promise<void> {
     switch (outcome.outcome) {
       case "success": {
@@ -632,9 +661,22 @@ export class MissionOrchestrator {
           this.pendingMutatingToolNamesByTask.set(taskId, pending);
         }
         await this.dagScheduler.blockTaskForHumanDecision(taskId);
-        this.options.onUserEscalation(
-          `任务 ${taskId} 需要权限调用 ${outcome.toolName}（${outcome.explanation}），参数: ${outcome.argumentsJson}`,
-        );
+        {
+          const permissionAskMessage =
+            `任务 ${taskId} 需要权限调用 ${outcome.toolName}（${outcome.explanation}），参数: ${outcome.argumentsJson}`;
+          // 既有回调**照旧**（未提供新回调时行为逐字不变）。
+          this.options.onUserEscalation(permissionAskMessage);
+          /**
+           * GUI-02-01 片①：权限询问**额外**上报发起方绝对身份，供调用方注册请求实体
+           * （`PermissionAskRequestStore` 按 owner 分目录，必须有 owner）。
+           * 可选回调：未提供时此处不产生任何行为差异。
+           */
+          this.options.onPermissionAskWithIdentity?.({
+            ownerAgentInstanceId,
+            taskId,
+            message: permissionAskMessage,
+          });
+        }
         break;
       case "cancelled":
         await this.dagScheduler.releaseTaskBackToPending(taskId);
