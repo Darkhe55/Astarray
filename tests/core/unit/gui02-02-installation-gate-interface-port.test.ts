@@ -212,4 +212,52 @@ describe("GUI-02-02 专用流程：界面侧安装通道", () => {
     // 两者都已超时 ⇒ 列表为空，但登记时确实各有一条（用 revision 递增间接验证独立锚点）
     expect(registry.listPending().length).toBe(0);
   });
+
+  it("⑧ **端口内部不得把异常抛给调用方**（门禁无 try/catch，异常会穿透到工具执行路径）", async () => {
+    const { port } = buildPort();
+    /**
+     * 构造"登记必然失败"的输入：注册表要求发起身份非空，空身份会抛
+     * `installation-inquiry-invalid`。端口必须**在内部收敛**为 `null`（fail-closed），
+     * **不得**让异常冒泡 —— `installation-gate-guard.ts:101` 与
+     * `policy-wrapper.ts:181` 均**未**包裹 try/catch。
+     */
+    await expect(
+      port.askExistingResource({
+        inquiryId: "inquiry-invalid",
+        requiredCapabilitySummary: "安装 package-x",
+        intendedUse: "用途",
+        compatibleCandidateTypes: [],
+        createdAtIso: new Date().toISOString(),
+        // 强制注入非法身份（模拟上游传空值）
+        requestingAgentInstanceId: "",
+      } as unknown as Parameters<typeof port.askExistingResource>[0]),
+    ).resolves.toBeNull();
+  });
+
+  it("⑨ 阶段 2 同样**不抛异常**（非法请求 ⇒ 收敛为 null）", async () => {
+    const { port } = buildPort();
+    await expect(
+      port.askAllowOnce({
+        authorizationRequestId: "auth-x",
+        nonce: "nonce-x",
+        inquiryReceiptId: "receipt-x",
+        // 空身份 ⇒ 登记必然抛错；端口必须收敛
+        requestingAgentInstanceId: "",
+        taskExecutionId: "task-exec:T",
+        userDecisionReference: "ref",
+        sourceUrlOrRegistry: "registry",
+        packageOrRepositoryIdentifier: "package-x",
+        pinnedVersionOrCommit: null,
+        integrityInformation: null,
+        targetPathOrScope: "workspace",
+        packageManager: "npm",
+        parametersJson: "{}",
+        requiresNetwork: false,
+        hasInstallScripts: false,
+        expectedChangesSummary: "新增依赖",
+        createdAtIso: new Date().toISOString(),
+        canRememberForSession: false,
+      }),
+    ).resolves.toBeNull();
+  });
 });

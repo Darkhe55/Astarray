@@ -65,7 +65,14 @@ export class InstallationGateInterfacePort implements InstallationGateUserPort {
     if (!this.isInteractive()) {
       return null;
     }
-    const record = this.registry.register({
+    /**
+     * **异常必须在端口内部收敛**（2026-10-12）：`assertInstallationAllowed` 的调用方
+     * （`policy-wrapper.ts`）**未**包裹 try/catch ⇒ 若本端口抛错，异常会穿透到工具执行路径。
+     * 故任何登记/等待失败一律**收敛为 `null`**（fail-closed），并写诊断（不静默）。
+     */
+    let record;
+    try {
+      record = this.registry.register({
       stage: "existing-resource",
       /**
        * 说明：`ExistingResourceInquiry` **不含**发起个体与任务执行 ID
@@ -83,11 +90,18 @@ export class InstallationGateInterfacePort implements InstallationGateUserPort {
       record.inquiryIdentifier,
       this.inquiryTimeoutMilliseconds,
     );
-    if (answer === null) {
+      if (answer === null) {
+        return null;
+      }
+      // 阶段 1 的回答形态与 `ExistingResourceAnswer` 结构兼容。
+      return answer as InstallationInquiryAnswer;
+    } catch (error) {
+      this.writeDiagnostic(
+        "[安装门禁] 询问登记/等待失败，按 fail-closed 处理: " +
+          (error instanceof Error ? error.message : String(error)),
+      );
       return null;
     }
-    // 阶段 1 的回答形态与 `ExistingResourceAnswer` 结构兼容。
-    return answer as InstallationInquiryAnswer;
   }
 
   /**
@@ -101,7 +115,9 @@ export class InstallationGateInterfacePort implements InstallationGateUserPort {
     if (!this.isInteractive()) {
       return null;
     }
-    const record = this.registry.register({
+    let record;
+    try {
+      record = this.registry.register({
       stage: "allow-once",
       requestingAgentInstanceId: request.requestingAgentInstanceId,
       taskExecutionId: request.taskExecutionId,
@@ -124,9 +140,16 @@ export class InstallationGateInterfacePort implements InstallationGateUserPort {
       record.inquiryIdentifier,
       this.inquiryTimeoutMilliseconds,
     );
-    if (decision === null) {
+      if (decision === null) {
+        return null;
+      }
+      return decision as "allow-once" | "deny";
+    } catch (error) {
+      this.writeDiagnostic(
+        "[安装门禁] 安装计划登记/等待失败，按 fail-closed 处理: " +
+          (error instanceof Error ? error.message : String(error)),
+      );
       return null;
     }
-    return decision as "allow-once" | "deny";
   }
 }
