@@ -31,6 +31,15 @@ export type DomainErrorCode =
   | "permission-ask-csrf-required"
   | "permission-ask-unauthenticated"
   | "permission-ask-not-visible"
+  /**
+   * 安装专用流程（GUI-02-02，2026-10-12）：待决安装询问的登记与裁决错误。
+   * 安装**不走**普通权限询问，故独立一组错误码，避免两套语义混用。
+   */
+  | "installation-inquiry-not-found"
+  | "installation-inquiry-invalid"
+  | "installation-inquiry-stage-mismatch"
+  | "installation-inquiry-already-answered"
+  | "installation-inquiry-stale-revision"
   | "permission-profile-not-found"
   | "backup-deletion-authorization-pending"
   | "backup-deletion-authorization-invalid"
