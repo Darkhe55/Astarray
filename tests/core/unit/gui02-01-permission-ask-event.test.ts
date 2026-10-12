@@ -174,4 +174,22 @@ describe("GUI-02-01 公共事件：字段白名单与脱敏", () => {
     expect(decided.status).toBe("allowed");
     expect(decided.requestRevision).toBe(2);
   });
+
+  it("idempotencyIdFactory 返回 **null** 时回退到默认 ID（覆盖 `??` 兜底分支）", () => {
+    /**
+     * `idempotencyIdFactory?.(record) ?? 默认值` —— `??` **只对 `null`/`undefined` 生效**。
+     * （我起初误以为空串也会回退，实测得到**空 ID** ⇒ 证明 `??` 不回退空串；
+     * 这是**我的错误假设**，已按真实语义改正。）
+     */
+    const event = buildPermissionAskEvent({
+      record: recordFixture(),
+      projectIdentifier: "astarray",
+      sessionIdentifier: "gui-session-local",
+      projectRootPath: PROJECT_ROOT,
+      idempotencyIdFactory: (() => null) as unknown as (
+        record: PermissionAskRequestRecord,
+      ) => string,
+    });
+    expect(event.idempotencyId).toBe("permission-ask:ask-1:1");
+  });
 });

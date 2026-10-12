@@ -234,6 +234,32 @@ describe("GUI-02-02 专用流程：界面侧安装通道", () => {
     ).resolves.toBeNull();
   });
 
+  it("⑩ 抛出**非 Error 值**时同样收敛（覆盖 `String(error)` 兜底分支）", async () => {
+    /**
+     * 注册表可能抛出非 `Error` 值（例如内部实现变化）。此时 `error instanceof Error`
+     * 为假，须走 `String(error)` 兜底 —— 该分支此前未被覆盖。
+     */
+    const throwingRegistry = {
+      register: () => {
+        throw "非 Error 抛出物";
+      },
+    } as unknown as InstallationInquiryRegistry;
+    const port = new InstallationGateInterfacePort({
+      registry: throwingRegistry,
+      inquiryTimeoutMilliseconds: 1_000,
+      isInteractive: () => true,
+    });
+    await expect(
+      port.askExistingResource({
+        inquiryId: "inquiry-non-error",
+        requiredCapabilitySummary: "安装 package-x",
+        intendedUse: "用途",
+        compatibleCandidateTypes: [],
+        createdAtIso: new Date().toISOString(),
+      }),
+    ).resolves.toBeNull();
+  });
+
   it("⑨ 阶段 2 同样**不抛异常**（非法请求 ⇒ 收敛为 null）", async () => {
     const { port } = buildPort();
     await expect(
