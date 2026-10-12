@@ -12,6 +12,12 @@ import path from "node:path";
 // 装配层内部使用（不是再导出）：把真实用量观测接到账目存储上（2026-10-06 接线）。
 import { createProviderUsageLedgerObserver } from "./orchestration/provider-usage-ledger-observer.js";
 import { CLOSED_CONTEXT_NODE_STATES } from "./orchestration/local-context-graph-store.js";
+// GUI-02-01 片②：权限询问的请求实体与公共事件（门面统一负责"登记 + 广播"）。
+import {
+  PermissionAskRequestStore,
+  type PermissionAskRequestRecord,
+} from "./orchestration/permission-ask-request-store.js";
+import { buildPermissionAskEvent } from "./orchestration/permission-ask-event.js";
 import { UsageLedgerStore } from "./orchestration/usage-ledger-store.js";
 // SMART-01-04：指令窗口与三分钟期限必须由**产品入口**真实驱动（此前只有 re-export 的独立组件）。
 import { InstructionWindowStore } from "./orchestration/instruction-window-store.js";
@@ -2001,6 +2007,61 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     return new ParameterAuthorizationSettingsStore({
       stateDirectory: this.stateDirectory,
     });
+  }
+
+  /**
+   * GUI-02-01 片②（2026-10-11）：**登记权限询问请求并广播事件**。
+   *
+   * 为什么放在门面而不是让调用方直接用 store：
+   * - 事件必须经门面的订阅口广播（GUI/多页面同步的数据来源），store 自身不发事件；
+   * - 调用方（CLI/GUI）不应承担核心存储细节 —— 片① 曾让 CLI 直接 import store，
+   *   本方法即为修正该设计。
+   *
+   * **只登记与广播，不执行任何操作**：不 unblock、不写产物、不改任务状态。
+   * 事件载荷**只含结构化安全预览**，**绝不携带原始 `argumentsJson`**。
+   */
+  async registerPermissionAskRequest(input: {
+    ownerAgentInstanceId: string;
+    taskIdentifier: string;
+    toolName: string;
+    /** 精确参数：逐字保留（不得改写、不得截断）。 */
+    argumentsJson: string;
+    explanation: string;
+    projectIdentifier: string;
+    sessionIdentifier: string;
+    projectRootPath?: string;
+    lifetimeSeconds?: number;
+  }): Promise<PermissionAskRequestRecord> {
+    this.assertOpen();
+    const record = await this.createPermissionAskRequestStore().registerRequest({
+      ownerAgentInstanceId: input.ownerAgentInstanceId,
+      taskIdentifier: input.taskIdentifier,
+      toolName: input.toolName,
+      argumentsJson: input.argumentsJson,
+      explanation: input.explanation,
+      ...(input.lifetimeSeconds === undefined
+        ? {}
+        : { lifetimeSeconds: input.lifetimeSeconds }),
+    });
+    const event = buildPermissionAskEvent({
+      record,
+      projectIdentifier: input.projectIdentifier,
+      sessionIdentifier: input.sessionIdentifier,
+      projectRootPath: input.projectRootPath ?? process.cwd(),
+    });
+    this.emit(event as unknown as PublicAstarrayEvent);
+    return record;
+  }
+
+  /** GUI-02-01 片②：权限询问请求实体存储（与 CLI/GUI 共用同一状态目录）。 */
+  private createPermissionAskRequestStore(): PermissionAskRequestStore {
+    if (this.stateDirectory === null) {
+      throw new PublicApplicationError(
+        "permission-ask-unavailable",
+        "应用未绑定状态目录，无法登记权限询问请求",
+      );
+    }
+    return new PermissionAskRequestStore({ baseDirectory: this.stateDirectory });
   }
 
   /** 本地存档中的 Agent 目录名（每 Agent 独立存档域；失败即空，不猜测）。 */

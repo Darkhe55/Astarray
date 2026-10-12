@@ -16,7 +16,6 @@ import {
   type PreviousApprovalRecord,
 } from "./permission-ask-adjudication.js";
 import { waitForPermissionAsk } from "./permission-ask-wait.js";
-import { PermissionAskRequestStore } from "../../../core/src/orchestration/permission-ask-request-store.js";
 import {
   RuntimeSelectionError,
   buildRuntimeSelection,
@@ -110,6 +109,9 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
   const escalationMessages: string[] = [];
   const application = await AstarrayApplicationFacade.create({
     stateDirectory: options.stateDirectory,
+    // GUI-02-01 片②：显式传入工作区根，使"项目标识"由**真实根目录名**推导，
+    // 而不是在 CLI 里硬编码；运行时亦以此作为产物对账根（避免写入宿主仓库）。
+    workspaceRootPath: process.cwd(),
     mode: runConfig.mode,
     ...runtimeSelection,
     concurrency: runConfig.concurrency,
@@ -128,22 +130,19 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
       logToStderr(text);
     },
     /**
-     * GUI-02-01 片①（2026-10-11）：权限询问**携带绝对身份**到达时，登记**请求实体**。
+     * GUI-02-01 片①②（2026-10-11）：权限询问**携带绝对身份**到达时，经**门面**登记
+     * 请求实体并广播事件。
      *
-     * 目的：让 CLI 路径与 GUI 共用同一份 `PermissionAskRequestStore` 事实 ——
-     * 实体带 `askIdentifier` / `operationFingerprint` / `status` / `requestRevision`，
-     * 是后续"按 `askIdentifier` 裁决"与多页面同步的锚点。
+     * 走门面而非直接 import store（片② 修正片① 的设计）：事件必须经门面订阅口广播
+     * 给 GUI/多页面，且调用方不应承担核心存储细节。
      *
-     * **本步只登记、不改裁决**：既有 `runPermissionAskAdjudication` 路径与行为不变。
+     * **只登记与广播，不改裁决**：既有 `runPermissionAskAdjudication` 路径与行为不变。
      * **失败处置**：登记失败**不得**影响既有裁决流程（不静默放行、也不阻断），
-     * 只把失败如实写入 stderr 供排查（fail-open 于**登记**、fail-closed 于**授权**）。
+     * 只把失败如实写入 stderr 供排查。
      */
     onPermissionAskWithIdentity: (input) => {
       void (async () => {
         try {
-          const requestStore = new PermissionAskRequestStore({
-            baseDirectory: options.stateDirectory,
-          });
           const parsed = buildPermissionAskFromEscalation(input.message);
           if (parsed === null) {
             logToStderr(
@@ -151,12 +150,14 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
             );
             return;
           }
-          await requestStore.registerRequest({
+          await application.registerPermissionAskRequest({
             ownerAgentInstanceId: input.ownerAgentInstanceId,
             taskIdentifier: parsed.taskIdentifier,
             toolName: parsed.toolName,
             argumentsJson: parsed.argumentsJson,
             explanation: parsed.explanation,
+            projectIdentifier: path.basename(process.cwd()) || "astarray",
+            sessionIdentifier: "cli-run",
           });
         } catch (error) {
           logToStderr(
