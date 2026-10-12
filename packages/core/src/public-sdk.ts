@@ -1074,6 +1074,17 @@ export interface PublicApplicationOptions {
   providerRuntimeRegistry?: ProviderRuntimeRegistry;
   /** 可选流式输出钩子（headless 写 stderr；不暴露内部字段）。 */
   streamOutput?: (missionIdentifier: string | null, text: string) => void;
+  /**
+   * GUI-02-01 片①（2026-10-11）：权限询问**携带绝对身份**的上报口（可选）。
+   *
+   * 未提供时行为与之前**逐字一致**。CLI 侧用它登记 `PermissionAskRequestStore`
+   * 的请求实体（该 store 按 `agent-memory/<owner>/permission-ask-requests/` 落盘）。
+   */
+  onPermissionAskWithIdentity?: (input: {
+    ownerAgentInstanceId: string;
+    taskId: string;
+    message: string;
+  }) => void;
   concurrency?: number;
   failureThreshold?: number;
   maximumLoopIterations?: number;
@@ -1421,6 +1432,10 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       runtimeKind,
       useFeedbackProcess: options.useFeedbackProcess ?? runtimeKind === "provider",
       streamOutput: options.streamOutput ?? (() => {}),
+      // GUI-02-01 片①：权限询问的绝对身份透传（可选；未提供则不传字段）。
+      ...(options.onPermissionAskWithIdentity === undefined
+        ? {}
+        : { onPermissionAskWithIdentity: options.onPermissionAskWithIdentity }),
       backupDeletionControlPort: options.backupDeletionControlPort ?? null,
       installationUserPort: options.installationUserPort ?? null,
       authenticatedUserId: options.authenticatedUserId,

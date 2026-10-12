@@ -16,6 +16,7 @@ import {
   type PreviousApprovalRecord,
 } from "./permission-ask-adjudication.js";
 import { waitForPermissionAsk } from "./permission-ask-wait.js";
+import { PermissionAskRequestStore } from "../../../core/src/orchestration/permission-ask-request-store.js";
 import {
   RuntimeSelectionError,
   buildRuntimeSelection,
@@ -125,6 +126,45 @@ export async function executeRunCommand(options: RunCommandOptions): Promise<num
         escalationMessages.push(text);
       }
       logToStderr(text);
+    },
+    /**
+     * GUI-02-01 片①（2026-10-11）：权限询问**携带绝对身份**到达时，登记**请求实体**。
+     *
+     * 目的：让 CLI 路径与 GUI 共用同一份 `PermissionAskRequestStore` 事实 ——
+     * 实体带 `askIdentifier` / `operationFingerprint` / `status` / `requestRevision`，
+     * 是后续"按 `askIdentifier` 裁决"与多页面同步的锚点。
+     *
+     * **本步只登记、不改裁决**：既有 `runPermissionAskAdjudication` 路径与行为不变。
+     * **失败处置**：登记失败**不得**影响既有裁决流程（不静默放行、也不阻断），
+     * 只把失败如实写入 stderr 供排查（fail-open 于**登记**、fail-closed 于**授权**）。
+     */
+    onPermissionAskWithIdentity: (input) => {
+      void (async () => {
+        try {
+          const requestStore = new PermissionAskRequestStore({
+            baseDirectory: options.stateDirectory,
+          });
+          const parsed = buildPermissionAskFromEscalation(input.message);
+          if (parsed === null) {
+            logToStderr(
+              "[权限请求登记] 升级文本无法结构化解析，未登记请求实体（裁决路径不受影响）。",
+            );
+            return;
+          }
+          await requestStore.registerRequest({
+            ownerAgentInstanceId: input.ownerAgentInstanceId,
+            taskIdentifier: parsed.taskIdentifier,
+            toolName: parsed.toolName,
+            argumentsJson: parsed.argumentsJson,
+            explanation: parsed.explanation,
+          });
+        } catch (error) {
+          logToStderr(
+            "[权限请求登记] 登记失败（裁决路径不受影响）: " +
+              (error instanceof Error ? error.message : String(error)),
+          );
+        }
+      })();
     },
   });
   try {
