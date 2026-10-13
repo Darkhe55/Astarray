@@ -2,18 +2,21 @@
 /**
  * 分支覆盖率缺口定位工具（E2E-01-04 覆盖率冲刺用）。
  *
- * 背景：仓库 `vitest.config.ts` 的 coverage reporter 不含 `json`，且 CLI
- * `--coverage.reporter=json` 覆盖不生效（实测输出目录为空），因此拿不到行级数据。
- * 生成 coverage-final.json 的方法：复制仓库配置并加 `json` reporter（见下文用法）。
+ * 背景：仓库 `vitest.config.ts` 的 coverage reporter 不含 `json`，需要用 CLI 显式指定
+ * `--coverage.reporter=json` **并同时指定** `--coverage.reportsDirectory` 才能拿到行级数据
+ * （2026-10-13 实测；详见文末用法）。
  *
  * 关键区分（2026-10-09 实测）：v8 会产出**无位置信息**的分支（行号为 0，记为 L0）。
  * 它们无法靠补测定向覆盖，因此报告把 L0 与**可定位**分支分开统计——
  * 缺口补足只能从可定位池里出。
  *
  * 用法：
- *   1) 生成行级数据（临时配置需含 reporter: ["json"]，reportsDirectory 指向任意目录）：
- *        npx vitest run --coverage --maxWorkers=6 --config <临时配置>
- *   2) node scripts/report-uncovered-branches.mjs <coverage-final.json 路径> [topN]
+ *   1) 生成行级数据：
+ *        npx vitest run --coverage --coverage.reporter=json --coverage.reportsDirectory=coverage-json
+ *      （2026-10-13 实测更正：**不必**再复制配置。此前记的"CLI 覆盖不生效"其成因是
+ *       **输出目录**——只给 reporter 不给 reportsDirectory 时目录为空；两者同时给即正常产出。
+ *       用完请删掉 `coverage-json/`，它不在常规忽略范围内。）
+ *   2) node scripts/report-uncovered-branches.mjs coverage-json/coverage-final.json [topN]
  */
 import { existsSync, readFileSync } from "node:fs";
 
