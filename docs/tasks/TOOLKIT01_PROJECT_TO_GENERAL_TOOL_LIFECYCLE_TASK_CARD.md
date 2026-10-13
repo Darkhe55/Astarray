@@ -524,7 +524,6 @@ CLI 每次调用都是**独立进程**，因此"停用阻止新运行"与"回滚
 - **仍未完成**：04 的独立反馈与取消/崩溃恢复管理入口；
   更大样本的复用次数与构建成本实测 ⇒ **不主张 TOOLKIT-01 通过**。
 ### TOOLKIT-01-04 进展（2026-10-10 五）：取消 / 崩溃恢复管理入口 与 独立反馈
-
 **缺口**：上一轮已有 `recordPendingVersionSwitch` / `recoverFromInterruptedSwitch` 两个**底层方法**，
 但**没有管理入口** —— 跨进程（真实 CLI）既看不到"半提交"现场、也无法触发恢复；
 也**没有独立反馈**记录（谁在何时对哪个包做了什么、结果如何）。
@@ -618,3 +617,61 @@ CLI 每次调用都是**独立进程**，因此"停用阻止新运行"与"回滚
 - **仍未完成**：**原流程 vs 工具化流程的真实 token 对照**（须把手工路径也真实跑一遍）；
   真实维护成本；
   跨平台可比性 ⇒ **不主张 TOOLKIT-01 整卡通过**。
+
+---
+
+## TOOLKIT-01-04 剩余项复核（2026-10-13）：与 MERGE-01 的联测，查出一处**门禁自相矛盾**
+
+卡内把 04 的剩余条件写作"与 MERGE-01 权限功能的**完整联测**"。本轮按此逐层核实，
+**没有找到任何已存在的联测**（以 `parameter-authorization` + `tool-package` 双关键字全仓检索
+测试文件，命中为 0），并在核实过程中发现一处**可复现的门禁旁路**：
+
+### 事实（实测，非推断）
+
+版本升级的"新增副作用须重新授权"门禁，最终取决于一个**调用方自述的裸布尔值**：
+
+```
+packages/core/src/toolkit/tool-package-version-controller.ts:293
+  if (differences.requiresReauthorization && !input.isReauthorized) { 拒绝 }
+packages/tui/src/cli/commands.ts:5161
+  isReauthorized: options.isReauthorized === true,
+packages/tui/src/cli.tsx:416 / 436
+  .option("--reauthorized", "已就该版本的新增副作用重新授权")
+  → isReauthorized: options.reauthorized === true
+```
+
+实测（临时脚本，跑完即删、未入库；v1 无副作用 → v2 含 `file-write`）：
+
+| 调用 | 结果 |
+| --- | --- |
+| `describeUpgradeDifferences(1→2)` | `requiresReauthorization=true`、`addedSideEffects=["file-write"]` |
+| `upgradeProjectVersion({ isReauthorized: false })` | **`isApplied=false`**，理由"须重新授权后方可切换" |
+| `upgradeProjectVersion({ isReauthorized: true })` | **`isApplied=true`、`reason=null`** ⇒ **门禁被打开** |
+
+即：**任何调用方（含 `--reauthorized` 这一个命令行参数）只要传 `true` 就能完成切换**，
+`ParameterAuthorizationSettings` 完全不参与该判定。
+
+### 为什么这是"自相矛盾"而不是"设计如此"
+
+同一个控制器对**另一条**路径（`enableForProject`，`:221-229`）留了明确的设计说明：
+
+> "早期版本允许调用方传 `isReauthorized` 来完成版本切换，但那等于给"新增副作用"的门禁开了
+> 一个**旁路**：任何调用方只要顺手传个 true 就能绕过重新授权。因此版本切换**只能**走
+> `upgradeProjectVersion()`（它总是做差异判定）。"
+
+⇒ 该说明把"调用方传 true"明确判定为**旁路**并据此移除了 `enableForProject` 的参数；
+但**指定的唯一路径** `upgradeProjectVersion()` 恰恰就是这个形态。两处口径冲突。
+
+### 结论：不判 04 通过，并把它收敛为可开工的具体条件
+
+**不主张 TOOLKIT-01-04 通过**（与卡内既有口径一致）。下一检查点（可直接开工）：
+1. 先写**行为反例**：`requiresReauthorization=true` 且**无**来自权限引擎的重新授权记录时，
+   即使传入 `isReauthorized: true` 也必须**被拒**（先红）；
+2. 把授权依据从"裸布尔"改为**可核验来源** —— 例如要求给出
+   该工具包的**重新授权记录标识 + revision**（由参数授权设置/权限引擎签发），
+   服务端据此自行判定，而不是采信调用方的断言；
+3. CLI 侧相应改为：先展示升级差异 → 取得显式确认 → 由**本地**签发并登记该重新授权，
+   再执行切换（`--reauthorized` 不再等价于"已授权"）；
+4. 补上卡内点名的**与 MERGE-01 的联测**（参数授权设置 × 版本切换）；
+5. `npm run build` → 目标套件 → `check` → 覆盖率 → 单独提交推送。
+**注意**：不得为让门禁变绿而放宽差异判定。
