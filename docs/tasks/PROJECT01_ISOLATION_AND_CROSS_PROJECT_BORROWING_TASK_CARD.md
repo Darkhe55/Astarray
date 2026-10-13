@@ -127,6 +127,37 @@ Agent仅接收不透明授权引用和公开范围说明，不接收可外传的
 **仍未完成（不主张 PROJECT-01-03/04 通过）**：SDK/GUI 入口尚未接线（CLI 已可用）；
 多项目/多同级个体压力验收与包级验收仍待做。
 
+> **2026-10-13 复核：把"入口未接线"收敛为一条具体、可执行的缺口**
+>
+> 逐层核实后的**准确表述**（此前只说"未接线"，无法据以开工）：
+>
+> - `AstarrayApplicationFacade` **已经**暴露跨项目公开方法
+>   （`readCrossProjectResource` / `importCrossProjectResource` /
+>   `grantCrossProjectAuthorizationForAcceptance` / `listCrossProjectAuthorizations`，
+>   见 `packages/core/src/public-sdk.ts:3918/3955/4052/4086`）；
+> - `AstarrayApplicationFacade.create()` **也**已把两个端口透传进门面
+>   （`public-sdk.ts:1523-1524`：`crossProjectResourceIo` / `crossProjectHumanEditGuard`）；
+> - **CLI 侧确有实现**（更正我最初的判断）：`packages/tui/src/cli/commands.ts:1208`
+>   的 `buildLocalResourceIoPort()`，在 `:1075` 与 `:1140` 两处注入。
+>   但它**是裸 `fs` 直通**——`readTextFile`/`writeTextFile`/`ensureDirectory`/`fileExists`
+>   仅直接调用 `node:fs` 对应 API，**没有任何** `WorkspaceBoundary` 或
+>   `ProtectedStoragePolicy` 校验（其注释自述"CLI 入口专用；不引入核心包依赖"）。
+> - **真正的缺口**：**除 CLI 这个裸端口外，全仓没有第二个生产实现**，
+>   故 `AstarrayApplicationFacade.create()` 的 `crossProjectResourceIo` 在 SDK/GUI 路径
+>   恒为 `null` ⇒ `importCrossProjectResource` 走 `public-sdk.ts:3970` 的
+>   "端口为 null ⇒ 如实 `cross-project-resource-io-unavailable`" fail-closed 分支
+>   ⇒ **SDK/GUI 在实际产品中无法执行跨项目借阅**。
+>
+> **下一检查点（可直接开工，不需外部条件）**：
+> 在装配层提供一个**项目内受控**的 `CrossProjectResourceIoPort` 并注入 SDK 路径，要求：
+> ① 读写必须经过既有的 `WorkspaceBoundary` 与 `ProtectedStoragePolicy`
+>   （**不得**照搬 CLI 的裸 `fs` 端口：那样等于"拿到绝对路径就能读写"，
+>   与 AGENTS.md"权限在工具实际执行前检查"和受保护存储禁令相冲突）；
+> ② 人工改动守卫（`CrossProjectTargetHumanEditGuardPort`）同样需要生产实现
+>   （缺它时目标已存在恒 fail-closed，是安全默认，但等于"能读不能导"）；
+> ③ 先写**行为反例**（越界路径必须被拒、受保护存储必须被拒、未授权不得读写），
+>   再实现，再跑门禁；改 `src` 后按纪律先 `npm run build`。
+
 ### PROJECT-01-04 陈旧覆盖拒绝 + 公开入口（2026-10-10 续）
 
 **缺口**：`importCopy` 接入真实 I/O 后只做"建父目录 → 覆盖写目标 → 复核存在"，
