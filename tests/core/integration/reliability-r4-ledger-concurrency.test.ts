@@ -15,12 +15,22 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   AstarrayApplicationFacade,
   loadTaskIdempotencyLedgerWithIntegrity,
 } from "../../../packages/core/src/public-sdk.js";
+
+/**
+ * 超时预算（2026-10-13）：用例 ④ 内部就有 **20_000ms 有界等待**（见该用例的 `deadline`），
+ * 而本文件**从未**设置 `testTimeout` ⇒ 沿用 vitest 默认 **5_000ms**，
+ * 比用例自身的等待预算还短：满载并发下必然先撞框架超时，
+ * 实测 `Test timed out in 5000ms`（隔离下实测仅 493ms，故"隔离恒过"）。
+ * 给预算**只影响失败时机，不放宽任何断言** —— 用例内"永不追平即失败并报实测值"的
+ * 判据保持不变。
+ */
+vi.setConfig({ testTimeout: 60_000 });
 
 let stateDirectory: string;
 

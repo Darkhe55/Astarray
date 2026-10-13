@@ -24,9 +24,19 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ToolPackageVersionStateStore } from "../../../packages/core/src/toolkit/tool-package-version-state-store.js";
+
+/**
+ * 超时预算（2026-10-13）：本文件用**真实 `dist/cli.js` 子进程**，属于仓库既有的
+ * "显式给预算"一类（另有 33 个文件用 `vi.setConfig({ testTimeout })`）。
+ * 此前**未**设置 ⇒ 沿用 vitest 默认 **5_000ms**：隔离下签名用例实测 1438ms（够），
+ * 但全量门禁并发下子进程被抢占 ⇒ 实测 `Test timed out in 5000ms`
+ * （见 `docs/reports/FLAKY_TEST_LOCATION_2026-10-12.md` 的 405/406 形态）。
+ * 这不是竞态，而是**真子进程在满载下需要更多预算**；断言一律不放宽。
+ */
+vi.setConfig({ testTimeout: 60_000 });
 
 const executeFile = promisify(execFile);
 
