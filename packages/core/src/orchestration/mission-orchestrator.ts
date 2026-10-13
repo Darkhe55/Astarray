@@ -313,7 +313,8 @@ export class MissionOrchestrator {
    * 会产生**无人接管的 `ENOENT`**（实测：全量测试约 30% 出现 `Errors 1 error`，退出码 1）。
    *
    * **修改此处前请先读该报告**：修复方向有两处取舍（真等待 vs 写入侧对目录消失 fail-soft），
-   * 且**均需先取得确定性复现**，否则无法验证。
+   * 且**均需先取得确定性复现**，否则无法验证 —— 本会话曾把上限临时改为 30 秒，
+   * 但**反例无法区分**（mock 任务毫秒级完成，窗口不出现），故**已回退**，不留未验证的改动。
    */
   async cancel(): Promise<void> {
     this.stopping = true;
@@ -331,7 +332,6 @@ export class MissionOrchestrator {
       new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
     ]);
   }
-
   getRunningTaskIds(): string[] {
     return [...this.inFlightTaskIds];
   }
