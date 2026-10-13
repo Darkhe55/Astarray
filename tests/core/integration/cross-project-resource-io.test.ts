@@ -878,3 +878,70 @@ describe("PROJECT-01-03：授权范围与真实读取对象必须绑定", () => 
     expect(result.didRead).toBe(false);
   });
 });
+
+describe("PROJECT-01-03：状态文件损坏/版本不符时按空继续（不伪造历史）", () => {
+  it("⑲ `schemaVersion` 不符 ⇒ 按空状态继续，**不得**把异版本内容当成有效授权", async () => {
+    /**
+     * 定向反例（2026-10-15）：`loadFromDisk` 里 `parsed.schemaVersion !== 1` 一路此前未覆盖。
+     * 语义：**不伪造历史** —— 版本不符的文档一律按空处理；
+     * 否则旧/未知格式里的条目会被当作当前有效授权使用。
+     */
+    const crossProjectDirectory = path.join(baseDirectory, "cross-project");
+    await fs.mkdir(crossProjectDirectory, { recursive: true });
+    await fs.writeFile(
+      path.join(crossProjectDirectory, "cross-project-authorizations.json"),
+      JSON.stringify({
+        schemaVersion: 999,
+        authorizations: [
+          {
+            authorizationIdentifier: "auth-1",
+            sourceProjectIdentifier: SOURCE_PROJECT,
+            sourceProjectRevision: SOURCE_REVISION,
+            targetProjectIdentifier: TARGET_PROJECT,
+            targetProjectRevision: 1,
+            operationKind: "read",
+            resourceScope: {
+              pathPrefixes: ["docs/"],
+              realPaths: [],
+              isDynamicSharedDirectory: false,
+            },
+            argumentsHash: "hash-docs-read",
+            expiresAtIso: "2030-01-01T00:00:00.000Z",
+            grantedByUserId: "user-1",
+            taskIdentifier: "T-001",
+            state: "active",
+          },
+        ],
+        copyReceipts: [],
+      }),
+      "utf8",
+    );
+
+    const store = new CrossProjectAuthorizationStore({ baseDirectory });
+    await store.ensureLoaded();
+
+    // 异版本文档里的授权**不得**生效
+    await expect(store.getAuthorization("auth-1")).resolves.toBeNull();
+    await expect(store.countCopyReceipts()).resolves.toBe(0);
+  });
+
+  it("⑳ 同 schemaVersion 但**缺** `authorizations`/`copyReceipts` 字段 ⇒ 兜底为空，不抛错", async () => {
+    /**
+     * 定向反例：`parsed.authorizations ?? []` 与 `parsed.copyReceipts ?? []` 两路。
+     * 语义：**向后兼容** —— 早期写出的文档可能没有这两个数组；
+     * 缺字段必须当空处理，而不是抛错让整个跨项目功能瘫痪。
+     */
+    const crossProjectDirectory = path.join(baseDirectory, "cross-project");
+    await fs.mkdir(crossProjectDirectory, { recursive: true });
+    await fs.writeFile(
+      path.join(crossProjectDirectory, "cross-project-authorizations.json"),
+      JSON.stringify({ schemaVersion: 1 }),
+      "utf8",
+    );
+
+    const store = new CrossProjectAuthorizationStore({ baseDirectory });
+    await expect(store.ensureLoaded()).resolves.toBeUndefined();
+    await expect(store.getAuthorization("auth-1")).resolves.toBeNull();
+    await expect(store.countCopyReceipts()).resolves.toBe(0);
+  });
+});
