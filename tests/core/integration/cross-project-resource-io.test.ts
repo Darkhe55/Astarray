@@ -945,3 +945,103 @@ describe("PROJECT-01-03：状态文件损坏/版本不符时按空继续（不�
     await expect(store.countCopyReceipts()).resolves.toBe(0);
   });
 });
+
+describe("PROJECT-01-03：幂等回执的释放必须 fail-closed", () => {
+  it("㉑ 释放**不存在**的认领键 ⇒ 如实报告未释放（不伪造『已释放』）", async () => {
+    /**
+     * 定向反例（2026-10-17）：`releaseCopyReceiptClaim` 里 `existing === undefined` 一路。
+     * 语义：没有该认领就该**如实回 false** —— 谎报"已释放"会让调用方以为
+     * 后续重试是安全的，从而掩盖真实的状态不一致。
+     */
+    const store = new CrossProjectAuthorizationStore({ baseDirectory });
+    const outcome = await store.releaseCopyReceiptClaim({
+      authorizationIdentifier: "auth-never-claimed",
+      sourceProjectIdentifier: SOURCE_PROJECT,
+      sourceRevision: SOURCE_REVISION,
+      sourceResourcePath: "docs/spec.md",
+      targetResourcePath: "docs/spec-copy.md",
+      contentHash: "sha256:" + "0".repeat(64),
+    });
+
+    expect(outcome.wasReleased).toBe(false);
+  });
+
+  it("㉒ **已落定的真实回执**不得被释放（否则等于允许对已完成副本重复写入）", async () => {
+    /**
+     * 定向反例：`!existing.receiptIdentifier.startsWith("pending-")` 一路。
+     * 这是卡内点名的**放宽重放保护**边界：
+     *  - 只有**占位**回执（`pending-` 前缀，写入失败时留下的）才允许释放；
+     *  - 已落定的真实回执一旦被释放，重试就会被当成"首次导入"而**重复写出副作用**。
+     * 故此处必须 fail-closed：非占位回执一律不删，且**回执数量不变**。
+     */
+    const sourceFilePath = path.join(sourceRootPath, "docs/spec.md");
+    const targetFilePath = path.join(targetRootPath, "docs/spec-copy.md");
+    const content = "# 幂等释放反例\n";
+    await fs.mkdir(path.dirname(sourceFilePath), { recursive: true });
+    await fs.mkdir(path.dirname(targetFilePath), { recursive: true });
+    await fs.writeFile(sourceFilePath, content, "utf8");
+
+    const store = new CrossProjectAuthorizationStore({ baseDirectory });
+    const argumentsHash = "hash-receipt-release";
+    await grantImportAuthorization(store, argumentsHash);
+    const service = buildService(store);
+
+    const imported = await service.importCopy({
+      authorizationIdentifier: "auth-import",
+      sourceProjectIdentifier: SOURCE_PROJECT,
+      targetProjectIdentifier: TARGET_PROJECT,
+      sourceResourcePath: "docs/spec.md",
+      targetResourcePath: "docs/spec-copy.md",
+      absoluteSourcePath: sourceFilePath,
+      sourceProjectRootPath: sourceRootPath,
+      absoluteTargetPath: targetFilePath,
+      targetProjectRootPath: targetRootPath,
+      sourceRevision: SOURCE_REVISION,
+      contentHash: sha256(content),
+      argumentsHash,
+      nowIso: "2026-10-02T00:00:00.000Z",
+    });
+    expect(imported.outcome).toBe("imported-copy");
+    const countBefore = await store.countCopyReceipts();
+    expect(countBefore).toBeGreaterThan(0);
+
+    /**
+     * 用**真实回执的键**去释放（键 = 授权 ID | 来源项目 | revision | 来源路径 | 目标路径 | 内容哈希）。
+     * 关键在于必须喂**真实内容哈希** —— 塞一个假哈希会落到"未知键"一路（那是㉑覆盖的分支），
+     * 从而**测不到**本用例要钉的"非占位回执不得释放"。
+     */
+    const released = await store.releaseCopyReceiptClaim({
+      authorizationIdentifier: "auth-import",
+      sourceProjectIdentifier: SOURCE_PROJECT,
+      sourceRevision: SOURCE_REVISION,
+      sourceResourcePath: "docs/spec.md",
+      targetResourcePath: "docs/spec-copy.md",
+      contentHash: sha256(content),
+    });
+
+    expect(released.wasReleased).toBe(false);
+    // 已落定的真实回执不得被删
+    await expect(store.countCopyReceipts()).resolves.toBe(countBefore);
+    // 目标文件仍在（不得因为"释放"而回滚已完成的写入）
+    expect(await fs.readFile(targetFilePath, "utf8")).toBe(content);
+    // 再次导入仍按幂等复用（证明回执确实还在生效）
+    const second = await service.importCopy({
+      authorizationIdentifier: "auth-import",
+      sourceProjectIdentifier: SOURCE_PROJECT,
+      targetProjectIdentifier: TARGET_PROJECT,
+      sourceResourcePath: "docs/spec.md",
+      targetResourcePath: "docs/spec-copy.md",
+      absoluteSourcePath: sourceFilePath,
+      sourceProjectRootPath: sourceRootPath,
+      absoluteTargetPath: targetFilePath,
+      targetProjectRootPath: targetRootPath,
+      sourceRevision: SOURCE_REVISION,
+      contentHash: sha256(content),
+      argumentsHash,
+      nowIso: "2026-10-02T00:00:00.000Z",
+    });
+    expect(second.outcome).toBe("reused-existing-copy");
+    // 幂等复用 ⇒ **没有**再次写出目标（这正是"回执还在生效"的证据）
+    expect(second.didWriteTarget).toBe(false);
+  });
+});
