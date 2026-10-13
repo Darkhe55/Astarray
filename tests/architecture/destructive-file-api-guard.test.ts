@@ -53,6 +53,14 @@ const ALLOWED_MODULES: Record<string, { tokens: AllowedTokens; reason: string }>
       "NODECTX-01-02 无损暂存：只在**调用方给定的暂存目录**内按 node@revision 写出原文，" +
       "落盘成功后才改可见性（磁盘失败状态不变）；不删除、不改写原文、无 rm/rename/copyFile",
   },
+  "core/src/toolkit/tool-package-reauthorization-record-store.ts": {
+    tokens: ["writeFile"],
+    reason:
+      "TOOLKIT-01-04 重新授权记录：把'新增副作用须重新授权'的依据从调用方自述的裸布尔值" +
+      "换成**本地签发的可核验记录**（绑定项目/包/from→to/新增副作用 + 一次性消费）。" +
+      "只写自己那一个 JSON 文件（`tool-package-reauthorizations.json`），" +
+      "不删除、不改名、不复制既有内容（无 rm/rename/copyFile）",
+  },
   "core/src/tools/session-permission-elevation.ts": {
     tokens: ["rm", "writeFile"],
     reason: "会话提升记录持久化（writeFile + 失效记录清理 rm）",
