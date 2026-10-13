@@ -30,6 +30,14 @@ beforeEach(async () => {
   });
 });
 
+/**
+ * 临时目录清理（2026-10-13）：此前本文件只恢复 stdout，**从未**删除
+ * `mkdtemp` 建的目录 ⇒ 每次全量运行泄漏 `astarray-t08c07-*`。
+ */
+afterEach(async () => {
+  await fs.rm(temporaryDirectory, { recursive: true, force: true }).catch(() => {});
+});
+
 describe("direct-dispatch CLI 命令", () => {
   it("目标次级未登记 → 返回错误（来源/授权不丢失）", async () => {
     await expect(

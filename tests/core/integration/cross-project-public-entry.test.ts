@@ -27,8 +27,14 @@ beforeEach(async () => {
   baseDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "astarray-project04-"));
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
+  /**
+   * 临时目录清理（2026-10-13）：此前本 hook 只恢复 mock，**从未**删除
+   * `beforeEach` 里 `mkdtemp` 建的目录 ⇒ 该文件每次全量运行泄漏
+   * 一个 `astarray-project04-*`。
+   */
+  await fs.rm(baseDirectory, { recursive: true, force: true }).catch(() => {});
 });
 
 describe("PROJECT-01-04：有效授权交叉判定", () => {

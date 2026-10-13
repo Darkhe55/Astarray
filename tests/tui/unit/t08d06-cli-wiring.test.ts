@@ -30,6 +30,14 @@ beforeEach(async () => {
   });
 });
 
+/**
+ * 临时目录清理（2026-10-13）：此前本文件只恢复 stdout，**从未**删除
+ * `mkdtemp` 建的目录 ⇒ 每次全量运行泄漏 `astarray-t08d06-*`。
+ */
+afterEach(async () => {
+  await fs.rm(temporaryDirectory, { recursive: true, force: true }).catch(() => {});
+});
+
 describe("craftsman 状态命令", () => {
   it("craftsman status 文本：列出内置三模板", async () => {
     const exitCode = await executeCraftsmanStatusCommand({

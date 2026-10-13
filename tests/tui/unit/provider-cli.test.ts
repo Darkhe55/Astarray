@@ -35,6 +35,16 @@ beforeEach(async () => {
   });
 });
 
+/**
+ * 临时目录清理（2026-10-13）：此前本文件只恢复 stdout，**从未**删除
+ * `mkdtemp` 建的目录 ⇒ 单次全量运行泄漏若干个 `astarray-t07d06-*`，
+ * 多次运行累积后在 `%TEMP%` 下堆到数千个，引发 `EPERM ... rename` 型门禁失败。
+ * 用 `force` + `catch` 保证清理失败不影响断言结果。
+ */
+afterEach(async () => {
+  await fs.rm(temporaryDirectory, { recursive: true, force: true }).catch(() => {});
+});
+
 async function registerDemoProvider() {
   const store = new FileProviderCredentialStore(temporaryDirectory);
   await store.writeCredential({

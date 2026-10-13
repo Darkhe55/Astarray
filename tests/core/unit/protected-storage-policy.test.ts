@@ -20,6 +20,12 @@ import { PolicyWrapper } from "../../../packages/core/src/tools/policy-wrapper.j
 import { BackupVault } from "../../../packages/core/src/tools/backup-vault.js";
 
 let temporaryDirectory: string;
+/**
+ * 本文件另有两个用例在工作区**之外**建 `mkdtemp` 目录（模拟 TOCTOU 换链目标），
+ * 此前没有任何清理 ⇒ 每次全量运行泄漏 `astarray-ar01-outside-*` /
+ * `astarray-ar01a-outside-*` 各一个。这里统一登记，在 `afterEach` 收口。
+ */
+let outsideDirectories: string[];
 let workspaceDirectory: string;
 let protectedStoragePolicy: ProtectedStoragePolicy;
 let registry: ToolRegistry;
@@ -28,6 +34,7 @@ let vault: BackupVault;
 
 beforeEach(async () => {
   temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "astarray-ar01-"));
+  outsideDirectories = [];
   workspaceDirectory = path.join(temporaryDirectory, "workspace");
   await fs.mkdir(workspaceDirectory);
   protectedStoragePolicy = new ProtectedStoragePolicy({
@@ -55,6 +62,10 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await fs.rm(temporaryDirectory, { recursive: true, force: true }).catch(() => {});
+  // 工作区外的换链目标同样必须收口（否则每次运行泄漏两个目录）。
+  for (const outsideDirectory of outsideDirectories) {
+    await fs.rm(outsideDirectory, { recursive: true, force: true }).catch(() => {});
+  }
 });
 
 /** 在保管库内放置一个真实备份与审计文件，供反例使用。 */
@@ -244,6 +255,7 @@ describe("ProtectedStoragePolicy 路径判定", () => {
     const outsideDirectory = await fs.mkdtemp(
       path.join(os.tmpdir(), "astarray-ar01-outside-"),
     );
+    outsideDirectories.push(outsideDirectory);
     await fs.writeFile(path.join(outsideDirectory, "secret.txt"), "机密", "utf8");
 
     // 包装 workspaceBoundary：第一次 resolve（预检）后，把子目录替换为指向工作区外的链接
@@ -377,6 +389,7 @@ describe("ProtectedStoragePolicy 路径判定", () => {
     const outsideDirectory = await fs.mkdtemp(
       path.join(os.tmpdir(), "astarray-ar01a-outside-"),
     );
+    outsideDirectories.push(outsideDirectory);
     const boundary = new WorkspaceBoundary(temporaryDirectory);
     let resolveCallCount = 0;
     const toctouBoundary = {

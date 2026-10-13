@@ -31,6 +31,14 @@ beforeEach(async () => {
   });
 });
 
+/**
+ * 临时目录清理（2026-10-13）：此前本文件只恢复 stdout，**从未**删除
+ * `mkdtemp` 建的目录 ⇒ 每次全量运行泄漏 `astarray-sesscmd-*`。
+ */
+afterEach(async () => {
+  await fs.rm(temporaryDirectory, { recursive: true, force: true }).catch(() => {});
+});
+
 async function prepareElevation(): Promise<string> {
   const createResult = await executeSessionElevateCommand({
     stateDirectory: temporaryDirectory,
