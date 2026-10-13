@@ -304,6 +304,16 @@ export class MissionOrchestrator {
    * 取消：停止调度循环，等待在途 Worker 与循环收敛后返回。
    * 无在途 Worker 时确定性等待循环结束（保证无后台持久化写操作遗留）；
    * 存在挂起 Worker 时以 2 秒为上限（真实工具可能不可中断）。
+   *
+   * ⚠️ **已知风险（2026-10-12 实测，见 docs/reports/NON_TEST_LEVEL_FAILURE_ROOT_CAUSE_2026-10-12.md）**：
+   * 上述 **2 秒上限意味着"本方法返回"≠"在途任务已停止写盘"**。
+   * 若某个在途 Worker 超过 2 秒才走到 `handleWorkerOutcome` → `DagScheduler.finishTask`
+   * → `persistChain`，则**本方法（及其上层 `shutdown()`）已返回**，
+   * 而落盘**随后**才发生 ⇒ 若宿主此时已退出或已清理状态目录，
+   * 会产生**无人接管的 `ENOENT`**（实测：全量测试约 30% 出现 `Errors 1 error`，退出码 1）。
+   *
+   * **修改此处前请先读该报告**：修复方向有两处取舍（真等待 vs 写入侧对目录消失 fail-soft），
+   * 且**均需先取得确定性复现**，否则无法验证。
    */
   async cancel(): Promise<void> {
     this.stopping = true;
