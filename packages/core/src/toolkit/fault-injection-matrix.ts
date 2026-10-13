@@ -273,7 +273,8 @@ export const FAULT_INJECTION_MATRIX: readonly FaultInjectionEntry[] = [
       "故『显式给预算』才是本仓既有约定）；这 21 个里隔离耗时最长者达 **4168ms**，另有多例 2.5–3.5s，" +
       "而满载争用系数实测约 1.4–3× ⇒ 沿用默认 5s 必然偶发翻红。" +
       "**已修其中实际翻红者 2 个**（`toolkit01-tool-package-cli`、`reliability-r4-ledger-concurrency`，" +
-      "各补 `vi.setConfig({ testTimeout: 60_000 })`，**未改任何断言**），修后连续 9 次全量实测全绿；" +
+      "各补 `vi.setConfig({ testTimeout: 60_000 })`，**未改任何断言**），修后**连续 14 次全量实测全绿**" +
+      "（6+8 两批，timedOut=0；修复前同一脚本 4/9 失败）；" +
       "并已修掉 `run-command-gaps` 那条 60s 超时的**真实根因**（反馈进程重复 shutdown 白等 5s：" +
       "单次 stop 8ms、重复序列 5002ms；修复后该用例 5181ms → 184ms）。" +
       "**仍任其为 `not-verified`**：其余 **19 个**『子进程但无预算』文件**尚未统一处置**" +
