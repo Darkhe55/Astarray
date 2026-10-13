@@ -107,6 +107,42 @@ export const MUTATIONS = [
     rationale:
       "去掉'一次性消费'后，同一条批准不得能反复升级（否则一次批准可被无限复用）",
   },
+  {
+    mutationIdentifier: "comm01-single-parent-uniqueness-removed",
+    targetFile: "packages/core/src/orchestration/agent-parent-binding-store.ts",
+    find: `    if (active !== null) {
+      if (active.parentAgentInstanceId === input.parentAgentInstanceId) {
+        return { isBound: true, reason: null };
+      }`,
+    replace: `    if (false && active !== null) {
+      if (active.parentAgentInstanceId === input.parentAgentInstanceId) {
+        return { isBound: true, reason: null };
+      }`,
+    testFiles: ["tests/core/integration/comm01-parent-binding.test.ts"],
+    expectedFailingTestNames: [
+      "两个上级并发绑定同一子 ⇒ 只允许一个成功",
+    ],
+    rationale:
+      "去掉'唯一上级'约束后，后到的上级会顶掉既有归属 ⇒ **并发绑定**那条必须变红" +
+      "（否则'执行层唯一上级'只是文档承诺，产品里并不成立）。" +
+      "注意：'非直属上级'那条**不能**列进来 —— 它只做一次绑定，不产生冲突绑定，" +
+      "本变异对它的判定路径没有影响（曾误列过一次，被验证器当场指出）。",
+  },
+  {
+    mutationIdentifier: "comm01-direct-parent-check-relaxed",
+    targetFile: "packages/core/src/orchestration/agent-parent-binding-store.ts",
+    find: `    if (active.parentAgentInstanceId !== input.claimedParentAgentInstanceId) {
+      return false;
+    }`,
+    replace: `    if (false && active.parentAgentInstanceId !== input.claimedParentAgentInstanceId) {
+      return false;
+    }`,
+    testFiles: ["tests/core/integration/comm01-parent-binding.test.ts"],
+    expectedFailingTestNames: ["非直属上级不得作为被授权出口"],
+    rationale:
+      "放宽'必须来自唯一直属上级'的比对后，越级/兄弟/伪造来源必须仍被拒" +
+      "（否则任何声称是上级的主体都能投递）",
+  },
 ];
 
 function sha256OfFile(filePath) {
