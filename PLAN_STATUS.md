@@ -127,6 +127,37 @@
 > 仍 **1 个/次**（孙进程持句柄 60s；两次修法均失败已回退，详见上一轮小节）；
 > ② 全局 `testTimeout` 未采纳（采用方案 B），如后续需要可再评估。
 
+> ## 🔴 本轮进展（2026-10-13 第 4 轮）——新发现**越权读取缺口**（未修，已入卡）
+>
+> **基线**：`HEAD == origin/main == 211d026`；`npm run check` **exit 0**
+> （**406 文件 / 3047 用例、0 失败**）。
+>
+> **缺陷（真实、可复现、优先级最高）**：`CrossProjectTransferService` 的**授权范围
+> 没有绑定"真正被读取的那个文件"**。
+> 实测证据（临时脚本验证后即删、未入库）：授权 `scope=["docs/"]`，声明
+> `resourcePath="docs/spec.md"`（范围校验因此通过），但实传 `absoluteResourcePath`
+> 指向 `docs/` 之外的 `secrets.md` ⇒
+> `OUTCOME=read-allowed didRead=true`、`READ_CONTENT="# 绝不应被读到"`。
+> 同源反例 `docs/../sibling.md`（前缀匹配的穿越写法）同样 `read-allowed`。
+>
+> **根因**：`isWithinScope`（`:516`）只对**声明的相对路径**做字符串前缀比较；
+> 真正读取用的是调用方另给的 `absoluteResourcePath`（`:609/616/639`），**二者无绑定**。
+> `importCopy` 与 SDK 的 `importCrossProjectResource` 同病（后者还"先读后判"）。
+> **影响不止** SDK/GUI —— **CLI 路径共用同一服务，同样受影响**。
+> 与 AGENTS.md「权限在工具**实际执行前**检查」冲突；既有反例④只覆盖"授权链不通过"，
+> **未覆盖**"授权通过但读的不是被授权的东西"。
+>
+> **本轮的做法与自我更正**：先写了 2 条红例并提交，随后意识到**主干不该留红** ——
+> 该提交已 `git revert`（`4967cef`），实现改动也全部 `git checkout` 回退，
+> 并**重新用临时脚本复现**确认缺口仍在（证据如上），最后把发现与 5 步修复顺序写进
+> `docs/tasks/PROJECT01_ISOLATION_AND_CROSS_PROJECT_BORROWING_TASK_CARD.md`。
+> **`main` 已复验全绿**（`check` exit 0）。
+>
+> **为什么没在本轮修完（具体条件）**：锚定项目根的守卫本身已实现且 typecheck 通过，
+> 但完成它必须同时给 **约 30 处既有测试调用点**与 **SDK/CLI 两个入口**补"项目根"参数
+> （SDK 方法签名也要扩展）。预算不足时强行改完风险高于收益，故整体回退、留作**独立一轮**。
+
+
 > **2026-10-10 第 60 轮收束（本会话最后核对）**：跨卡对账见
 > `docs/reports/CROSS_CARD_RECONCILIATION_2026-10-10.md`
 > （逐卡归入"本地已证实 / 仍未完成（附卡点）/ 仅用户或平台可提供"三类），
