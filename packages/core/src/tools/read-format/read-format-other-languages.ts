@@ -93,10 +93,9 @@ function matchGoImportStatement(
   index: number,
 ): ImportStatementMatch | null {
   const lineEndIndex = sourceText.indexOf("\n", index);
-  const lineText = sourceText.slice(
-    index,
-    lineEndIndex === -1 ? sourceText.length : lineEndIndex,
-  );
+  const lineText = sourceText
+    .slice(index, lineEndIndex === -1 ? sourceText.length : lineEndIndex)
+    .replace(/\r$/, "");
   if (!/^\s*import\b/.test(lineText)) {
     return null;
   }
@@ -293,10 +292,16 @@ function matchShellImportStatement(
   index: number,
 ): ImportStatementMatch | null {
   const lineEndIndex = sourceText.indexOf("\n", index);
-  const lineText = sourceText.slice(
-    index,
-    lineEndIndex === -1 ? sourceText.length : lineEndIndex,
-  );
+  /**
+   * **去掉尾随 `\r`**（2026-10-12 修复 CRLF 缺陷）：
+   * Windows 上 `core.autocrlf=true` 检出的文件为 CRLF，而本函数按 `\n` 切行
+   * ⇒ 行文本末尾会带一个 `\r`。此前该 `\r` 进入后续判定，使**静态**
+   * `source ./lib/common.sh` **未被省略**（实测：干净检出下该用例失败）。
+   * 行尾不属语言语义，故在此**归一**（只影响行尾，不改其它字节）。
+   */
+  const lineText = sourceText
+    .slice(index, lineEndIndex === -1 ? sourceText.length : lineEndIndex)
+    .replace(/\r$/, "");
   const importMatch = /^\s*(source|\.)(\s+)(.*)$/.exec(lineText);
   if (importMatch === null) {
     return null;
