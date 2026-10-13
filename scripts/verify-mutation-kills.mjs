@@ -143,6 +143,27 @@ export const MUTATIONS = [
       "放宽'必须来自唯一直属上级'的比对后，越级/兄弟/伪造来源必须仍被拒" +
       "（否则任何声称是上级的主体都能投递）",
   },
+  {
+    mutationIdentifier: "comm01-delivery-authorization-hook-skipped",
+    targetFile: "packages/core/src/feedback-process/delivery-worker.ts",
+    find: `    const isSourceAuthorized = this.dependencies.isDeliverySourceAuthorized;
+    if (isSourceAuthorized !== undefined) {
+      const isAuthorized = await isSourceAuthorized(nextMessage);
+      if (!isAuthorized) {`,
+    replace: `    const isSourceAuthorized = this.dependencies.isDeliverySourceAuthorized;
+    if (false && isSourceAuthorized !== undefined) {
+      const isAuthorized = await isSourceAuthorized(nextMessage);
+      if (!isAuthorized) {`,
+    testFiles: ["tests/core/integration/comm01-delivery-authorization.test.ts"],
+    expectedFailingTestNames: [
+      "钩子拒绝 ⇒ 不投递、不标记已投递",
+      "真实 ParentBindingController 端到端",
+      "上级被回收 ⇒ 其下级消息同样不得投递",
+    ],
+    rationale:
+      "把投递步骤的按地址授权整段短路后，'非直属下级/被回收上级的下级不得投递'必须变红" +
+      "（否则唯一上级约束只写在模块里、在真实投递路径上并不生效）",
+  },
 ];
 
 function sha256OfFile(filePath) {
