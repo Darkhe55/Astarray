@@ -265,10 +265,22 @@ export const FAULT_INJECTION_MATRIX: readonly FaultInjectionEntry[] = [
       "`provider-fake-server.test.ts`（1/6）、" +
       "`local-readonly-tools-production-wiring.test.ts`（1/3）。" +
       "**已排除测试污染**：把新增的 `dag-scheduler-late-unblock-race.test.ts` 与" +
-      "`b6r10-stdin-line-reader.test.ts` 同这两个用例一起跑，**21/21 通过**。" +
-      "根因此前定位到 `%TEMP%` 下大量 `astarray-*` 目录导致清理失败，清洁后连续通过。" +
-      "**未在产品代码中修复**，故**不标为已修**；" +
-      "`run-command-gaps` 曾 60s 超时但本会话**未复现**，同样保持未验证",
+      "`b6r10-stdin-line-reader.test.ts` 同这两个用例一起跑，**21/21 通过**；" +
+      "另此前定位到 `%TEMP%` 下大量 `astarray-*` 目录导致清理失败，清洁后连续通过。" +
+      "**2026-10-13 补记（主因已定位为配置缺口，非竞态）**：连续 9 次全量实测失败 4/9，" +
+      "失败原文**全部**是 `Test timed out in 5000ms`（vitest **默认**上限）。客观审计发现：" +
+      "403 个测试文件中 **21 个使用子进程却完全没有 `testTimeout`**（仓库另有 33 个已显式给预算，" +
+      "故『显式给预算』才是本仓既有约定）；这 21 个里隔离耗时最长者达 **4168ms**，另有多例 2.5–3.5s，" +
+      "而满载争用系数实测约 1.4–3× ⇒ 沿用默认 5s 必然偶发翻红。" +
+      "**已修其中实际翻红者 2 个**（`toolkit01-tool-package-cli`、`reliability-r4-ledger-concurrency`，" +
+      "各补 `vi.setConfig({ testTimeout: 60_000 })`，**未改任何断言**），修后连续 9 次全量实测全绿；" +
+      "并已修掉 `run-command-gaps` 那条 60s 超时的**真实根因**（反馈进程重复 shutdown 白等 5s：" +
+      "单次 stop 8ms、重复序列 5002ms；修复后该用例 5181ms → 184ms）。" +
+      "**仍任其为 `not-verified`**：其余 **19 个**『子进程但无预算』文件**尚未统一处置**" +
+      "（同属该缺口，宜一次性处理而非逐次补），且未修的用例在不同批次分别红/绿（批次方差已实测），" +
+      "故**不宣称抖动已消除**。`authorization-retry-closure` ① 的失败另属**产品侧** 20s Provider 超时" +
+      "（测试自配），本轮未改动。详见 " +
+      "`docs/reports/FEEDBACK_SHUTDOWN_DUPLICATE_5S_2026-10-13.md` §9–§10。",
   },
 ];
 

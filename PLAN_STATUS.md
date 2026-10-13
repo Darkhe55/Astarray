@@ -17,6 +17,47 @@
 >
 > 以下为 2026-10-10 的历史收束记录（保留备查）。
 
+> ## ✅ 本轮进展（2026-10-13）——基线 `HEAD == origin/main == ca99608`
+>
+> **门禁真实退出码**：`test:coverage` **0**（stmts 92.58 / **branch 85.23** / funcs 93.03 / lines 92.6）｜
+> `check` **0**（**406 文件 / 3047 用例、skipped 0**）｜`typecheck`/`lint`/`build` 均 **0**。
+> （上一轮 3045 用例 → 本轮 3047：新增 2 条反例。）
+>
+> **① GUI-02 卡片汇总层补齐（`5a0fec8`）**：把"安装专用流程 3 片 + 另 5 项修复"的提交号
+> 写进本文件 GUI-02 行与 `docs/tasks/GUI02_AUTHORIZATION_AND_HISTORY_VIEW_TASK_CARD.md`
+> （此前如实登记为未做，见 `1b756ca` 提交说明第 5 项）。9 个提交号已用
+> `git cat-file -e` 逐个验证存在（missing=0），内容自述按 `git show --stat` 复核。
+>
+> **② 超时型抖动：定位到两层真因（`5f0ef84` + `dbbb4d7`）**
+>
+> - **反馈进程重复 shutdown 白等 5s（已修）**：`ApplicationRuntime.shutdown()` 既调
+>   `feedbackClient.shutdown()`，又调 `supervisor.stop()`（后者内部**再**调一次）。
+>   子进程首次应答后即 `exit(0)` ⇒ 第二个请求永无应答，客户端白等
+>   `requestTimeoutMilliseconds`（默认 **5_000ms**）并被 `catch {}` 静默吞掉。
+>   实测：单次 stop **8ms** vs 重复序列 **5002ms**；修复后 `run-command-gaps`
+>   bootstrap 用例 **5181ms → 184ms（≈28×）**，该文件 tests 汇总 **5.70s → 845ms**。
+>   **不止影响测试**：`run-command.ts:152` 规定非 mock 运行时走独立反馈进程 ⇒
+>   真实 Provider 运行的每次收口都多滞留约 5 秒。
+> - **默认 5_000ms 对真子进程用例不足（部分已修）**：连续 9 次全量实测失败 **4/9**，
+>   失败原文**全部**是 `Test timed out in 5000ms`（vitest 默认上限）。客观审计：
+>   403 个测试文件中 **21 个使用子进程却完全没有 `testTimeout`**（另有 **33 个已显式给预算**
+>   ⇒ 显式给预算才是本仓既有约定），其中隔离耗时最长者 **4168ms**（距 5s 仅剩 20%），
+>   满载争用系数实测 **1.4–3×**。已修其中**实际翻红过**的 2 个文件
+>   （各补 `vi.setConfig({ testTimeout: 60_000 })`，**未改任何断言**），修后连续 **9 次全量实测全绿**。
+>
+> **③ 尚未处置（如实保留，不宣称已修复）**
+>
+> - 其余 **19 个**"子进程但无 `testTimeout`"文件**尚未统一处置** —— 同属一个系统性缺口，
+>   宜**一次性**处理（全局 `testTimeout` 或逐文件补预算），而非每红一个补一个；
+> - **批次方差已实测**：未修的 `git-defensive-branches` 在不同批次分别红/绿 ⇒
+>   **不写"抖动已消除"**；
+> - `authorization-retry-closure` ① 的失败属**产品侧** 20s Provider 超时（测试自配），本轮未改。
+> - 故障矩阵 `load-sensitive-full-gate-flake` **仍为 `not-verified`**，已在条目内就地补记
+>   本轮定位与已修项（未验证条目按矩阵纪律**不得**带证据引用）。
+>
+> 详见 `docs/reports/FEEDBACK_SHUTDOWN_DUPLICATE_5S_2026-10-13.md`（含红→绿反例、
+> 隔离实测表、9 次全量实测逐次结果）。
+
 > **2026-10-10 第 60 轮收束（本会话最后核对）**：跨卡对账见
 > `docs/reports/CROSS_CARD_RECONCILIATION_2026-10-10.md`
 > （逐卡归入"本地已证实 / 仍未完成（附卡点）/ 仅用户或平台可提供"三类），
