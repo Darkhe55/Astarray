@@ -304,3 +304,46 @@ describe("TOOLKIT-01-04：重新授权的签发入口（authorizeToolPackageUpgr
     await expect(store.reauthorizationRecordStore.listRecords()).resolves.toEqual([]);
   });
 });
+
+describe("TOOLKIT-01-04：版本状态文件的 fail-closed 与缺省字段兜底", () => {
+  it("⑩ 状态文件非法（合法 JSON 但 `versions` 非数组）⇒ 明确报错，不静默当空状态", async () => {
+    /**
+     * 定向反例：`readSnapshot` 的 `!Array.isArray(raw.versions)` 一路此前未覆盖。
+     * 语义要求：**明确报错**（"请修正或删除"），因为静默返回空快照会让
+     * "版本状态丢失"看起来像"从没配过"，从而放行不该放行的启用/升级。
+     */
+    const stateFilePath = path.join(stateDirectory, "tool-package-version-state.json");
+    await fs.writeFile(
+      stateFilePath,
+      JSON.stringify({ schemaVersion: "x", versions: "not-an-array" }),
+      "utf8",
+    );
+
+    await expect(store.readSnapshot()).rejects.toThrowError(/非法/);
+  });
+
+  it("⑪ 旧文件缺 `projectLocks` 等可选字段 ⇒ 兜底为空数组，不抛错", async () => {
+    /**
+     * 定向反例：`?? []` 这几路（`projectLocks`/`callHistory`/`inFlightCalls`/`pendingSwitches`）。
+     * 语义要求：**向后兼容**——旧版本写出的文件缺这些数组时按空处理，
+     * 而不是把用户已有的版本登记一起废掉。
+     */
+    const stateFilePath = path.join(stateDirectory, "tool-package-version-state.json");
+    await fs.writeFile(
+      stateFilePath,
+      JSON.stringify({
+        schemaVersion: "ASTARRAY_TOOL_PACKAGE_VERSION_STATE_V1",
+        versions: [],
+        // 故意缺少 projectLocks / callHistory / inFlightCalls / pendingSwitches
+      }),
+      "utf8",
+    );
+
+    const snapshot = await store.readSnapshot();
+    expect(snapshot.versions).toEqual([]);
+    expect(snapshot.projectLocks).toEqual([]);
+    expect(snapshot.callHistory).toEqual([]);
+    expect(snapshot.inFlightCalls).toEqual([]);
+    expect(snapshot.pendingSwitches).toEqual([]);
+  });
+});

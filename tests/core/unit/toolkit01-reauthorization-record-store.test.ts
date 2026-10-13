@@ -149,4 +149,33 @@ describe("重新授权记录原语", () => {
     expect(reordered).toBe(base);
     expect(changed).not.toBe(base);
   });
+
+  it("⑧ 记录文件是**合法 JSON 但结构不对**（records 非数组）⇒ 视为无授权（fail-closed）", async () => {
+    /**
+     * 单个分支的定向反例：`readRecords` 里 `!Array.isArray(parsed.records)` 这一路
+     * 此前没有用例走到。语义必须与"文件损坏"一致 —— 视作**没有任何有效授权**，
+     * 而不是抛错、更不是"当作空数组照样放行"。
+     */
+    const recordsFilePath = path.join(
+      stateDirectory,
+      "tool-package-reauthorizations.json",
+    );
+    const variants = [
+      JSON.stringify({ records: "not-an-array" }),
+      JSON.stringify({ records: null }),
+      JSON.stringify([{ recordIdentifier: "x" }]), // 顶层数组：records 缺失
+      JSON.stringify("just-a-string"),
+      JSON.stringify(42),
+    ];
+
+    for (const variant of variants) {
+      await fs.writeFile(recordsFilePath, variant, "utf8");
+      const outcome = await store.consumeRecordForOperation({
+        recordIdentifier: "any",
+        scope: BASE_SCOPE,
+      });
+      expect(outcome.isConsumed, variant).toBe(false);
+      await expect(store.listRecords(), variant).resolves.toEqual([]);
+    }
+  });
 });
