@@ -159,9 +159,9 @@ describe("授权后必须等待重跑（正向闭环）", () => {
         "--provider-model",
         "fake-model",
         "--provider-request-timeout-seconds",
-        "20",
+        "120",
         "--timeout-seconds",
-        "40",
+        "180",
         "--json",
       ],
       {

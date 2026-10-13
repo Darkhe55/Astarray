@@ -138,9 +138,9 @@ async function runCli(input: {
       "--provider-model",
       "fake-model",
       "--provider-request-timeout-seconds",
-      "30",
+      "120",
       "--timeout-seconds",
-      "8",
+      "180",
       "--json",
     ],
     {

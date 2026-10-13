@@ -28,7 +28,16 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+/*
+ * 超时预算（2026-10-13）：本文件 `spawn` **真实 `dist/cli.js`** 并用本地假 Provider 驱动，
+ * 此前**从未设置** `testTimeout` ⇒ 沿用 vitest 默认 **5_000ms**，而它自配的
+ * `--timeout-seconds 180`（夹具）比框架给它的预算还长 ⇒ 满载下先撞框架超时。
+ * 仓库既有约定是给这类文件显式预算（另有 33+ 个文件同样用 `vi.setConfig`）。
+ * **断言一律不放宽。** 依据：docs/reports/FEEDBACK_SHUTDOWN_DUPLICATE_5S_2026-10-13.md §9。
+ */
+vi.setConfig({ testTimeout: 240_000 });
 
 const repositoryRoot = path.resolve(__dirname, "..", "..", "..");
 const cliEntryPath = path.join(repositoryRoot, "dist", "cli.js");
@@ -148,9 +157,9 @@ async function runCliAgainstFakeProvider(input: {
       "--provider-model",
       "fake-model",
       "--provider-request-timeout-seconds",
-      "20",
+      "120",
       "--timeout-seconds",
-      "40",
+      "180",
       "--json",
     ],
     {

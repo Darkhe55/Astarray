@@ -166,9 +166,9 @@ describe("CLI 端到端：anthropic-messages 协议", () => {
         "--provider-model",
         "u2-flash",
         "--provider-request-timeout-seconds",
-        "20",
+        "120",
         "--timeout-seconds",
-        "40",
+        "180",
         "--json",
       ],
       {
