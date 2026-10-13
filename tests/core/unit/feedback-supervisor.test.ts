@@ -85,6 +85,32 @@ describe.skipIf(!hasBuiltEntry)("FeedbackProcessSupervisor", () => {
     await supervisor.stop();
   });
 
+  it("client.shutdown() 后再 stop()：不得重复等待已退出子进程的应答", async () => {
+    /**
+     * 反例（2026-10-13 实测）：`ApplicationRuntime.shutdown()` 曾按
+     * `controller.shutdown()` → `feedbackClient.shutdown()` → `supervisor.stop()` 顺序收口，
+     * 而 `stop()` 内部又会调用 `client.shutdown()`。子进程在第一次 `shutdown` 收到
+     * `shutdownComplete` 后即 `process.exit(0)`，**第二次请求永远不会有应答** ⇒
+     * 客户端白等到 `requestTimeoutMilliseconds`（生产默认 5_000ms）才吞掉超时。
+     * 实测：单次 stop 8ms，重复序列 **5002ms**。
+     *
+     * 这里按真实子进程与真实请求超时（默认 5_000ms）复现该序列：
+     * 幂等后必须**远早于**默认请求超时返回。
+     */
+    const supervisor = new FeedbackProcessSupervisor({
+      modulePath: distEntryPath,
+      baseDirectory: path.join(os.tmpdir(), `astarray-supervisor-duplicate-${Date.now()}`),
+      shutdownGracePeriodMilliseconds: 2_000,
+    });
+    const client = await supervisor.start();
+    const startedAtMilliseconds = Date.now();
+    await client.shutdown();
+    await supervisor.stop();
+    const elapsedMilliseconds = Date.now() - startedAtMilliseconds;
+    // 修复前该序列恒等于默认请求超时（≈5_000ms）；给足余量但仍远低于它。
+    expect(elapsedMilliseconds).toBeLessThan(2_000);
+  }, 20_000);
+
   it("不响应的子进程在宽限期后被强制终止", async () => {
     const supervisor = new FeedbackProcessSupervisor({
       modulePath: path.join(process.cwd(), "tests", "core", "fixtures", "never-exit.mjs"),

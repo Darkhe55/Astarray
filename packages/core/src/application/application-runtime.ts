@@ -996,7 +996,11 @@ export async function createApplicationRuntime(
   const shutdown = async (): Promise<void> => {
     // T07D-R1-03：先收敛在途编排（取消并等待 Worker/循环），再释放反馈进程资源。
     await controller.shutdown().catch(() => {});
-    await feedbackClient?.shutdown().catch(() => {});
+    // 反馈进程**由 supervisor 独占收口**：`stop()` 内部即 `client.shutdown()` +
+    // 等待子进程退出 + 置空引用。此处**不得**再单独调用 `feedbackClient.shutdown()`：
+    // 子进程在收到第一个 shutdown 请求后发送 `shutdownComplete` 并 `process.exit(0)`，
+    // 第二个请求永远不会有应答 ⇒ 客户端只能等到 `requestTimeoutMilliseconds`
+    // （默认 5_000ms）再吞掉超时。实测：单次 stop 约 8ms，重复序列 **502ms→5014ms**。
     await supervisor?.stop().catch(() => {});
   };
 

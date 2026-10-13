@@ -130,6 +130,42 @@ describe("ForkFeedbackClient", () => {
     });
   });
 
+  it("重复 shutdown 不等于重复等待：第二次必须立即返回（子进程已退出，不会有第二次应答）", async () => {
+    const fakeChild = new FakeChildProcess();
+    const requestTimeoutMilliseconds = 200;
+    const client = createWiredClient(fakeChild, { requestTimeoutMilliseconds });
+    fakeChild.emitInbound({
+      type: "ready",
+      protocolVersion: FEEDBACK_PROTOCOL_VERSION,
+      processPid: 99,
+    });
+    await client.waitUntilReady();
+
+    // 第一次 shutdown：子进程正常应答 shutdownComplete。
+    const firstShutdown = client.shutdown();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const shutdownRequest = fakeChild.sentMessages.find(
+      (message) => message.type === "shutdown",
+    );
+    expect(shutdownRequest?.type).toBe("shutdown");
+    fakeChild.emitInbound({
+      type: "shutdownComplete",
+      requestId: (shutdownRequest as { requestId: string }).requestId,
+    });
+    await firstShutdown;
+
+    // 子进程已 process.exit，第二次请求**不可能**再收到应答。
+    // 若客户端仍发出新请求并等待，就会白等到请求超时（生产默认 5s）。
+    const startedAtMilliseconds = Date.now();
+    await client.shutdown();
+    const elapsedMilliseconds = Date.now() - startedAtMilliseconds;
+    expect(elapsedMilliseconds).toBeLessThan(requestTimeoutMilliseconds / 2);
+    const shutdownRequestCount = fakeChild.sentMessages.filter(
+      (message) => message.type === "shutdown",
+    ).length;
+    expect(shutdownRequestCount).toBe(1);
+  });
+
   it("enqueue 请求收到 enqueued 应答后解析", async () => {
     const fakeChild = new FakeChildProcess();
     const client = createWiredClient(fakeChild);

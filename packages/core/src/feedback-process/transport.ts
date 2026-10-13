@@ -38,6 +38,8 @@ export class ForkFeedbackClient implements FeedbackTransportPort {
   private resolveReady: (() => void) | undefined;
   private rejectReady: ((error: Error) => void) | undefined;
   private disconnected = false;
+  /** 是否已发出过 shutdown 请求（幂等收口依据）。 */
+  private hasRequestedShutdown = false;
   private protocolVersion: number;
 
   constructor(
@@ -125,6 +127,14 @@ export class ForkFeedbackClient implements FeedbackTransportPort {
   }
 
   async shutdown(): Promise<void> {
+    // 幂等：子进程在应答第一个 shutdown 请求后即 `process.exit(0)`，
+    // 后续请求**不可能**再有应答。若仍发出新请求，就只能白等到
+    // `requestTimeoutMilliseconds`（默认 5_000ms）才吞掉超时 ——
+    // 这正是 `ApplicationRuntime.shutdown()` 重复收口时实测到的 5 秒滞留。
+    if (this.hasRequestedShutdown) {
+      return;
+    }
+    this.hasRequestedShutdown = true;
     const requestId = randomUUID();
     try {
       await this.requestResponse(
