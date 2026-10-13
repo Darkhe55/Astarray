@@ -7,6 +7,15 @@
 import { EventEmitter } from "node:events";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+/*
+ * 超时预算（2026-10-13，纵深防御）：本文件使用**子进程**，此前**未设置** `testTimeout`
+ * ⇒ 沿用 vitest 默认 **5_000ms**。本批文件隔离实测均远低于该值（本文件最慢单例见
+ * docs/reports/FEEDBACK_SHUTDOWN_DUPLICATE_5S_2026-10-13.md §12 的实测表），
+ * 但满载争用系数实测约 1.4-3x —— 同类文件已因此出现过 `Test timed out in 5000ms`。
+ * 故按仓库既有约定显式给预算（另有 30+ 文件同样用 60_000）；**断言一律不放宽**。
+ */
+vi.setConfig({ testTimeout: 60_000 });
+
 
 vi.mock("node:child_process", () => ({ fork: vi.fn() }));
 
