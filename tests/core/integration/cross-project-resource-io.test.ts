@@ -26,6 +26,8 @@ import {
   CrossProjectTransferService,
   type CrossProjectResourceIoPort,
 } from "../../../packages/core/src/orchestration/cross-project-authorization-store.js";
+// 2026-10-13：跨项目通道必须拒绝受保护存储（backup-vault / 删除审计）。
+import { ProtectedStoragePolicy } from "../../../packages/core/src/tools/protected-storage-policy.js";
 
 let baseDirectory: string;
 let sourceRootPath: string;
@@ -530,5 +532,85 @@ describe("PROJECT-01-03：授权范围与真实读取对象必须绑定", () => 
     expect(result.receipt).toBeNull();
     // 绝不能写到未被声明的目标
     expect(await fs.readFile(unrelatedTargetPath, "utf8").catch(() => null)).toBeNull();
+  });
+
+  it("⑬ 受保护存储（backup-vault / 删除审计）不得经跨项目通道访问——即使它在授权范围内", async () => {
+    /**
+     * 缺口（2026-10-13 实测）：当状态目录位于项目根内（常见布局：项目里的 `.astarray/`），
+     * 若用户把 `.astarray/` 写进授权范围，跨项目只读就能读到 `backup-vault/` 里的备份内容
+     * （实测 `read-allowed` 并返回了保管库内容）。
+     *
+     * 关键区分：授权范围判定回答"是否在用户授权范围内"，**不回答**"是不是受保护存储"——
+     * 二者必须各自校验，且受保护存储**任何范围都不得放行**。
+     */
+    const projectRootPath = path.join(baseDirectory, "project-a");
+    const stateDirectoryPath = path.join(projectRootPath, ".astarray");
+    const vaultRootPath = path.join(stateDirectoryPath, "backup-vault");
+    await fs.mkdir(vaultRootPath, { recursive: true });
+    const vaultSecretPath = path.join(vaultRootPath, "backup-1.json");
+    const vaultSecretContent = '{"secret":"vault-content"}\n';
+    await fs.writeFile(vaultSecretPath, vaultSecretContent, "utf8");
+
+    const store = new CrossProjectAuthorizationStore({ baseDirectory: stateDirectoryPath });
+    await store.grantAuthorization({
+      authorizationIdentifier: "auth-vault",
+      sourceProjectIdentifier: SOURCE_PROJECT,
+      sourceProjectRevision: SOURCE_REVISION,
+      targetProjectIdentifier: TARGET_PROJECT,
+      targetProjectRevision: 1,
+      operationKind: "read",
+      // 授权范围**故意**覆盖状态目录（模拟"用户把 .astarray/ 划进范围"）
+      resourceScope: {
+        pathPrefixes: [".astarray/"],
+        realPaths: [],
+        isDynamicSharedDirectory: false,
+      },
+      argumentsHash: "hash-vault",
+      expiresAtIso: "2030-01-01T00:00:00.000Z",
+      grantedByUserId: "user-1",
+      taskIdentifier: "T-001",
+    });
+
+    // 服务接上"受保护存储"禁用判定器（生产入口即如此接线）
+    const protectedStoragePolicy = new ProtectedStoragePolicy({
+      stateDirectoryPath,
+    });
+    const service = new CrossProjectTransferService({
+      store,
+      resourceIo: {
+        readTextFile: (absolutePath: string) => fs.readFile(absolutePath, "utf8"),
+        writeTextFile: (absolutePath: string, content: string) =>
+          fs.writeFile(absolutePath, content, "utf8"),
+        ensureDirectory: async (absoluteDirectory: string) => {
+          await fs.mkdir(absoluteDirectory, { recursive: true });
+        },
+        fileExists: async (absolutePath: string) => {
+          try {
+            await fs.stat(absolutePath);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+      },
+      isForbiddenAccessTarget: (canonicalAccessTargetPath: string) =>
+        protectedStoragePolicy.isProtectedStorageAccessTarget(canonicalAccessTargetPath),
+    });
+
+    const result = await service.readResource({
+      authorizationIdentifier: "auth-vault",
+      sourceProjectIdentifier: SOURCE_PROJECT,
+      targetProjectIdentifier: TARGET_PROJECT,
+      resourcePath: ".astarray/backup-vault/backup-1.json",
+      absoluteResourcePath: vaultSecretPath,
+      sourceProjectRootPath: projectRootPath,
+      argumentsHash: "hash-vault",
+      nowIso: "2026-10-02T00:00:00.000Z",
+      sourceWriteProbe: { writeAttemptCount: 0 },
+    });
+
+    expect(result.outcome).not.toBe("read-allowed");
+    expect(result.didRead).toBe(false);
+    expect(result.content ?? "").not.toContain("vault-content");
   });
 });

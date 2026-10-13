@@ -729,8 +729,50 @@ export class CrossProjectTransferService {
       resourceIo?: CrossProjectResourceIoPort;
       /** 目标人工改动守卫；未注入且目标已存在 ⇒ 拒绝覆盖（fail-closed）。 */
       humanEditGuard?: CrossProjectTargetHumanEditGuardPort;
+      /**
+       * 禁用访问判定器（2026-10-13）：返回 true 表示该**规范绝对路径**绝不可经本服务访问。
+       *
+       * 为什么需要：**已实测**——当状态目录位于项目根内（常见布局：项目里的 `.astarray/`），
+       * 跨项目通道可以读到 `backup-vault/` 与 `backup-deletion-audit.jsonl` 这类**受保护存储**。
+       * 授权范围判定回答的是"是否在用户授权范围内"，**不回答**"是不是受保护存储"；
+       * 二者必须各自校验。入口层把 `ProtectedStoragePolicy` 接成这个判定器即可。
+       */
+      isForbiddenAccessTarget?: (canonicalAccessTargetPath: string) => Promise<boolean>;
     },
   ) {}
+
+  /**
+   * 访问目标的三重前置校验（2026-10-13）：绑定声明路径 → 落在授权范围 → 非禁用（受保护存储）。
+   * 全部在**任何 I/O 之前**完成。
+   */
+  private async authorizeAccessTarget(input: {
+    projectRootPath: string | undefined;
+    relativeResourcePath: string;
+    absoluteResourcePath: string | undefined;
+    scopePathPrefixes: string[];
+    label: string;
+  }): Promise<
+    { isAllowed: true; resolvedAbsolutePath: string } | { isAllowed: false; detail: string }
+  > {
+    const binding = await assertAccessTargetMatchesDeclaredResource(input);
+    if (!binding.isAllowed) {
+      return binding;
+    }
+    const isForbiddenAccessTarget = this.options.isForbiddenAccessTarget;
+    if (
+      isForbiddenAccessTarget !== undefined &&
+      (await isForbiddenAccessTarget(binding.resolvedAbsolutePath))
+    ) {
+      return {
+        isAllowed: false,
+        detail:
+          `${input.label}目标是受保护存储（backup-vault / 删除审计等），` +
+          "任何授权范围都不得经跨项目通道访问（fail-closed）：" +
+          binding.resolvedAbsolutePath,
+      };
+    }
+    return binding;
+  }
 
   private static sha256Text(text: string): string {
     return createHash("sha256").update(text, "utf8").digest("hex");
@@ -841,7 +883,7 @@ export class CrossProjectTransferService {
      * ⇒ "授权 docs/" + "传 docs/ 之外的绝对路径" 即可越权读取任意文件。
      * 这里在**任何 I/O 之前**先证明二者是同一个文件；不通过即拒绝、零 I/O。
      */
-    const binding = await assertAccessTargetMatchesDeclaredResource({
+    const binding = await this.authorizeAccessTarget({
       projectRootPath: input.sourceProjectRootPath,
       relativeResourcePath: input.resourcePath,
       absoluteResourcePath: input.absoluteResourcePath,
@@ -1024,7 +1066,7 @@ export class CrossProjectTransferService {
      * "目标已存在且无人工改动守卫 ⇒ 拒绝覆盖"，把幂等语义破坏成 fail-closed 拒绝。
      * 放在认领之后既保持了幂等，也保证**真正要写之前**才做绑定判定。
      */
-    const sourceBinding = await assertAccessTargetMatchesDeclaredResource({
+    const sourceBinding = await this.authorizeAccessTarget({
       projectRootPath: input.sourceProjectRootPath,
       relativeResourcePath: input.sourceResourcePath,
       absoluteResourcePath: input.absoluteSourcePath,
@@ -1035,10 +1077,17 @@ export class CrossProjectTransferService {
       await releaseClaim();
       return refusal("resource-out-of-scope", sourceBinding.detail);
     }
-    const targetBinding = await assertAccessTargetMatchesDeclaredResource({
+    const targetBinding = await this.authorizeAccessTarget({
       projectRootPath: input.targetProjectRootPath,
       relativeResourcePath: input.targetResourcePath,
       absoluteResourcePath: input.absoluteTargetPath,
+      /**
+       * 目标**不套用来源的 scope 前缀**：授权范围描述的是"来源项目里允许读什么"，
+       * 而目标路径是目标项目内的落点（例：scope `docs/` 的来源导入到目标的 `imported/`）。
+       * 对目标施加同一前缀会误拒合法导入。目标侧仍由"绑定 + 非受保护存储"两道守卫约束。
+       * 传空数组即"不做前缀范围校验"。
+       */
+      scopePathPrefixes: [],
       label: "副本导入（目标）：",
     });
     if (!targetBinding.isAllowed) {

@@ -46,6 +46,8 @@ import {
   type CrossProjectResourceIoPort,
   type CrossProjectTargetHumanEditGuardPort,
 } from "./orchestration/cross-project-authorization-store.js";
+// 2026-10-13：跨项目通道必须拒绝受保护存储（backup-vault / 删除审计）。
+import { ProtectedStoragePolicy } from "./tools/protected-storage-policy.js";
 import {
   evaluateInstructionDeadline,
   type InstructionDeadlineEvaluation,
@@ -3898,6 +3900,15 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       );
     }
     const store = new CrossProjectAuthorizationStore({ baseDirectory: this.stateDirectory });
+    /**
+     * 2026-10-13 安全修复：**受保护存储不得经跨项目通道访问**。
+     * 已实测：状态目录位于项目根内时（如项目里的 `.astarray/`），跨项目只读能读到
+     * `backup-vault/` 与 `backup-deletion-audit.jsonl`。授权范围判定不回答"是否受保护存储"，
+     * 故这里按同一状态目录构造 `ProtectedStoragePolicy` 并接成禁用判定器。
+     */
+    const protectedStoragePolicy = new ProtectedStoragePolicy({
+      stateDirectoryPath: this.stateDirectory,
+    });
     this.crossProjectTransferService = new CrossProjectTransferService({
       store,
       ...(this.crossProjectResourceIo === null
@@ -3906,6 +3917,8 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       ...(this.crossProjectHumanEditGuard === null
         ? {}
         : { humanEditGuard: this.crossProjectHumanEditGuard }),
+      isForbiddenAccessTarget: (canonicalAccessTargetPath: string) =>
+        protectedStoragePolicy.isProtectedStorageAccessTarget(canonicalAccessTargetPath),
     });
     return this.crossProjectTransferService;
   }
@@ -4021,6 +4034,18 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     const transferService = new CrossProjectTransferService({
       store: await this.getCrossProjectAuthorizationStore(),
       resourceIo: this.crossProjectResourceIo,
+      /**
+       * 2026-10-13 安全修复：副本导入同样必须拒绝受保护存储（目标或来源都不例外）。
+       * 状态目录未知时**不注入**判定器会留下缺口，故此处显式要求状态目录已配置。
+       */
+      ...(this.stateDirectory === null
+        ? {}
+        : {
+            isForbiddenAccessTarget: (canonicalAccessTargetPath: string) =>
+              new ProtectedStoragePolicy({
+                stateDirectoryPath: this.stateDirectory as string,
+              }).isProtectedStorageAccessTarget(canonicalAccessTargetPath),
+          }),
       ...(input.expectedTargetContentHash === undefined
         ? {}
         : {

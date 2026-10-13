@@ -1081,9 +1081,22 @@ export async function executeCrossProjectReadCommand(
       "../../../core/src/orchestration/cross-project-authorization-store.js"
     );
     const store = new CrossProjectAuthorizationStore({ baseDirectory: options.stateDirectory });
+    /**
+     * 2026-10-13 安全修复：CLI 入口同样必须拒绝受保护存储。
+     * 已实测：状态目录位于项目根内时，CLI 的跨项目只读能读到 `backup-vault/`。
+     * 授权范围判定不回答"是否受保护存储"，故按同一状态目录构造策略并接入。
+     */
+    const { ProtectedStoragePolicy } = await import(
+      "../../../core/src/tools/protected-storage-policy.js"
+    );
+    const protectedStoragePolicy = new ProtectedStoragePolicy({
+      stateDirectoryPath: options.stateDirectory,
+    });
     const service = new CrossProjectTransferService({
       store,
       resourceIo: buildLocalResourceIoPort(),
+      isForbiddenAccessTarget: (canonicalAccessTargetPath: string) =>
+        protectedStoragePolicy.isProtectedStorageAccessTarget(canonicalAccessTargetPath),
     });
     const result = await service.readResource({
       authorizationIdentifier: options.authorizationIdentifier,
@@ -1150,9 +1163,23 @@ export async function executeCrossProjectImportCopyCommand(
     const store = new CrossProjectAuthorizationStore({ baseDirectory: options.stateDirectory });
     // 人工改动守卫：仅在给出"预期目标内容哈希"时才能判定；否则**拒绝覆盖已存在目标**。
     const expectedTargetContentHash = options.expectedTargetContentHash;
+    /**
+     * 2026-10-13 安全修复：副本导入的**来源与目标**都不得落到受保护存储
+     * （backup-vault / 删除审计）；否则导入可覆盖保管库内容或把保管库拷出去。
+     */
+    const { ProtectedStoragePolicy } = await import(
+      "../../../core/src/tools/protected-storage-policy.js"
+    );
+    const protectedStoragePolicyForImport = new ProtectedStoragePolicy({
+      stateDirectoryPath: options.stateDirectory,
+    });
     const service = new CrossProjectTransferService({
       store,
       resourceIo: buildLocalResourceIoPort(),
+      isForbiddenAccessTarget: (canonicalAccessTargetPath: string) =>
+        protectedStoragePolicyForImport.isProtectedStorageAccessTarget(
+          canonicalAccessTargetPath,
+        ),
       ...(expectedTargetContentHash === undefined
         ? {}
         : {

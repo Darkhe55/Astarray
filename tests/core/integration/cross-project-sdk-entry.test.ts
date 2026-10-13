@@ -224,4 +224,53 @@ describe("PROJECT-01-04：跨项目传输的 SDK 公开入口", () => {
       await application.shutdown();
     }
   });
+
+  it("⑤ SDK 入口：受保护存储（backup-vault）不得经跨项目通道读取", async () => {
+    /**
+     * 缺口（2026-10-13 实测）：SDK 的跨项目只读此前能读到状态目录下的 `backup-vault/`。
+     * 本用例从**公开入口**复验：即使授权范围覆盖了状态目录，也必须被拒绝且不得返回内容。
+     */
+    const stateDirectoryPath = path.join(baseDirectory, "project-a", ".astarray");
+    const vaultRootPath = path.join(stateDirectoryPath, "backup-vault");
+    await fs.mkdir(vaultRootPath, { recursive: true });
+    const vaultSecretPath = path.join(vaultRootPath, "backup-1.json");
+    await fs.writeFile(vaultSecretPath, '{"secret":"vault-content"}\n', "utf8");
+
+    const application = await AstarrayApplicationFacade.create({
+      stateDirectory: stateDirectoryPath,
+      mode: "assist",
+      runtime: "mock",
+      concurrency: 2,
+      failureThreshold: 3,
+      crossProjectResourceIo: buildResourceIo(),
+    } as never);
+    try {
+      await application.grantCrossProjectAuthorizationForAcceptance({
+        authorizationIdentifier: "sdk-auth-vault",
+        sourceProjectIdentifier: SOURCE_PROJECT,
+        sourceProjectRevision: SOURCE_REVISION,
+        targetProjectIdentifier: TARGET_PROJECT,
+        operationKind: "read",
+        // 故意把状态目录划进授权范围
+        resourcePathPrefixes: [".astarray/"],
+        argumentsHash: "sdk-hash-vault",
+      });
+
+      const result = await application.readCrossProjectResource({
+        authorizationIdentifier: "sdk-auth-vault",
+        sourceProjectIdentifier: SOURCE_PROJECT,
+        targetProjectIdentifier: TARGET_PROJECT,
+        sourceResourcePath: ".astarray/backup-vault/backup-1.json",
+        absoluteResourcePath: vaultSecretPath,
+        sourceProjectRootPath: path.join(baseDirectory, "project-a"),
+        argumentsHash: "sdk-hash-vault",
+      });
+
+      expect(result.outcome).not.toBe("read-allowed");
+      expect(result.didRead).toBe(false);
+      expect(result.content ?? "").not.toContain("vault-content");
+    } finally {
+      await application.shutdown();
+    }
+  });
 });

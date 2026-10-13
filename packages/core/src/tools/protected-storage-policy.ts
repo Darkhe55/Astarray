@@ -156,6 +156,31 @@ export class ProtectedStoragePolicy {
     return canonicalTargetPath === this.canonicalBackupDeletionAuditFilePath;
   }
 
+  /**
+   * 受保护存储判定（**含链接/联接别名**），供"先判定、后访问"的调用方使用（2026-10-13）。
+   *
+   * 与 `isProtectedPath` 的差别：后者只看**词法**路径；本方法在词法不命中时再解析真实路径，
+   * 以便拦住"工作区内链接指向保管库"这类别名访问（AR-01a 的异步语义）。
+   *
+   * 为什么单独开这个公共方法：跨项目公开入口需要它作为**注入给传输服务的禁用判定器**
+   * （已实测：状态目录位于项目根内时，跨项目通道可以读到 `backup-vault/` 里的内容）。
+   *
+   * 失败语义：真实路径**无法解析**时一律视为受保护（fail-closed）——
+   * 无法证明它不是受保护存储，就不放行。
+   */
+  async isProtectedStorageAccessTarget(canonicalPath: string): Promise<boolean> {
+    if (this.isProtectedPath(canonicalPath)) {
+      return true;
+    }
+    let realTargetPath: string;
+    try {
+      realTargetPath = await this.resolveRealPath(canonicalPath);
+    } catch {
+      return true;
+    }
+    return this.isProtectedPath(realTargetPath);
+  }
+
   private isStateDirectory(canonicalPath: string): boolean {
     return this.canonicalize(canonicalPath) === this.canonicalStateDirectoryPath;
   }
