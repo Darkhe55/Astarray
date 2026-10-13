@@ -400,7 +400,7 @@ for (const changeKind of ["enable", "disable", "upgrade", "rollback"] as const) 
         : changeKind === "rollback"
           ? "回滚到指定版本（只切换后续使用版本，不撤销历史副作用）"
           : changeKind === "upgrade"
-            ? "升级到指定版本（含新增副作用时须 --reauthorized）"
+            ? "升级到指定版本（含新增副作用时须 --reauthorization-record）"
             : "在项目内启用指定版本",
     )
     .option("--project <project-id>", "项目标识")
@@ -413,8 +413,8 @@ for (const changeKind of ["enable", "disable", "upgrade", "rollback"] as const) 
   }
   if (changeKind === "upgrade") {
     registration = registration.option(
-      "--reauthorized",
-      "已就该版本的新增副作用重新授权",
+      "--reauthorization-record <record-id>",
+      "该版本新增副作用的重新授权记录标识（本地签发，须先取得）",
     );
   }
   registration.action(
@@ -423,7 +423,7 @@ for (const changeKind of ["enable", "disable", "upgrade", "rollback"] as const) 
       options: {
         project?: string;
         toolVersion?: string;
-        reauthorized?: boolean;
+        reauthorizationRecord?: string;
         stateDir?: string;
         json?: boolean;
       },
@@ -433,7 +433,9 @@ for (const changeKind of ["enable", "disable", "upgrade", "rollback"] as const) 
         toolPackageId,
         projectIdentifier: options.project ?? "",
         version: options.toolVersion === undefined ? undefined : Number(options.toolVersion),
-        isReauthorized: options.reauthorized === true,
+        ...(options.reauthorizationRecord === undefined
+          ? {}
+          : { reauthorizationRecordIdentifier: options.reauthorizationRecord }),
         stateDirectory: options.stateDir ?? defaultStateDirectory(),
         isJsonOutput: options.json === true,
       });

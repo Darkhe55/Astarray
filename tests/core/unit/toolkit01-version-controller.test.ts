@@ -111,7 +111,7 @@ describe("TOOLKIT-01-04：项目锁定版本，不自动随库升级", () => {
       projectIdentifier: "project-alpha",
       toolPackageId: "report-formatter",
       toVersion: 2,
-      isReauthorized: false,
+      hasVerifiedReauthorizationGrant: false,
     });
     expect(outcome.isApplied).toBe(false);
     expect(String(outcome.reason)).toMatch(/新增副作用|重新授权/);
@@ -127,14 +127,19 @@ describe("TOOLKIT-01-04：项目锁定版本，不自动随库升级", () => {
     });
     expect(bypassAttempt.isApplied).toBe(false);
     expect(String(bypassAttempt.reason)).toMatch(/upgradeProjectVersion|绕过/);
-    // 重新授权后升级成功
-    const reauthorized = controller.upgradeProjectVersion({
+    /**
+     * 2026-10-13 安全修正后：控制器**只**接受"已核验"标志，
+     * 不再有 `isReauthorized` 这类可由调用方自述的布尔入口。
+     * 授权来源的核验在上层（`ToolPackageVersionStateStore`）按本地签发的
+     * 重新授权记录完成；本文件只钉住控制器的判定语义。
+     */
+    const verified = controller.upgradeProjectVersion({
       projectIdentifier: "project-alpha",
       toolPackageId: "report-formatter",
       toVersion: 2,
-      isReauthorized: true,
+      hasVerifiedReauthorizationGrant: true,
     });
-    expect(reauthorized.isApplied).toBe(true);
+    expect(verified.isApplied).toBe(true);
   });
 });
 

@@ -250,13 +250,44 @@ describe("TOOLKIT-01-04：CLI 管理入口（真实子进程）", () => {
     expect(upgrade.exitCode, "stderr=" + upgrade.stderr).not.toBe(0);
     expect(upgrade.stderr + upgrade.stdout).toMatch(/新增副作用|重新授权/);
 
-    // 带显式重新授权标志则成功
-    const reauthorized = await runCli([
+    /**
+     * 2026-10-13 安全修正：此前的 `--reauthorized`（裸布尔）已**删除** ——
+     * 它等于"任何调用方顺手传 true 就绕过门禁"。
+     * 现在必须给出**本地签发的重新授权记录标识**；该标识不存在 ⇒ 仍须拒绝。
+     */
+    const withUnknownRecord = await runCli([
       "tool-package", "upgrade", "report-formatter",
       "--project", "project-alpha", "--tool-version", "2",
-      "--reauthorized",
+      "--reauthorization-record", "not-a-real-record",
       "--state-dir", stateDirectory, "--json",
     ]);
-    expect(reauthorized.exitCode, "stderr=" + reauthorized.stderr).toBe(0);
+    expect(withUnknownRecord.exitCode, "stderr=" + withUnknownRecord.stderr).not.toBe(0);
+    expect(withUnknownRecord.stderr + withUnknownRecord.stdout).toMatch(
+      /重新授权|不存在/,
+    );
+
+    // 由本地控制面签发该操作的授权记录后，升级成功（授权依据来自记录，不是自述）
+    const differences = await store.describeUpgradeDifferences({
+      toolPackageId: "report-formatter",
+      fromVersion: 1,
+      toVersion: 2,
+    });
+    const record = await store.reauthorizationRecordStore.issueRecord({
+      scope: {
+        projectIdentifier: "project-alpha",
+        toolPackageId: "report-formatter",
+        fromVersion: 1,
+        toVersion: 2,
+        addedSideEffects: [...differences.addedSideEffects],
+      },
+      issuedBy: "user-1",
+    });
+    const upgraded = await runCli([
+      "tool-package", "upgrade", "report-formatter",
+      "--project", "project-alpha", "--tool-version", "2",
+      "--reauthorization-record", record.recordIdentifier,
+      "--state-dir", stateDirectory, "--json",
+    ]);
+    expect(upgraded.exitCode, "stderr=" + upgraded.stderr).toBe(0);
   });
 });

@@ -4949,7 +4949,11 @@ export interface ToolPackageProjectCommandOptions {
   stateDirectory: string;
   isJsonOutput: boolean;
   version?: number;
-  isReauthorized?: boolean;
+  /**
+   * 重新授权记录标识（2026-10-13 安全修正）：目标版本含**新增副作用**时必需。
+   * 取代此前的 `isReauthorized?: boolean`（调用方自述的裸布尔，等于旁路）。
+   */
+  reauthorizationRecordIdentifier?: string;
 }
 
 /**
@@ -5158,7 +5162,14 @@ export async function executeToolPackageChangeCommand(
             projectIdentifier: options.projectIdentifier,
             toolPackageId: options.toolPackageId,
             toVersion: options.version,
-            isReauthorized: options.isReauthorized === true,
+            // 2026-10-13 安全修正：不再接受"已重新授权"的裸布尔；
+            // 必须给出**本地签发的重新授权记录标识**，由存储层按差异逐项核验。
+            ...(options.reauthorizationRecordIdentifier === undefined
+              ? {}
+              : {
+                  reauthorizationRecordIdentifier:
+                    options.reauthorizationRecordIdentifier,
+                }),
           });
         }
         case "rollback": {

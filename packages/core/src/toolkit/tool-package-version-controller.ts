@@ -262,12 +262,21 @@ export class ToolPackageVersionController {
     return { isApplied: true, revision, reason: null };
   }
 
-  /** 升级项目版本：**唯一**的版本切换入口，总是做差异判定与重新授权门禁。 */
+  /**
+   * 升级项目版本：**唯一**的版本切换入口，总是做差异判定与重新授权门禁。
+   *
+   * 2026-10-13 安全修正：入参由 `isReauthorized: boolean`（**调用方自述的裸布尔**）
+   * 改为 `hasVerifiedReauthorizationGrant: boolean`。本方法**无法自行核验**授权来源，
+   * 因此该标志**只能**由上层在核验过"本地签发、操作绑定、未消费"的重新授权记录后传入
+   * （见 `ToolPackageVersionStateStore.upgradeProjectVersion` 与
+   * `tool-package-reauthorization-record-store.ts`）。
+   * 命名刻意保留 `Verified` 前缀，提醒调用方：传 true 之前必须先真的核验过。
+   */
   upgradeProjectVersion(input: {
     projectIdentifier: string;
     toolPackageId: string;
     toVersion: number;
-    isReauthorized: boolean;
+    hasVerifiedReauthorizationGrant: boolean;
   }): ToolPackageVersionChangeOutcome {
     const stored = this.versions.get(versionKey(input.toolPackageId, input.toVersion));
     if (stored === undefined) {
@@ -290,12 +299,13 @@ export class ToolPackageVersionController {
       fromVersion: existingLock.version,
       toVersion: input.toVersion,
     });
-    if (differences.requiresReauthorization && !input.isReauthorized) {
+    if (differences.requiresReauthorization && !input.hasVerifiedReauthorizationGrant) {
       return {
         isApplied: false,
         revision: existingLock.revision,
         reason:
-          "目标版本含**新增副作用**，须重新授权后方可切换（新增副作用: " +
+          "目标版本含**新增副作用**，须先取得并核验该操作的重新授权记录后方可切换" +
+          "（新增副作用: " +
           differences.addedSideEffects.join(",") +
           "）",
       };

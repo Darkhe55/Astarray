@@ -9,6 +9,7 @@
  * 避免出现"存储层和判定层结论不一致"。
  */
 
+import { ToolPackageReauthorizationRecordStore } from "./tool-package-reauthorization-record-store.js";
 import { ToolPackageVersionController } from "./tool-package-version-controller.js";
 import type {
   ToolPackageCallRecord,
@@ -59,9 +60,17 @@ export interface ToolPackageVersionStateStoreOptions {
 
 export class ToolPackageVersionStateStore {
   private readonly stateDirectory: string;
+  /**
+   * 重新授权记录存储（2026-10-13）：升级门禁的授权依据。
+   * 与版本状态**分开落盘**，避免状态回滚把授权历史一起带走。
+   */
+  readonly reauthorizationRecordStore: ToolPackageReauthorizationRecordStore;
 
   constructor(options: ToolPackageVersionStateStoreOptions) {
     this.stateDirectory = options.stateDirectory;
+    this.reauthorizationRecordStore = new ToolPackageReauthorizationRecordStore({
+      stateDirectory: options.stateDirectory,
+    });
   }
 
   private get stateFilePath(): string {
@@ -158,14 +167,74 @@ export class ToolPackageVersionStateStore {
     return outcome;
   }
 
+  /**
+   * 升级项目版本（**唯一**门禁入口，2026-10-13 安全修正）。
+   *
+   * 入参不再接受"是否已重新授权"的**裸布尔**，改为要求给出**重新授权记录标识**；
+   * 本方法按差异判定自行核验该记录（本地签发、操作绑定、未消费），核验通过后
+   * 才向控制器传入 `hasVerifiedReauthorizationGrant: true`。
+   *
+   * 无记录 / 记录不存在 / 与本次差异不匹配 / 已被消费 ⇒ 一律**拒绝**（fail-closed），
+   * 不存在"调用方顺手传 true 就放行"的路径。
+   */
   async upgradeProjectVersion(input: {
     projectIdentifier: string;
     toolPackageId: string;
     toVersion: number;
-    isReauthorized: boolean;
+    reauthorizationRecordIdentifier?: string;
   }): Promise<ReturnType<ToolPackageVersionController["upgradeProjectVersion"]>> {
     const controller = await this.loadController();
-    const outcome = controller.upgradeProjectVersion(input);
+
+    const currentLockedVersion = controller
+      .listProjectLocks()
+      .find(
+        (lock) =>
+          lock.projectIdentifier === input.projectIdentifier &&
+          lock.toolPackageId === input.toolPackageId,
+      )?.version;
+    const differences = controller.describeUpgradeDifferences({
+      toolPackageId: input.toolPackageId,
+      fromVersion: currentLockedVersion ?? input.toVersion,
+      toVersion: input.toVersion,
+    });
+
+    if (differences.requiresReauthorization) {
+      const recordIdentifier = input.reauthorizationRecordIdentifier;
+      if (recordIdentifier === undefined || recordIdentifier === "") {
+        return {
+          isApplied: false,
+          revision: 0,
+          reason:
+            "目标版本含**新增副作用**，须提供该操作的重新授权记录标识" +
+            "（新增副作用: " + differences.addedSideEffects.join(",") + "）" +
+            "：不接受调用方自述的布尔值",
+        };
+      }
+      const consumeOutcome = await this.reauthorizationRecordStore.consumeRecordForOperation({
+        recordIdentifier,
+        scope: {
+          projectIdentifier: input.projectIdentifier,
+          toolPackageId: input.toolPackageId,
+          fromVersion: currentLockedVersion ?? -1,
+          toVersion: input.toVersion,
+          addedSideEffects: [...differences.addedSideEffects],
+        },
+      });
+      if (!consumeOutcome.isConsumed) {
+        return {
+          isApplied: false,
+          revision: 0,
+          reason: "重新授权核验未通过：" + String(consumeOutcome.reason ?? ""),
+        };
+      }
+    }
+
+    const outcome = controller.upgradeProjectVersion({
+      projectIdentifier: input.projectIdentifier,
+      toolPackageId: input.toolPackageId,
+      toVersion: input.toVersion,
+      hasVerifiedReauthorizationGrant: differences.requiresReauthorization,
+    });
     await this.saveController(controller);
     return outcome;
   }
