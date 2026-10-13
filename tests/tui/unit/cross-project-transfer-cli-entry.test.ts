@@ -30,6 +30,9 @@ import {
 let baseDirectory: string;
 let sourceFilePath: string;
 let targetFilePath: string;
+/** 项目根（2026-10-13 安全修复）：授权绑定需要用它把声明路径锚定到真实文件。 */
+let sourceRootPath: string;
+let targetRootPath: string;
 
 const SOURCE_PROJECT = "project-a";
 const TARGET_PROJECT = "project-b";
@@ -37,8 +40,10 @@ const SOURCE_REVISION = 3;
 
 beforeEach(async () => {
   baseDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "astarray-project04-cli-"));
-  sourceFilePath = path.join(baseDirectory, "project-a", "docs", "spec.md");
-  targetFilePath = path.join(baseDirectory, "project-b", "docs", "spec-copy.md");
+  sourceRootPath = path.join(baseDirectory, "project-a");
+  targetRootPath = path.join(baseDirectory, "project-b");
+  sourceFilePath = path.join(sourceRootPath, "docs", "spec.md");
+  targetFilePath = path.join(targetRootPath, "docs", "spec-copy.md");
   await fs.mkdir(path.dirname(sourceFilePath), { recursive: true });
   await fs.mkdir(path.dirname(targetFilePath), { recursive: true });
 });
@@ -89,6 +94,7 @@ describe("PROJECT-01-04：只读入口（CLI）", () => {
       targetProjectIdentifier: TARGET_PROJECT,
       sourceResourcePath: "docs/spec.md",
       absoluteResourcePath: sourceFilePath,
+      sourceProjectRootPath: sourceRootPath,
       argumentsHash: "hash-read",
     });
     expect(exitCode).toBe(0);
@@ -107,6 +113,7 @@ describe("PROJECT-01-04：只读入口（CLI）", () => {
       targetProjectIdentifier: TARGET_PROJECT,
       sourceResourcePath: "docs/spec.md",
       absoluteResourcePath: sourceFilePath,
+      sourceProjectRootPath: sourceRootPath,
       argumentsHash: "hash-different",
     });
     expect(exitCode).not.toBe(0);
@@ -129,7 +136,9 @@ describe("PROJECT-01-04：副本导入入口（CLI）", () => {
       sourceResourcePath: "docs/spec.md",
       targetResourcePath: "docs/spec-copy.md",
       absoluteSourcePath: sourceFilePath,
+      sourceProjectRootPath: sourceRootPath,
       absoluteTargetPath: targetFilePath,
+      targetProjectRootPath: targetRootPath,
       sourceRevision: SOURCE_REVISION,
       argumentsHash: "hash-import",
     });
@@ -154,7 +163,9 @@ describe("PROJECT-01-04：副本导入入口（CLI）", () => {
       sourceResourcePath: "docs/spec.md",
       targetResourcePath: "docs/spec-copy.md",
       absoluteSourcePath: sourceFilePath,
+      sourceProjectRootPath: sourceRootPath,
       absoluteTargetPath: targetFilePath,
+      targetProjectRootPath: targetRootPath,
       sourceRevision: SOURCE_REVISION,
       argumentsHash: "hash-import",
     });

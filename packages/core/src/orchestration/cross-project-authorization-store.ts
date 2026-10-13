@@ -28,6 +28,229 @@ export interface CrossProjectResourceScope {
 
 export type CrossProjectOperationKind = "read" | "import-copy";
 
+/**
+ * 授权范围与**真实访问对象**的绑定守卫（2026-10-13，安全修复）。
+ *
+ * 缺口（已实测复现）：`readResource` 只用**声明的**相对 `resourcePath` 做 `isWithinScope`
+ * 字符串前缀判定，随后真正读取的却是**调用方另给的** `absoluteResourcePath` —— 二者之间
+ * 没有任何绑定。实测：授权 `docs/`，声明 `docs/spec.md`，实传 `docs/` 之外的
+ * `secrets.md` ⇒ `read-allowed` 且读到了那部分内容（越权读取任意文件）。
+ *
+ * 本守卫把二者**扣在一起**：真实访问的对象必须正是"项目根 + 声明路径"解析出的那个文件；
+ * 并拒绝一切逃出项目根的解析结果（`..` 穿越）。缺根或缺绝对路径 ⇒ **fail-closed 拒绝**
+ * （"不能证明是同一个文件"不等于"是同一个文件"）。
+ */
+async function assertAccessTargetMatchesDeclaredResource(input: {
+  projectRootPath: string | undefined;
+  relativeResourcePath: string;
+  absoluteResourcePath: string | undefined;
+  /**
+   * 授权范围前缀（相对项目根）。给出时**额外**要求真实访问对象落在这些范围内。
+   *
+   * 为什么必须校验它（2026-10-13 实测教训）：只比较"真实对象 vs 声明路径解析结果"时，
+   * 若声明路径本身含 `..`（如 `docs/../sibling.md`），两者会**同时**指向那个越界文件，
+   * 于是比较"通过"——而该文件其实在授权范围 `docs/` **之外**。
+   * 范围前缀是**授权**给的，必须按同一个根解析后一并校验。
+   */
+  scopePathPrefixes?: string[];
+  label: string;
+}): Promise<
+  { isAllowed: true; resolvedAbsolutePath: string } | { isAllowed: false; detail: string }
+> {
+  if (input.projectRootPath === undefined || input.projectRootPath === "") {
+    return {
+      isAllowed: false,
+      detail:
+        `${input.label}缺少项目根（projectRootPath）：无法证明真实访问对象与授权范围是同一个文件，` +
+        "已 fail-closed 拒绝（不触达资源）",
+    };
+  }
+  if (input.absoluteResourcePath === undefined || input.absoluteResourcePath === "") {
+    return {
+      isAllowed: false,
+      detail: `${input.label}缺少绝对路径：无法真实访问（不伪装已执行）`,
+    };
+  }
+
+  // 项目根可能尚不存在（导入会新建目标项目根）：用"最近存在祖先"解析，避免误拒正常导入。
+  const canonicalProjectRootPath = await resolveCanonicalPathWithNearestExistingAncestor(
+    input.projectRootPath,
+  );
+  if (canonicalProjectRootPath === null) {
+    return {
+      isAllowed: false,
+      detail: `${input.label}项目根不可解析：${input.projectRootPath}`,
+    };
+  }
+
+  const expectedAbsolutePath = path.resolve(canonicalProjectRootPath, input.relativeResourcePath);
+  if (!isPathWithinDirectory(canonicalProjectRootPath, expectedAbsolutePath)) {
+    return {
+      isAllowed: false,
+      detail:
+        `${input.label}声明路径逃出项目根（path-escape-attempt）：` +
+        `${input.relativeResourcePath} → ${expectedAbsolutePath}`,
+    };
+  }
+
+  const canonicalActualPath = path.resolve(input.absoluteResourcePath);
+
+  /**
+   * 顺序很关键（2026-10-13 实测）：**先**用词法（不触盘）校验"真实访问对象是否落在
+   * 授权范围内"，**再**做容忍符号链接的 realpath 比对。否则在比对那一步会 realpath
+   * 到那个越界文件本身（即"为了拒绝而先读它"），构成 TOCTOU 式越界触达。
+   */
+  const scopePathPrefixes = input.scopePathPrefixes ?? [];
+  if (scopePathPrefixes.length > 0) {
+    const isWithinSomeAuthorizedScope = scopePathPrefixes.some((prefix) => {
+      const scopeAbsolutePath = path.resolve(canonicalProjectRootPath, prefix.replace(/\/$/, ""));
+      return isPathWithinDirectory(scopeAbsolutePath, canonicalActualPath);
+    });
+    if (!isWithinSomeAuthorizedScope) {
+      return {
+        isAllowed: false,
+        detail:
+          `${input.label}真实访问对象不在授权范围内（access-target-outside-scope）：` +
+          `${canonicalActualPath}（授权范围 ${scopePathPrefixes.join(", ")}）`,
+      };
+    }
+  }
+
+  // 词法一致即可放行（调用方通常正是这样构造的）；
+  // 否则再用 realpath 比对一次，容忍项目根或目标为符号链接的情形。
+  if (canonicalActualPath !== expectedAbsolutePath) {
+    let realExpectedPath: string | null;
+    try {
+      realExpectedPath = await fs.realpath(expectedAbsolutePath);
+    } catch {
+      /**
+       * 被声明路径解析出的文件**尚不存在**是正常情况（副本导入的目标本来就要新建）。
+       * 此时不能仅因"realpath 失败"就拒绝；改做"完整规范路径"比对（见下）。
+       */
+      realExpectedPath = null;
+    }
+
+    if (realExpectedPath === null) {
+      const expectedParentPath = path.dirname(expectedAbsolutePath);
+      // 父目录也可能尚不存在（导入会新建）：同样用"最近存在祖先"解析。
+      const realExpectedParentPath =
+        await resolveCanonicalPathWithNearestExistingAncestor(expectedParentPath);
+      if (realExpectedParentPath === null) {
+        return {
+          isAllowed: false,
+          detail: `${input.label}被声明路径不可解析：${expectedParentPath}`,
+        };
+      }
+      /**
+       * 关键（2026-10-13 实测）：目标尚不存在时，**不能只比父目录** ——
+       * 同一目录下的**另一个文件名**（如声明 docs/copy.md 却写 docs/other.md）
+       * 父目录完全相同，只比父目录会放行，等于漏掉"目标被换名"这一类越权。
+       * 故比较**完整规范路径**：实际路径按"最近存在祖先"规范化后，必须等于
+       * "规范父目录 + 声明文件名"。
+       */
+      const canonicalizedActualPath =
+        (await resolveCanonicalPathWithNearestExistingAncestor(canonicalActualPath)) ??
+        canonicalActualPath;
+      const expectedCanonicalTargetPath = path.join(
+        realExpectedParentPath,
+        path.basename(expectedAbsolutePath),
+      );
+      if (canonicalizedActualPath !== expectedCanonicalTargetPath) {
+        return {
+          isAllowed: false,
+          detail:
+            `${input.label}真实访问对象与被授权对象不是同一个文件（access-target-mismatch）：` +
+            `声明 ${input.relativeResourcePath} ⇒ ${expectedCanonicalTargetPath}，实际 ${canonicalizedActualPath}`,
+        };
+      }
+      return { isAllowed: true, resolvedAbsolutePath: canonicalizedActualPath };
+    }
+
+    let realActualPath: string;
+    try {
+      realActualPath = await fs.realpath(canonicalActualPath);
+    } catch {
+      return {
+        isAllowed: false,
+        detail: `${input.label}真实访问对象不存在：${canonicalActualPath}`,
+      };
+    }
+    if (realActualPath !== realExpectedPath) {
+      return {
+        isAllowed: false,
+        detail:
+          `${input.label}真实访问对象与被授权对象不是同一个文件（access-target-mismatch）：` +
+          `声明 ${input.relativeResourcePath} ⇒ ${expectedAbsolutePath}，实际 ${canonicalActualPath}`,
+      };
+    }
+  }
+
+  return { isAllowed: true, resolvedAbsolutePath: canonicalActualPath };
+}
+
+function isPathWithinDirectory(directoryPath: string, candidatePath: string): boolean {
+  const relativePath = path.relative(directoryPath, candidatePath);
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith("..") && !path.isAbsolute(relativePath))
+  );
+}
+
+/**
+ * 解析一个**可能尚不存在**的目标的规范绝对路径（2026-10-13 实测教训）。
+ *
+ * 为什么不能直接用 `fs.realpath`：副本导入的**目标项目根**本身可能还不存在
+ * （导入要负责新建它）。实测若直接对根做 `realpath`，会因 ENOENT 走进
+ * "项目根不存在 ⇒ fail-closed 拒绝"，把所有正常导入都拒掉。
+ *
+ * 做法：沿祖先链找到**最近存在的祖先**并 realpath 它，再把剩余尚未存在的路径段
+ * 原样拼回。既保留符号链接容忍，又不要求目标预先存在。
+ */
+async function resolveCanonicalPathWithNearestExistingAncestor(
+  targetPath: string,
+): Promise<string | null> {
+  const pendingSegments: string[] = [];
+  let currentPath = path.resolve(targetPath);
+  for (;;) {
+    try {
+      const canonicalAncestorPath = await fs.realpath(currentPath);
+      return path.join(canonicalAncestorPath, ...pendingSegments.reverse());
+    } catch {
+      const parentPath = path.dirname(currentPath);
+      if (parentPath === currentPath) {
+        return null;
+      }
+      pendingSegments.push(path.basename(currentPath));
+      currentPath = parentPath;
+    }
+  }
+}
+
+/**
+ * 供**入口层在自身做任何 I/O 之前**先自证"要访问的对象确实是被授权的那个文件"。
+ *
+ * 为什么需要它：SDK 入口在调用 `importCopy` 之前会先读来源算内容哈希 ——
+ * 若不先校验，这次前置读取本身就是一次**绕过授权范围**的读（"先读后判"）。
+ */
+export async function assertCrossProjectAccessTargetIsAuthorized(input: {
+  projectRootPath: string | undefined;
+  relativeResourcePath: string;
+  absoluteResourcePath: string | undefined;
+  scopePathPrefixes?: string[];
+  label?: string;
+}): Promise<
+  { isAllowed: true; resolvedAbsolutePath: string } | { isAllowed: false; detail: string }
+> {
+  return assertAccessTargetMatchesDeclaredResource({
+    projectRootPath: input.projectRootPath,
+    relativeResourcePath: input.relativeResourcePath,
+    absoluteResourcePath: input.absoluteResourcePath,
+    scopePathPrefixes: input.scopePathPrefixes,
+    label: input.label ?? "跨项目访问：",
+  });
+}
+
+
 export interface CrossProjectAuthorizationRecord {
   authorizationIdentifier: string;
   sourceProjectIdentifier: string;
@@ -539,6 +762,11 @@ export class CrossProjectTransferService {
     sourceWriteProbe: { writeAttemptCount: number };
     /** 资源的**绝对路径**（相对路径只用于范围判定；未给出即无法真实读取）。 */
     absoluteResourcePath?: string;
+    /**
+     * 来源**项目根**（2026-10-13 安全修复）：用于把 `resourcePath` 与
+     * `absoluteResourcePath` **绑定**成同一个文件。未给出 ⇒ fail-closed 拒绝（不触达资源）。
+     */
+    sourceProjectRootPath?: string;
     /** 调用方声明的内容哈希；给出时必须与实际内容一致，否则拒绝。 */
     expectedContentHash?: string;
   }): Promise<CrossProjectReadResult> {
@@ -606,14 +834,32 @@ export class CrossProjectTransferService {
         "未接入资源 I/O 端口或缺少资源绝对路径：只读未执行（不伪装已读取）",
       );
     }
-    if (!(await resourceIo.fileExists(input.absoluteResourcePath))) {
+
+    /**
+     * 2026-10-13 安全修复：**授权范围必须绑定到真正被读取的那个文件**。
+     * 此前只校验声明的 `resourcePath`，随后读取调用方另给的 `absoluteResourcePath`
+     * ⇒ "授权 docs/" + "传 docs/ 之外的绝对路径" 即可越权读取任意文件。
+     * 这里在**任何 I/O 之前**先证明二者是同一个文件；不通过即拒绝、零 I/O。
+     */
+    const binding = await assertAccessTargetMatchesDeclaredResource({
+      projectRootPath: input.sourceProjectRootPath,
+      relativeResourcePath: input.resourcePath,
+      absoluteResourcePath: input.absoluteResourcePath,
+      scopePathPrefixes: record.resourceScope.pathPrefixes,
+      label: "只读：",
+    });
+    if (!binding.isAllowed) {
+      return denied("resource-out-of-scope", binding.detail);
+    }
+
+    if (!(await resourceIo.fileExists(binding.resolvedAbsolutePath))) {
       return denied("resource-not-found", "资源不存在：" + input.resourcePath);
     }
 
     let content: string;
     let sourceContentHashBefore: string;
     try {
-      content = await resourceIo.readTextFile(input.absoluteResourcePath);
+      content = await resourceIo.readTextFile(binding.resolvedAbsolutePath);
       sourceContentHashBefore = CrossProjectTransferService.sha256Text(content);
     } catch (error) {
       return denied("resource-read-failed", "资源读取失败：" + (error as Error).message);
@@ -636,7 +882,7 @@ export class CrossProjectTransferService {
     // 读后再取一次来源哈希：与读取前相等 ⇒ 来源零写入的可核对证据。
     let sourceContentHashAfter: string;
     try {
-      const sourceTextAfterRead = await resourceIo.readTextFile(input.absoluteResourcePath);
+      const sourceTextAfterRead = await resourceIo.readTextFile(binding.resolvedAbsolutePath);
       sourceContentHashAfter = CrossProjectTransferService.sha256Text(sourceTextAfterRead);
     } catch (error) {
       return denied(
@@ -690,6 +936,12 @@ export class CrossProjectTransferService {
     /** 来源/目标**绝对路径**（相对路径只用于范围判定与回执；未给出即无法真实拷贝）。 */
     absoluteSourcePath?: string;
     absoluteTargetPath?: string;
+    /**
+     * 来源/目标**项目根**（2026-10-13 安全修复）：把声明路径与真实访问对象绑定。
+     * 未给出 ⇒ fail-closed 拒绝（不能证明是同一个文件）。
+     */
+    sourceProjectRootPath?: string;
+    targetProjectRootPath?: string;
   }): Promise<CrossProjectImportResult> {
     const refusal = (
       outcome: CrossProjectImportResult["outcome"],
@@ -746,6 +998,7 @@ export class CrossProjectTransferService {
       };
     }
 
+
     /** 释放未完成的认领，避免"有回执无文件"挡住重试。 */
     const releaseClaim = async (): Promise<void> => {
       try {
@@ -762,6 +1015,37 @@ export class CrossProjectTransferService {
       }
     };
 
+    /**
+     * 2026-10-13 安全修复：与 `readResource` 同样的"检查 A、使用 B"缺口 ——
+     * 来源与目标两处绝对路径都必须绑定到声明的相对路径。
+     *
+     * **必须放在幂等认领之后**：并发/重放调用若已有回执，应走上面的"幂等复用"路径
+     * （目标文件已存在是**正常**结果）；若把绑定判定提前，这些调用会先撞上
+     * "目标已存在且无人工改动守卫 ⇒ 拒绝覆盖"，把幂等语义破坏成 fail-closed 拒绝。
+     * 放在认领之后既保持了幂等，也保证**真正要写之前**才做绑定判定。
+     */
+    const sourceBinding = await assertAccessTargetMatchesDeclaredResource({
+      projectRootPath: input.sourceProjectRootPath,
+      relativeResourcePath: input.sourceResourcePath,
+      absoluteResourcePath: input.absoluteSourcePath,
+      scopePathPrefixes: record.resourceScope.pathPrefixes,
+      label: "副本导入（来源）：",
+    });
+    if (!sourceBinding.isAllowed) {
+      await releaseClaim();
+      return refusal("resource-out-of-scope", sourceBinding.detail);
+    }
+    const targetBinding = await assertAccessTargetMatchesDeclaredResource({
+      projectRootPath: input.targetProjectRootPath,
+      relativeResourcePath: input.targetResourcePath,
+      absoluteResourcePath: input.absoluteTargetPath,
+      label: "副本导入（目标）：",
+    });
+    if (!targetBinding.isAllowed) {
+      await releaseClaim();
+      return refusal("resource-out-of-scope", targetBinding.detail);
+    }
+
     const resourceIo = this.options.resourceIo;
     if (
       resourceIo === undefined ||
@@ -776,14 +1060,14 @@ export class CrossProjectTransferService {
     }
 
     // 真实读取来源（并取前后哈希 ⇒ 来源零写入的可核对证据）
-    if (!(await resourceIo.fileExists(input.absoluteSourcePath))) {
+    if (!(await resourceIo.fileExists(sourceBinding.resolvedAbsolutePath))) {
       await releaseClaim();
       return refusal("resource-not-found", "来源资源不存在：" + input.sourceResourcePath);
     }
     let sourceContent: string;
     let sourceContentHashBefore: string;
     try {
-      sourceContent = await resourceIo.readTextFile(input.absoluteSourcePath);
+      sourceContent = await resourceIo.readTextFile(sourceBinding.resolvedAbsolutePath);
       sourceContentHashBefore = CrossProjectTransferService.sha256Text(sourceContent);
     } catch (error) {
       await releaseClaim();
@@ -806,7 +1090,7 @@ export class CrossProjectTransferService {
     // 真实写出目标副本之前：**目标已存在时必须先查人工改动**（拒绝陈旧覆盖）。
     // 目标不存在 ⇒ 无需询问守卫（避免无谓 I/O）。
     try {
-      if (await resourceIo.fileExists(input.absoluteTargetPath)) {
+      if (await resourceIo.fileExists(targetBinding.resolvedAbsolutePath)) {
         const guard = this.options.humanEditGuard;
         if (guard === undefined) {
           await releaseClaim();
@@ -819,7 +1103,8 @@ export class CrossProjectTransferService {
           };
         }
         const guardOutcome = await guard.hasUnexpectedHumanChange({
-          absoluteTargetPath: input.absoluteTargetPath,
+          // 用**已校验**的目标路径（与后续写入同一路径），避免守卫与写入看不同对象。
+          absoluteTargetPath: targetBinding.resolvedAbsolutePath,
           expectedContent: sourceContent,
         });
         if (guardOutcome.hasHumanChange) {
@@ -847,8 +1132,8 @@ export class CrossProjectTransferService {
 
     // 真实写出目标副本（先建父目录，再写内容）
     try {
-      await resourceIo.ensureDirectory(path.dirname(input.absoluteTargetPath));
-      await resourceIo.writeTextFile(input.absoluteTargetPath, sourceContent);
+      await resourceIo.ensureDirectory(path.dirname(targetBinding.resolvedAbsolutePath));
+      await resourceIo.writeTextFile(targetBinding.resolvedAbsolutePath, sourceContent);
     } catch (error) {
       await releaseClaim();
       return {
@@ -858,7 +1143,7 @@ export class CrossProjectTransferService {
     }
 
     // 写出后复核目标确实存在：回执成立必须以文件成立为前提。
-    if (!(await resourceIo.fileExists(input.absoluteTargetPath))) {
+    if (!(await resourceIo.fileExists(targetBinding.resolvedAbsolutePath))) {
       await releaseClaim();
       return {
         ...refusal("target-write-failed", "写入后复核目标不存在：不落定回执"),
@@ -869,7 +1154,7 @@ export class CrossProjectTransferService {
     let sourceContentHashAfter: string;
     try {
       sourceContentHashAfter = CrossProjectTransferService.sha256Text(
-        await resourceIo.readTextFile(input.absoluteSourcePath),
+        await resourceIo.readTextFile(sourceBinding.resolvedAbsolutePath),
       );
     } catch (error) {
       await releaseClaim();

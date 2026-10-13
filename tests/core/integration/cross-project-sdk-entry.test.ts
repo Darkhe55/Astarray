@@ -27,6 +27,9 @@ import { AstarrayApplicationFacade } from "../../../packages/core/src/public-sdk
 import type { CrossProjectResourceIoPort } from "../../../packages/core/src/orchestration/cross-project-authorization-store.js";
 
 let baseDirectory: string;
+/** 项目根（2026-10-13 安全修复）：授权绑定需要用它把声明路径锚定到真实文件。 */
+let SOURCE_PROJECT_ROOT: string;
+let TARGET_PROJECT_ROOT: string;
 let sourceFilePath: string;
 let targetFilePath: string;
 
@@ -36,6 +39,8 @@ const SOURCE_REVISION = 3;
 
 beforeEach(async () => {
   baseDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "astarray-project04-sdk-"));
+  SOURCE_PROJECT_ROOT = path.join(baseDirectory, "project-a");
+  TARGET_PROJECT_ROOT = path.join(baseDirectory, "project-b");
   sourceFilePath = path.join(baseDirectory, "project-a", "docs", "spec.md");
   targetFilePath = path.join(baseDirectory, "project-b", "docs", "spec-copy.md");
   await fs.mkdir(path.dirname(sourceFilePath), { recursive: true });
@@ -106,6 +111,7 @@ describe("PROJECT-01-04：跨项目传输的 SDK 公开入口", () => {
         targetProjectIdentifier: TARGET_PROJECT,
         sourceResourcePath: "docs/spec.md",
         absoluteResourcePath: sourceFilePath,
+        sourceProjectRootPath: SOURCE_PROJECT_ROOT,
         argumentsHash: "sdk-hash-read",
       });
       expect(result.outcome).toBe("read-allowed");
@@ -129,6 +135,7 @@ describe("PROJECT-01-04：跨项目传输的 SDK 公开入口", () => {
         targetProjectIdentifier: TARGET_PROJECT,
         sourceResourcePath: "docs/spec.md",
         absoluteResourcePath: sourceFilePath,
+        sourceProjectRootPath: SOURCE_PROJECT_ROOT,
         argumentsHash: "sdk-hash-read",
       });
       expect(result.outcome).toBe("authorization-not-found");
@@ -162,7 +169,9 @@ describe("PROJECT-01-04：跨项目传输的 SDK 公开入口", () => {
         sourceResourcePath: "docs/spec.md",
         targetResourcePath: "docs/spec-copy.md",
         absoluteSourcePath: sourceFilePath,
+        sourceProjectRootPath: SOURCE_PROJECT_ROOT,
         absoluteTargetPath: targetFilePath,
+        targetProjectRootPath: TARGET_PROJECT_ROOT,
         sourceRevision: SOURCE_REVISION,
         argumentsHash: "sdk-hash-import",
       };
@@ -203,7 +212,9 @@ describe("PROJECT-01-04：跨项目传输的 SDK 公开入口", () => {
         sourceResourcePath: "docs/spec.md",
         targetResourcePath: "docs/spec-copy.md",
         absoluteSourcePath: sourceFilePath,
+        sourceProjectRootPath: SOURCE_PROJECT_ROOT,
         absoluteTargetPath: targetFilePath,
+        targetProjectRootPath: TARGET_PROJECT_ROOT,
         sourceRevision: SOURCE_REVISION,
         argumentsHash: "sdk-hash-import",
       });

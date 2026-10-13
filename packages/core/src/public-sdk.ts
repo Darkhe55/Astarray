@@ -38,6 +38,7 @@ import { InstructionWindowStore } from "./orchestration/instruction-window-store
 import type { InstructionWindowSnapshot } from "./orchestration/instruction-window-store.js";
 // PROJECT-01-04：跨项目传输的真实 I/O 与人工改动守卫（由嵌入方注入）。
 import {
+  assertCrossProjectAccessTargetIsAuthorized,
   CrossProjectAuthorizationStore,
   CrossProjectTransferService,
   type CrossProjectImportResult,
@@ -3921,6 +3922,12 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     targetProjectIdentifier: string;
     sourceResourcePath: string;
     absoluteResourcePath: string;
+    /**
+     * 来源**项目根**（2026-10-13 安全修复）：必需 —— 服务据此证明
+     * `sourceResourcePath` 解析出的文件正是 `absoluteResourcePath`。
+     * 缺省 ⇒ 服务 fail-closed 拒绝（不触达资源）。
+     */
+    sourceProjectRootPath?: string;
     argumentsHash: string;
     nowIso?: string;
     currentSourceProjectRevision?: number;
@@ -3934,6 +3941,9 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       targetProjectIdentifier: input.targetProjectIdentifier,
       resourcePath: input.sourceResourcePath,
       absoluteResourcePath: input.absoluteResourcePath,
+      ...(input.sourceProjectRootPath === undefined
+        ? {}
+        : { sourceProjectRootPath: input.sourceProjectRootPath }),
       argumentsHash: input.argumentsHash,
       nowIso: input.nowIso ?? new Date().toISOString(),
       sourceWriteProbe: { writeAttemptCount: 0 },
@@ -3960,6 +3970,12 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     targetResourcePath: string;
     absoluteSourcePath: string;
     absoluteTargetPath: string;
+    /**
+     * 来源/目标**项目根**（2026-10-13 安全修复）：必需 —— 服务据此证明声明路径
+     * 解析出的文件正是被真实读写的那个。缺省 ⇒ fail-closed 拒绝。
+     */
+    sourceProjectRootPath?: string;
+    targetProjectRootPath?: string;
     sourceRevision: number;
     argumentsHash: string;
     nowIso?: string;
@@ -3971,6 +3987,35 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       throw new PublicApplicationError(
         "cross-project-resource-io-missing",
         "未注入跨项目资源 I/O 端口：拒绝执行（不产生回执假完成）",
+      );
+    }
+    /**
+     * 2026-10-13 安全修复（"先读后判"）：下面会用 `absoluteSourcePath` 读来源算哈希，
+     * 而授权范围此前是在 `importCopy` 内部才判定 ⇒ 这次前置读取本身即越权读。
+     * 故**先**证明来源/目标的访问对象与声明路径一致，再做任何 I/O。
+     */
+    const sourceTargetAuthorization = await assertCrossProjectAccessTargetIsAuthorized({
+      projectRootPath: input.sourceProjectRootPath,
+      relativeResourcePath: input.sourceResourcePath,
+      absoluteResourcePath: input.absoluteSourcePath,
+      label: "副本导入（来源）：",
+    });
+    if (!sourceTargetAuthorization.isAllowed) {
+      throw new PublicApplicationError(
+        "cross-project-access-target-mismatch",
+        sourceTargetAuthorization.detail,
+      );
+    }
+    const destinationTargetAuthorization = await assertCrossProjectAccessTargetIsAuthorized({
+      projectRootPath: input.targetProjectRootPath,
+      relativeResourcePath: input.targetResourcePath,
+      absoluteResourcePath: input.absoluteTargetPath,
+      label: "副本导入（目标）：",
+    });
+    if (!destinationTargetAuthorization.isAllowed) {
+      throw new PublicApplicationError(
+        "cross-project-access-target-mismatch",
+        destinationTargetAuthorization.detail,
       );
     }
     const transferService = new CrossProjectTransferService({
@@ -4023,6 +4068,12 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       nowIso: input.nowIso ?? new Date().toISOString(),
       absoluteSourcePath: input.absoluteSourcePath,
       absoluteTargetPath: input.absoluteTargetPath,
+      ...(input.sourceProjectRootPath === undefined
+        ? {}
+        : { sourceProjectRootPath: input.sourceProjectRootPath }),
+      ...(input.targetProjectRootPath === undefined
+        ? {}
+        : { targetProjectRootPath: input.targetProjectRootPath }),
     });
   }
 

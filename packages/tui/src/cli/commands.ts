@@ -1024,6 +1024,11 @@ export interface CrossProjectReadCommandOptions {
   targetProjectIdentifier: string;
   sourceResourcePath: string;
   absoluteResourcePath: string;
+  /**
+   * 来源**项目根**（2026-10-13 安全修复）：把 `sourceResourcePath` 与
+   * `absoluteResourcePath` 绑定成同一个文件。缺省 ⇒ 服务 fail-closed 拒绝。
+   */
+  sourceProjectRootPath?: string;
   argumentsHash: string;
   nowIso?: string;
   currentSourceProjectRevision?: number;
@@ -1046,6 +1051,12 @@ export interface CrossProjectImportCopyCommandOptions {
   targetResourcePath: string;
   absoluteSourcePath: string;
   absoluteTargetPath: string;
+  /**
+   * 来源/目标**项目根**（2026-10-13 安全修复）：把声明路径与真实访问对象绑定。
+   * 缺省 ⇒ 服务 fail-closed 拒绝（不能证明是同一个文件）。
+   */
+  sourceProjectRootPath?: string;
+  targetProjectRootPath?: string;
   sourceRevision: number;
   argumentsHash: string;
   nowIso?: string;
@@ -1083,6 +1094,10 @@ export async function executeCrossProjectReadCommand(
       nowIso: options.nowIso ?? new Date().toISOString(),
       sourceWriteProbe: { writeAttemptCount: 0 },
       absoluteResourcePath: options.absoluteResourcePath,
+      // 2026-10-13 安全修复：把声明路径锚定到来源项目根（缺省由服务 fail-closed 拒绝）。
+      ...(options.sourceProjectRootPath === undefined
+        ? {}
+        : { sourceProjectRootPath: options.sourceProjectRootPath }),
       ...(options.currentSourceProjectRevision === undefined
         ? {}
         : { currentSourceProjectRevision: options.currentSourceProjectRevision }),
@@ -1182,6 +1197,13 @@ export async function executeCrossProjectImportCopyCommand(
       nowIso: options.nowIso ?? new Date().toISOString(),
       absoluteSourcePath: options.absoluteSourcePath,
       absoluteTargetPath: options.absoluteTargetPath,
+      // 2026-10-13 安全修复：来源/目标各自锚定到项目根（缺省由服务 fail-closed 拒绝）。
+      ...(options.sourceProjectRootPath === undefined
+        ? {}
+        : { sourceProjectRootPath: options.sourceProjectRootPath }),
+      ...(options.targetProjectRootPath === undefined
+        ? {}
+        : { targetProjectRootPath: options.targetProjectRootPath }),
     });
     const isImported =
       result.outcome === "imported-copy" || result.outcome === "reused-existing-copy";

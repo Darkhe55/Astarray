@@ -140,6 +140,7 @@ describe("PROJECT-01-03：只读跨项目访问（真实 I/O）", () => {
       targetProjectIdentifier: TARGET_PROJECT,
       resourcePath: "docs/spec.md",
       absoluteResourcePath: sourceFilePath,
+      sourceProjectRootPath: sourceRootPath,
       argumentsHash,
       nowIso: "2026-10-02T00:00:00.000Z",
       sourceWriteProbe: { writeAttemptCount: 0 },
@@ -170,6 +171,7 @@ describe("PROJECT-01-03：只读跨项目访问（真实 I/O）", () => {
       targetProjectIdentifier: TARGET_PROJECT,
       resourcePath: "docs/missing.md",
       absoluteResourcePath: path.join(sourceRootPath, "docs/missing.md"),
+      sourceProjectRootPath: sourceRootPath,
       argumentsHash,
       nowIso: "2026-10-02T00:00:00.000Z",
       sourceWriteProbe: { writeAttemptCount: 0 },
@@ -193,6 +195,7 @@ describe("PROJECT-01-03：只读跨项目访问（真实 I/O）", () => {
       targetProjectIdentifier: TARGET_PROJECT,
       resourcePath: "docs/spec.md",
       absoluteResourcePath: sourceFilePath,
+      sourceProjectRootPath: sourceRootPath,
       argumentsHash,
       nowIso: "2026-10-02T00:00:00.000Z",
       expectedContentHash: sha256("声明的是另一份内容\n"),
@@ -228,6 +231,7 @@ describe("PROJECT-01-03：只读跨项目访问（真实 I/O）", () => {
       targetProjectIdentifier: TARGET_PROJECT,
       resourcePath: "docs/spec.md",
       absoluteResourcePath: sourceFilePath,
+      sourceProjectRootPath: sourceRootPath,
       argumentsHash: "hash-different",
       nowIso: "2026-10-02T00:00:00.000Z",
       sourceWriteProbe: { writeAttemptCount: 0 },
@@ -257,7 +261,9 @@ describe("PROJECT-01-03：副本导入（真实 I/O）", () => {
       sourceResourcePath: "docs/spec.md",
       targetResourcePath: "docs/spec-copy.md",
       absoluteSourcePath: sourceFilePath,
+      sourceProjectRootPath: sourceRootPath,
       absoluteTargetPath: targetFilePath,
+      targetProjectRootPath: targetRootPath,
       sourceRevision: SOURCE_REVISION,
       contentHash: sha256(content),
       argumentsHash,
@@ -289,7 +295,9 @@ describe("PROJECT-01-03：副本导入（真实 I/O）", () => {
       sourceResourcePath: "docs/absent.md",
       targetResourcePath: "docs/absent-copy.md",
       absoluteSourcePath: path.join(sourceRootPath, "docs/absent.md"),
+      sourceProjectRootPath: sourceRootPath,
       absoluteTargetPath: targetFilePath,
+      targetProjectRootPath: targetRootPath,
       sourceRevision: SOURCE_REVISION,
       contentHash: sha256("whatever"),
       argumentsHash,
@@ -317,7 +325,9 @@ describe("PROJECT-01-03：副本导入（真实 I/O）", () => {
       sourceResourcePath: "docs/spec.md",
       targetResourcePath: "docs/spec-copy.md",
       absoluteSourcePath: sourceFilePath,
+      sourceProjectRootPath: sourceRootPath,
       absoluteTargetPath: targetFilePath,
+      targetProjectRootPath: targetRootPath,
       sourceRevision: SOURCE_REVISION,
       contentHash: sha256(content),
       argumentsHash,
@@ -370,7 +380,9 @@ describe("PROJECT-01-03：副本导入（真实 I/O）", () => {
       sourceResourcePath: "docs/spec.md",
       targetResourcePath: "docs/spec-copy.md",
       absoluteSourcePath: sourceFilePath,
+      sourceProjectRootPath: sourceRootPath,
       absoluteTargetPath: targetFilePath,
+      targetProjectRootPath: targetRootPath,
       sourceRevision: SOURCE_REVISION,
       contentHash: sha256(content),
       argumentsHash,
@@ -388,5 +400,135 @@ describe("PROJECT-01-03：副本导入（真实 I/O）", () => {
     const retried = await service.importCopy(importInput);
     expect(retried.outcome).toBe("imported-copy");
     expect(await fs.readFile(targetFilePath, "utf8")).toBe(content);
+  });
+});
+
+/**
+ * 对抗性反例（2026-10-13，安全修复）：**授权范围必须真正绑定到被读取的那个文件**。
+ *
+ * 修复前实测缺口：`readResource` 只用**声明的** `resourcePath` 做范围判定
+ * （`isWithinScope`，逐字符串前缀匹配），随后真正读取的却是**调用方另给的**
+ * `absoluteResourcePath` —— 二者**之间没有任何绑定**（当时实测返回 `read-allowed`
+ * 且真的读到了范围外的内容）。这类"检查 A、使用 B"正是 AGENTS.md 要求
+ * "权限在工具**实际执行前**检查"所针对的形态。
+ */
+describe("PROJECT-01-03：授权范围与真实读取对象必须绑定", () => {
+  const OUTSIDE_SCOPE_CONTENT = "# 绝不应被读到\n";
+
+  it("⑨ 授权范围是 docs/ 时，传范围之外的绝对路径必须拒绝（否则等于越权读取任意文件）", async () => {
+    const authorizedFilePath = path.join(sourceRootPath, "docs/spec.md");
+    await fs.writeFile(authorizedFilePath, "# 授权范围内\n", "utf8");
+    const outsideFilePath = path.join(sourceRootPath, "secrets.md");
+    await fs.writeFile(outsideFilePath, OUTSIDE_SCOPE_CONTENT, "utf8");
+
+    const store = new CrossProjectAuthorizationStore({ baseDirectory });
+    const argumentsHash = "hash-scope-binding";
+    await grantReadAuthorization(store, argumentsHash);
+    const service = buildService(store);
+
+    const result = await service.readResource({
+      authorizationIdentifier: "auth-read",
+      sourceProjectIdentifier: SOURCE_PROJECT,
+      targetProjectIdentifier: TARGET_PROJECT,
+      // 声明的是**范围内**路径（因此范围校验会通过）……
+      resourcePath: "docs/spec.md",
+      // ……但实际要读的是**范围之外**的文件。
+      absoluteResourcePath: outsideFilePath,
+      sourceProjectRootPath: sourceRootPath,
+      argumentsHash,
+      nowIso: "2026-10-02T00:00:00.000Z",
+      sourceWriteProbe: { writeAttemptCount: 0 },
+    });
+
+    expect(result.outcome).not.toBe("read-allowed");
+    expect(result.didRead).toBe(false);
+    expect(result.content ?? "").not.toContain("绝不应被读到");
+  });
+
+  it("⑩ 绝对路径与「来源项目根 + 声明路径」不一致时必须拒绝（含 .. 穿越）", async () => {
+    await fs.writeFile(path.join(sourceRootPath, "docs/spec.md"), "# 授权范围内\n", "utf8");
+    const siblingFilePath = path.join(sourceRootPath, "sibling.md");
+    await fs.writeFile(siblingFilePath, "# 兄弟目录\n", "utf8");
+
+    const store = new CrossProjectAuthorizationStore({ baseDirectory });
+    const argumentsHash = "hash-scope-binding-2";
+    await grantReadAuthorization(store, argumentsHash);
+    const service = buildService(store);
+
+    const traversed = await service.readResource({
+      authorizationIdentifier: "auth-read",
+      sourceProjectIdentifier: SOURCE_PROJECT,
+      targetProjectIdentifier: TARGET_PROJECT,
+      resourcePath: "docs/../sibling.md",
+      absoluteResourcePath: siblingFilePath,
+      sourceProjectRootPath: sourceRootPath,
+      argumentsHash,
+      nowIso: "2026-10-02T00:00:00.000Z",
+      sourceWriteProbe: { writeAttemptCount: 0 },
+    });
+
+    expect(traversed.outcome).not.toBe("read-allowed");
+    expect(traversed.didRead).toBe(false);
+  });
+
+  it("⑪ 缺少项目根时必须 fail-closed（不能证明是同一个文件 ≠ 是同一个文件）", async () => {
+    const authorizedFilePath = path.join(sourceRootPath, "docs/spec.md");
+    await fs.writeFile(authorizedFilePath, "# 授权范围内\n", "utf8");
+
+    const store = new CrossProjectAuthorizationStore({ baseDirectory });
+    const argumentsHash = "hash-scope-binding-3";
+    await grantReadAuthorization(store, argumentsHash);
+    const service = buildService(store);
+
+    const result = await service.readResource({
+      authorizationIdentifier: "auth-read",
+      sourceProjectIdentifier: SOURCE_PROJECT,
+      targetProjectIdentifier: TARGET_PROJECT,
+      resourcePath: "docs/spec.md",
+      absoluteResourcePath: authorizedFilePath,
+      // 故意不传 sourceProjectRootPath
+      argumentsHash,
+      nowIso: "2026-10-02T00:00:00.000Z",
+      sourceWriteProbe: { writeAttemptCount: 0 },
+    });
+
+    expect(result.outcome).not.toBe("read-allowed");
+    expect(result.didRead).toBe(false);
+  });
+
+  it("⑫ 副本导入：目标绝对路径与「目标项目根 + 声明路径」不一致时必须拒绝", async () => {
+    const sourceFilePath = path.join(sourceRootPath, "docs/spec.md");
+    const content = "# 导入内容\n";
+    await fs.writeFile(sourceFilePath, content, "utf8");
+    // 目标声明为 docs/copy.md，但实传**同目录下另一个（并不存在的）文件名**：
+    // 仍在授权范围 docs/ 内、且父目录相同，因此本用例**只**检验
+    // "真实目标与声明目标是否是同一个文件"这一条，不掺入范围判定。
+    const unrelatedTargetPath = path.join(targetRootPath, "docs/not-the-declared-target.md");
+
+    const store = new CrossProjectAuthorizationStore({ baseDirectory });
+    const argumentsHash = "hash-import-binding";
+    await grantImportAuthorization(store, argumentsHash);
+    const service = buildService(store);
+
+    const result = await service.importCopy({
+      authorizationIdentifier: "auth-import",
+      sourceProjectIdentifier: SOURCE_PROJECT,
+      targetProjectIdentifier: TARGET_PROJECT,
+      sourceResourcePath: "docs/spec.md",
+      targetResourcePath: "docs/copy.md",
+      sourceRevision: SOURCE_REVISION,
+      contentHash: sha256(content),
+      argumentsHash,
+      nowIso: "2026-10-02T00:00:00.000Z",
+      absoluteSourcePath: sourceFilePath,
+      absoluteTargetPath: unrelatedTargetPath,
+      sourceProjectRootPath: sourceRootPath,
+      targetProjectRootPath: targetRootPath,
+    });
+
+    expect(result.outcome).not.toBe("imported-copy");
+    expect(result.receipt).toBeNull();
+    // 绝不能写到未被声明的目标
+    expect(await fs.readFile(unrelatedTargetPath, "utf8").catch(() => null)).toBeNull();
   });
 });

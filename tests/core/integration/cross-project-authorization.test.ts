@@ -20,9 +20,14 @@ import {
 } from "../../../packages/core/src/orchestration/cross-project-authorization-store.js";
 
 let baseDirectory: string;
+/** 项目根（2026-10-13 安全修复）：授权绑定需要用它把声明路径锚定到真实文件。 */
+let SOURCE_PROJECT_ROOT: string;
+let TARGET_PROJECT_ROOT: string;
 
 beforeEach(async () => {
   baseDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "astarray-project03-"));
+  SOURCE_PROJECT_ROOT = path.join(baseDirectory, "project-a");
+  TARGET_PROJECT_ROOT = path.join(baseDirectory, "project-b");
 });
 
 afterEach(async () => {
@@ -99,6 +104,7 @@ describe("PROJECT-01-03：只读跨项目访问", () => {
       targetProjectIdentifier: TARGET_PROJECT,
       resourcePath: "docs/spec.md",
       absoluteResourcePath: sourceAbsolutePath,
+      sourceProjectRootPath: SOURCE_PROJECT_ROOT,
       argumentsHash: "hash-docs-read",
       nowIso: "2026-10-02T00:00:00.000Z",
       sourceWriteProbe: { writeAttemptCount: 0 },
@@ -251,7 +257,9 @@ describe("PROJECT-01-03：副本导入", () => {
       sourceResourcePath: "docs/spec.md",
       targetResourcePath: "imported/spec.md",
       absoluteSourcePath: sourceAbsolutePath,
+      sourceProjectRootPath: SOURCE_PROJECT_ROOT,
       absoluteTargetPath: targetAbsolutePath,
+      targetProjectRootPath: TARGET_PROJECT_ROOT,
       sourceRevision: 3,
       contentHash: sha256Text(sourceContent),
       argumentsHash: "hash-import",
@@ -301,7 +309,9 @@ describe("PROJECT-01-03：副本导入", () => {
       sourceResourcePath: "docs/spec.md",
       targetResourcePath: "imported/spec.md",
       absoluteSourcePath: sourceAbsolutePath,
+      sourceProjectRootPath: SOURCE_PROJECT_ROOT,
       absoluteTargetPath: targetAbsolutePath,
+      targetProjectRootPath: TARGET_PROJECT_ROOT,
       sourceRevision: 3,
       contentHash: declaredContentHash,
       argumentsHash: "hash-import",
@@ -346,7 +356,9 @@ describe("PROJECT-01-03：副本导入", () => {
       sourceResourcePath: "docs/spec.md",
       targetResourcePath: "imported/spec.md",
       absoluteSourcePath: sourceAbsolutePath,
+      sourceProjectRootPath: SOURCE_PROJECT_ROOT,
       absoluteTargetPath: targetAbsolutePath,
+      targetProjectRootPath: TARGET_PROJECT_ROOT,
       sourceRevision: 3,
       contentHash: declaredContentHash,
       argumentsHash: "hash-import",
