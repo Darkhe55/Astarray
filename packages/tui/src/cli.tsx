@@ -64,6 +64,7 @@ import {
   executeInstructionDeadlineCommand,
   executeInstructionListCommand,
   executePerfOverviewCommand,
+  executeToolPackageAuthorizeUpgradeCommand,
   executeToolPackageCancelCommand,
   executeToolPackageChangeCommand,
   executeToolPackageDescribeCommand,
@@ -486,6 +487,36 @@ toolPackageCommand
         stateDirectory: options.stateDir ?? defaultStateDirectory(),
         isJsonOutput: options.json === true,
         requestingAgentInstanceId: "authenticated-user",
+      });
+    },
+  );
+toolPackageCommand
+  .command("authorize-upgrade <tool-package-id>")
+  .description(
+    "为含新增副作用的升级签发重新授权记录（先展示差异；签发与执行分离）",
+  )
+  .option("--project <project-id>", "项目标识")
+  .option("--tool-version <version>", "目标版本")
+  .option("--state-dir <dir>", "状态目录")
+  .option("--json", "JSON 输出")
+  .action(
+    async (
+      toolPackageId: string,
+      options: {
+        project?: string;
+        toolVersion?: string;
+        stateDir?: string;
+        json?: boolean;
+      },
+    ) => {
+      process.exitCode = await executeToolPackageAuthorizeUpgradeCommand({
+        toolPackageId,
+        projectIdentifier: options.project ?? "",
+        toVersion:
+          options.toolVersion === undefined ? undefined : Number(options.toolVersion),
+        stateDirectory: options.stateDir ?? defaultStateDirectory(),
+        isJsonOutput: options.json === true,
+        issuedBy: "authenticated-user",
       });
     },
   );

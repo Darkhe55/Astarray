@@ -26,7 +26,129 @@ export type ToolPackageOperationKind =
   | "upgrade"
   | "rollback"
   | "cancel"
-  | "recover";
+  | "recover"
+  /** 2026-10-13：为"含新增副作用的升级"签发重新授权记录（独立于版本状态落盘）。 */
+  | "authorize-upgrade";
+
+export interface ToolPackageUpgradeAuthorizationOutcome {
+  /** 是否真的需要重新授权（无新增副作用时为 false，此时不签发记录）。 */
+  isReauthorizationRequired: boolean;
+  /** 本次差异中新增的副作用（供人确认；顺序与差异判定一致）。 */
+  addedSideEffects: string[];
+  /** 签发的记录标识；不需要重新授权时为 null。 */
+  reauthorizationRecordIdentifier: string | null;
+  /** 人可读说明（用于 CLI 输出与反馈记录）。 */
+  detail: string;
+}
+
+/**
+ * TOOLKIT-01-04（2026-10-13 第 3/3 片）：**签发"重新授权记录"的入口**。
+ *
+ * 背景：第 2/3 片已把升级门禁从"调用方自述的裸布尔"改为"本地签发、操作绑定、
+ * 一次性消费的记录"。但若没有**签发入口**，命令行用户拿不到记录标识，
+ * 含新增副作用的升级在 CLI 上就永远无法完成 —— 那是"门禁正确但能力不可用"。
+ *
+ * 本函数把两件事绑在一起，顺序刻意如此：
+ *  1. **先**把升级差异算出来（`describeUpgradeDifferences`）—— 这是"知情同意"的依据；
+ *  2. 若差异含**新增副作用**才签发记录，并把**新增副作用逐项**绑进记录 scope
+ *     （因此签发的不是一张空白通行证，而是"就这一批副作用、这一对版本"的授权）；
+ *  3. 不需要重新授权时**不签发**（避免留下无意义记录），并如实说明。
+ *
+ * 注意：本函数**不执行**升级 —— 签发与执行分离，便于"展示 → 确认 → 执行"三段式，
+ * 也避免"签发即生效"这种一步到位的隐性授权。
+ */
+export async function authorizeToolPackageUpgrade(input: {
+  stateDirectory: string;
+  projectIdentifier: string;
+  toolPackageId: string;
+  toVersion: number;
+  /** 签发者（本地受控流程/人员标识，随记录落盘可追溯）。 */
+  issuedBy: string;
+}): Promise<ToolPackageUpgradeAuthorizationOutcome> {
+  const store = new ToolPackageVersionStateStore({
+    stateDirectory: input.stateDirectory,
+  });
+  const controller = await store.loadController();
+
+  const fromVersion = controller
+    .listProjectLocks()
+    .find(
+      (lock) =>
+        lock.projectIdentifier === input.projectIdentifier &&
+        lock.toolPackageId === input.toolPackageId,
+    )?.version;
+
+  if (fromVersion === undefined) {
+    throw new DomainError(
+      "tool-package-project-not-locked",
+      "项目尚未锁定该工具包：无法计算升级差异（请先 lockProjectToVersion）",
+    );
+  }
+
+  const differences = controller.describeUpgradeDifferences({
+    toolPackageId: input.toolPackageId,
+    fromVersion,
+    toVersion: input.toVersion,
+  });
+
+  const feedbackStore = new ToolPackageOperationFeedbackStore({
+    stateDirectory: input.stateDirectory,
+  });
+
+  if (!differences.requiresReauthorization) {
+    const detail =
+      "该升级不含**新增副作用**，无需重新授权（未签发记录）";
+    await feedbackStore.appendRecord({
+      operationKind: "authorize-upgrade",
+      projectIdentifier: input.projectIdentifier,
+      toolPackageId: input.toolPackageId,
+      requestingAgentInstanceId: input.issuedBy,
+      revision: 0,
+      outcome: "rejected",
+      detail,
+    });
+    return {
+      isReauthorizationRequired: false,
+      addedSideEffects: [],
+      reauthorizationRecordIdentifier: null,
+      detail,
+    };
+  }
+
+  const record = await store.reauthorizationRecordStore.issueRecord({
+    scope: {
+      projectIdentifier: input.projectIdentifier,
+      toolPackageId: input.toolPackageId,
+      fromVersion,
+      toVersion: input.toVersion,
+      addedSideEffects: [...differences.addedSideEffects],
+    },
+    issuedBy: input.issuedBy,
+  });
+
+  const detail =
+    "已签发重新授权记录（绑定 " +
+    input.toolPackageId +
+    " v" + String(fromVersion) + "→v" + String(input.toVersion) +
+    "，新增副作用: " + differences.addedSideEffects.join(",") +
+    "）：仅此一次、仅此项操作有效";
+  await feedbackStore.appendRecord({
+    operationKind: "authorize-upgrade",
+    projectIdentifier: input.projectIdentifier,
+    toolPackageId: input.toolPackageId,
+    requestingAgentInstanceId: input.issuedBy,
+    revision: 0,
+    outcome: "applied",
+    detail,
+  });
+
+  return {
+    isReauthorizationRequired: true,
+    addedSideEffects: [...differences.addedSideEffects],
+    reauthorizationRecordIdentifier: record.recordIdentifier,
+    detail,
+  };
+}
 
 export interface ToolPackageOperationFeedbackRecord {
   recordIdentifier: string;

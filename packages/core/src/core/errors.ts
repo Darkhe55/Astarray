@@ -75,6 +75,11 @@ export type DomainErrorCode =
   | "preservation-object-missing"
   | "restore-target-not-empty"
   | "restore-target-invalid"
+  /**
+   * TOOLKIT-01-04（2026-10-13）：签发"重新授权记录"要求项目已锁定该工具包 ——
+   * 未锁定则**无法计算升级差异**，而"不知情"就不该签发授权。
+   */
+  | "tool-package-project-not-locked"
   | "unknown";
 
 export class DomainError extends Error {

@@ -5300,6 +5300,67 @@ export async function executeToolPackageRecoverCommand(
   }
 }
 
+export interface ToolPackageAuthorizeUpgradeCommandOptions {
+  stateDirectory: string;
+  isJsonOutput: boolean;
+  projectIdentifier: string;
+  toolPackageId: string;
+  /** 目标版本；未给出即用法错误（否则无法计算差异）。 */
+  toVersion?: number;
+  /** 签发者（本地受控流程标识；随记录落盘可追溯）。 */
+  issuedBy: string;
+}
+
+/**
+ * `tool-package authorize-upgrade`（2026-10-13 第 3/3 片）：
+ * 为**含新增副作用**的升级签发重新授权记录。
+ *
+ * 与 `upgrade` 的关系：签发与执行**分离**。本命令只做"展示差异 → 签发记录"，
+ * 不改变已锁定版本；用户拿到记录标识后再执行
+ * `tool-package upgrade ... --reauthorization-record <id>`。
+ * 无新增副作用时**不签发**并如实说明（避免留下无意义授权）。
+ */
+export async function executeToolPackageAuthorizeUpgradeCommand(
+  options: ToolPackageAuthorizeUpgradeCommandOptions,
+): Promise<number> {
+  try {
+    if (options.toVersion === undefined || Number.isNaN(options.toVersion)) {
+      failWith(
+        new Error("authorize-upgrade 需要 --tool-version"),
+        EXIT_CODES.USAGE_ERROR,
+      );
+    }
+    const { authorizeToolPackageUpgrade } = await import(
+      "../../../core/src/toolkit/tool-package-operation-control.js"
+    );
+    const outcome = await authorizeToolPackageUpgrade({
+      stateDirectory: options.stateDirectory,
+      projectIdentifier: options.projectIdentifier,
+      toolPackageId: options.toolPackageId,
+      toVersion: options.toVersion,
+      issuedBy: options.issuedBy,
+    });
+    if (options.isJsonOutput) {
+      printJson({
+        isReauthorizationRequired: outcome.isReauthorizationRequired,
+        addedSideEffects: outcome.addedSideEffects,
+        reauthorizationRecordIdentifier: outcome.reauthorizationRecordIdentifier,
+        detail: outcome.detail,
+      });
+    } else {
+      process.stdout.write(outcome.detail + "\n");
+      if (outcome.reauthorizationRecordIdentifier !== null) {
+        process.stdout.write(
+          "重新授权记录标识：" + outcome.reauthorizationRecordIdentifier + "\n",
+        );
+      }
+    }
+    return EXIT_CODES.SUCCESS;
+  } catch (error) {
+    failWith(error instanceof Error ? error : new Error(String(error)));
+  }
+}
+
 export interface ToolPackageFeedbackCommandOptions {
   stateDirectory: string;
   isJsonOutput: boolean;

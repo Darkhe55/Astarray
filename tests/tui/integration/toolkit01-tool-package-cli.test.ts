@@ -290,4 +290,114 @@ describe("TOOLKIT-01-04：CLI 管理入口（真实子进程）", () => {
     ]);
     expect(upgraded.exitCode, "stderr=" + upgraded.stderr).toBe(0);
   });
+
+  it("⑤ authorize-upgrade：命令行可自行取得重新授权记录并完成含新增副作用的升级", async () => {
+    /**
+     * 本用例钉住**闭环**：第 2/3 片把门禁从"裸布尔"换成"本地签发的记录"后，
+     * 若没有签发入口，命令行用户就永远拿不到记录标识 ⇒ 那是"门禁正确但能力不可用"。
+     * 第 3/3 片补上 `authorize-upgrade`，本用例从真实 CLI 走完
+     * "签发 → 用记录升级"这条路径。
+     */
+    const store = new ToolPackageVersionStateStore({ stateDirectory });
+    await store.registerVersion(buildVersionInput({ version: 1 }) as never);
+    await store.registerVersion(
+      buildVersionInput({
+        version: 2,
+        contentHash: "sha256:" + "b".repeat(64),
+        declaredSideEffects: ["file-write"],
+        permissionRequirements: ["read-file", "write-file"],
+      }) as never,
+    );
+    await store.lockProjectToVersion({
+      projectIdentifier: "project-alpha",
+      toolPackageId: "report-formatter",
+      version: 1,
+      contentHash: "sha256:" + "a".repeat(64),
+    });
+    await store.enableForProject({
+      projectIdentifier: "project-alpha",
+      toolPackageId: "report-formatter",
+      version: 1,
+    });
+
+    // ① 命令行签发重新授权记录（先展示差异，再签发）
+    const authorize = await runCli([
+      "tool-package", "authorize-upgrade", "report-formatter",
+      "--project", "project-alpha", "--tool-version", "2",
+      "--state-dir", stateDirectory, "--json",
+    ]);
+    expect(authorize.exitCode, "stderr=" + authorize.stderr).toBe(0);
+    const authorization = JSON.parse(authorize.stdout.trim()) as {
+      isReauthorizationRequired: boolean;
+      addedSideEffects: string[];
+      reauthorizationRecordIdentifier: string | null;
+    };
+    expect(authorization.isReauthorizationRequired).toBe(true);
+    expect(authorization.addedSideEffects).toContain("file-write");
+    expect(authorization.reauthorizationRecordIdentifier).not.toBeNull();
+
+    // ② 用该记录执行升级 ⇒ 成功，且版本真的切到 2
+    const upgrade = await runCli([
+      "tool-package", "upgrade", "report-formatter",
+      "--project", "project-alpha", "--tool-version", "2",
+      "--reauthorization-record", String(authorization.reauthorizationRecordIdentifier),
+      "--state-dir", stateDirectory, "--json",
+    ]);
+    expect(upgrade.exitCode, "stderr=" + upgrade.stderr).toBe(0);
+    const status = await runCli([
+      "tool-package", "status", "report-formatter",
+      "--project", "project-alpha", "--state-dir", stateDirectory, "--json",
+    ]);
+    expect(JSON.parse(status.stdout.trim()).version).toBe(2);
+
+    // ③ 同一条记录**不可复用**（一次性）：回滚后再用它升级必须失败
+    await runCli([
+      "tool-package", "rollback", "report-formatter",
+      "--project", "project-alpha", "--tool-version", "1",
+      "--state-dir", stateDirectory, "--json",
+    ]);
+    const reuse = await runCli([
+      "tool-package", "upgrade", "report-formatter",
+      "--project", "project-alpha", "--tool-version", "2",
+      "--reauthorization-record", String(authorization.reauthorizationRecordIdentifier),
+      "--state-dir", stateDirectory, "--json",
+    ]);
+    expect(reuse.exitCode, "stderr=" + reuse.stderr).not.toBe(0);
+    expect(reuse.stderr + reuse.stdout).toMatch(/使用过|核验未通过/);
+  });
+
+  it("⑥ authorize-upgrade：无新增副作用时不签发记录（不留下无意义授权）", async () => {
+    const store = new ToolPackageVersionStateStore({ stateDirectory });
+    await store.registerVersion(buildVersionInput({ version: 1 }) as never);
+    await store.registerVersion(
+      buildVersionInput({ version: 3, contentHash: "sha256:" + "c".repeat(64) }) as never,
+    );
+    await store.lockProjectToVersion({
+      projectIdentifier: "project-alpha",
+      toolPackageId: "report-formatter",
+      version: 1,
+      contentHash: "sha256:" + "a".repeat(64),
+    });
+    await store.enableForProject({
+      projectIdentifier: "project-alpha",
+      toolPackageId: "report-formatter",
+      version: 1,
+    });
+
+    const authorize = await runCli([
+      "tool-package", "authorize-upgrade", "report-formatter",
+      "--project", "project-alpha", "--tool-version", "3",
+      "--state-dir", stateDirectory, "--json",
+    ]);
+
+    expect(authorize.exitCode, "stderr=" + authorize.stderr).toBe(0);
+    const authorization = JSON.parse(authorize.stdout.trim()) as {
+      isReauthorizationRequired: boolean;
+      reauthorizationRecordIdentifier: string | null;
+    };
+    expect(authorization.isReauthorizationRequired).toBe(false);
+    expect(authorization.reauthorizationRecordIdentifier).toBeNull();
+    // 确实没有留下任何记录
+    await expect(store.reauthorizationRecordStore.listRecords()).resolves.toEqual([]);
+  });
 });

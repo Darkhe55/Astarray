@@ -15,6 +15,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ToolPackageVersionStateStore } from "../../../packages/core/src/toolkit/tool-package-version-state-store.js";
+import { authorizeToolPackageUpgrade } from "../../../packages/core/src/toolkit/tool-package-operation-control.js";
 
 let stateDirectory: string;
 let store: ToolPackageVersionStateStore;
@@ -197,8 +198,7 @@ describe("TOOLKIT-01-04：新增副作用门禁必须以本地签发的重新授
     expect(locks.find((lock) => lock.toolPackageId === TOOL_PACKAGE)?.version).toBe(2);
   });
 
-  it("⑥ 无新增副作用（1→3 同副作用）⇒ 不需要记录即可切换（门禁不过度拦截）", async () => {
-    await store.registerVersion(buildVersionInput({ version: 1 }));
+  it("⑥ 无新增副作用（1→3 同副作用）⇒ 不需要记录即可切换（门禁不过度拦截）", async () => {    await store.registerVersion(buildVersionInput({ version: 1 }));
     await store.registerVersion(
       buildVersionInput({
         version: 3,
@@ -225,5 +225,82 @@ describe("TOOLKIT-01-04：新增副作用门禁必须以本地签发的重新授
     });
 
     expect(outcome.isApplied).toBe(true);
+  });
+});
+
+describe("TOOLKIT-01-04：重新授权的签发入口（authorizeToolPackageUpgrade）", () => {
+  it("⑦ 项目未锁定 ⇒ 拒绝签发（无法计算差异 ⇒ 不知情就不该签发授权）", async () => {
+    await store.registerVersion(buildVersionInput({ version: 1 }));
+    await store.registerVersion(
+      buildVersionInput({
+        version: 2,
+        contentHash: "sha256:" + "b".repeat(64),
+        declaredSideEffects: ["file-write"],
+      }),
+    );
+
+    await expect(
+      authorizeToolPackageUpgrade({
+        stateDirectory,
+        projectIdentifier: PROJECT,
+        toolPackageId: TOOL_PACKAGE,
+        toVersion: 2,
+        issuedBy: "user-1",
+      }),
+    ).rejects.toMatchObject({ errorCode: "tool-package-project-not-locked" });
+
+    // 也没有留下任何记录
+    await expect(store.reauthorizationRecordStore.listRecords()).resolves.toEqual([]);
+  });
+
+  it("⑧ 有新增副作用 ⇒ 签发记录，且**绑定真实差异**（用别的副作用列表换不出授权）", async () => {
+    await prepareOneToTwoWithNewSideEffect();
+
+    const outcome = await authorizeToolPackageUpgrade({
+      stateDirectory,
+      projectIdentifier: PROJECT,
+      toolPackageId: TOOL_PACKAGE,
+      toVersion: 2,
+      issuedBy: "user-1",
+    });
+
+    expect(outcome.isReauthorizationRequired).toBe(true);
+    expect(outcome.addedSideEffects).toEqual(["file-write"]);
+    expect(outcome.reauthorizationRecordIdentifier).not.toBeNull();
+
+    // 正例：拿这张记录可以真的完成升级
+    const applied = await store.upgradeProjectVersion({
+      projectIdentifier: PROJECT,
+      toolPackageId: TOOL_PACKAGE,
+      toVersion: 2,
+      reauthorizationRecordIdentifier: String(outcome.reauthorizationRecordIdentifier),
+    });
+    expect(applied.isApplied).toBe(true);
+  });
+
+  it("⑨ 无新增副作用 ⇒ 不签发记录（避免留下无意义授权），但仍如实说明", async () => {
+    await store.registerVersion(buildVersionInput({ version: 1 }));
+    await store.registerVersion(
+      buildVersionInput({ version: 3, contentHash: "sha256:" + "c".repeat(64) }),
+    );
+    await store.lockProjectToVersion({
+      projectIdentifier: PROJECT,
+      toolPackageId: TOOL_PACKAGE,
+      version: 1,
+      contentHash: "sha256:" + "a".repeat(64),
+    });
+
+    const outcome = await authorizeToolPackageUpgrade({
+      stateDirectory,
+      projectIdentifier: PROJECT,
+      toolPackageId: TOOL_PACKAGE,
+      toVersion: 3,
+      issuedBy: "user-1",
+    });
+
+    expect(outcome.isReauthorizationRequired).toBe(false);
+    expect(outcome.reauthorizationRecordIdentifier).toBeNull();
+    expect(outcome.detail).toContain("无需重新授权");
+    await expect(store.reauthorizationRecordStore.listRecords()).resolves.toEqual([]);
   });
 });
