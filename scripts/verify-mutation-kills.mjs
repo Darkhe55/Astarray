@@ -73,6 +73,40 @@ export const MUTATIONS = [
     rationale:
       "把'完整规范路径比对'放宽成'只比父目录'后，'同目录换个文件名'必须仍被拒绝（否则目标可被调包）",
   },
+  {
+    mutationIdentifier: "tool-package-reauthorization-gate-removed",
+    targetFile: "packages/core/src/toolkit/tool-package-version-state-store.ts",
+    find: `    if (differences.requiresReauthorization) {
+      const recordIdentifier = input.reauthorizationRecordIdentifier;`,
+    replace: `    if (false && differences.requiresReauthorization) {
+      const recordIdentifier = input.reauthorizationRecordIdentifier;`,
+    testFiles: ["tests/core/integration/toolkit01-reauthorization-gate.test.ts"],
+    expectedFailingTestNames: [
+      "无重新授权记录 ⇒ 必须拒绝",
+      "给了不存在的记录标识 ⇒ 必须拒绝",
+      "记录与本次操作绑定不匹配 ⇒ 必须拒绝",
+      "记录已被消费 ⇒ 必须拒绝",
+    ],
+    rationale:
+      "把'以本地签发的重新授权记录为依据'的门禁整段短路后，无记录/记录不存在/绑定不匹配/已消费四种情形必须全部变红" +
+      "（否则等于门禁形同虚设，调用方又能凭自述放行）",
+  },
+  {
+    mutationIdentifier: "tool-package-reauthorization-single-use-removed",
+    targetFile: "packages/core/src/toolkit/tool-package-reauthorization-record-store.ts",
+    find: `    if (record.consumedAtIso !== null) {`,
+    replace: `    if (false && record.consumedAtIso !== null) {`,
+    testFiles: [
+      "tests/core/unit/toolkit01-reauthorization-record-store.test.ts",
+      "tests/core/integration/toolkit01-reauthorization-gate.test.ts",
+    ],
+    expectedFailingTestNames: [
+      "一次性：同一条记录不得二次放行",
+      "记录已被消费 ⇒ 必须拒绝",
+    ],
+    rationale:
+      "去掉'一次性消费'后，同一条批准不得能反复升级（否则一次批准可被无限复用）",
+  },
 ];
 
 function sha256OfFile(filePath) {
