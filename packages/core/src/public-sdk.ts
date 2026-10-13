@@ -2258,25 +2258,25 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
    * 说明：安装**不走**普通权限询问的授权卡，故这是**独立入口**；
    * 未开启界面安装通道时返回空列表（**不是**"已授权"）。
    */
-  listPendingInstallationInquiries(): Array<InstallationInquiryRecord> {
+  async listPendingInstallationInquiries(): Promise<InstallationInquiryRecord[]> {
     return this.installationInquiryRegistry?.listPending() ?? [];
   }
 
   /** GUI-02-02 专用流程：回答**阶段 1**「是否已有资源」（必须匹配 revision）。 */
-  answerInstallationInquiry(input: {
+  async answerInstallationInquiry(input: {
     inquiryIdentifier: string;
     expectedRevision: number;
     answer: InstallationInquiryAnswer;
-  }): InstallationInquiryRecord {
+  }): Promise<InstallationInquiryRecord> {
     return this.requireInstallationInquiryRegistry().answerInquiry(input);
   }
 
   /** GUI-02-02 专用流程：回答**阶段 2**「是否允许本次安装」（必须匹配 revision）。 */
-  decideInstallationAllowOnce(input: {
+  async decideInstallationAllowOnce(input: {
     inquiryIdentifier: string;
     expectedRevision: number;
     decision: "allow-once" | "deny";
-  }): InstallationInquiryRecord {
+  }): Promise<InstallationInquiryRecord> {
     return this.requireInstallationInquiryRegistry().decideAllowOnce(input);
   }
 
