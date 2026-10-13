@@ -379,5 +379,60 @@ astarray: [需要用户] 任务 T-001 失败：Provider 请求失败或超时（
    这一点值得注意：本次没有发现任何确定性竞态，
    但也不能据此断言"不存在竞态"（未验证 ≠ 不存在）。
 
+## 18. 覆盖率余量：可执行的收口配方（2026-10-13 第 14–15 轮）
+
+### 18.1 先把"差多少"算清楚（避免盲目补行）
+
+实测口径：`branch` 门槛 85%，全局分支分母约 **11296** 条 ⇒
+
+| 每条分支价值 | 达到余量 0.20（85.20%） | 达到余量 0.30（85.30%） |
+| --- | --- | --- |
+| **≈0.0089 个百分点** | 还需覆盖 **≈8 条** | 还需覆盖 **≈20 条** |
+
+即：不是遥不可及，但也**不是"再补一两条就行"** —— 需要挑**成块**的行为补
+（历史经验：零散补分支徒劳）。
+
+**当前进度**：本会话把 branch 由 **85.03 → 85.13**（第 12 轮实现引入的下降已补回并略增），
+余量 **0.13**，**仍未达 0.20 的抖动带**。
+
+### 18.2 测量配方（**更正了一处长期错误说法**）
+
+仓库文档与 `report-uncovered-branches.mjs` 顶部原本都写着
+"CLI `--coverage.reporter=json` **不生效**（输出目录为空）"。本轮实测**不成立**：
+
+```powershell
+# 一次性拿行级数据（无需复制配置）
+npx vitest run --coverage --coverage.reporter=json --coverage.reportsDirectory=coverage-json
+# 逐行定位缺口（仓库自带脚本；区分 L0 无位置信息 与 可定位分支）
+node scripts/report-uncovered-branches.mjs coverage-json/coverage-final.json 20
+# 用完务必删除（不在常规忽略范围内，别误提交）
+Remove-Item coverage-json -Recurse -Force
+```
+
+⇒ **"不生效"的成因是输出目录，不是 reporter 覆盖本身。** 两处文档已就地更正。
+
+**快速迭代提示（实测）**：只跑子集时，未被该子集 import 的模块显示 0% 覆盖，
+**不能**据此判断"该模块是否还有缺口"；有效缺口清单必须跑**全量**一次（约 96s）。
+
+### 18.3 本轮已补的缺口（均为 fail-closed / 防御分支）
+
+| 模块 | 补的反例 | 语义 |
+| --- | --- | --- |
+| `tool-package-reauthorization-record-store.ts` | "合法 JSON 但 `records` 非数组"（含 null / 顶层数组 / 字符串 / 数字） | 必须视为**无任何有效授权**（fail-closed），不得抛错、更不得当空数组**放行** |
+| `tool-package-version-state-store.ts` | "合法 JSON 但 `versions` 非数组" | 必须**明确报错** —— 静默返回空快照会让"状态丢失"看起来像"从没配过" |
+| 同上 | 旧文件缺 4 个可选数组字段 | 兜底为空数组（**向后兼容**） |
+| `tool-package-operation-control.ts` | 反馈文件 `records` 非数组 | 视为无记录（fail-closed） |
+| 同上 | `appendRecord` 来源为空 | **拒绝写入**（来源须具体到不可复用的 `agentInstanceId`） |
+
+### 18.4 下一轮建议的缺口池（已验证可见）
+
+`commands.ts`(294) > `public-sdk.ts`(100) > `local-preservation-service.ts`(50) >
+**`cross-project-authorization-store.ts`(36，含安全守卫的错误分支)** >
+`anthropic-messages-runtime.ts`(36) > `builtins.ts`(34) …
+
+**优先挑安全相关模块的错误分支**（而不是最容易补的那几个）——
+分支覆盖率的意义在于"真实行为被验证"，不是数字本身。
+
+
 
 
