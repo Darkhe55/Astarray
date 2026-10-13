@@ -46,6 +46,18 @@ v8 会产出**没有位置信息**的分支（行号 0）。它们**无法靠补
 **坑**：仓库 `vitest.config.ts` 的 `coverage.reporter` 只有 `["text", "html", "json-summary"]`；
 CLI 传 `--coverage.reporter=json` **不生效**（实测输出目录为空）。要拿行级数据必须**复制配置并加 `json`**：
 
+> **2026-10-13 更正（更省事的做法，已实测）**：上面这条**不必**再复制配置 ——
+> 关键是要**同时**给 `reportsDirectory`，只给 reporter 才不生效：
+>
+> ```powershell
+> npx vitest run --coverage --coverage.reporter=json --coverage.reportsDirectory=coverage-json
+> # ⇒ coverage-json/coverage-final.json 正常产出（本轮实测；209 文件全量）
+> ```
+>
+> 即：**"不生效"的成因是输出目录，不是 reporter 覆盖本身**。用完记得删掉 `coverage-json/`
+> （它不在 `.gitignore` 的常规覆盖范围内，别误提交）。
+
+
 ```powershell
 # 1) 临时配置（放在 .tmp/，不入库）：复制 vitest.config.ts，
 #    reporter 加 "json"，reportsDirectory 指向 .tmp，阈值置 0（仅用于定位）
