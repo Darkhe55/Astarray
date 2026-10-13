@@ -613,4 +613,164 @@ describe("PROJECT-01-03：授权范围与真实读取对象必须绑定", () => 
     expect(result.didRead).toBe(false);
     expect(result.content ?? "").not.toContain("vault-content");
   });
+
+  it("⑭ 副本导入：**来源**是受保护存储时不得被拷出去（目标也不得留下文件/回执）", async () => {
+    /**
+     * 反例意图：上一轮只钉住了"目标不得是受保护存储"。同一条通道还能把保管库当**来源**
+     * 拷到目标项目 —— 那等于把备份内容外泄。本用例钉住来源侧。
+     */
+    const projectRootPath = path.join(baseDirectory, "project-a");
+    const stateDirectoryPath = path.join(projectRootPath, ".astarray");
+    const vaultRootPath = path.join(stateDirectoryPath, "backup-vault");
+    await fs.mkdir(vaultRootPath, { recursive: true });
+    const vaultInsideSourcePath = path.join(vaultRootPath, "backup-1.json");
+    const vaultContent = '{"secret":"should-not-leak"}\n';
+    await fs.writeFile(vaultInsideSourcePath, vaultContent, "utf8");
+
+    // 目标项目根（正常、非受保护）
+    const importTargetRootPath = path.join(baseDirectory, "project-b");
+    const targetPath = path.join(importTargetRootPath, "docs", "leaked.json");
+
+    const store = new CrossProjectAuthorizationStore({ baseDirectory: stateDirectoryPath });
+    await store.grantAuthorization({
+      authorizationIdentifier: "auth-import-vault",
+      sourceProjectIdentifier: SOURCE_PROJECT,
+      sourceProjectRevision: SOURCE_REVISION,
+      targetProjectIdentifier: TARGET_PROJECT,
+      targetProjectRevision: 1,
+      operationKind: "import-copy",
+      // 授权范围故意覆盖状态目录，使"范围判定"无法成为唯一防线
+      resourceScope: {
+        pathPrefixes: [".astarray/"],
+        realPaths: [],
+        isDynamicSharedDirectory: false,
+      },
+      argumentsHash: "hash-import-vault",
+      expiresAtIso: "2030-01-01T00:00:00.000Z",
+      grantedByUserId: "user-1",
+      taskIdentifier: "T-001",
+    });
+
+    const protectedStoragePolicy = new ProtectedStoragePolicy({ stateDirectoryPath });
+    const service = new CrossProjectTransferService({
+      store,
+      resourceIo: {
+        readTextFile: (absolutePath: string) => fs.readFile(absolutePath, "utf8"),
+        writeTextFile: (absolutePath: string, content: string) =>
+          fs.writeFile(absolutePath, content, "utf8"),
+        ensureDirectory: async (absoluteDirectory: string) => {
+          await fs.mkdir(absoluteDirectory, { recursive: true });
+        },
+        fileExists: async (absolutePath: string) => {
+          try {
+            await fs.stat(absolutePath);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+      },
+      isForbiddenAccessTarget: (canonicalAccessTargetPath: string) =>
+        protectedStoragePolicy.isProtectedStorageAccessTarget(canonicalAccessTargetPath),
+    });
+
+    const result = await service.importCopy({
+      authorizationIdentifier: "auth-import-vault",
+      sourceProjectIdentifier: SOURCE_PROJECT,
+      targetProjectIdentifier: TARGET_PROJECT,
+      sourceResourcePath: ".astarray/backup-vault/backup-1.json",
+      targetResourcePath: "docs/leaked.json",
+      sourceRevision: SOURCE_REVISION,
+      contentHash: sha256(vaultContent),
+      argumentsHash: "hash-import-vault",
+      nowIso: "2026-10-02T00:00:00.000Z",
+      absoluteSourcePath: vaultInsideSourcePath,
+      absoluteTargetPath: targetPath,
+      sourceProjectRootPath: projectRootPath,
+      targetProjectRootPath: importTargetRootPath,
+    });
+
+    expect(result.outcome).not.toBe("imported-copy");
+    expect(result.receipt).toBeNull();
+    // 目标不得留下文件，也不得留下回执（否则"有回执无文件/反面"都会误导重试）
+    expect(await fs.readFile(targetPath, "utf8").catch(() => null)).toBeNull();
+    expect(await store.countCopyReceipts()).toBe(0);
+  });
+
+  it("⑮ 受保护存储之删除审计文件同样不得经跨项目通道读取（文件**存在**时也不得读到内容）", async () => {
+    /**
+     * 与 ⑬ 同类，但针对 `backup-deletion-audit.jsonl`：它是**文件**而非目录，
+     * 走策略里另一条词法分支。
+     *
+     * 变异验证教训（2026-10-13）：本用例最初**不创建**该文件，结果在"临时禁用判定器"时
+     * **仍然通过** —— 因为服务先命中 `resource-not-found` 就拒绝了，根本没走到受保护存储判定，
+     * 属**空洞反例**。故这里先真实创建审计文件并写入哨兵内容，确保拒绝只能来自受保护存储判定。
+     */
+    const projectRootPath = path.join(baseDirectory, "project-a");
+    const stateDirectoryPath = path.join(projectRootPath, ".astarray");
+    await fs.mkdir(stateDirectoryPath, { recursive: true });
+    const auditFilePath = path.join(stateDirectoryPath, "backup-deletion-audit.jsonl");
+    const auditSentinelContent = '{"deletedBy":"audit-should-not-leak"}\n';
+    await fs.writeFile(auditFilePath, auditSentinelContent, "utf8");
+    // 前置条件自检：文件确实存在（否则本用例会退化成 resource-not-found）
+    await expect(fs.stat(auditFilePath)).resolves.toBeDefined();
+
+    const store = new CrossProjectAuthorizationStore({ baseDirectory: stateDirectoryPath });
+    await store.grantAuthorization({
+      authorizationIdentifier: "auth-audit",
+      sourceProjectIdentifier: SOURCE_PROJECT,
+      sourceProjectRevision: SOURCE_REVISION,
+      targetProjectIdentifier: TARGET_PROJECT,
+      targetProjectRevision: 1,
+      operationKind: "read",
+      resourceScope: {
+        pathPrefixes: [".astarray/"],
+        realPaths: [],
+        isDynamicSharedDirectory: false,
+      },
+      argumentsHash: "hash-audit",
+      expiresAtIso: "2030-01-01T00:00:00.000Z",
+      grantedByUserId: "user-1",
+      taskIdentifier: "T-001",
+    });
+
+    const protectedStoragePolicy = new ProtectedStoragePolicy({ stateDirectoryPath });
+    const service = new CrossProjectTransferService({
+      store,
+      resourceIo: {
+        readTextFile: (absolutePath: string) => fs.readFile(absolutePath, "utf8"),
+        writeTextFile: (absolutePath: string, content: string) =>
+          fs.writeFile(absolutePath, content, "utf8"),
+        ensureDirectory: async (absoluteDirectory: string) => {
+          await fs.mkdir(absoluteDirectory, { recursive: true });
+        },
+        fileExists: async (absolutePath: string) => {
+          try {
+            await fs.stat(absolutePath);
+            return true;
+          } catch {
+            return false;
+          }
+        },
+      },
+      isForbiddenAccessTarget: (canonicalAccessTargetPath: string) =>
+        protectedStoragePolicy.isProtectedStorageAccessTarget(canonicalAccessTargetPath),
+    });
+
+    const result = await service.readResource({
+      authorizationIdentifier: "auth-audit",
+      sourceProjectIdentifier: SOURCE_PROJECT,
+      targetProjectIdentifier: TARGET_PROJECT,
+      resourcePath: ".astarray/backup-deletion-audit.jsonl",
+      absoluteResourcePath: auditFilePath,
+      sourceProjectRootPath: projectRootPath,
+      argumentsHash: "hash-audit",
+      nowIso: "2026-10-02T00:00:00.000Z",
+      sourceWriteProbe: { writeAttemptCount: 0 },
+    });
+
+    expect(result.outcome).not.toBe("read-allowed");
+    expect(result.didRead).toBe(false);
+    expect(result.content ?? "").not.toContain("audit-should-not-leak");
+  });
 });
