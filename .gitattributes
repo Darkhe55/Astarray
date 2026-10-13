@@ -1,0 +1,11 @@
+# 行尾策略（2026-10-12 新增）
+#
+# 背景（见 docs/reports/KNOWN_ISSUE_LINE_ENDING_SENSITIVE_TEST_2026-10-12.md）：
+# 本仓库未声明行尾策略，而 Windows 上 `core.autocrlf=true` 会在检出时把 LF 转为 CRLF。
+# 这使 `tests/core/unit/read-format-other-languages.test.ts` **在工作区通过、在干净检出失败**
+# —— 因为该测试对夹具的**确切字节**敏感（判定"静态 source 是否省略"）。
+#
+# 只对**测试夹具**声明 LF：
+# - 夹具属**内容敏感资产**，其字节必须在所有平台一致；
+# - 限定在此目录，**不改变**源码文件的既有检出行为，避免大面积行尾漂移。
+tests/fixtures/** text eol=lf
