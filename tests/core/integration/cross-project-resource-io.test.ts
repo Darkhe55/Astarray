@@ -773,4 +773,108 @@ describe("PROJECT-01-03：授权范围与真实读取对象必须绑定", () => 
     expect(result.didRead).toBe(false);
     expect(result.content ?? "").not.toContain("audit-should-not-leak");
   });
+
+  it("⑯ 来源项目根不可解析 ⇒ 拒绝（不得默认放行，零 I/O）", async () => {
+    /**
+     * 定向反例（2026-10-15）：绑定守卫里"项目根不可解析"一路此前未覆盖。
+     * 语义：**无法证明"真实对象 = 被授权对象"就不放行**。
+     * 用一个不存在的盘符作为项目根，使"最近存在祖先"回溯也失败。
+     */
+    const existingFilePath = path.join(sourceRootPath, "docs/spec.md");
+    await fs.writeFile(existingFilePath, "# 内容\n", "utf8");
+
+    const store = new CrossProjectAuthorizationStore({ baseDirectory });
+    const argumentsHash = "hash-unresolvable-root";
+    await grantReadAuthorization(store, argumentsHash);
+    const service = buildService(store);
+
+    const result = await service.readResource({
+      authorizationIdentifier: "auth-read",
+      sourceProjectIdentifier: SOURCE_PROJECT,
+      targetProjectIdentifier: TARGET_PROJECT,
+      resourcePath: "docs/spec.md",
+      absoluteResourcePath: existingFilePath,
+      sourceProjectRootPath: "Z:\\definitely-not-a-volume\\project-a",
+      argumentsHash,
+      nowIso: "2026-10-02T00:00:00.000Z",
+      sourceWriteProbe: { writeAttemptCount: 0 },
+    });
+
+    expect(result.outcome).not.toBe("read-allowed");
+    expect(result.didRead).toBe(false);
+    // 零 I/O：连"资源是否存在"都不该去问
+    expect(result.content).toBeNull();
+  });
+
+  it("⑰ 声明路径逃出项目根 ⇒ 拒绝（path-escape-attempt，零 I/O）", async () => {
+    /**
+     * 定向反例：`!isPathWithinDirectory(canonicalProjectRootPath, expectedAbsolutePath)` 一路。
+     * 语义：声明路径本身不得逃出项目根（`..` 上溯）；该判定必须在**任何 I/O 之前**。
+     */
+    const existingFilePath = path.join(sourceRootPath, "docs/spec.md");
+    await fs.writeFile(existingFilePath, "# 内容\n", "utf8");
+
+    const store = new CrossProjectAuthorizationStore({ baseDirectory });
+    const argumentsHash = "hash-declared-escape";
+    // 授权范围必须命中声明路径，否则会先撞"超出授权范围"，走不到逃逸判定
+    await store.grantAuthorization({
+      authorizationIdentifier: "auth-escape",
+      sourceProjectIdentifier: SOURCE_PROJECT,
+      sourceProjectRevision: SOURCE_REVISION,
+      targetProjectIdentifier: TARGET_PROJECT,
+      targetProjectRevision: 1,
+      operationKind: "read",
+      resourceScope: {
+        pathPrefixes: ["docs/../"],
+        realPaths: [],
+        isDynamicSharedDirectory: false,
+      },
+      argumentsHash,
+      expiresAtIso: "2030-01-01T00:00:00.000Z",
+      grantedByUserId: "user-1",
+      taskIdentifier: "T-001",
+    });
+    const service = buildService(store);
+
+    const result = await service.readResource({
+      authorizationIdentifier: "auth-escape",
+      sourceProjectIdentifier: SOURCE_PROJECT,
+      targetProjectIdentifier: TARGET_PROJECT,
+      resourcePath: "docs/../../outside-root.md",
+      absoluteResourcePath: existingFilePath,
+      sourceProjectRootPath: sourceRootPath,
+      argumentsHash,
+      nowIso: "2026-10-02T00:00:00.000Z",
+      sourceWriteProbe: { writeAttemptCount: 0 },
+    });
+
+    expect(result.outcome).not.toBe("read-allowed");
+    expect(result.didRead).toBe(false);
+  });
+
+  it("⑱ 真实访问对象不存在 ⇒ 拒绝（access-target-missing，零 I/O）", async () => {
+    /**
+     * 定向反例：`fs.realpath(canonicalActualPath)` 失败一路。
+     * 语义：要读的对象**必须真实存在**；不存在即拒绝（不得先当"范围通过"再失败在读取上）。
+     */
+    const store = new CrossProjectAuthorizationStore({ baseDirectory });
+    const argumentsHash = "hash-missing-target";
+    await grantReadAuthorization(store, argumentsHash);
+    const service = buildService(store);
+
+    const result = await service.readResource({
+      authorizationIdentifier: "auth-read",
+      sourceProjectIdentifier: SOURCE_PROJECT,
+      targetProjectIdentifier: TARGET_PROJECT,
+      resourcePath: "docs/spec.md",
+      absoluteResourcePath: path.join(sourceRootPath, "docs", "does-not-exist.md"),
+      sourceProjectRootPath: sourceRootPath,
+      argumentsHash,
+      nowIso: "2026-10-02T00:00:00.000Z",
+      sourceWriteProbe: { writeAttemptCount: 0 },
+    });
+
+    expect(result.outcome).not.toBe("read-allowed");
+    expect(result.didRead).toBe(false);
+  });
 });
