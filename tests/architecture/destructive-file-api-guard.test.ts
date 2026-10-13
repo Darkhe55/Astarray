@@ -61,6 +61,15 @@ const ALLOWED_MODULES: Record<string, { tokens: AllowedTokens; reason: string }>
       "只写自己那一个 JSON 文件（`tool-package-reauthorizations.json`），" +
       "不删除、不改名、不复制既有内容（无 rm/rename/copyFile）",
   },
+  "core/src/orchestration/agent-parent-binding-store.ts": {
+    tokens: ["writeFile"],
+    reason:
+      "COMM-01-02 唯一上级归属：持久化'谁是谁的唯一上级'与释放/回收标记" +
+      "（卡内缺口原文：'无统一持久化父子归属字段与跨实例唯一性约束'）。" +
+      "只写自己那一个 JSON 文件（`agent-parent-bindings.json`）；" +
+      "释放与回收均**追加标记、不删除历史**（供报告追溯'当初是谁收的'），" +
+      "故无 rm/rename/copyFile",
+  },
   "core/src/tools/session-permission-elevation.ts": {
     tokens: ["rm", "writeFile"],
     reason: "会话提升记录持久化（writeFile + 失效记录清理 rm）",
