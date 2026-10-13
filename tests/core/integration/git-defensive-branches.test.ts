@@ -6,7 +6,16 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+/*
+ * 超时预算（2026-10-13）：本文件含**真 git 子进程**用例，隔离实测最慢 2976ms，
+ * 距 vitest **默认** 5_000ms 上限很近；全量门禁并发下争用系数实测约 1.4-3x
+ * ⇒ 曾实测 `Test timed out in 5000ms`。仓库既有约定是给这类文件显式预算
+ * （另有 33 个文件同样用 vi.setConfig），此处补齐；**断言一律不放宽**。
+ * 依据：docs/reports/FEEDBACK_SHUTDOWN_DUPLICATE_5S_2026-10-13.md §10。
+ */
+vi.setConfig({ testTimeout: 60_000 });
+
 
 import { GitContributionVerifier } from "../../../packages/core/src/orchestration/git-contribution-verifier.js";
 import { GitIntegrationCoordinator } from "../../../packages/core/src/orchestration/git-integration-coordinator.js";
