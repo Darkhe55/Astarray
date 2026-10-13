@@ -463,6 +463,25 @@ export class RecoveryCenterController {
   }
 
   async abandonMission(missionIdentifier: string): Promise<RecoveryAbandonResult> {
+    /**
+     * **先探测是否存在**（2026-10-12 修复"误报放弃成功"）：
+     * `updateMissionStatus` 对不存在的 mission 会**静默 return**，
+     * 而 `probeMissionDirectory` 会如实给出 `exists`。
+     * 此前本方法**无条件**填 `abandoned: true` ⇒ 对不存在的 mission 也报"已放弃"，
+     * 会让用户以为已经关停了某个 mission（实际什么都没做）。
+     * `abandoned` 的语义即"是否真的放弃了"，故此处**如实填 `false`**。
+     */
+    const probeBeforeAbandon = await this.missionManager.probeMissionDirectory(
+      missionIdentifier,
+    );
+    if (!probeBeforeAbandon.exists) {
+      return {
+        missionIdentifier,
+        abandoned: false,
+        artifactsRetained: true,
+        statusAfter: null,
+      };
+    }
     await this.missionManager.updateMissionStatus(missionIdentifier, "cancelled");
     const probe = await this.missionManager.probeMissionDirectory(missionIdentifier);
     return {

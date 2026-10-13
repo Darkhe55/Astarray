@@ -120,19 +120,19 @@ describe("GUI-02 覆盖补强：只读诊断命令组（进程内）", () => {
      * 输出里同时出现 `abandoned` 与 `false`。
      */
     /**
-     * **如实适配既有语义**（已读实现 + 实测）：`recover abandon` 的退出码**总是 0**，
-     * 而"是否真的放弃了"由输出字段 `abandoned` 表达 —— 这是**幂等设计**：
-     * 对不存在的 mission 请求放弃**不算错误**。
-     *
-     * **同时记录一个待查可疑点（本轮未改产品）**：实测对**不存在**的 mission，
-     * 输出竟是 `"abandoned":true`（而非 `false`）：
-     * `{"missionIdentifier":"mission-does-not-exist","abandoned":true,...}`。
-     * 这可能只是"幂等地把不存在的目标视为已放弃"，也可能是**误报放弃成功**。
-     * 未查清产品本意前**不臆断、不改**，故此处只断言可观察行为（返回 0、不抛异常）。
+     * **2026-10-12 更新**：上一轮我把这里记为"待查可疑点"（实测对不存在的 mission
+     * 输出 `"abandoned":true`）。**该可疑点已被查实并修复** —— 属
+     * `RecoveryCenterController.abandonMission` **无条件**填 `abandoned: true`
+     * 导致的**误报放弃成功**（见 `tests/core/integration/recover-abandon-honest-report.test.ts`
+     * 与修复提交）。故此处现在可以**断言正确行为**：返回 0（幂等，既有约定）+ `abandoned` 为 false。
      */
     expect(result.threw, result.threw ?? "").toBeNull();
     expect(result.exit).toBe(0);
     expect(result.output).toContain("mission-does-not-exist");
+    // 修复后的正确行为：未放弃 ⇒ 必须如实为 false（不再误报 true）
+    expect(result.output).toContain("abandoned");
+    expect(result.output).toContain("false");
+    expect(result.output).not.toMatch(/abandoned"\s*:\s*true/);
   });
 
   it("④ concurrent status：空目录下如实报告", async () => {

@@ -252,7 +252,40 @@ describe("recover resume 命令（重启先只读对账）", () => {
 });
 
 describe("recover abandon 命令", () => {
+  /**
+   * **2026-10-12 修复（本文件）**：本用例原本**未 seed mission**，却断言
+   * `abandoned === true` —— 它此前**恰好依赖**一个真实缺陷
+   * （`abandonMission` 对**不存在**的 mission 也无条件报 `abandoned: true`）。
+   * 该缺陷已修（见 `tests/core/integration/recover-abandon-honest-report.test.ts`），
+   * 故此处**补上真实 mission**，使断言测的是它本意要测的行为：
+   * "**存在**的 mission 被放弃后应报 `abandoned: true`"。
+   */
+  async function seedAbandonTargetMission(missionIdentifier: string): Promise<void> {
+    const missionManager = new MissionManager(
+      new TaskStore({ baseDirectory: stateDirectory }),
+      stateDirectory,
+    );
+    await missionManager.createMission({
+      missionId: missionIdentifier,
+      mode: "assist",
+      prompt: "abandon 目标任务",
+      taskNodes: [
+        {
+          id: "T-001",
+          description: "任务一",
+          dependsOn: [],
+          taskType: "data",
+          toolNames: ["readFile"],
+          assignedAgentId: null,
+          status: "pending",
+          resultLocation: null,
+        },
+      ],
+    });
+  }
+
   it("关闭调度并保留存档（不删除数据）", async () => {
+    await seedAbandonTargetMission("mission-1");
     const exitCode = await executeRecoverAbandonCommand({
       stateDirectory,
       isJsonOutput: true,
