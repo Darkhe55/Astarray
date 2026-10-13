@@ -277,4 +277,53 @@ describe("TOOLKIT-01-04：CLI 管理入口（取消 / 恢复与独立反馈）",
     expect(feedbackPayload.records.map((record) => record.operationKind)).toContain("cancel");
     expect(feedbackPayload.records.map((record) => record.operationKind)).toContain("recover");
   });
+
+  it("⑤ 反馈文件'合法 JSON 但 records 非数组'⇒ 视为空记录（fail-closed，不抛错）", async () => {
+    /**
+     * 定向反例（2026-10-13）：`readRecords` 里 `!Array.isArray(raw.records)` 一路此前未覆盖。
+     * 语义必须与"文件损坏/不存在"一致：**视为无记录**，既不抛错、
+     * 更不能把非数组内容当成记录列表交给上层（那会让"来源/动作/revision"全部失真）。
+     */
+    const feedbackFilePath = path.join(
+      stateDirectory,
+      "tool-package-operation-feedback.json",
+    );
+    const variants = [
+      JSON.stringify({ records: "not-an-array" }),
+      JSON.stringify({ records: null }),
+      JSON.stringify([{ operationKind: "cancel" }]),
+      JSON.stringify("plain-string"),
+    ];
+
+    for (const variant of variants) {
+      await fs.writeFile(feedbackFilePath, variant, "utf8");
+      const store = new ToolPackageOperationFeedbackStore({ stateDirectory });
+      await expect(store.listRecords(), variant).resolves.toEqual([]);
+    }
+  });
+
+  it("⑥ 反馈必须带**具体来源**：`requestingAgentInstanceId` 为空 ⇒ 拒绝记录", async () => {
+    /**
+     * 定向反例：`appendRecord` 的首个守卫此前未覆盖。
+     * 卡内硬要求"每条反馈消息必须携带经过校验的信息来源，Agent 来源必须具体到
+     * 不可复用的 `agentInstanceId`" ⇒ 来源缺失/为空时**必须拒绝写入**，
+     * 不得留下一条无法追溯的反馈。
+     */
+    const store = new ToolPackageOperationFeedbackStore({ stateDirectory });
+
+    await expect(
+      store.appendRecord({
+        operationKind: "cancel",
+        projectIdentifier: "project-alpha",
+        toolPackageId: "report-formatter",
+        requestingAgentInstanceId: "",
+        revision: 1,
+        outcome: "applied",
+        detail: "缺少来源的反馈",
+      }),
+    ).rejects.toMatchObject({ errorCode: "task-sequence-permission-denied" });
+
+    // 也不得留下任何记录
+    await expect(store.listRecords()).resolves.toEqual([]);
+  });
 });
