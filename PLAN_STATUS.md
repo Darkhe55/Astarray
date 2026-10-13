@@ -167,6 +167,24 @@
 > 不接入 `check`（与既有 `verify:*` 一致，按需运行）。
 > **仍未覆盖**：只登记了跨项目授权这 2 个变异，其余安全关键模块尚可扩展。
 >
+> ### 🔴 第 9 轮（TOOLKIT-01-04 复核）：查出"新增副作用须重新授权"门禁**自相矛盾**（未修，已收敛）
+>
+> 卡内把 04 的剩余条件写作"与 MERGE-01 的完整联测"。核实结果：
+> **该联测并不存在**（`parameter-authorization` + `tool-package` 双关键字检索测试文件命中 0），
+> 且查出该门禁最终只依赖**调用方自述的裸布尔值**：
+> `controller:293` 判 `requiresReauthorization && !isReauthorized`，
+> 而 `isReauthorized` 来自 `cli.tsx` 的 `--reauthorized` 参数（`commands.ts:5161`）。
+> **实测**（v1 无副作用 → v2 含 `file-write`）：传 `false` ⇒ `isApplied=false`（门禁生效）；
+> 传 `true` ⇒ **`isApplied=true`（门禁被打开）**；`ParameterAuthorizationSettings` 完全不参与。
+>
+> **为何是自相矛盾**：同一控制器在 `enableForProject`（`:221-229`）留有明确说明——
+> "调用方传 `isReauthorized` …等于给门禁开了**旁路**"，并据此**移除**了该参数、
+> 指明版本切换"**只能**走 `upgradeProjectVersion()`"；而该唯一路径恰是这个形态。
+>
+> **处置**：**不主张 TOOLKIT-01-04 通过**；已收敛为 5 步可开工条件
+> （先红例 → 授权依据改为可核验的重新授权记录 → CLI 先展示差异再本地签发 → 补 MERGE-01 联测 → 门禁）。
+> **注意**：不得为让门禁变绿而放宽差异判定。
+>
 > ---
 >
 > 以下为**第 4 轮发现时**的原始记录（保留供回归参照）。
