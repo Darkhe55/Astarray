@@ -132,3 +132,25 @@
 跨任务回复/重放/迟到、撤销与到期在途复检、**独立反馈进程接线**、
 受控路由目录与端到端可达矩阵；以及 COMM-01-03 的
 SDK/CLI/TUI/GUI 入口、只读拓扑/投递状态查询、tarball 隔离安装验收。
+
+### 6.1 自查纠正（2026-10-19，`df5da47`）：切片① 起初**产品不可达**
+
+第 19 轮做了一次可达性审计，发现上面这份交付**重演了本卡 §1 点名的缺陷**：
+
+> "在生产源码检索到类定义，**未找到该控制器的生产实例化引用**；
+> **不能以组件存在声称产品已接通**。"
+
+- `agent-parent-binding-store.ts` 生产引用 **0**、不在 `public-sdk` 导出里
+  ⇒ `dist` 中**零命中**（对比本会话其它模块：`protected-storage-policy` 8 处引用 /
+  `cross-project-authorization-store` 6 处 / `tool-package-version-state-store` 6 处 /
+  `tool-package-operation-control` 5 处 / `tool-package-reauthorization-record-store` 2 处）。
+- **已纠正**：`public-sdk.ts` 导出该入口 ⇒ `dist` 命中 0 → **8**，
+  并经 `node -e "import { ParentBindingController } from './dist/public-sdk.js'"`
+  实测为**真实 function**（非字符串命中）。
+- 新增构建产物可达性反例 **2 条**（`comm01-parent-binding-sdk-entry.test.ts`）：
+  在**真实子进程** import `dist/public-sdk.js` 并**实际执行**判定；
+  另一条验证"构建产物写入 → 父进程用源码入口重开仍读到"。
+
+**仍未完成（比上一版记录更准确）**：本次只解决"**入口可达**"。
+该判定**尚未接入独立反馈进程的真实投递路径**（`recipientId` 投递链目前不调用它）
+—— 这是 COMM-01-02 下一片的核心，**不得**因"已导出/已可达"就认为约束已在产品中生效。
