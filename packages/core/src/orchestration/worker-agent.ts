@@ -21,6 +21,8 @@ import {
   verifyArtifactExistence,
 } from "./artifact-verification.js";
 import { DomainError } from "../core/errors.js";
+// COMM-01-02（2026-10-25）：反馈默认走**任务发布者的反向通道**（不再按上下级/硬编码推断）。
+import { resolveFeedbackRecipient } from "./task-publisher-feedback-route.js";
 import type { ContextPromptProvider } from "./context-prompt-assembler.js";
 import { runToolLoop } from "../runtime/tool-loop.js";
 import type { GuidanceSafePointPort } from "../runtime/tool-loop.js";
@@ -495,6 +497,18 @@ export class WorkerAgent {
 
   private async reportOutcome(outcome: WorkerOutcome): Promise<void> {
     const payload: FeedbackMessage["payload"] = buildOutcomePayload(outcome);
+    /**
+     * COMM-01-02（2026-10-25）：反馈默认走**任务发布者的反向通道**。
+     *
+     * 此前这里**硬编码** `scheduler:<missionId>` ⇒ 与"谁发布了这条任务"无关：
+     * 别的发布者发布的任务，其反馈会**错投到默认 scheduler 信箱**。
+     * 现改为按任务记录的发布者解析；任务未记录发布者时**回退**并保留可读原因
+     * （不静默、不按上下级推断）。
+     */
+    const route = resolveFeedbackRecipient({
+      task: this.options.task,
+      defaultSchedulerRecipientId: `scheduler:${this.options.missionId}`,
+    });
     await this.options.feedbackTransport.enqueue({
       protocolVersion: 1,
       messageId: randomUUID(),
@@ -503,7 +517,7 @@ export class WorkerAgent {
         agentInstanceId: this.options.agentInstanceId,
         agentRole: "tertiary",
       },
-      recipientId: `scheduler:${this.options.missionId}`,
+      recipientId: route.recipientId,
       priority: payloadPriority(payload.kind),
       createdAtIso: new Date().toISOString(),
       idempotencyKey: `${this.options.missionId}/${this.options.task.id}/${randomUUID()}`,

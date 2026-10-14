@@ -236,6 +236,22 @@ export const MUTATIONS = [
       "不再移除消失功能的旧规则后，'消失的功能也要对应移除旧的权限管理开关'这条就不成立" +
       "（会留下指向已不存在功能的僵尸开关）",
   },
+  {
+    mutationIdentifier: "comm01-feedback-ignores-task-publisher",
+    targetFile: "packages/core/src/orchestration/worker-agent.ts",
+    find: `      recipientId: route.recipientId,`,
+    replace: `      recipientId: \`scheduler:\${this.options.missionId}\`,`,
+    testFiles: [
+      "tests/core/unit/worker-agent.test.ts",
+      "tests/core/unit/comm01-task-publisher-feedback-route.test.ts",
+    ],
+    expectedFailingTestNames: [
+      "任务记录了发布者 ⇒ 反馈**投给发布者**而非默认 scheduler",
+    ],
+    rationale:
+      "把反馈去向改回硬编码 scheduler 后，'反馈走任务发布者反向通道'必须变红" +
+      "（用户澄清：反馈**不是**根据上下级关系，而是默认走任务发布者的反向通道）",
+  },
 ];
 
 function sha256OfFile(filePath) {

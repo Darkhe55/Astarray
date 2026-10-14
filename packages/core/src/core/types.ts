@@ -329,6 +329,17 @@ export interface TaskDependencyNode {
   assignedAgentId: string | null;
   status: TaskDependencyNodeStatus;
   resultLocation: string | null;
+  /**
+   * COMM-01-02（2026-10-25）：**本任务的发布者信箱**。
+   *
+   * 用户澄清："反馈…**每条任务的反馈路径默认走任务发布者的反向通道**"。
+   * 因此发布者在发布任务时须记下自己的信箱，执行者据此回报；
+   * 未记录时调用方须**如实报告回退**（见 `task-publisher-feedback-route.ts`），
+   * 不得默认按"上下级"推断去向。
+   *
+   * 可选以兼容既有任务链文档（旧文档无此字段 ⇒ 走回退并如实说明）。
+   */
+  publishedByRecipientId?: string | null;
 }
 
 /**
