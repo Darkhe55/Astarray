@@ -167,6 +167,22 @@ export interface GuiApplicationPort {  subscribe(listener: (event: PublicAstarra
     pageIndex?: number;
     afterMissionIdentifier?: string;
   }): Promise<GuiMissionHistoryPageView>;
+  /**
+   * GUI-02-04（2026-11-08）：**恢复执行入口**（可选能力；缺失时服务端显式 501）。
+   *
+   * 与公共门面 `resumeRecoveredMission({ missionIdentifier, hasExplicitUserConfirmation })` 对齐：
+   * **必须**显式确认；对账/鉴权由服务端与核心强制。
+   */
+  resumeRecoveredMission?(input: {
+    missionIdentifier: string;
+    hasExplicitUserConfirmation: boolean;
+  }): Promise<{
+    outcome: string;
+    missionIdentifier: string;
+    detail?: string;
+    requiredReauthorizationTypes?: string[];
+    blockedDecisionItems?: string[];
+  }>;
   recordVerificationDecision?(input: {
     ownerAgentInstanceId: string;
     taskIdentifier: string;
@@ -1889,6 +1905,51 @@ export async function startGuiServer(
         effectivePageSize: page.effectivePageSize,
         totalMissionCount: page.totalMissionCount,
       });
+      return;
+    }
+
+    /**
+     * GUI-02-04（2026-11-08）：**恢复执行**（显式 + 先对账 + 重新鉴权）。
+     *
+     * 只接受 `POST`；**必须**带 `hasExplicitUserConfirmation: true` ——
+     * 缺它即视为"未显式确认"，入口层直接 400，**不进核心**（不提供"点开即恢复"）。
+     * 对账/鉴权由门面与核心判定；核心拒绝时**原样回报**（不美化成已恢复）。
+     */
+    if (
+      request.method === "POST" &&
+      requestUrl.pathname === "/commands/recovery-resume"
+    ) {
+      const applicationService = options.applicationService;
+      if (applicationService.resumeRecoveredMission === undefined) {
+        writeCapabilityUnavailable(response);
+        return;
+      }
+      const parsedBody = JSON.parse((await readBody(request)) || "{}") as {
+        missionIdentifier?: unknown;
+        hasExplicitUserConfirmation?: unknown;
+      };
+      if (
+        typeof parsedBody.missionIdentifier !== "string" ||
+        parsedBody.missionIdentifier.length === 0
+      ) {
+        writeJsonResponse(response, 400, {
+          errorCode: "recovery-mission-identifier-invalid",
+          message: "需要提供 missionIdentifier",
+        });
+        return;
+      }
+      if (parsedBody.hasExplicitUserConfirmation !== true) {
+        writeJsonResponse(response, 400, {
+          errorCode: "recovery-not-explicitly-confirmed",
+          message: "恢复必须由你显式确认（不提供点开即恢复）",
+        });
+        return;
+      }
+      const resumeResult = await applicationService.resumeRecoveredMission({
+        missionIdentifier: parsedBody.missionIdentifier,
+        hasExplicitUserConfirmation: true,
+      });
+      writeJsonResponse(response, 200, resumeResult);
       return;
     }
 

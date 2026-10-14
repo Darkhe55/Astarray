@@ -816,6 +816,8 @@ export interface PublicRecoveryMissionView {
   pendingTaskCount: number | null;
   hasTrustedCheckpoint: boolean;
   isLeaseActive: boolean;
+  /** GUI-02-04：恢复前必须**重新鉴权**的能力类型（空数组表示无需重新鉴权）。 */
+  requiredReauthorizationTypes: string[];
 }
 
 export interface PublicRecoveryOverview {
@@ -1127,6 +1129,12 @@ function toPublicRecoveryMissionView(view: {
   pendingTaskCount: number | null;
   hasTrustedCheckpoint: boolean;
   isLeaseActive: boolean;
+  /**
+   * GUI-02-04（2026-11-08）：恢复前**必须重新鉴权**的能力类型。
+   * 一次性授权不随恢复延续 ⇒ 界面据此提示"还差重新鉴权"，
+   * 而不是让用户以为点一下就能恢复。
+   */
+  requiredReauthorizationTypes?: string[];
 }): PublicRecoveryMissionView {
   return {
     missionIdentifier: view.missionIdentifier,
@@ -1137,6 +1145,7 @@ function toPublicRecoveryMissionView(view: {
     pendingTaskCount: view.pendingTaskCount,
     hasTrustedCheckpoint: view.hasTrustedCheckpoint,
     isLeaseActive: view.isLeaseActive,
+    requiredReauthorizationTypes: view.requiredReauthorizationTypes ?? [],
   };
 }
 
@@ -1964,6 +1973,123 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     });
   }
 
+  /**
+   * GUI-02-04（2026-11-08）：**恢复执行入口**（显式 + 先对账 + 重新鉴权）。
+   *
+   * ## 为什么要有这个门（而不是直接调核心 `resumeMission`）
+   *
+   * 卡内要求"恢复须**显式** + **先对账** + **重新鉴权**"。
+   * 核心 `resumeMission()` 自带若干前置（损坏/终态/可信检查点/未决冲突），
+   * 但"**显式**"（用户主动确认，而非点开即恢复）与"**重新鉴权**"必须在入口处强制。
+   *
+   * 本方法**先**取恢复概览判定三道门；任一未满足 ⇒ **不调用核心恢复**并返回拒绝事实：
+   * - `recovery-not-explicitly-confirmed`：未显式确认；
+   * - `recovery-reconciliation-required`：对账未完成；
+   * - `recovery-reauthorization-required`：仍需重新鉴权（附 `requiredReauthorizationTypes`）。
+   *
+   * **只有三道门全过**才真正调用 `controller.resumeMission()`，
+   * 并**把核心结果原样回报**（`resumed`／`blockedDecisionItems` 等一律不加工、不美化）。
+   */
+  async resumeRecoveredMission(input: {
+    missionIdentifier: string;
+    hasExplicitUserConfirmation: boolean;
+  }): Promise<
+    | { outcome: "resumed"; missionIdentifier: string;
+        recoveredSafeNodes: string[];
+        requiresHandoffIdentity: boolean;
+        requiredReauthorizationTypes: string[] }
+    | { outcome:
+        | "recovery-not-explicitly-confirmed"
+        | "recovery-reconciliation-required"
+        | "recovery-reauthorization-required"
+        | "recovery-blocked-by-core";
+        missionIdentifier: string;
+        detail: string;
+        requiredReauthorizationTypes: string[];
+        blockedDecisionItems: string[] }
+  > {
+    this.assertOpen();
+    const missionIdentifier = input.missionIdentifier;
+    /**
+     * **第一道门必须在任何核心查找之前**（2026-11-08 反例②实测纠正）。
+     *
+     * 我最初把"显式确认"判在 mission 存在性检查**之后**，于是"未确认 + 未知 mission"
+     * 会返回 `recovery-blocked-by-core` —— 那说明"显式"这道门**形同虚设**
+     * （用户还没表态，系统就已经先替他去核心查了一圈）。
+     * 现改为：**先判显式**，再谈其它。
+     */
+    if (input.hasExplicitUserConfirmation !== true) {
+      return {
+        outcome: "recovery-not-explicitly-confirmed",
+        missionIdentifier,
+        detail: "恢复必须由你显式确认（不提供「点开即恢复」）",
+        requiredReauthorizationTypes: [],
+        blockedDecisionItems: [],
+      };
+    }
+    const controller = await this.createRecoveryCenterController();
+
+    // 再取只读视图，作为**对账**这道门的依据（不触碰状态）。
+    const overview = await controller.listMissions();
+    const missionView = overview.missions.find(
+      (mission) => mission.missionIdentifier === missionIdentifier,
+    );
+    if (missionView === undefined) {
+      return {
+        outcome: "recovery-blocked-by-core",
+        missionIdentifier,
+        detail: "恢复概览里没有该 mission（不得对未知 mission 执行恢复）",
+        requiredReauthorizationTypes: [],
+        blockedDecisionItems: ["mission-not-found-in-recovery-overview"],
+      };
+    }
+
+    /**
+     * 第二道门：**先对账**。
+     *
+     * `requiredReauthorizationTypes` **不在这里预判**：它由核心的分类结果给出
+     * （`listMissions()` 不携带该信息）。照搬一个"先假装满足、再靠核心兜底"的写法
+     * 会让这道门看起来存在、实际不生效 —— 那正是要避免的空断言。
+     * 故此处**只**做可验证的两道门，第三道（重新鉴权）**由核心 `resumeMission` 强制**：
+     * 核心只在 `hasBlockingItems` 与未决冲突均为空时才给 `resumed: true`，
+     * 而一次性授权不随恢复延续会被计为阻塞项 ⇒ 未重新鉴权**不可能**得到 `resumed: true`。
+     */
+    if (missionView.reconciliationRequired === true) {
+      return {
+        outcome: "recovery-reconciliation-required",
+        missionIdentifier,
+        detail: "恢复前必须先完成对账（未知状态不得当成已恢复）",
+        requiredReauthorizationTypes: [],
+        blockedDecisionItems: [],
+      };
+    }
+
+    // 前两道门已过 ⇒ 才调用核心；第三道门（重新鉴权）由核心强制。
+    const resumeResult = await controller.resumeMission(missionIdentifier);
+    if (resumeResult.resumed) {
+      return {
+        outcome: "resumed",
+        missionIdentifier,
+        recoveredSafeNodes: resumeResult.recoveredSafeNodes,
+        requiresHandoffIdentity: resumeResult.requiresHandoffIdentity,
+        requiredReauthorizationTypes: resumeResult.reauthorizationRequiredTypes,
+      };
+    }
+    // 核心拒绝 ⇒ **原样回报**，不美化成"已恢复"。
+    return {
+      outcome: "recovery-blocked-by-core",
+      missionIdentifier,
+      detail:
+        resumeResult.blockedDecisionItems.length > 0
+          ? resumeResult.blockedDecisionItems
+              .map((item) => item.item + ": " + item.reason)
+              .join(" | ")
+          : "核心恢复未成立（未给出具体理由 ⇒ 视为未知，不当作成功）",
+      requiredReauthorizationTypes: resumeResult.reauthorizationRequiredTypes,
+      blockedDecisionItems: resumeResult.blockedDecisionItems.map((item) => item.item),
+    };
+  }
+
   /** GUI-01-R-03：恢复中心只读概览（真实 RecoveryCenterController）。 */
   async queryRecoveryOverview(): Promise<PublicRecoveryOverview> {
     this.assertOpen();
@@ -1977,8 +2103,8 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     };
   }
 
-  /** GUI-01-R-03：单个 mission 的磁盘状态/损坏/检查点/租约视图。 */
-  async inspectRecoveryMission(
+  /**
+   * GUI-01-R-03：单个 mission 的磁盘状态/损坏/检查点/租约视图。 */  async inspectRecoveryMission(
     missionIdentifier: string,
   ): Promise<PublicRecoveryMissionView | null> {
     this.assertOpen();
