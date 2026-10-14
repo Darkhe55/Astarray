@@ -29,6 +29,20 @@ let stateDirectory: string;
 let server: http.Server | null = null;
 let requestIndex = 0;
 let scriptedResponses: Array<() => string> = [];
+/**
+ * 已服务的**真实**请求数（只增不减；`requestIndex` 在 `beforeEach` 会归零，故单列一个）。
+ *
+ * 2026-11-08（第 52 轮）：用于**发现"脚本被静默夹住"**这件事 —— 见下面 `startScriptedProviderServer`
+ * 里对"超出脚本数"的处理。B2 那条偶发 `expected 'blocked' to be 'done'`，
+ * 而该用例的脚本恰好是 3 步；若模型多打了一次请求、又被静默地用最后一段脚本兜住，
+ * 现象就会非常难归因。现在超量会**显式报错**且计数可读。
+ */
+let servedRequestCount = 0;
+/** 诊断用：最近一次运行的终态与关键计数。 */
+let lastRunDiagnostics: { requestCount: number; scriptCount: number } = {
+  requestCount: 0,
+  scriptCount: 0,
+};
 
 beforeEach(async () => {
   workspaceDirectory = await fs.mkdtemp(
@@ -36,6 +50,7 @@ beforeEach(async () => {
   );
   stateDirectory = path.join(workspaceDirectory, ".astarray");
   requestIndex = 0;
+  servedRequestCount = 0;
   scriptedResponses = [];
 });
 
@@ -107,18 +122,50 @@ async function startScriptedProviderServer(
   onBeforeResponse: Array<() => void | Promise<void>> = [],
 ): Promise<string> {
   scriptedResponses = scripts;
+  servedRequestCount = 0;
+  lastRunDiagnostics = { requestCount: 0, scriptCount: scripts.length };
   server = http.createServer((request, response) => {
     request.on("data", () => {});
     request.on("end", () => {
       void (async () => {
         requestIndex += 1;
+        servedRequestCount += 1;
+        lastRunDiagnostics = {
+          requestCount: servedRequestCount,
+          scriptCount: scripts.length,
+        };
         const hook = onBeforeResponse[requestIndex - 1];
         if (hook !== undefined) {
           // 必须等待钩子完成（如重新登记授权）再回应，否则重试可能先于授权到达。
           await hook();
         }
         response.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
-        const script = scriptedResponses[Math.min(requestIndex - 1, scriptedResponses.length - 1)];
+        /**
+         * 2026-11-08（第 52 轮）：**不再静默夹住超量请求**。
+         *
+         * 原写法 `scriptedResponses[Math.min(requestIndex - 1, length - 1)]`
+         * 会把"超出脚本数"的请求**静默**地喂最后一段脚本 —— 于是"模型多打了一次"
+         * 这种真实异常会被伪装成正常流程，事后极难归因
+         * （B2 那条偶发 `expected 'blocked' to be 'done'` 就属于"现象明确、成因不明"）。
+         *
+         * 现在改为：超出脚本数时**返回一个明确的错误响应**，让问题当场可见、
+         * 且带上"请求数 vs 脚本数"的诊断信息。
+         */
+        const scriptedIndexOfRequest = requestIndex - 1;
+        if (scriptedIndexOfRequest >= scripts.length) {
+          response.write(
+            sseContent(
+              "（脚本已耗尽：本次请求数=" +
+                String(servedRequestCount) +
+                "，脚本数=" +
+                String(scripts.length) +
+                "；测试脚本未预料到额外请求）",
+            ),
+          );
+          response.end();
+          return;
+        }
+        const script = scriptedResponses[scriptedIndexOfRequest];
         response.write(script === undefined ? sseContent("（无脚本）") : script());
         response.end();
       })();
@@ -175,6 +222,22 @@ async function runToTerminal(
   application: AstarrayApplicationFacade,
   prompt: string,
 ): Promise<string> {
+  const outcome = await runToTerminalWithDiagnostics(application, prompt);
+  return outcome.status;
+}
+
+/**
+ * 2026-11-08（第 52 轮）：除了终态，还回报**是否撞上了等待上限**。
+ *
+ * 这一点对归因很关键：`blocked` 既可能是"完成门禁真的把任务判成阻塞"，
+ * 也可能是"我等了 45s 就不等了、而那一刻恰好是 blocked"。两者处置完全不同
+ * —— 前者是产品语义、后者是**测试预算**问题（本任务里已修过多起同类）。
+ */
+async function runToTerminalWithDiagnostics(
+  application: AstarrayApplicationFacade,
+  prompt: string,
+): Promise<{ status: string; didHitDeadline: boolean; elapsedMilliseconds: number }> {
+  const startedAtMilliseconds = Date.now();
   await application.submitTask({ sessionId: "session-1", taskIdentifier: "task-1", prompt });
   const deadline = Date.now() + 45_000;
   let status = (
@@ -186,7 +249,11 @@ async function runToTerminal(
       await application.queryTask({ sessionId: "session-1", taskIdentifier: "task-1" })
     ).status;
   }
-  return status;
+  return {
+    status,
+    didHitDeadline: !["done", "failed", "blocked", "cancelled"].includes(status),
+    elapsedMilliseconds: Date.now() - startedAtMilliseconds,
+  };
 }
 
 /**
@@ -379,8 +446,32 @@ describe("完成门禁：未解决的必需操作失败不得结案", () => {
     const application = await createApplication(endpoint);
     try {
       await grantToolExecution(application, "createProjectFile", toolArguments);
-      const status = await runToTerminal(application, "创建 PROBE-RETRY-OK.md");
-      expect(status).toBe("done");
+      const terminalOutcome = await runToTerminalWithDiagnostics(
+        application,
+        "创建 PROBE-RETRY-OK.md",
+      );
+      /**
+       * 2026-11-08（第 52 轮）：**失败时带上现场**。
+       *
+       * 本条曾在全量门禁下偶发 `expected 'blocked' to be 'done'`，而"现象明确、成因不明"——
+       * 无法判断到底是"模型多打了请求（脚本被静默夹住）"、"第二次工具没跑到"，
+       * 还是"完成门禁真的把它判成阻塞"、抑或"我等够了就不等了"。
+       * 现在把这些事实一并放进失败消息，下次再红就能**直接归因**。
+       */
+      const statusDiagnostics =
+        "status=" +
+        terminalOutcome.status +
+        "；撞上限=" +
+        String(terminalOutcome.didHitDeadline) +
+        "；耗时=" +
+        String(terminalOutcome.elapsedMilliseconds) +
+        "ms；提供者请求数=" +
+        String(lastRunDiagnostics.requestCount) +
+        "／脚本数=" +
+        String(lastRunDiagnostics.scriptCount) +
+        "；目标文件内容=" +
+        JSON.stringify(await fs.readFile(targetPath, "utf8").catch(() => "(不存在)"));
+      expect(terminalOutcome.status, statusDiagnostics).toBe("done");
       // 产物必须真实落盘（不是靠文本声称成功）
       expect(await fs.readFile(targetPath, "utf8")).toBe("# 第二轮写入\n");
     } finally {
