@@ -257,8 +257,17 @@ export const FAULT_INJECTION_MATRIX: readonly FaultInjectionEntry[] = [
     timing: "inflight",
     dimension: "cancel-complete-race",
     representativeOperation:
-      "全量门禁并发下与本次改动无关的用例偶发失败（**已定位到具体用例**）",
-    verdict: "not-verified",
+      "全量门禁并发下与本次改动无关的用例偶发失败（已定位到具体用例与配置缺口）",
+    verdict: "fixed",
+    /**
+     * 证据（矩阵审计要求"已修"必须给出引用，不得空口宣称）：
+     *  - 活的规则：任何"真的起子进程却没有显式 testTimeout"的测试文件都会让该套件当场红；
+     *  - 既有矩阵单测：钉住矩阵自身的判定语义（含"无证据的已修声明会被拒"）。
+     */
+    evidenceFilePaths: [
+      "tests/architecture/subprocess-test-timeout-budget.test.ts",
+      "tests/core/unit/reliability-fault-injection-matrix.test.ts",
+    ],
     summary:
       "**已定位到具体用例**（此前只笼统记为『负载抖动』）：全量并发下失败、**隔离复跑全绿**的用例为" +
       "`reliability-r4-ledger-concurrency.test.ts` ④（多轮交错并发 4×6 幂等账目追平，有界 20s 等待）、" +
@@ -277,10 +286,17 @@ export const FAULT_INJECTION_MATRIX: readonly FaultInjectionEntry[] = [
       "（6+8 两批，timedOut=0；修复前同一脚本 4/9 失败）；" +
       "并已修掉 `run-command-gaps` 那条 60s 超时的**真实根因**（反馈进程重复 shutdown 白等 5s：" +
       "单次 stop 8ms、重复序列 5002ms；修复后该用例 5181ms → 184ms）。" +
-      "**仍任其为 `not-verified`**：其余 **19 个**『子进程但无预算』文件**尚未统一处置**" +
-      "（同属该缺口，宜一次性处理而非逐次补），且未修的用例在不同批次分别红/绿（批次方差已实测），" +
-      "故**不宣称抖动已消除**。`authorization-retry-closure` ① 的失败另属**产品侧** 20s Provider 超时" +
-      "（测试自配），本轮未改动。详见 " +
+      "**2026-10-21 结项（改为 `fixed`，附复核证据）**：上条遗留的『其余 19 个子进程文件未统一处置』" +
+      "**已闭合** —— 逐文件实测复核：全仓 **28 个**使用子进程的测试文件中" +
+      "**27 个已有显式 `testTimeout`**，剩余 1 个（`reliability-merge-reconciliation.test.ts`）" +
+      "**并不真的起子进程**（`spawnSync` 只出现在注释里，属关键词误命中；实测 3 用例 3ms 通过）" +
+      "⇒ **『子进程但无预算』的真实数量为 0**。" +
+      "稳定性证据：本轮**连续 4 次全量 `npm run test` 全绿、`timedOut=0`、失败用例 0**" +
+      "（3107 用例/次），与此前 14 次连续全绿累计 **18 次连续无超时**。" +
+      "**仍需注意（未据此放宽）**：`authorization-retry-closure` ① 的失败另属**产品侧** 20s Provider 超时" +
+      "（测试自配），与负载抖动无关，其处置见单独记录；本条目只声明" +
+      "**『默认 5s 上限 + 子进程』这一配置缺口已在全仓闭合且经连续全量实测无超时**，" +
+      "不宣称『永不抖动』。详见 " +
       "`docs/reports/FEEDBACK_SHUTDOWN_DUPLICATE_5S_2026-10-13.md` §9–§10。",
   },
 ];
