@@ -70,3 +70,24 @@ export function stampPublisherOnTasks(input: {
     publishedByRecipientId: input.publisherRecipientId,
   }));
 }
+
+/**
+ * 决定**本编排器发布一条任务时**登记到自己名下的发布者信箱。
+ *
+ * - 任务已带发布者（例如由别处显式发布，或从已有任务链读回）⇒ **尊重原值**，不覆盖
+ *   （否则会把别人的反向通道改写成我们的，属另一种"错投"）；
+ * - 未带 ⇒ 登记本编排器的信箱。
+ *
+ * 单独抽成纯函数是为了**可测**：`MissionOrchestrator` 内部构造 Worker、无注入口，
+ * 无法在编排层断言；把规则抽出来即可逐项验证，编排层只做一次调用。
+ */
+export function resolvePublisherRecipientIdForTask(input: {
+  task: TaskDependencyNode;
+  publisherRecipientId: string;
+}): string {
+  const existing = input.task.publishedByRecipientId;
+  if (typeof existing === "string" && existing.trim() !== "") {
+    return existing;
+  }
+  return input.publisherRecipientId;
+}

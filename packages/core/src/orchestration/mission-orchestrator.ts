@@ -20,6 +20,8 @@ import type { GitWorkerAllocation } from "../core/types.js";
 import type { GitIntegrationReport } from "../core/types.js";
 import type { ToolDescriptor } from "../core/types.js";
 import type { ContextPromptProvider } from "./context-prompt-assembler.js";
+// COMM-01-02（2026-10-26）：发布任务时登记自己的信箱 ⇒ 反馈走发布者反向通道。
+import { resolvePublisherRecipientIdForTask } from "./task-publisher-feedback-route.js";
 import type { GuidanceControlQueue } from "../runtime-guidance/guidance-control-queue.js";
 
 /**
@@ -475,7 +477,19 @@ export class MissionOrchestrator {
     const worker = new WorkerAgent({
       agentInstanceId,
       missionId,
-      task,
+      /**
+       * COMM-01-02（2026-10-26）：**本编排器即这条任务的发布者**，
+       * 故在此把自己的信箱登记到任务上 —— 执行者的反馈据此走
+       * **任务发布者的反向通道**（而不是靠"上下级"或硬编码推断）。
+       * 已有发布者的任务**尊重原值**（不覆盖别人的反向通道）。
+       */
+      task: {
+        ...task,
+        publishedByRecipientId: resolvePublisherRecipientIdForTask({
+          task,
+          publisherRecipientId: `scheduler:${missionId}`,
+        }),
+      },
       availableToolDescriptors:
         this.options.workerFactories.toolDescriptorFactory?.(task) ?? [],
       requireCompletionEvent: this.options.requireCompletionControlEvent ?? false,

@@ -252,6 +252,23 @@ export const MUTATIONS = [
       "把反馈去向改回硬编码 scheduler 后，'反馈走任务发布者反向通道'必须变红" +
       "（用户澄清：反馈**不是**根据上下级关系，而是默认走任务发布者的反向通道）",
   },
+  {
+    mutationIdentifier: "comm01-publisher-stamp-overwrites-existing",
+    targetFile: "packages/core/src/orchestration/task-publisher-feedback-route.ts",
+    find: `  const existing = input.task.publishedByRecipientId;
+  if (typeof existing === "string" && existing.trim() !== "") {
+    return existing;
+  }`,
+    replace: `  const existing = input.task.publishedByRecipientId;
+  if (false && typeof existing === "string" && existing.trim() !== "") {
+    return existing;
+  }`,
+    testFiles: ["tests/core/unit/comm01-task-publisher-feedback-route.test.ts"],
+    expectedFailingTestNames: ["任务**已带**发布者 ⇒ 尊重原值"],
+    rationale:
+      "强行覆盖既有发布者 ⇒ 会把反馈从真正的发布者改投到本编排器（另一种'错投'）" +
+      "（'尊重原值'这条必须变红）",
+  },
 ];
 
 function sha256OfFile(filePath) {

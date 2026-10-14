@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import type { TaskDependencyNode } from "../../../packages/core/src/core/types.js";
 import {
   resolveFeedbackRecipient,
+  resolvePublisherRecipientIdForTask,
   stampPublisherOnTasks,
 } from "../../../packages/core/src/orchestration/task-publisher-feedback-route.js";
 
@@ -96,5 +97,56 @@ describe("COMM-01-02：反馈去向 = 任务发布者的反向通道", () => {
     expect(first.recipientId).toBe("main:mission-7");
     expect(second.recipientId).toBe("scheduler:mission-2");
     expect(first.recipientId).not.toBe(second.recipientId);
+  });
+});
+
+describe("COMM-01-02：发布者登记规则（编排器发布任务时用）", () => {
+  it("⑥ 任务未带发布者 ⇒ 登记**本编排器**的信箱", () => {
+    const recipientId = resolvePublisherRecipientIdForTask({
+      task: buildTask(),
+      publisherRecipientId: "scheduler:mission-1",
+    });
+
+    expect(recipientId).toBe("scheduler:mission-1");
+  });
+
+  it("⑦ 任务**已带**发布者 ⇒ 尊重原值（不覆盖别人的反向通道）", () => {
+    const recipientId = resolvePublisherRecipientIdForTask({
+      task: buildTask({ publishedByRecipientId: "main:mission-7" }),
+      publisherRecipientId: "scheduler:mission-1",
+    });
+
+    // 覆盖会把反馈从真正的发布者改投到我们这里 —— 那是另一种"错投"
+    expect(recipientId).toBe("main:mission-7");
+  });
+
+  it("⑧ 发布者字段为空白 ⇒ 视为未登记，用本编排器信箱补齐", () => {
+    const recipientId = resolvePublisherRecipientIdForTask({
+      task: buildTask({ publishedByRecipientId: "  " }),
+      publisherRecipientId: "scheduler:mission-1",
+    });
+
+    expect(recipientId).toBe("scheduler:mission-1");
+  });
+
+  it("⑨ 登记后再解析去向 ⇒ 走发布者反向通道（两段规则衔接一致）", () => {
+    const task = buildTask();
+    const stamped = {
+      ...task,
+      publishedByRecipientId: resolvePublisherRecipientIdForTask({
+        task,
+        publisherRecipientId: "scheduler:mission-1",
+      }),
+    };
+
+    const route = resolveFeedbackRecipient({
+      task: stamped,
+      defaultSchedulerRecipientId: "scheduler:mission-1",
+    });
+
+    expect(route.recipientId).toBe("scheduler:mission-1");
+    // 关键：登记后**不再**是"回退"，而是**正向的发布者反向通道**
+    expect(route.isPublisherReverseChannel).toBe(true);
+    expect(route.fallbackReason).toBeNull();
   });
 });
