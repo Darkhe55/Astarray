@@ -366,13 +366,28 @@ describe("完成门禁：未解决的必需操作失败不得结案", () => {
       // 门禁判词必须落进工作存档（可追溯）。
       // 判词可能来自两条规则：①"该写工具未成功"；②"尝试过写工具但从未成功执行"
       // （2026-10-02 阻断项修复新增）。两者都表示"验收缺失、不得结案"。
-      const archivedSummaries = await readArchivedSummaries(stateDirectory);
-      expect(
-        archivedSummaries.some(
+      //
+      // 2026-11-08（第 52 轮）：**改为有界等待存档落盘**。
+      // 本条曾在全量门禁下偶发（`expected false to be true`），而"状态已终态"与
+      // "判词已写进工作存档"是**两件有先后的事** —— 原来只读一次磁盘，
+      // 负载下归档尚未落盘就会误红。现改为在**有界窗口内**重试读取；
+      // **断言本身没有放宽**：判词最终必须出现，只是不再强求"此刻已在磁盘上"。
+      const doesVerdictAppear = (summaries: string[]): boolean =>
+        summaries.some(
           (summary) =>
             summary.includes("writeFileTemporary 未成功") ||
             summary.includes("必需操作未成功执行"),
-        ),
+        );
+      let archivedSummaries = await readArchivedSummaries(stateDirectory);
+      const verdictDeadline = Date.now() + 10_000;
+      while (!doesVerdictAppear(archivedSummaries) && Date.now() < verdictDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        archivedSummaries = await readArchivedSummaries(stateDirectory);
+      }
+      expect(
+        doesVerdictAppear(archivedSummaries),
+        "工作存档里始终没有出现门禁判词；已读到的摘要数=" +
+          String(archivedSummaries.length),
       ).toBe(true);
     } finally {
       await application.shutdown();
