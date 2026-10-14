@@ -1,6 +1,31 @@
 # BRIDGE-01：外部工具接入 MVP
 
 > 状态：**done（2026-10-10）**：01/02/03 done，-04 真实第三方客户端消费已完成（仅缺 macOS/Linux 平台验证）
+>
+> **✅ 2026-11-08（第 41 轮）：Linux 侧平台验证已取得（WSL2）**，按用户指示
+> 「**Linux 部分使用 WSL 做，macOS 部分先跳过，保留记录以后再补**」。
+>
+> | 项 | 值 |
+> | --- | --- |
+> | 平台 | **WSL2**（`6.18.33.2-microsoft-standard-WSL2`）／ **Ubuntu 26.04 LTS** |
+> | 运行时 | **Node v22.22.1** |
+> | 源提交 | `5f08ef0`（WSL 原生文件系统内独立检出，`npm ci` 重装 Linux 依赖） |
+> | 命令 | `node scripts/verify-mcp-bridge-loop.mjs` |
+> | 结果 | **退出码 0**；`checkCount = 20`、**passed 20／failed 0**、`isPassed: true` |
+>
+> **该脚本自足、无需外部 MCP 客户端**：它只 `spawn(process.execPath, [cliEntryPath, "mcp", "serve"])`
+> （即 `node dist/cli.js mcp serve`），**不触网、不用凭据**，故可直接在 Linux 复跑。
+> Linux 上逐条通过的关键判据含：**主体隔离**（他人任务一律 `task-not-accessible`，且不误伤
+> 「自己能读自己的」）、**断连收口**（`stdin` 结束后进程**自行退出** `exitCode 0`、**未走 `SIGKILL`**）、
+> **stdout 纯净性**（多主体连接时只含合法 MCP 消息）、**业务级失败与协议级失败可区分**。
+> ⇒ 与 Windows 记录「**20 项全过／0 失败**」**完全一致** ⇒ 该闭环在两平台结论一致。
+>
+> **仍未验证（不因本行改变）**：
+> - **macOS 平台证据**：**未取得**（本次按指示先跳过、保留待补）；
+> - **真实第三方客户端（`opencode`/`pi`）在 Linux 上的消费**：**未验证**（本次跑的是脚本化闭环；
+>   WSL 内是否装有该两客户端**未探测**，不臆断）。
+>
+> ⇒ **本卡不因本次 Linux 证据改判**；详见 `docs/reports/BRIDGE01_LINUX_PLATFORM_EVIDENCE_WSL2_2026-11-08.md`。
 > 创建日期：2026-09-10
 > 类型：后续扩展；高风险工作按检查点执行
 > 来源：用户授权布置；本文件为Agent派生实施方案，运行态节点默认层级1或以下，不冒充用户层级0
