@@ -314,6 +314,23 @@ allow-once / allow-session / deny / modify / Esc 五条决策分支与初始渲�
   `All files | 92.46 | 85.02 | 93.18 | 92.49`（branches 85.02% ≥ 85%，见 B6R-10 §复核）；
   该项原为分支 83.56% 的**失败门禁**，经四批**行为测试**（非硬凑）补齐；
   typecheck/lint/build 全绿，`npm run check` **exit 0**（**361 文件 / 2718 用例、skipped 0**）。
-- **仍未完成**：平台不可达分支（Windows-only 的非 win32 归一化路径、
+- **仍未完成（2026-11-08 第 53 轮更新：Linux 侧已取得证据；macOS 仍缺）**：平台不可达分支（Windows-only 的非 win32 归一化路径、
   `sensitive-content-access-policy` L78/L156、`protected-storage-policy` L40）
   ⇒ **须由 Linux/macOS 平台提供证据**，本会话不得以文字覆盖。
+
+  > **✅ Linux 侧证据已取得（WSL2 ／ Ubuntu 26.04 LTS ／ Node v22.22.1 ／ 源提交 `9d894fe`，与 Windows 同提交）**：
+  > 定向测量三个文件 ⇒ **分支覆盖率全部 100%**：
+  > `cross-platform-path-canonicalization.ts` **100.0%（23/23）**、
+  > `protected-storage-policy.ts` **100.0%（13/13）**、
+  > `sensitive-content-access-policy.ts` **100.0%（28/28）**。
+  > ⇒ 卡内点名的「Windows-only／非 win32 归一化」分支在 Linux 上**确实被执行到了**（**平台证据**，非文字说明）。
+  > 同一次 WSL 全量：**431 文件 / 3255 用例（3253 passed ＋ 2 skipped）、exit 0**。
+  >
+  > **⚠️ 一处未能对齐（如实）**：卡内用**行号**指认分支，但按**当前提交**读这些行号内容已不符
+  > （如 `protected-storage-policy.ts:40` 现为一行注释）⇒ 文件有过改动、**行号已漂移**。
+  > **我没有据此声称「卡内三处就是这三处」**，而改用**更强且不依赖行号**的判据：
+  > **这三个文件的分支覆盖率在 Linux 上达到 100%** ⇒ 只要成立，就**不存在**任何
+  > 「只在非 win32 平台可达却从未被走到」的分支（同时覆盖卡内点名的三处**及**可能被遗漏的同类分支）。
+  >
+  > **仍未取得**：**macOS 平台证据**（按指示先跳过）⇒ **本卡仍不得改判通过**。
+  > 详见 `docs/reports/AR07_LINUX_PLATFORM_EVIDENCE_WSL2_2026-11-08.md`。
