@@ -164,6 +164,13 @@ for (const check of checks) {
 // ─── PROJECT-01-04：跨项目只读 / 副本导入（同一 tarball 内）───
 // 授权用**已安装包**的公开 SDK 写入；随后的只读/导入走**已安装包**的 CLI。
 const crossProjectRoot = path.join(installRoot, "cross-project");
+/**
+ * PROJECT-01-03（2026-11-02）：**项目根**必须传给 CLI。
+ * 服务据此把「声明路径」锚定到真实文件；缺它一律 fail-closed 回 `resource-out-of-scope`
+ * （实测：本脚本的 5 条跨项目判据曾全部因此变红）。
+ */
+const sourceProjectRoot = path.join(crossProjectRoot, "project-a");
+const targetProjectRoot = path.join(crossProjectRoot, "project-b");
 const sourceAbsolutePath = path.join(crossProjectRoot, "project-a", "docs", "spec.md");
 const targetAbsolutePath = path.join(crossProjectRoot, "project-b", "docs", "spec-copy.md");
 const occupiedTargetPath = path.join(crossProjectRoot, "project-b", "docs", "occupied.md");
@@ -221,6 +228,8 @@ const readAllowed = runInstalled([
   "docs/spec.md",
   "--absolute-resource",
   sourceAbsolutePath,
+  "--source-project-root",
+  sourceProjectRoot,
   "--arguments-hash",
   "pkg-hash-read",
   "--json",
@@ -238,6 +247,8 @@ const readUnauthorized = runInstalled([
   "docs/spec.md",
   "--absolute-resource",
   sourceAbsolutePath,
+  "--source-project-root",
+  sourceProjectRoot,
   "--arguments-hash",
   "pkg-hash-read",
   "--json",
@@ -259,6 +270,10 @@ const importAllowed = runInstalled([
   sourceAbsolutePath,
   "--absolute-target",
   targetAbsolutePath,
+  "--source-project-root",
+  sourceProjectRoot,
+  "--target-project-root",
+  targetProjectRoot,
   "--source-revision",
   "3",
   "--arguments-hash",
@@ -282,6 +297,10 @@ const importStaleRejected = runInstalled([
   sourceAbsolutePath,
   "--absolute-target",
   occupiedTargetPath,
+  "--source-project-root",
+  sourceProjectRoot,
+  "--target-project-root",
+  targetProjectRoot,
   "--source-revision",
   "3",
   "--arguments-hash",

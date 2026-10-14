@@ -623,6 +623,18 @@ crossProjectCommand
   .requiredOption("--absolute-resource <absolute-path>", "来源资源绝对路径（真正被读取）")
   .requiredOption("--arguments-hash <hash>", "完整规范化参数哈希（必须与授权绑定一致）")
   .option("--source-revision <revision>", "来源项目当前 revision（给出时须与授权绑定一致）")
+  /**
+   * PROJECT-01-03（2026-11-02）：**来源项目根**。
+   *
+   * 服务据此把「声明路径」锚定到真实文件，证明 `--absolute-resource`
+   * 就是授权范围内的那个文件。此前 CLI **未暴露该选项**、执行器也从未收到它
+   * ⇒ 一律 fail-closed 回 `resource-out-of-scope`
+   * （实测：包级验收的跨项目判据 5/5 全红）。
+   */
+  .requiredOption(
+    "--source-project-root <dir>",
+    "来源项目根（用于把声明路径锚定到真实文件）",
+  )
   .option("--expected-content-hash <hash>", "期望内容哈希（不符即拒绝）")
   .option("--now <iso>", "显式当前时间（ISO 8601）")
   .option("--json", "JSON 输出")
@@ -634,6 +646,7 @@ crossProjectCommand
       resource: string;
       absoluteResource: string;
       argumentsHash: string;
+      sourceProjectRoot: string;
       sourceRevision?: string;
       expectedContentHash?: string;
       now?: string;
@@ -648,6 +661,8 @@ crossProjectCommand
         sourceResourcePath: options.resource,
         absoluteResourcePath: options.absoluteResource,
         argumentsHash: options.argumentsHash,
+        // PROJECT-01-03：来源项目根必须传到服务，否则声明路径无法锚定 ⇒ 一律 out-of-scope。
+        sourceProjectRootPath: options.sourceProjectRoot,
         ...(options.sourceRevision === undefined
           ? {}
           : { currentSourceProjectRevision: Number(options.sourceRevision) }),
@@ -670,6 +685,18 @@ crossProjectCommand
   .requiredOption("--absolute-target <absolute-path>", "目标绝对路径（真正被写出）")
   .requiredOption("--source-revision <revision>", "来源项目 revision（必须与授权绑定一致）")
   .requiredOption("--arguments-hash <hash>", "完整规范化参数哈希（必须与授权绑定一致）")
+  /**
+   * PROJECT-01-03（2026-11-02）：**来源/目标项目根**（与 `read` 同因）。
+   * 此前未暴露 ⇒ 服务无法把声明路径锚定到真实文件 ⇒ 一律 `resource-out-of-scope`。
+   */
+  .requiredOption(
+    "--source-project-root <dir>",
+    "来源项目根（用于把来源声明路径锚定到真实文件）",
+  )
+  .requiredOption(
+    "--target-project-root <dir>",
+    "目标项目根（用于把目标声明路径锚定到真实文件）",
+  )
   .option(
     "--expected-target-content-hash <hash>",
     "目标预期内容哈希（给出时可判定人工改动；未给出且目标已存在则拒绝覆盖）",
@@ -687,6 +714,8 @@ crossProjectCommand
       absoluteTarget: string;
       sourceRevision: string;
       argumentsHash: string;
+      sourceProjectRoot: string;
+      targetProjectRoot: string;
       expectedTargetContentHash?: string;
       now?: string;
       json?: boolean;
@@ -703,6 +732,9 @@ crossProjectCommand
         absoluteTargetPath: options.absoluteTarget,
         sourceRevision: Number(options.sourceRevision),
         argumentsHash: options.argumentsHash,
+        // PROJECT-01-03：两个项目根都必须传到服务，否则声明路径无法锚定 ⇒ out-of-scope。
+        sourceProjectRootPath: options.sourceProjectRoot,
+        targetProjectRootPath: options.targetProjectRoot,
         ...(options.expectedTargetContentHash === undefined
           ? {}
           : { expectedTargetContentHash: options.expectedTargetContentHash }),
