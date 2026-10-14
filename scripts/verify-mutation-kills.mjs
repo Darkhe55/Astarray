@@ -286,6 +286,52 @@ export const MUTATIONS = [
       "编排器不再登记发布者 ⇒ '编排器产出的 Worker 配置里带着编排器自己的信箱'必须变红" +
       "（否则这次'启用'等于没启用，反向通道又变回死代码）",
   },
+  {
+    mutationIdentifier: "comm01-relay-recipient-bypassed",
+    targetFile: "packages/core/src/orchestration/collaboration-relay-via-parent.ts",
+    find: `    request: {
+      relayRecipientAgentInstanceId: directParentAgentInstanceId,`,
+    replace: `    request: {
+      relayRecipientAgentInstanceId: input.targetAgentInstanceId,`,
+    testFiles: ["tests/core/unit/comm01-collaboration-relay.test.ts"],
+    expectedFailingTestNames: [
+      "收件人**由本地按归属算出** = 目标的唯一直属上级",
+      "**不允许第二上级直接下令**",
+    ],
+    rationale:
+      "把收件人改成目标自己（绕过其唯一直属上级）后，'经唯一上级转达'必须变红" +
+      "（卡内 §2.2：涉及三级/四级目标的跨上级句柄须向**其直属上级的协作收件箱**递交）",
+  },
+  {
+    mutationIdentifier: "comm01-relay-marks-original-instruction",
+    targetFile: "packages/core/src/orchestration/collaboration-relay-via-parent.ts",
+    find: `      isRelayedRequest: true,`,
+    replace: `      isRelayedRequest: false as never,`,
+    testFiles: ["tests/core/unit/comm01-collaboration-relay.test.ts"],
+    expectedFailingTestNames: ["**显式标注为转达**（不冒充原创）"],
+    rationale:
+      "不再标注为转达 ⇒ 接收方会把转达请求当成直属上级的**原创指令**" +
+      "（卡内 §2.2 明确：转达保留来源、转达者与任务关联，**不冒充直属上级原创**）",
+  },
+  {
+    mutationIdentifier: "comm01-relay-parent-unavailable-not-paused",
+    targetFile: "packages/core/src/orchestration/collaboration-relay-via-parent.ts",
+    find: `    return {
+      isRoutable: false,
+      isPausedForRecovery: true,
+      reason:
+        "协作目标的直属上级 \`" + directParentAgentInstanceId +`,
+    replace: `    return {
+      isRoutable: false,
+      isPausedForRecovery: false as never,
+      reason:
+        "协作目标的直属上级 \`" + directParentAgentInstanceId +`,
+    testFiles: ["tests/core/unit/comm01-collaboration-relay.test.ts"],
+    expectedFailingTestNames: ["**原上级已不可用** ⇒ **暂停并存档**"],
+    rationale:
+      "原上级不可用却不再要求暂停存档 ⇒ 执行者可能被诱导自行另找上级" +
+      "（卡内 §2.2：原上级不可用时暂停并存档，不让执行者自行找新上级）",
+  },
 ];
 
 function sha256OfFile(filePath) {

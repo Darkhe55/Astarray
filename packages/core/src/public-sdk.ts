@@ -60,6 +60,13 @@ export {
   type AgentCreationRecord,
   type AgentCreationRegistryOptions,
 } from "./orchestration/agent-parent-binding-store.js";
+// 2026-10-28（COMM-01-02 §2.2）：协作请求必须经目标的**唯一直属上级**代理转达
+// （执行者不选收件人；转达保留来源/转达者/任务关联且不冒充原创；原上级不可用则暂停存档）。
+export {
+  routeCollaborationViaUniqueParent,
+  type RelayedCollaborationOutcome,
+  type RelayedCollaborationRequest,
+} from "./orchestration/collaboration-relay-via-parent.js";
 // 2026-10-24（TOOLKIT-01-04）：工具**升级包**必须显式声明三模式默认权限规则与理由，
 // 且升级要**新增**新功能开关、**移除**消失功能的旧开关。
 export {
