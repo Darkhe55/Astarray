@@ -197,6 +197,45 @@ export const MUTATIONS = [
       "放开'不得放大'后，下级可授出无期限/更长期限的能力 ⇒ 逐层分发变成权限膨胀" +
       "（用户要求'向下级逐层分发'但**不得放大**）",
   },
+  {
+    mutationIdentifier: "toolkit01-upgrade-declaration-modes-not-required",
+    targetFile: "packages/core/src/toolkit/tool-upgrade-permission-declaration.ts",
+    find: `  if (missingModes.length > 0) {`,
+    replace: `  if (false && missingModes.length > 0) {`,
+    testFiles: ["tests/core/unit/toolkit01-upgrade-permission-declaration.test.ts"],
+    expectedFailingTestNames: ["**缺少任一模式** ⇒ 拒绝"],
+    rationale:
+      "不再要求三模式齐全后，升级包可以只声明一部分模式就落地" +
+      "（用户明确要求'必须显式声明三种模式的默认权限规则和理由'）",
+  },
+  {
+    mutationIdentifier: "toolkit01-upgrade-declaration-reason-not-required",
+    targetFile: "packages/core/src/toolkit/tool-upgrade-permission-declaration.ts",
+    find: `      if (rule.reason.trim() === "") {`,
+    replace: `      if (false && rule.reason.trim() === "") {`,
+    testFiles: ["tests/core/unit/toolkit01-upgrade-permission-declaration.test.ts"],
+    expectedFailingTestNames: ["但**规则没有理由** ⇒ 拒绝"],
+    rationale:
+      "不再要求理由后，升级包可加开关却不说为什么" +
+      "（用户明确要求'显式声明三种模式的默认权限规则**和理由**'）",
+  },
+  {
+    mutationIdentifier: "toolkit01-upgrade-removed-feature-rules-kept",
+    targetFile: "packages/core/src/toolkit/tool-upgrade-permission-declaration.ts",
+    find: `  const retainedRules = input.existingRules.filter((rule) => {
+    const key = rule.ruleIdentifier ?? rule.action;
+    return !removedFeatureIdentifiers.has(key);
+  });`,
+    replace: `  const retainedRules = input.existingRules.filter((rule) => {
+    const key = rule.ruleIdentifier ?? rule.action;
+    return true || !removedFeatureIdentifiers.has(key);
+  });`,
+    testFiles: ["tests/core/unit/toolkit01-upgrade-permission-declaration.test.ts"],
+    expectedFailingTestNames: ["**消失的功能** ⇒ 移除其旧规则"],
+    rationale:
+      "不再移除消失功能的旧规则后，'消失的功能也要对应移除旧的权限管理开关'这条就不成立" +
+      "（会留下指向已不存在功能的僵尸开关）",
+  },
 ];
 
 function sha256OfFile(filePath) {

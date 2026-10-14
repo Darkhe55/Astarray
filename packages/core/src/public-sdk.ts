@@ -60,6 +60,20 @@ export {
   type AgentCreationRecord,
   type AgentCreationRegistryOptions,
 } from "./orchestration/agent-parent-binding-store.js";
+// 2026-10-24（TOOLKIT-01-04）：工具**升级包**必须显式声明三模式默认权限规则与理由，
+// 且升级要**新增**新功能开关、**移除**消失功能的旧开关。
+export {
+  TOOL_UPGRADE_DECLARED_MODES,
+  reconcilePermissionRulesForUpgrade,
+  validateToolUpgradePermissionDeclaration,
+  type DeclaredModePermissionRules,
+  type DeclaredPermissionRule,
+  type DeclarationValidationOutcome,
+  type ExistingAuthorizationRule,
+  type PermissionRulesReconciliationOutcome,
+  type ToolUpgradeFeatureDelta,
+  type ToolUpgradePermissionDeclaration,
+} from "./toolkit/tool-upgrade-permission-declaration.js";
 import {
   evaluateInstructionDeadline,
   type InstructionDeadlineEvaluation,
