@@ -34,7 +34,19 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+/**
+ * 2026-11-08（第 57 轮）：**本守卫自己也要给预算**。
+ *
+ * 实测：全量门禁下本文件曾报 `Test timed out in 5000ms` ——
+ * 因为它要**读取全部 431 个测试文件**，而 vitest 默认单个用例上限只有 5s。
+ * 这与本任务里反复修过的那一类完全同源（"自己要做重活却不给预算"），
+ * 只不过这次**栽在我自己写的守卫上**（它不 spawn 子进程，故不被
+ * `subprocess-test-timeout-budget` 守卫扫到 —— 那条规则只覆盖子进程/起服务）。
+ */
+vi.setConfig({ testTimeout: 60_000 });
+
 
 /** `endsWith("}")` 形态的结果到齐判据。 */
 const RESULT_COMPLETENESS_PATTERN = /endsWith\("}"\)/;
@@ -77,11 +89,24 @@ describe("架构守卫：等待子进程结果时不得以'像 JSON'当作'JSON 
     const offenders: string[] = [];
     let occurrences = 0;
 
-    for (const filePath of testFiles) {
-      if (path.basename(filePath) === GUARD_FILE_NAME) {
-        continue;
-      }
-      const sourceText = await fs.readFile(filePath, "utf8");
+    /**
+     * 2026-11-08（第 57 轮）：**并发读取**，不再 431 次串行 await。
+     *
+     * 串行读 431 个文件是全量门禁下超时的直接原因（见文件头的 setConfig 说明）。
+     * 并发读把墙钟时间从"431 次 I/O 之和"压到"一次批量的时间"，
+     * 既治本又保留可读性。**扫描逻辑与断言一字未改。**
+     */
+    const scannedFiles = testFiles.filter(
+      (filePath) => path.basename(filePath) !== GUARD_FILE_NAME,
+    );
+    const fileTexts = await Promise.all(
+      scannedFiles.map(async (filePath) => ({
+        filePath,
+        sourceText: await fs.readFile(filePath, "utf8"),
+      })),
+    );
+
+    for (const { filePath, sourceText } of fileTexts) {
       const lines = sourceText.split("\n");
       for (let index = 0; index < lines.length; index += 1) {
         if (!RESULT_COMPLETENESS_PATTERN.test(lines[index]!)) {

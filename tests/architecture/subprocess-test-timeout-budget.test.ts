@@ -15,7 +15,23 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+/**
+ * 2026-11-08（第 57 轮）：**本守卫自己也要给预算**。
+ *
+ * 实测：全量门禁下本文件（与本轮的另一个守卫）曾报 `Test timed out in 5000ms` ——
+ * 因为它们都要**读取全部 431 个测试文件**，而默认单例上限只有 5s。
+ * 这与本任务反复修过的那一类**完全同源**（"自己要做重活却不给预算"），
+ * 只不过这次栽在**我自己写的守卫**上：它不 spawn 子进程，
+ * 故**不被它自己那条规则覆盖**（那条只扫子进程/起服务）。
+ *
+ * 诚实说明：文件里原有的 `setConfig` 字样是**正则模式定义**
+ * （`TIMEOUT_BUDGET_PATTERN` 里写着 `setConfig\s*\(\s*\{\s*testTimeout`），
+ * 不是真的调用 —— 所以它此前**确实没有预算**。
+ */
+vi.setConfig({ testTimeout: 60_000 });
+
 
 /** 真正会起子进程的调用形态（注释里的关键词会被剔除后再判断）。 */
 const SUBPROCESS_CALL_PATTERN =
@@ -65,8 +81,15 @@ describe("RELIABILITY-01：起子进程 / 起服务的用例必须显式给出�
     let subprocessFileCount = 0;
     let serverFileCount = 0;
 
-    for (const filePath of testFiles) {
-      const sourceText = await fs.readFile(filePath, "utf8");
+    // 2026-11-08（第 57 轮）：并发读取替代 431 次串行 await（超时的直接原因）。
+    const fileTexts = await Promise.all(
+      testFiles.map(async (filePath) => ({
+        filePath,
+        sourceText: await fs.readFile(filePath, "utf8"),
+      })),
+    );
+
+    for (const { filePath, sourceText } of fileTexts) {
       const codeText = stripComments(sourceText);
       const startsSubprocess = SUBPROCESS_CALL_PATTERN.test(codeText);
       const startsServer = SERVER_CALL_PATTERN.test(codeText);
@@ -121,8 +144,15 @@ describe("RELIABILITY-01：起子进程 / 起服务的用例必须显式给出�
     const offenders: string[] = [];
     let deadlineOccurrenceCount = 0;
 
-    for (const filePath of testFiles) {
-      const sourceText = await fs.readFile(filePath, "utf8");
+    // 2026-11-08（第 57 轮）：同样改为并发读取。
+    const fileTexts = await Promise.all(
+      testFiles.map(async (filePath) => ({
+        filePath,
+        sourceText: await fs.readFile(filePath, "utf8"),
+      })),
+    );
+
+    for (const { filePath, sourceText } of fileTexts) {
       const testTimeoutMatch = /setConfig\(\s*\{\s*testTimeout:\s*([0-9_]+)/.exec(sourceText);
       if (testTimeoutMatch === null) {
         continue;
