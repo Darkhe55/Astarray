@@ -33,6 +33,26 @@ afterEach(async () => {
 });
 
 /** 孙进程心跳：每 50ms 追加一行；文件停止增长即表示孙进程已被收口。 */
+/**
+ * 夹具（父 + 孙）的最长存活时间。
+ *
+ * ## 为什么是 8 秒而不是 60 秒（2026-11-07，RELIABILITY-01-03）
+ *
+ * **实测复现的缺陷**：每次运行本文件都会**永久泄漏**一个 `astarray-git-tree-*` 临时目录。
+ * 机制：用例 ⓪ 只等 **6s** 就把夹具丢下（`Promise.race` 的窗口），而夹具原本活 **60s**
+ * ⇒ 孙进程作为孤儿继续持有该目录内的心跳文件句柄 ⇒ `afterEach` 的
+ * `fs.rm(..., { force: true })` 在 Windows 上因**文件被占用**而失败
+ * ⇒ 目录残留（`force` 只忽略 ENOENT，不忽略 EBUSY/EPERM）。
+ * 已验证：文件跑完后**系统里已无任何 node 进程**（`Get-Process node` = 0），
+ * 目录**依然存在** ⇒ 属**永久**残留，不是"等一会儿就好"。
+ *
+ * ⇒ 把最长存活压到 **8s**：两次用例都不需要夹具活得比这更久
+ * （⓪ 只要求 6s 内写出 >3 行心跳；① 在 1s 超时后只再观测 ~2.2s），
+ * 于是孤儿在 `afterEach` 之前（或至少很快）就自然退出，句柄释放、目录可回收。
+ * **断言强度未变**：⓪ 仍是 `>3` 行，① 仍是"心跳停止增长"。
+ */
+const FIXTURE_MAXIMUM_LIFETIME_MILLISECONDS = 8_000;
+
 function buildGrandchildHeartbeatScript(heartbeatPath: string): string {
   const escapedPath = heartbeatPath.replace(/\\/g, "\\\\");
   return [
@@ -41,7 +61,7 @@ function buildGrandchildHeartbeatScript(heartbeatPath: string): string {
     `  try { fs.appendFileSync("${escapedPath}", "beat\\n"); } catch {}`,
     "}, 50);",
     "timer.unref?.();",
-    "setTimeout(() => process.exit(0), 60000);",
+    `setTimeout(() => process.exit(0), ${String(FIXTURE_MAXIMUM_LIFETIME_MILLISECONDS)});`,
   ].join("\n");
 }
 
@@ -50,7 +70,7 @@ function buildParentScript(heartbeatPath: string): string {
     'const { spawn } = require("node:child_process");',
     `const child = spawn(process.execPath, ["-e", ${JSON.stringify(buildGrandchildHeartbeatScript(heartbeatPath))}], { stdio: "ignore", windowsHide: true });`,
     "child.unref();",
-    "setTimeout(() => process.exit(0), 60000);",
+    `setTimeout(() => process.exit(0), ${String(FIXTURE_MAXIMUM_LIFETIME_MILLISECONDS)});`,
   ].join("\n");
 }
 
@@ -83,11 +103,15 @@ describe("GitProcess 超时的进程树收口（R2）", () => {
      *
      * 故把活性窗口放宽到 **6s**：这只影响"是否给夹具足够时间**证明自己活着**"，
      * **不触及任何断言强度** —— `>3` 的门槛与 ① 的"心跳停止增长"判定都原样保留。
+     *
+     * **2026-11-07 修正（RELIABILITY-01-03，临时目录泄漏）**：上面这种"等 6s 就把夹具
+     * **丢下不管**"的写法会让夹具继续存活到其上限，而**孤儿孙进程持有本临时目录内
+     * 心跳文件的句柄** ⇒ `afterEach` 的 `fs.rm` 在 Windows 上失败 ⇒ **每次运行永久残留
+     * 一个 `astarray-git-tree-*` 目录**（已实测复现）。
+     * 现改为**等夹具自然结束**（其上限已压到 8s）：既仍然证明"孙进程确实在写心跳"，
+     * 又保证用例结束时不留下任何持有句柄的进程。**断言强度不变**。
      */
-    await Promise.race([
-      gitProcess.run(workingDirectoryPath, [], "夹具命令（活性）").catch(() => null),
-      new Promise((resolve) => setTimeout(resolve, 6_000)),
-    ]);
+    await gitProcess.run(workingDirectoryPath, [], "夹具命令（活性）").catch(() => null);
     expect(countHeartbeatLines(heartbeatPath)).toBeGreaterThan(3);
   });
 
