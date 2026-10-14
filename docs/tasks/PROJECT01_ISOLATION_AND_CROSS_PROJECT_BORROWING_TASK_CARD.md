@@ -169,6 +169,24 @@ Agent仅接收不透明授权引用和公开范围说明，不接收可外传的
 > ⇒ 目标已存在时仍 fail-closed（**安全默认**，但等于"能读不能覆盖导入"）。
 > 上述**已知边界**是否扩展（保管库保护以单一状态目录为界）亦待决定。
 > 多项目/多同级个体**压力验收**与包级验收仍待做 ⇒ **不主张 PROJECT-01-03/04 通过**。
+> > **2026-11-02（`ce1ea3f`）：包级（tarball 隔离安装）验收**已通过 17/17**，
+> > 并实测查出一个 **CLI 接线缺口**。**上句"包级验收仍待做"已不成立**（压力验收仍未做）。
+> >
+> > **实测缺口**：`npm run verify:instruction-entry-package` 曾 **exit 1（12/17）**，
+> > 5 条跨项目判据**全红**、失败原文一致：`outcome=resource-out-of-scope`。
+> > 根因：服务需 `sourceProjectRootPath`/`targetProjectRootPath` 才能把声明路径锚定到真实文件，
+> > 而 **CLI 的 `cross-project read`/`import-copy` 从未注册这两个选项、也从未传给执行器**
+> > （执行器**支持**该字段，只是永远收不到）⇒ 一律 fail-closed。
+> > 即 **SDK 路径早已接线（第 9 轮），CLI 路径一直漏传** —— 类型检查发现不了的静默缺口。
+> >
+> > **修法**：CLI 两个命令新增 **required** `--source-project-root`（import-copy 另加
+> > `--target-project-root`）并传参；包级验收脚本 4 处调用补上项目根。
+> > **实测**：`verify:instruction-entry-package` **exit 0、通过（17/17）** ——
+> > 用**已安装包**的真实 CLI 完成只读、来源零写入、导入、拒绝陈旧覆盖、人工字节保留。
+> >
+> > **新增架构守卫**：`tests/architecture/cross-project-cli-root-wiring.test.ts` 断言
+> > ①注册②**确实传参**（只注册不传 = 没接线）③两选项均 **required**
+> > （让"忘了传"变用法错误，而非静默 fail-closed）。
 > > **2026-10-31 更新（`8f15a6c`）：② 已交付，且修正两处真实缺陷。** 上条"② 仍未做"**已不成立**。
 > > **交付** `tools/cross-project-human-edit-guard.ts`：逐字节比较目标现有内容与预期 ——
 > > 不存在 ⇒ 无人工改动；**等于** ⇒ 无（幂等重放安全）；**不等于** ⇒ 有；
