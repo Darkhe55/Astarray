@@ -40,6 +40,7 @@ import type { PermissionCapabilityCatalog } from "../tools/permission-capability
 import type { ConfigurablePermissionPolicyEngine } from "../tools/configurable-permission-policy-engine.js";
 import type { ScopeAuthorizationGate } from "../tools/scope-authorization-gate.js";
 import { describeToolOperation } from "../tools/scope-authorization-gate.js";
+import type { RegisteredProjectRoot } from "../tools/scope-resolution.js";
 import type { CurrentPermissionSelectionStore } from "../tools/current-permission-selection.js";
 import type { MainAgentReadonlyToolProjection } from "../tools/main-agent-readonly-projection.js";
 import type { SessionPermissionElevationStore } from "../tools/session-permission-elevation.js";
@@ -71,6 +72,12 @@ export interface MainControllerOptions {
   registry: ToolRegistry;
   feedbackTransport: FeedbackTransportPort;
   workspaceBoundary: WorkspaceBoundary;
+  /**
+   * GUI-02-03（2026-11-08）：显式登记的工程根（与范围判定同源）。
+   * 新建 mission 时用其**首个**条目的 `projectIdentifier` 记录"所属项目"，
+   * 使历史视图能呈现卡内点名的"项目"字段。缺省则不写该字段（不臆造项目名）。
+   */
+  registeredProjectRoots?: RegisteredProjectRoot[];
   temporaryDirectoryPath: string;
   concurrency: number;
   failureThreshold: number;
@@ -264,11 +271,19 @@ export class MainController {
     }
     const missionId = `mission-${randomUUID().slice(0, 8)}`;
     const taskNodes = this.decomposePromptForScriptedRun(message);
+    /**
+     * GUI-02-03（2026-11-08）：把**所属项目**写进 mission 摘要，
+     * 使历史视图能呈现卡内点名的"项目"字段。
+     * 取值与范围判定同源（`registeredProjectRoots[0]`），**不臆造**新概念。
+     */
+    const projectIdentifier =
+      this.options.registeredProjectRoots?.[0]?.projectIdentifier;
     await this.options.missionManager.createMission({
       missionId,
       mode,
       prompt: message,
       taskNodes,
+      ...(projectIdentifier === undefined ? {} : { projectIdentifier }),
     });
     if (mode === "assist") {
       this.launchAssistMission(missionId, taskNodes);

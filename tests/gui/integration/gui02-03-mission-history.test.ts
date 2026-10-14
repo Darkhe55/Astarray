@@ -254,8 +254,73 @@ describe("GUI-02-03：只读查看**不恢复、不调模型、不注入上下�
   });
 });
 
-describe("GUI-02-03：损坏/**无权**记录必须明确处理（不抛错、不静默丢弃）", () => {
-  it("⑪ summary.json 损坏 ⇒ 该条被**标注**为损坏并保留在列表中（不抛错、不消失）", async () => {
+describe("GUI-02-03：**任务目标/项目/时间/最后状态/结果** 五项都要能呈现", () => {
+  it("⑲ 摘要里写了 `projectIdentifier` ⇒ 历史条目必须**如实带出项目**（卡内点名字段）", async () => {
+    const missionDirectory = path.join(stateDirectory, "missions", "mission-with-project");
+    await fs.mkdir(missionDirectory, { recursive: true });
+    await fs.writeFile(
+      path.join(missionDirectory, "summary.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        missionId: "mission-with-project",
+        mode: "assist",
+        prompt: "带项目的任务",
+        createdAtIso: "2026-11-02T00:00:00.000Z",
+        status: "done",
+        projectIdentifier: "project-alpha",
+      }),
+      "utf8",
+    );
+
+    const page = await queryMissionHistory({ stateDirectory, pageSize: 10, pageIndex: 0 });
+
+    const entry = page.entries[0]!;
+    expect(entry.projectIdentifier).toBe("project-alpha");
+    // 其余四项也必须齐备（任务目标/时间/最后状态/结果）
+    expect(entry.prompt).toBe("带项目的任务");
+    expect(entry.createdAtIso).toBe("2026-11-02T00:00:00.000Z");
+    expect(entry.recordedStatus).toBe("done");
+    expect(entry.runtimeState).toBe("finished");
+  });
+
+  it("⑳ **旧记录没有** `projectIdentifier` ⇒ 必须是 `null`（不得伪造项目名）", async () => {
+    // writeMissionSummary 默认**不写** projectIdentifier（模拟历史遗留记录）
+    await writeMissionSummary("mission-legacy", { status: "done" });
+
+    const page = await queryMissionHistory({ stateDirectory, pageSize: 10, pageIndex: 0 });
+
+    const entry = page.entries[0]!;
+    expect(entry.projectIdentifier).toBeNull();
+    // 但其它字段照常可用 —— 缺项目不等于整条不可用
+    expect(entry.prompt).toBe("任务目标 mission-legacy");
+    expect(entry.recordedStatus).toBe("done");
+  });
+
+  it("㉑ 空字符串项目名不得被当成有效项目（视为缺失，不伪装）", async () => {
+    const missionDirectory = path.join(stateDirectory, "missions", "mission-blank-project");
+    await fs.mkdir(missionDirectory, { recursive: true });
+    await fs.writeFile(
+      path.join(missionDirectory, "summary.json"),
+      JSON.stringify({
+        schemaVersion: 1,
+        missionId: "mission-blank-project",
+        mode: "assist",
+        prompt: "空白项目",
+        createdAtIso: "2026-11-02T00:00:00.000Z",
+        status: "done",
+        projectIdentifier: "   ",
+      }),
+      "utf8",
+    );
+
+    const page = await queryMissionHistory({ stateDirectory, pageSize: 10, pageIndex: 0 });
+
+    // 只有空白 ⇒ 视为"没有项目信息"，而不是回一个看起来有值的空串
+    expect(page.entries[0]?.projectIdentifier).toBeNull();
+  });
+});
+
+describe("GUI-02-03：损坏/**无权**记录必须明确处理（不抛错、不静默丢弃）", () => {  it("⑪ summary.json 损坏 ⇒ 该条被**标注**为损坏并保留在列表中（不抛错、不消失）", async () => {
     await writeMissionSummary("mission-good", { status: "done" });
     await writeCorruptedMission("mission-corrupted");
 

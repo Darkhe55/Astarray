@@ -453,6 +453,21 @@ export const MUTATIONS = [
       "把枚举结果清空 ⇒ 列表为空，'损坏记录必须保留在列表中'与分页反例都会变红" +
       "（证明'不静默丢弃'这条真的有断言在守）",
   },
+  {
+    mutationIdentifier: "gui0203-history-blank-project-faked",
+    targetFile: "packages/core/src/gui/mission-history-reader.ts",
+    find: `    typeof rawProjectIdentifier === "string" && rawProjectIdentifier.trim().length > 0
+      ? rawProjectIdentifier.trim()
+      : null;`,
+    replace: `    typeof rawProjectIdentifier === "string"
+      ? rawProjectIdentifier
+      : null;`,
+    testFiles: ["tests/gui/integration/gui02-03-mission-history.test.ts"],
+    expectedFailingTestNames: ["空字符串项目名不得被当成有效项目"],
+    rationale:
+      "去掉'非空白'校验 ⇒ 空白项目名会被原样返回，界面显示一个'看着有值其实是空'的项目" +
+      "⇒ 该反例必须变红（不得伪装项目名）",
+  },
 ];
 
 function sha256OfFile(filePath) {

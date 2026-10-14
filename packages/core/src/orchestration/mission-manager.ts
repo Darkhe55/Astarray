@@ -18,6 +18,17 @@ export interface MissionSummary {
   prompt: string;
   createdAtIso: string;
   status: "running" | "done" | "cancelled" | "blocked";
+  /**
+   * GUI-02-03（2026-11-08）：该 mission 所属**项目标识**。
+   *
+   * 卡内要求历史列表能呈现「任务目标／**项目**／时间/最后状态/结果」，
+   * 而此前摘要里**没有**项目信息 ⇒ 历史视图无从显示「项目」。
+   * 取值来自装配层的 `projectIdentifier`（与 `registeredProjectRoots` 同源）。
+   *
+   * **可选**是刻意的：历史遗留的 `summary.json` 没有该字段，
+   * 读取方必须把它当作「**没有项目信息**」（`null`），**不得伪造**。
+   */
+  projectIdentifier?: string;
 }
 
 export interface MissionStatus {
@@ -43,6 +54,8 @@ export interface CreateMissionInput {
   mode: AgentMode;
   prompt: string;
   taskNodes: TaskChainDocument["tasks"];
+  /** GUI-02-03：所属项目标识（可选；缺省则摘要里不写该项目字段）。 */
+  projectIdentifier?: string;
 }
 
 export class MissionManager {
@@ -85,6 +98,14 @@ export class MissionManager {
       prompt: input.prompt,
       createdAtIso: new Date().toISOString(),
       status: "running",
+      /**
+       * GUI-02-03：只在**确有项目标识**时写入该字段（空/空白不写），
+       * 避免落盘一个「看着有值其实是空」的项目名。
+       */
+      ...(typeof input.projectIdentifier === "string" &&
+      input.projectIdentifier.trim().length > 0
+        ? { projectIdentifier: input.projectIdentifier.trim() }
+        : {}),
     };
     await this.summaryWriteMutex.runExclusive(() =>
       writeAtomicJson(this.summaryFilePath(input.missionId), summary),

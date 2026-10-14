@@ -1143,6 +1143,15 @@ export interface PublicApplicationOptions {
    * 缺省为进程 cwd；嵌入方（含测试）应显式指定，避免写入宿主仓库。
    */
   workspaceRootPath?: string;
+  /**
+   * GUI-02-03（2026-11-08）：**所属项目标识**。
+   *
+   * 与范围判定（`registeredProjectRoots`）同源：装配层用它登记工程根，
+   * 这里透传给运行时，使**新建 mission 的摘要记录所属项目**，
+   * 历史列表才能呈现卡内点名的「项目」字段。
+   * 缺省时运行时按既有约定回退为 `"workspace"`（**行为不变**）。
+   */
+  projectIdentifier?: string;
   mode: AgentMode;
   /** 运行时选择：mock（离线）或 provider（真实 Provider，T07D-R2）。 */
   runtime?: "mock" | "provider";
@@ -1540,6 +1549,10 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     const runtime = await createApplicationRuntime({
       mode: options.mode,
       stateDirectory: options.stateDirectory,
+      // GUI-02-03：把项目标识透传给运行时（未提供时不传字段 ⇒ 保持既有回退行为）。
+      ...(options.projectIdentifier === undefined
+        ? {}
+        : { projectIdentifier: options.projectIdentifier }),
       concurrency: options.concurrency ?? 1,
       failureThreshold: options.failureThreshold ?? 1,
       maxLoopIterations: options.maximumLoopIterations ?? 8,

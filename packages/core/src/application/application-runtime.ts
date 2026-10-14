@@ -878,6 +878,8 @@ export async function createApplicationRuntime(
     processInstanceId,
     feedbackTransport: feedbackClient ?? createNoopFeedbackTransport(),
     workspaceBoundary,
+    // GUI-02-03：把登记的项目根交给主控制器，使新建 mission 记录"所属项目"。
+    registeredProjectRoots,
     temporaryDirectoryPath,
     concurrency: options.concurrency,
     failureThreshold: options.failureThreshold,

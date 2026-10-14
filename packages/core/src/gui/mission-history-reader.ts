@@ -63,6 +63,11 @@ export interface MissionHistoryEntry {
   /** 任务目标（损坏时为 null）。 */
   prompt: string | null;
   mode: string | null;
+  /**
+   * **所属项目**（卡内点名字段）。
+   * 历史遗留记录没有该字段、或值为空白 ⇒ `null`（**不伪造项目名**）。
+   */
+  projectIdentifier: string | null;
   createdAtIso: string | null;
   /** **历史状态**：磁盘上如实记录的当时状态（损坏时为 null）。 */
   recordedStatus: MissionRecordedStatus | null;
@@ -177,6 +182,7 @@ async function readMissionHistoryEntry(input: {
     missionIdentifier: input.missionIdentifier,
     prompt: null as string | null,
     mode: null as string | null,
+    projectIdentifier: null as string | null,
     createdAtIso: null as string | null,
     recordedStatus: null as MissionRecordedStatus | null,
     isActivelyRunning: false,
@@ -221,6 +227,15 @@ async function readMissionHistoryEntry(input: {
 
   const prompt = typeof parsed["prompt"] === "string" ? parsed["prompt"] : null;
   const mode = typeof parsed["mode"] === "string" ? parsed["mode"] : null;
+  /**
+   * **项目标识**：只有"字符串且非空白"才算有值；否则 `null`。
+   * 空白串若原样返回，界面会显示一个"看起来有值"的空项目名 —— 那是伪装，故归一为 null。
+   */
+  const rawProjectIdentifier = parsed["projectIdentifier"];
+  const projectIdentifier =
+    typeof rawProjectIdentifier === "string" && rawProjectIdentifier.trim().length > 0
+      ? rawProjectIdentifier.trim()
+      : null;
   const createdAtIso =
     typeof parsed["createdAtIso"] === "string" ? parsed["createdAtIso"] : null;
 
@@ -246,6 +261,7 @@ async function readMissionHistoryEntry(input: {
     ...baseEntry,
     prompt,
     mode,
+    projectIdentifier,
     createdAtIso,
     recordedStatus,
     isActivelyRunning,
