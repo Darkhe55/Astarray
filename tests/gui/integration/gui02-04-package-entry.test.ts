@@ -103,6 +103,23 @@ describe("GUI-02-04：GUI 必须有**公开包入口**（否则 tarball 里根�
       },
     });
     try {
+      /**
+       * 2026-11-08（第 59 轮）：**先把"端口是不是可用端口"这件事查清楚**。
+       *
+       * 本条曾在**全量默认并发**下偶发（隔离单跑 8 次全绿）：
+       *   `TypeError: fetch failed` / `Caused by: Error: bad port`
+       * 而 `bad port` 只会在**地址里的端口不是有效端口**时出现
+       * （`fetch` 侧表现为"端口非法"）。原始报错**完全看不出端口是多少**，
+       * 所以我当时**没法归因**（这一轮我已因"没落盘完整输出"吃过一次亏）。
+       *
+       * 故这里显式断言端口是**有效端口**，并把**真实取值**写进失败消息 ——
+       * 下次再出现就能立刻区分"句柄返回了 0/未定义"还是"端口被回收/耗尽"。
+       */
+      expect(
+        Number.isInteger(startedServer.port) && startedServer.port > 0 && startedServer.port <= 65_535,
+        "startGuiServer 返回了不可用的端口：" + JSON.stringify(startedServer.port),
+      ).toBe(true);
+
       const response = await fetch("http://127.0.0.1:" + String(startedServer.port) + "/");
       expect(response.status).toBe(200);
       const pageText = await response.text();
