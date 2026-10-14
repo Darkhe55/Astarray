@@ -375,6 +375,42 @@ export const MUTATIONS = [
     rationale:
       "跳过工作区边界 ⇒ 工作区外路径可被读写（'拿到绝对路径就能读写'）⇒ 三条越界反例必须变红",
   },
+  {
+    mutationIdentifier: "project01-human-edit-guard-fails-open",
+    targetFile: "packages/core/src/tools/cross-project-human-edit-guard.ts",
+    find: `        return {
+          hasHumanChange: true,
+          reason: "目标已存在但不是普通文件（可能是目录/链接）⇒ 拒绝覆盖（fail-closed）",
+        };`,
+    replace: `        return {
+          hasHumanChange: false,
+          reason: "目标已存在但不是普通文件（可能是目录/链接）⇒ 拒绝覆盖（fail-closed）",
+        };`,
+    testFiles: ["tests/core/integration/project01-human-edit-guard.test.ts"],
+    expectedFailingTestNames: ["目标是**目录**而非普通文件 ⇒ 判为有人工改动"],
+    rationale:
+      "把'非普通文件'判为无人工改动（fail-open）⇒ 可能对目录/链接路径放行覆盖 ⇒ 该反例必须变红",
+  },
+  {
+    mutationIdentifier: "project01-import-guard-missing-without-baseline",
+    targetFile: "packages/core/src/public-sdk.ts",
+    /**
+     * 注意：`public-sdk.ts` 是 **CRLF** 文件（实测 4527 个 CRLF、0 个裸 LF），
+     * 多行 `find` 锚点会因换行符不同而**命中 0 次**（验证器会当场报错，不会静默跳过）。
+     * 故这里用**单行锚点**。
+     */
+    find: `        const baselineContentHash = input.expectedTargetContentHash;`,
+    replace: `        const baselineContentHash = input.expectedTargetContentHash;
+        // 变异：不再回退默认守卫（用于验证"端到端可见"）
+        if (true) { return undefined; }`,
+    testFiles: [
+      "tests/core/integration/project01-default-resource-io-assembly.test.ts",
+    ],
+    expectedFailingTestNames: ["目标已存在且内容**与预期一致** ⇒ 允许"],
+    rationale:
+      "未给基线时又不回退默认守卫 ⇒ 目标已存在恒 target-stale-rejected（'能读不能导'）" +
+      "⇒ 该端到端用例必须变红",
+  },
 ];
 
 function sha256OfFile(filePath) {

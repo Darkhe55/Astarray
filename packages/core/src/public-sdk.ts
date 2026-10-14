@@ -52,6 +52,7 @@ import { ProtectedStoragePolicy } from "./tools/protected-storage-policy.js";
 // ⇒ 跨项目借阅只能 fail-closed。现默认装配**受控**端口（边界 + 受保护存储双闸门），
 // 不照搬 CLI 的裸 fs 端口（那等于"拿到绝对路径就能读写"）。
 import { ControlledCrossProjectResourceIo } from "./tools/controlled-cross-project-resource-io.js";
+import { createCrossProjectHumanEditGuard } from "./tools/cross-project-human-edit-guard.js";
 import { WorkspaceBoundary } from "./tools/workspace-boundary.js";
 // 2026-10-18（COMM-01-02 切片①）；**2026-10-22 依设计清单订正语义**。
 // 首版误把"唯一上级 = 通信授权"（只允许直属上级投递）—— 与
@@ -1579,7 +1580,17 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
             stateDirectoryPath: options.stateDirectory,
           }),
         }),
-      crossProjectHumanEditGuard: options.crossProjectHumanEditGuard ?? null,
+      /**
+       * PROJECT-01-03（2026-10-31）：**人工改动守卫默认装配**。
+       *
+       * 此前未提供 ⇒ 目标已存在时恒 `target-stale-rejected`（安全默认，
+       * 但等于**"能读不能导"**）。现默认装配逐字节比较的守卫：
+       * 目标与预期副本一致 ⇒ 允许（幂等重放）；被人工改过 ⇒ 拒绝覆盖；
+       * **不确定**（读失败/非普通文件）⇒ 判为有人工改动（fail-closed）。
+       * 调用方仍可显式注入覆盖。
+       */
+      crossProjectHumanEditGuard:
+        options.crossProjectHumanEditGuard ?? createCrossProjectHumanEditGuard(),
       installationInquiryRegistry,
     });
   }
@@ -1600,7 +1611,17 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       options.statusPollIntervalMilliseconds ?? 25;
     this.stateDirectory = options.stateDirectory ?? null;
     this.crossProjectResourceIo = options.crossProjectResourceIo ?? null;
-    this.crossProjectHumanEditGuard = options.crossProjectHumanEditGuard ?? null;
+    /**
+     * PROJECT-01-03（2026-10-31）：**这里曾经无条件 `?? null`**，
+     * 把 `create()` 里装配好的默认守卫又抹回 `null` ⇒ 目标已存在时仍恒
+     * `target-stale-rejected`（"能读不能导"）。实测证据：端到端用例打印出
+     * `detail="目标已存在且未装配人工改动守卫…"`。
+     * 现改为与 `create()` 一致的默认（调用方显式传 `null` 时仍尊重其选择）。
+     */
+    this.crossProjectHumanEditGuard =
+      options.crossProjectHumanEditGuard === undefined
+        ? createCrossProjectHumanEditGuard()
+        : options.crossProjectHumanEditGuard;
     this.installationInquiryRegistry = options.installationInquiryRegistry ?? null;
     this.idempotencyLedgerFilePath =
       this.stateDirectory === null
@@ -4101,32 +4122,58 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
                 stateDirectoryPath: this.stateDirectory as string,
               }).isProtectedStorageAccessTarget(canonicalAccessTargetPath),
           }),
-      ...(input.expectedTargetContentHash === undefined
-        ? {}
-        : {
-            humanEditGuard: {
-              hasUnexpectedHumanChange: async (guardInput: {
-                absoluteTargetPath: string;
-                expectedContent: string;
-              }) => {
-                let existing: string;
-                try {
-                  existing = await this.crossProjectResourceIo!.readTextFile(
-                    guardInput.absoluteTargetPath,
-                  );
-                } catch {
-                  return { hasHumanChange: false };
-                }
-                return createHash("sha256").update(existing, "utf8").digest("hex") ===
-                  input.expectedTargetContentHash
-                  ? { hasHumanChange: false }
-                  : {
-                      hasHumanChange: true,
-                      reason: "目标实际内容哈希与给定基线不一致（疑似人工修改）",
-                    };
-              },
-            },
-          }),
+      /**
+       * PROJECT-01-03（2026-10-31）修正两处真实缺陷：
+       *
+       * 1. **未提供 `expectedTargetContentHash` 时此处完全不给守卫** ⇒ 目标已存在恒
+       *    `target-stale-rejected`（"能读不能导"）。现回退到默认装配的守卫
+       *    （`this.crossProjectHumanEditGuard`，逐字节比较）。
+       * 2. **内联守卫读不到目标时 `return { hasHumanChange: false }`（fail-open）**
+       *    —— 读失败即放行覆盖，正是"人工字节保护"最不该的失败方向。
+       *    改为 `true`（fail-closed）。
+       * 另外把内联实现里的 `readTextFile` 换成**受控端口**上的一次读取：
+       * `this.crossProjectResourceIo!` 在该分支可能为 null（会在下面抛错），
+       * 故先判空，避免 `!` 断言的静默崩溃。
+       */
+      humanEditGuard: (() => {
+        const baselineContentHash = input.expectedTargetContentHash;
+        if (baselineContentHash === undefined) {
+          return this.crossProjectHumanEditGuard ?? undefined;
+        }
+        return {
+          hasUnexpectedHumanChange: async (guardInput: {
+            absoluteTargetPath: string;
+            expectedContent: string;
+          }) => {
+            const resourceIo = this.crossProjectResourceIo;
+            if (resourceIo === null) {
+              return {
+                hasHumanChange: true,
+                reason: "资源 I/O 端口未装配：无法确认目标内容（fail-closed）",
+              };
+            }
+            let existing: string;
+            try {
+              existing = await resourceIo.readTextFile(guardInput.absoluteTargetPath);
+            } catch (error) {
+              // **fail-closed**：读不到就不能声称"没有人工改动"。
+              return {
+                hasHumanChange: true,
+                reason:
+                  "无法读取目标现有内容（" + String((error as Error).message) +
+                  "）⇒ 按存在人工改动处理（fail-closed）",
+              };
+            }
+            return createHash("sha256").update(existing, "utf8").digest("hex") ===
+              baselineContentHash
+              ? { hasHumanChange: false }
+              : {
+                  hasHumanChange: true,
+                  reason: "目标实际内容哈希与给定基线不一致（疑似人工修改）",
+                };
+          },
+        };
+      })(),
     });
     // 声明的内容哈希取自**来源实际内容**：入口不猜哈希，避免把别的版本当本次许可内容。
     let declaredContentHash = "";

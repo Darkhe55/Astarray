@@ -217,3 +217,71 @@ describe("PROJECT-01-03：默认装配下 SDK 就能真实跨项目导入（无�
     }
   });
 });
+
+describe("PROJECT-01-03：默认装配下人工改动守卫生效（目标已存在也能导入）", () => {
+  it("④ 目标已存在且内容**与预期一致** ⇒ 允许（此前无守卫时恒拒绝）", async () => {
+    const content = "# 一致内容\n";
+    await fs.writeFile(sourceFilePath, content, "utf8");
+    // 目标已存在，内容恰好等于来源 ⇒ 守卫应判「无人工改动」
+    await fs.writeFile(targetFilePath, content, "utf8");
+
+    const application = await createApplicationWithoutInjectedPort();
+    try {
+      await grantImportAuthorization(application, "hash-guard");
+      const result = await application.importCrossProjectResource({
+        authorizationIdentifier: "auth-import",
+        sourceProjectIdentifier: SOURCE_PROJECT,
+        targetProjectIdentifier: TARGET_PROJECT,
+        sourceResourcePath: "docs/spec.md",
+        targetResourcePath: "docs/spec-copy.md",
+        absoluteSourcePath: sourceFilePath,
+        sourceProjectRootPath: sourceProjectRoot,
+        absoluteTargetPath: targetFilePath,
+        targetProjectRootPath: targetProjectRoot,
+        sourceRevision: 3,
+        argumentsHash: "hash-guard",
+        nowIso: "2026-10-31T00:00:00.000Z",
+      });
+
+      // 关键：不再因「目标已存在且无守卫」而 target-stale-rejected
+      expect(result.outcome).toBe("imported-copy");
+      expect(await fs.readFile(targetFilePath, "utf8")).toBe(content);
+    } finally {
+      await application.shutdown();
+    }
+  });
+
+  it("⑤ 目标已存在且**被人工改过** ⇒ 拒绝覆盖，人工字节保留", async () => {
+    const content = "# 来源内容\n";
+    const humanContent = "# 用户手改过，不许覆盖\n";
+    await fs.writeFile(sourceFilePath, content, "utf8");
+    await fs.writeFile(targetFilePath, humanContent, "utf8");
+
+    const application = await createApplicationWithoutInjectedPort();
+    try {
+      await grantImportAuthorization(application, "hash-guard-human");
+      const result = await application.importCrossProjectResource({
+        authorizationIdentifier: "auth-import",
+        sourceProjectIdentifier: SOURCE_PROJECT,
+        targetProjectIdentifier: TARGET_PROJECT,
+        sourceResourcePath: "docs/spec.md",
+        targetResourcePath: "docs/spec-copy.md",
+        absoluteSourcePath: sourceFilePath,
+        sourceProjectRootPath: sourceProjectRoot,
+        absoluteTargetPath: targetFilePath,
+        targetProjectRootPath: targetProjectRoot,
+        sourceRevision: 3,
+        argumentsHash: "hash-guard-human",
+        nowIso: "2026-10-31T00:00:00.000Z",
+      });
+
+      expect(result.outcome).toBe("target-stale-rejected");
+      // 关键：人工字节必须**原样保留**
+      expect(await fs.readFile(targetFilePath, "utf8")).toBe(humanContent);
+      // 来源零写入
+      expect(await fs.readFile(sourceFilePath, "utf8")).toBe(content);
+    } finally {
+      await application.shutdown();
+    }
+  });
+});
