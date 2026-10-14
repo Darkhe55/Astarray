@@ -15,6 +15,7 @@ import type { AgentMode } from "../../../core/src/core/types.js";
 import type { PublicAstarrayEvent } from "../../../core/src/public-sdk.js";
 import {
   applyGuiEventToTracker,
+  buildGuiMissionHistoryListView,
   buildGuiSnapshot,
   createGuiTaskTracker,
 } from "../application/gui-read-model.js";
@@ -552,6 +553,59 @@ ul { margin: 8px 0 0; padding-left: 20px; }
     <ul id="installation-inquiries" aria-live="polite"></ul>
     <p id="installation-inquiry-result" role="status" aria-live="polite"></p>
   </section>
+  <!--
+    GUI-02-03（2026-11-08）：历史列表及详情（三视图）。
+
+    只读：这里没有任何恢复/模型/上下文注入入口；数据一律来自 GET /mission-history。
+    三视图分别是 列表 / 详情 / 原始，由 data-history-view 属性切换。
+  -->
+  <section aria-labelledby="history-heading">
+    <h2 id="history-heading">历史任务（只读）</h2>
+    <p>
+      查看历史**不会**恢复任务、**不会**调用模型、**不会**注入上下文。
+      历史状态是"当时记录"，运行状态是"现在是否真的在跑"——两者分开显示：
+      重启前写着「运行中」的任务会显示为「已中断，待对账」。
+    </p>
+    <div id="history-view-switcher" role="group" aria-label="历史视图切换">
+      <button id="history-show-list" type="button" aria-pressed="true">列表</button>
+      <button id="history-show-detail" type="button" aria-pressed="false" disabled>详情</button>
+      <button id="history-show-raw" type="button" aria-pressed="false" disabled>原始</button>
+      <button id="history-back-to-list" type="button" hidden>返回列表</button>
+    </div>
+
+    <div id="history-list" class="history-view" data-history-view="list">
+      <div>
+        <button id="history-previous-page" type="button" disabled>上一页</button>
+        <button id="history-next-page" type="button" disabled>下一页</button>
+        <span id="history-paging" role="status" aria-live="polite">未加载</span>
+      </div>
+      <table>
+        <caption>历史任务列表（每页按需加载，不一次读取全部）</caption>
+        <thead>
+          <tr>
+            <th scope="col">任务目标</th>
+            <th scope="col">项目</th>
+            <th scope="col">时间</th>
+            <th scope="col">最后状态（当时记录）</th>
+            <th scope="col">运行状态（现在）</th>
+          </tr>
+        </thead>
+        <tbody id="history-rows"></tbody>
+      </table>
+      <p id="history-empty" role="status" aria-live="polite" hidden></p>
+    </div>
+
+    <div id="history-detail" class="history-view" data-history-view="detail" hidden>
+      <dl id="history-detail-fields"></dl>
+      <p id="history-detail-corrupted" class="history-corrupted" hidden>记录损坏</p>
+    </div>
+
+    <div id="history-raw" class="history-view" data-history-view="raw" hidden>
+      <p>以下为**未归一**的原样记录，供核对（不做任何标签替换）。</p>
+      <pre id="history-raw-text"></pre>
+    </div>
+    <p id="history-result" role="status" aria-live="polite"></p>
+  </section>
 </main>
 <script>
 (function () {
@@ -780,6 +834,188 @@ ul { margin: 8px 0 0; padding-left: 20px; }
       .catch(function () {});
   }
   document.getElementById("refresh-verifications").addEventListener("click", refreshVerifications);
+
+  /**
+   * GUI-02-03（2026-11-08）：**历史三视图**（列表 / 详情 / 原始）。
+   *
+   * 硬约束（与读模型、路由同口径 —— 三处必须一致，任一处走样都是缺陷）：
+   * ── 只读：只 GET /mission-history；没有恢复/模型/上下文注入的任何入口；
+   * ── 分页按需：只在翻页时取那一页，绝不把全部历史一次取回；
+   * ── 历史状态与运行状态分列：recordedStatusText（当时记录）与
+   *    runtimeStateText（现在）分别渲染 —— 重启前写着「运行中（当时记录）」的任务，
+   *    运行列显示「已中断，待对账」，不会看起来还在跑；
+   * - **损坏明确标注**：行上标「记录损坏」，且条目**不隐藏**；
+   * - **原始视图用 textContent**（不是"以 HTML 方式插入"）⇒ 原样文本不会被当作标签执行。
+   */
+  var historyRowsElement = document.getElementById("history-rows");
+  var historyEmptyElement = document.getElementById("history-empty");
+  var historyPagingElement = document.getElementById("history-paging");
+  var historyResultElement = document.getElementById("history-result");
+  var historyDetailFieldsElement = document.getElementById("history-detail-fields");
+  var historyDetailCorruptedElement = document.getElementById("history-detail-corrupted");
+  var historyRawTextElement = document.getElementById("history-raw-text");
+  var historyPreviousPageButton = document.getElementById("history-previous-page");
+  var historyNextPageButton = document.getElementById("history-next-page");
+  var historyShowDetailButton = document.getElementById("history-show-detail");
+  var historyShowRawButton = document.getElementById("history-show-raw");
+  var historyBackToListButton = document.getElementById("history-back-to-list");
+  var historyViewElements = document.querySelectorAll("[data-history-view]");
+
+  var HISTORY_PAGE_SIZE = 10;
+  var historyPageIndex = 0;
+  var historyEntriesInCurrentPage = [];
+  var historySelectedEntry = null;
+
+  function showHistoryView(viewName) {
+    for (var index = 0; index < historyViewElements.length; index += 1) {
+      var element = historyViewElements[index];
+      element.hidden = element.getAttribute("data-history-view") !== viewName;
+    }
+    historyBackToListButton.hidden = viewName === "list";
+    historyShowDetailButton.setAttribute("aria-pressed", String(viewName === "detail"));
+    historyShowRawButton.setAttribute("aria-pressed", String(viewName === "raw"));
+  }
+
+  function appendHistoryCell(row, text, className) {
+    var cell = document.createElement("td");
+    cell.textContent = text;
+    if (className) {
+      cell.className = className;
+    }
+    row.appendChild(cell);
+    return cell;
+  }
+
+  function renderHistoryRows(rows) {
+    historyRowsElement.textContent = "";
+    for (var index = 0; index < rows.length; index += 1) {
+      var entry = rows[index];
+      var row = document.createElement("tr");
+      appendHistoryCell(row, entry.promptText);
+      appendHistoryCell(row, entry.projectText);
+      appendHistoryCell(row, entry.createdAtText);
+      // **历史状态**列（当时记录）
+      appendHistoryCell(row, entry.recordedStatusText);
+      // **运行状态**列（现在）—— 与上一列分开，重启前的 running 在这里是"已中断，待对账"
+      appendHistoryCell(row, entry.runtimeStateText);
+      if (entry.isCorrupted) {
+        var corruptedCell = appendHistoryCell(row, entry.corruptedText || "记录损坏");
+        corruptedCell.className = "history-corrupted";
+      }
+      var actionCell = document.createElement("td");
+      var detailButton = document.createElement("button");
+      detailButton.type = "button";
+      detailButton.textContent = "查看详情";
+      detailButton.addEventListener(
+        "click",
+        (function (capturedEntry) {
+          return function () {
+            historySelectedEntry = capturedEntry;
+            renderHistoryDetail(capturedEntry);
+            historyShowRawButton.disabled = false;
+            showHistoryView("detail");
+          };
+        })(entry),
+      );
+      actionCell.appendChild(detailButton);
+      row.appendChild(actionCell);
+      historyRowsElement.appendChild(row);
+    }
+  }
+
+  function renderHistoryDetail(entry) {
+    historyDetailFieldsElement.textContent = "";
+    var fields = [
+      ["任务标识", entry.missionIdentifier],
+      ["任务目标", entry.promptText],
+      ["项目", entry.projectText],
+      ["时间", entry.createdAtText],
+      ["最后状态（当时记录）", entry.recordedStatusText],
+      ["运行状态（现在）", entry.runtimeStateText],
+    ];
+    for (var index = 0; index < fields.length; index += 1) {
+      var term = document.createElement("dt");
+      term.textContent = fields[index][0];
+      var description = document.createElement("dd");
+      description.textContent = fields[index][1];
+      historyDetailFieldsElement.appendChild(term);
+      historyDetailFieldsElement.appendChild(description);
+    }
+    historyDetailCorruptedElement.hidden = !entry.isCorrupted;
+  }
+
+  function renderHistoryRaw(entry) {
+    /**
+     * 原始视图：用 textContent 原样呈现「未归一」记录。
+     * 刻意采用"纯文本赋值"而非"以 HTML 方式插入" —— 原始文本不得被当作标签执行。
+     */
+    historyRawTextElement.textContent = JSON.stringify(
+      {
+        missionIdentifier: entry.missionIdentifier,
+        prompt: entry.promptText,
+        projectIdentifier: entry.projectText,
+        createdAtIso: entry.createdAtText,
+        recordedStatus: entry.recordedStatusText,
+        runtimeState: entry.runtimeStateText,
+        isActivelyRunning: entry.isActivelyRunning,
+        isCorrupted: entry.isCorrupted,
+      },
+      null,
+      2,
+    );
+  }
+
+  function refreshHistory() {
+    // 只取**当前这一页**（分页按需；不存在"一次取全部"的路径）。
+    return fetch(
+      "/mission-history?pageSize=" + String(HISTORY_PAGE_SIZE) + "&pageIndex=" + String(historyPageIndex),
+      { headers: { accept: "application/json" } },
+    )
+      .then(function (response) {
+        if (!response.ok) {
+          throw new Error("HTTP " + String(response.status));
+        }
+        return response.json();
+      })
+      .then(function (page) {
+        historyEntriesInCurrentPage = page.rows || [];
+        renderHistoryRows(historyEntriesInCurrentPage);
+        historyEmptyElement.hidden = historyEntriesInCurrentPage.length > 0;
+        historyEmptyElement.textContent = historyEntriesInCurrentPage.length > 0 ? "" : "暂无历史任务。";
+        historyPagingElement.textContent = page.pagingLabel + " · " + page.totalMissionCountText;
+        historyPreviousPageButton.disabled = historyPageIndex <= 0;
+        historyNextPageButton.disabled = page.isMoreAvailable !== true;
+        historyResultElement.textContent = "";
+        showHistoryView("list");
+      })
+      .catch(function (error) {
+        historyResultElement.textContent = "历史加载失败：" + String(error.message);
+      });
+  }
+
+  historyPreviousPageButton.addEventListener("click", function () {
+    if (historyPageIndex > 0) {
+      historyPageIndex -= 1;
+      refreshHistory();
+    }
+  });
+  historyNextPageButton.addEventListener("click", function () {
+    historyPageIndex += 1;
+    refreshHistory();
+  });
+  document.getElementById("history-show-list").addEventListener("click", function () {
+    showHistoryView("list");
+  });
+  historyBackToListButton.addEventListener("click", function () {
+    showHistoryView("list");
+  });
+  historyShowRawButton.addEventListener("click", function () {
+    if (historySelectedEntry) {
+      renderHistoryRaw(historySelectedEntry);
+      showHistoryView("raw");
+    }
+  });
+  refreshHistory();
   /**
    * GUI-02-02 片3（2026-10-11）：**待授权**的呈现与裁决。
    *
@@ -1615,7 +1851,18 @@ export async function startGuiServer(
           ? {}
           : { afterMissionIdentifier }),
       });
-      writeJsonResponse(response, 200, page);
+      /**
+       * **视图在服务端构建**（单一事实来源）：运行态/历史态的展示文案一律来自
+       * `gui-read-model`，客户端**不自己拼标签** —— 否则页面脚本里会再出现一套
+       * 状态映射，迟早与读模型/核心层走样（那正是"三处必须一致"最难守的地方）。
+       */
+      const listView = buildGuiMissionHistoryListView(page);
+      writeJsonResponse(response, 200, {
+        ...listView,
+        pageIndex: page.pageIndex,
+        effectivePageSize: page.effectivePageSize,
+        totalMissionCount: page.totalMissionCount,
+      });
       return;
     }
 

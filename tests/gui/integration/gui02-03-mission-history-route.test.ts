@@ -132,7 +132,7 @@ afterEach(async () => {
 });
 
 describe("GUI-02-03：历史只读路由", () => {
-  it("① GET /mission-history ⇒ 200，返回分页页对象（含 totalMissionCount/hasMorePages）", async () => {
+  it("① GET /mission-history ⇒ 200，返回分页视图（含 totalMissionCount/hasMorePages）", async () => {
     await writeMissionSummary("mission-1", { projectIdentifier: "project-alpha" });
     await writeMissionSummary("mission-2");
     await startServerWithHistory();
@@ -140,18 +140,22 @@ describe("GUI-02-03：历史只读路由", () => {
     const response = await request({ method: "GET", path: "/mission-history?pageSize=1&pageIndex=0" });
 
     expect(response.statusCode).toBe(200);
+    /**
+     * 注意：路由返回的是**已归一的视图**（`rows`，含 `*Text` 展示字段）——
+     * 视图在**服务端**构建，客户端不自己拼状态标签（单一事实来源）。
+     */
     const parsed = JSON.parse(response.body) as {
-      entries: Array<Record<string, unknown>>;
+      rows: Array<Record<string, unknown>>;
       pageIndex: number;
       effectivePageSize: number;
       totalMissionCount: number;
-      hasMorePages: boolean;
+      isMoreAvailable: boolean;
     };
     // **分页按需**：只要 1 条
-    expect(parsed.entries).toHaveLength(1);
+    expect(parsed.rows).toHaveLength(1);
     expect(parsed.effectivePageSize).toBe(1);
     expect(parsed.totalMissionCount).toBe(2);
-    expect(parsed.hasMorePages).toBe(true);
+    expect(parsed.isMoreAvailable).toBe(true);
   });
 
   it("② 页大小请求超过上限 ⇒ 被**夹到上限**（不得按请求量返回全部）", async () => {
@@ -223,21 +227,23 @@ describe("GUI-02-03：历史只读路由", () => {
 
     expect(response.statusCode).toBe(200);
     const parsed = JSON.parse(response.body) as {
-      entries: Array<{
+      rows: Array<{
         missionIdentifier: string;
-        recordedStatus: string | null;
-        runtimeState: string;
+        recordedStatusText: string;
+        runtimeStateText: string;
         isActivelyRunning: boolean;
       }>;
     };
-    const entry = parsed.entries.find(
+    const row = parsed.rows.find(
       (item) => item.missionIdentifier === "mission-stale-running",
     )!;
-    // 历史状态**如实保留**
-    expect(entry.recordedStatus).toBe("running");
-    // 运行状态必须说明"现在没在跑"
-    expect(entry.isActivelyRunning).toBe(false);
-    expect(entry.runtimeState).toBe("interrupted-needs-reconciliation");
+    // 历史列**如实**写「运行中（当时记录）」—— 不篡改历史
+    expect(row.recordedStatusText).toContain("运行中");
+    // 运行列必须说明"现在没在跑"
+    expect(row.isActivelyRunning).toBe(false);
+    expect(row.runtimeStateText).toBe("已中断，待对账");
+    // 两列**必须不同**（否则就是把历史当成了运行态）
+    expect(row.runtimeStateText).not.toBe(row.recordedStatusText);
   });
 
   it("⑥ 只读：**非 GET** 不得改动任何东西（查看历史没有写路径）", async () => {
@@ -267,43 +273,41 @@ describe("GUI-02-03：历史只读路由", () => {
 
     const response = await request({ method: "GET", path: "/mission-history?pageSize=10" });
     const parsed = JSON.parse(response.body) as {
-      entries: Array<Record<string, unknown>>;
+      rows: Array<Record<string, unknown>>;
     };
-    const entry = parsed.entries[0]!;
+    const row = parsed.rows[0]!;
 
-    expect(entry["prompt"]).toBe("五个字段都要有");        // 任务目标
-    expect(entry["projectIdentifier"]).toBe("project-beta"); // 项目
-    expect(entry["createdAtIso"]).toBe("2026-11-01T00:00:00.000Z"); // 时间
-    expect(entry["recordedStatus"]).toBe("blocked");        // 最后状态
-    expect(entry["runtimeState"]).toBe("finished");         // 结果（运行态归一）
+    expect(row["promptText"]).toBe("五个字段都要有");          // 任务目标
+    expect(row["projectText"]).toBe("project-beta");           // 项目
+    expect(row["createdAtText"]).toBe("2026-11-01T00:00:00.000Z"); // 时间
+    expect(row["recordedStatusText"]).toBe("已阻塞");           // 最后状态（历史）
+    expect(row["runtimeStateText"]).toBe("已结束");             // 结果（运行态归一）
   });
 
-  it("⑧ 游标翻页：afterMissionIdentifier 不重不漏", async () => {
+  it("⑧ 翻页不重不漏：第 0/1 页拼起来恰好覆盖全部 4 条", async () => {
     for (let index = 0; index < 4; index += 1) {
       await writeMissionSummary("mission-" + String(index));
     }
     await startServerWithHistory();
 
-    const first = JSON.parse(
+    const firstPage = JSON.parse(
       (await request({ method: "GET", path: "/mission-history?pageSize=2&pageIndex=0" })).body,
-    ) as { entries: Array<{ missionIdentifier: string }> };
-    expect(first.entries).toHaveLength(2);
+    ) as { rows: Array<{ missionIdentifier: string }>; isMoreAvailable: boolean };
+    expect(firstPage.rows).toHaveLength(2);
+    expect(firstPage.isMoreAvailable).toBe(true);
 
-    const lastIdentifier = first.entries[first.entries.length - 1]!.missionIdentifier;
-    const second = JSON.parse(
-      (
-        await request({
-          method: "GET",
-          path: "/mission-history?pageSize=2&afterMissionIdentifier=" + encodeURIComponent(lastIdentifier),
-        })
-      ).body,
-    ) as { entries: Array<{ missionIdentifier: string }> };
+    const secondPage = JSON.parse(
+      (await request({ method: "GET", path: "/mission-history?pageSize=2&pageIndex=1" })).body,
+    ) as { rows: Array<{ missionIdentifier: string }>; isMoreAvailable: boolean };
+    expect(secondPage.rows).toHaveLength(2);
+    expect(secondPage.isMoreAvailable).toBe(false);
 
     const collected = [
-      ...first.entries.map((entry) => entry.missionIdentifier),
-      ...second.entries.map((entry) => entry.missionIdentifier),
+      ...firstPage.rows.map((row) => row.missionIdentifier),
+      ...secondPage.rows.map((row) => row.missionIdentifier),
     ];
-    expect(new Set(collected).size).toBe(collected.length);
+    // **不重**且**不漏**：恰好 4 条、互不相同
     expect(collected).toHaveLength(4);
+    expect(new Set(collected).size).toBe(4);
   });
 });
