@@ -17,8 +17,15 @@ import { pathToFileURL } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// 覆盖率插桩 + 并行门禁下纵向链路明显变慢：仅提高等待上限，断言不变。
-vi.setConfig({ testTimeout: 240_000 });
+/**
+ * 覆盖率插桩 + 并行门禁下纵向链路明显变慢：仅提高等待上限，断言不变。
+ *
+ * 2026-11-06（第 37 轮）：240_000 → **300_000**。
+ * 实测该用例隔离仅 2.42–2.51s，但全量运行下曾耗 **200.11s**（约 200× 争用拖慢）
+ * 并撞上内上限 ⇒ 翻红。现内上限 220s、`testTimeout` 300s，**仍保持内上限严格小于**
+ * `testTimeout`（差 80s），使真卡住报 `Test timed out` 而非状态断言失败。
+ */
+vi.setConfig({ testTimeout: 300_000 });
 
 import { createHash } from "node:crypto";
 
@@ -200,7 +207,23 @@ async function runToTerminal(
   }
   const missionIdentifier = accepted.missionIdentifier;
   let status = "accepted";
-  const deadline = Date.now() + 180_000;
+  /**
+   * 修（2026-11-06，第 37 轮）：**抬高上限，别让"慢"伪装成"状态不对"**。
+   *
+   * 实测：本文件**隔离复跑 3 次仅 2.42–2.51s**（用例本体 799–884ms）；
+   * 而全量覆盖率运行下该用例**耗时 200.11s** 并在 `:375` 报出
+   * `expected 'running' to be 'done'` —— 即撞上了原 **180s** 上限
+   * ⇒ 满载争用下被拖慢约 **200×**（与第 36 轮 `context-node-lifecycle` 同类）。
+   *
+   * 关键点：本函数被**顺序调用 3 次**（实现 → 返修 → 独立验收），
+   * 三次**共用**同一段时间预算，于是第 3 次只剩残额 ⇒ 恰好在那里翻红。
+   *
+   * 故同时抬高内上限（→220s）与 `testTimeout`（240s→300s），保证
+   * **内部上限仍严格小于** `testTimeout`（差 80s）：
+   * 真卡住会由 vitest 报 `Test timed out`（明确可归因），
+   * 而不是伪装成一条状态断言失败。**断言未放宽**。
+   */
+  const deadline = Date.now() + 220_000;
   while (
     !["done", "failed", "blocked", "cancelled"].includes(status) &&
     Date.now() < deadline
@@ -293,7 +316,12 @@ describe("E2E-01-02 切片 4：纵向实现→测试→返修→独立验收", (
       "task-implement-1",
       "实现 fixture 目标功能（第一版）",
     );
-    expect(firstImplementation.status).toBe("done");
+    expect(
+      firstImplementation.status,
+      "第 1/3 次顺序任务未到终态（实测 status=" +
+        firstImplementation.status +
+        "）—— 三者共用同一段预算，若此处失败请先看是否整体变慢",
+    ).toBe("done");
 
     // ② 测试（以冻结断言判定）：第一版必然失败 → 触发返修
     const brokenModule = await importFresh(fixture.sourceFilePath);
@@ -320,7 +348,10 @@ describe("E2E-01-02 切片 4：纵向实现→测试→返修→独立验收", (
       "task-implement-2",
       "实现 fixture 目标功能（返修）",
     );
-    expect(rework.status).toBe("done");
+    expect(
+      rework.status,
+      "第 2/3 次顺序任务（返修）未到终态（实测 status=" + rework.status + "）",
+    ).toBe("done");
 
     // ④ 测试通过 + 产出真实产物（与 E2E-01-01 冻结预期一致）
     const fixedModule = await importFresh(fixture.sourceFilePath);
@@ -372,7 +403,12 @@ describe("E2E-01-02 切片 4：纵向实现→测试→返修→独立验收", (
       "task-accept-1",
       "独立复核产物摘要",
     );
-    expect(independentAcceptance.status).toBe("done");
+    expect(
+      independentAcceptance.status,
+      "第 3/3 次顺序任务（独立验收）未到终态（实测 status=" +
+        independentAcceptance.status +
+        "）—— 它只继承前两次之后的残额，是本用例最容易先翻红的一处",
+    ).toBe("done");
     const acceptanceBodies = receivedBodies.join("\n");
     expect(acceptanceBodies).toContain("已完成 2/4");
 
