@@ -35,10 +35,6 @@ afterEach(async () => {
   }
 });
 
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
 describe("SMART-01-04 补做：慢模型与长下级任务下仍能接收新指令", () => {
   it("① 模拟慢模型：首条在途期间后续指令仍被受理（不阻塞接收）", async () => {
     const store = new InstructionWindowStore({ baseDirectory, windowCapacity: 3 });
@@ -51,8 +47,23 @@ describe("SMART-01-04 补做：慢模型与长下级任务下仍能接收新指�
       instructionText: "慢任务",
       idempotencyKey: "key-1",
     });
+    /**
+     * 修（2026-11-04）：**不能用 `delay(120)` 与后续 await 抢跑**。
+     *
+     * 原写法是"起一个 120ms 后完成的在途任务，然后连发 3 条指令"——
+     * 那是**墙钟竞速**：负载高时这 120ms 里那 3 次 `await` 可能已经跑完并触发完成，
+     * 于是窗口腾出一格，第 4 条被 `admitted` 而非 `queued`
+     * （实测全量运行下偶发 `expected 'admitted' to be 'queued'`，隔离复跑通过）。
+     *
+     * 现改为**显式闸门**：在途任务只在测试**主动放行**后才完成，
+     * 从而"第 4 条到达时窗口必然已满"成为**确定性**前提。断言未做任何放宽。
+     */
+    let releaseSlowTask: () => void = () => {};
+    const slowTaskGate = new Promise<void>((resolve) => {
+      releaseSlowTask = resolve;
+    });
     const slowTaskPromise = (async () => {
-      await delay(120);
+      await slowTaskGate;
       return store.submitReceipt({
         instructionIdentifier: "ins-1",
         instructionRevision: 1,
@@ -92,6 +103,8 @@ describe("SMART-01-04 补做：慢模型与长下级任务下仍能接收新指�
     });
     expect(fourth.outcome).toBe("queued");
 
+    // 显式放行在途任务（此时四条指令都已到达，前提确定）
+    releaseSlowTask();
     await slowTaskPromise;
     const snapshot = await store.snapshot();
     expect(snapshot.terminalInstructions.map((item) => item.instructionIdentifier)).toContain("ins-1");
