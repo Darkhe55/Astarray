@@ -49,6 +49,33 @@
 - 本机仅 Windows（win32 x64）；仓库无远端，无法在本会话内建立 Linux/macOS CI。
 - 状态：**未通过（保持）**。证据缺失：Linux Node 20/新版本矩阵、macOS Node 20/新版本矩阵。
 
+> ### ✅ 2026-11-08 更新（第 40 轮）：**Linux 侧已取得**，macOS 侧按用户指示暂缓
+>
+> **用户指示原文（2026-11-08）**：「linux部分使用wsl做，macos部分先跳过，保留记录以后再补」
+> ⇒ 本卡点名的"**Linux Node 20/新版本矩阵**"本次**已补齐**；"**macOS Node 20/新版本矩阵**"
+> **仍缺失**，但已按指示**保留记录、明确待补**（不是遗忘、也不冒充已做）。
+>
+> **Linux 证据（可复核）**：
+>
+> | 项 | 值 |
+> | --- | --- |
+> | 平台 | **WSL2**（`6.18.33.2-microsoft-standard-WSL2`）／**Ubuntu 26.04 LTS** ／ x86_64 |
+> | **Node 版本** | **v22.22.1** —— 满足本卡"**Node 20／新版本**"的版本区间要求 |
+> | 源提交 | `5f08ef0`（WSL 原生文件系统内独立 `git clone`） |
+> | 安装方式 | **`npm ci`**（按 lockfile 可复现；**不复用** Windows 的 `node_modules`，因其为 `@esbuild/win32-x64` 等平台二进制） |
+> | 退出码 | `npm ci` **0**／`build` **0**／`typecheck` **0**／`lint` **0**／**`test` 0（422 文件）**／**`test:coverage` 0** |
+> | 测试结果 | **3177 passed ＋ 2 skipped（共 3179）**；分支覆盖率 **85.23**（阈值 85 通过） |
+>
+> **2 skipped 的成因（已定位，非失败）**：`smart01-04-live-u2-flash-verdict.test.ts` 的守卫
+> `hasLiveVerdict = existsSync(<repo>/.tmp/live-u2-flash/acceptance-verdict.json)` ——
+> 该文件是**真实 Provider 运行产物、不在版本控制内**，全新 clone 无此产物 ⇒ 条件跳过；
+> 同文件其余 4 条"脚本存在性/契约"断言**照常执行并通过**。其余三处 `skipIf` 在 Linux **均未跳过**。
+>
+> **⚠️ 本卡状态**：跨平台矩阵**仍为"未通过"** —— 因为要求的是**矩阵**（Windows ＋ Linux ＋ macOS），
+> 现缺 **macOS** 一格。**Linux 一格的证据已落盘**，见
+> `docs/reports/LINUX_PLATFORM_EVIDENCE_WSL2_2026-11-08.md`。
+> **不得**据本行把整卡改判通过。
+
 ## 结论（B6R-11 后更新）
 
 - 功能、打包、隔离安装、tarball 审计、**全局分支覆盖率门槛（85.05%）**：**通过**。
