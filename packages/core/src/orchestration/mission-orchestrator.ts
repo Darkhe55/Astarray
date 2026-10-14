@@ -44,6 +44,7 @@ import { DagScheduler } from "./dag-scheduler.js";
 import type { ScheduleAction } from "./dag-scheduler.js";
 import { ToolFailureCounter } from "./failure-counter.js";
 import { WorkerAgent } from "./worker-agent.js";
+import type { WorkerAgentOptions } from "./worker-agent.js";
 import type { WorkerOutcome } from "./worker-agent.js";
 import type { GitIntegrationCoordinator } from "./git-integration-coordinator.js";
 import { GitProcess } from "./git-process.js";
@@ -474,22 +475,14 @@ export class MissionOrchestrator {
         return;
       }
     }
-    const worker = new WorkerAgent({
+    /**
+     * 注意：**发布者登记在 `buildWorkerAgent` 内部完成**（不变量放在那里，
+     * 任何经该方法构造的 Worker 都带发布者信箱，调用点无法漏掉）。
+     */
+    const worker = this.buildWorkerAgent({
       agentInstanceId,
       missionId,
-      /**
-       * COMM-01-02（2026-10-26）：**本编排器即这条任务的发布者**，
-       * 故在此把自己的信箱登记到任务上 —— 执行者的反馈据此走
-       * **任务发布者的反向通道**（而不是靠"上下级"或硬编码推断）。
-       * 已有发布者的任务**尊重原值**（不覆盖别人的反向通道）。
-       */
-      task: {
-        ...task,
-        publishedByRecipientId: resolvePublisherRecipientIdForTask({
-          task,
-          publisherRecipientId: `scheduler:${missionId}`,
-        }),
-      },
+      task,
       availableToolDescriptors:
         this.options.workerFactories.toolDescriptorFactory?.(task) ?? [],
       requireCompletionEvent: this.options.requireCompletionControlEvent ?? false,
@@ -548,6 +541,35 @@ export class MissionOrchestrator {
     void workerPromise.finally(() => {
       this.inFlightWorkerPromises.delete(workerPromise);
       this.wake();
+    });
+  }
+
+  /**
+   * 构造执行任务的 Worker（COMM-01-02，2026-10-27）。
+   *
+   * **为什么抽成一个可覆写方法**：此前这里是内联的 `new WorkerAgent({...})`，
+   * `workerFactories` **不提供** worker 注入口，且全仓没有构造 `MissionOrchestrator`
+   * 的测试 ⇒ "编排器发布任务时**确实把发布者信箱登记到任务上**"这件事
+   * **无法被端到端断言**（只能靠类型检查 + 纯函数测试）。抽成方法后，
+   * 集成测试可覆写它以**捕获真实编排路径产出的 Worker 配置**并逐项断言。
+   *
+   * **发布者登记放在本方法内部**（而不是调用点）：这样"本编排器即发布者"
+   * 这条不变量**无法被绕过** —— 任何经本方法构造的 Worker 都带着发布者信箱；
+   * 若放在调用点，覆写本方法或新增调用点都会悄悄丢掉它
+   * （实测：放在调用点时，直接调用本方法产出的任务**没有**发布者字段）。
+   *
+   * 覆写者必须返回一个可 `run()` 的 Worker（见 `WorkerAgentOptions`）。
+   */
+  protected buildWorkerAgent(options: WorkerAgentOptions): WorkerAgent {
+    return new WorkerAgent({
+      ...options,
+      task: {
+        ...options.task,
+        publishedByRecipientId: resolvePublisherRecipientIdForTask({
+          task: options.task,
+          publisherRecipientId: `scheduler:${options.missionId}`,
+        }),
+      },
     });
   }
 

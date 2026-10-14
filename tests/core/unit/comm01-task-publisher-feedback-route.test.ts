@@ -10,6 +10,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { TaskDependencyNode } from "../../../packages/core/src/core/types.js";
+import { MissionOrchestrator } from "../../../packages/core/src/orchestration/mission-orchestrator.js";
+import type { WorkerAgent, WorkerAgentOptions } from "../../../packages/core/src/orchestration/worker-agent.js";
 import {
   resolveFeedbackRecipient,
   resolvePublisherRecipientIdForTask,
@@ -148,5 +150,98 @@ describe("COMM-01-02：发布者登记规则（编排器发布任务时用）", 
     // 关键：登记后**不再**是"回退"，而是**正向的发布者反向通道**
     expect(route.isPublisherReverseChannel).toBe(true);
     expect(route.fallbackReason).toBeNull();
+  });
+});
+
+describe("COMM-01-02：编排器构造 Worker 时确实登记发布者（端到端于该类内部）", () => {
+  /**
+   * 为何用**子类 + 调用 `buildWorkerAgent`**：
+   * `MissionOrchestrator` 的构造依赖很重（TaskStore/租约/调度器/各种工厂），
+   * 但在全仓没有构造它的集成测试之前，"编排器确实登记了发布者"这件事
+   * 只能靠类型检查 + 纯函数测试支撑（上一轮我如实标注了这一点）。
+   *
+   * 本轮把内联的 `new WorkerAgent({...})` 抽成可覆写的 `buildWorkerAgent`，
+   * 于是可以：
+   *  1. 覆写它以**捕获真实编排代码产出的配置**（而不是复制一份配置来测）；
+   *  2. 直接调用该 protected 方法并断言其返回值 —— 这就是**编排代码本身**的行为，
+   *     不再是我复制的逻辑。
+   *
+   * 若有人把那段登记逻辑删掉，本用例会红。
+   */
+  class CapturingOrchestrator extends MissionOrchestrator {
+    capture(options: WorkerAgentOptions): WorkerAgent {
+      return this.buildWorkerAgent(options);
+    }
+  }
+
+  function buildOrchestrator(): CapturingOrchestrator {
+    return new CapturingOrchestrator({
+      initialChain: {
+        schemaVersion: 1,
+        missionId: "mission-1",
+        revision: 1,
+        updatedAtIso: "2026-10-27T00:00:00.000Z",
+        tasks: [buildTask()],
+      },
+      missionId: "mission-1",
+      concurrency: 1,
+      taskStore: {
+        readTaskChain: async () => null,
+        writeTaskChain: async () => {},
+      } as never,
+      feedbackTransportFactory: async () =>
+        ({
+          onMessage: () => {},
+          enqueue: async () => {},
+          queryHealth: async () => ({
+            isHealthy: true,
+            processPid: 0,
+            protocolVersion: 1,
+            queuedMessageCount: 0,
+          }),
+          shutdown: async () => {},
+          setAgentStatus: () => {},
+        }) as never,
+      workerFactories: {
+        runtimeFactory: () => ({}) as never,
+        toolPortFactory: () => ({}) as never,
+        buildPermissionExplanation: () => "无需工具",
+      },
+      maxLoopIterations: 1,
+      onUserEscalation: () => {},
+    } as never);
+  }
+
+  it("⑩ 编排器产出的 Worker 配置里，任务带着**编排器自己的信箱**", () => {
+    const orchestrator = buildOrchestrator();
+    const task = buildTask();
+
+    const worker = orchestrator.capture({
+      agentInstanceId: "worker-1",
+      missionId: "mission-1",
+      task,
+      runtime: {} as never,
+      toolPort: {} as never,
+    } as never);
+
+    // 通过 WorkerAgent 自身的 options 读回（契约：构造时传入什么就持有什么）
+    const capturedTask = (worker as unknown as { options: WorkerAgentOptions }).options.task;
+    expect(capturedTask.publishedByRecipientId).toBe("scheduler:mission-1");
+  });
+
+  it("⑪ 任务**已带**发布者 ⇒ 编排器不覆盖（尊重别人的反向通道）", () => {
+    const orchestrator = buildOrchestrator();
+    const task = buildTask({ publishedByRecipientId: "main:mission-7" });
+
+    const worker = orchestrator.capture({
+      agentInstanceId: "worker-1",
+      missionId: "mission-1",
+      task,
+      runtime: {} as never,
+      toolPort: {} as never,
+    } as never);
+
+    const capturedTask = (worker as unknown as { options: WorkerAgentOptions }).options.task;
+    expect(capturedTask.publishedByRecipientId).toBe("main:mission-7");
   });
 });

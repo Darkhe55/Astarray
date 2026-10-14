@@ -269,6 +269,23 @@ export const MUTATIONS = [
       "强行覆盖既有发布者 ⇒ 会把反馈从真正的发布者改投到本编排器（另一种'错投'）" +
       "（'尊重原值'这条必须变红）",
   },
+  {
+    mutationIdentifier: "comm01-orchestrator-skips-publisher-stamp",
+    targetFile: "packages/core/src/orchestration/mission-orchestrator.ts",
+    find: `        publishedByRecipientId: resolvePublisherRecipientIdForTask({
+          task: options.task,
+          publisherRecipientId: \`scheduler:\${options.missionId}\`,
+        }),`,
+    replace: `        publishedByRecipientId: resolvePublisherRecipientIdForTask({
+          task: { ...options.task, publishedByRecipientId: undefined } as never,
+          publisherRecipientId: undefined as never,
+        }),`,
+    testFiles: ["tests/core/unit/comm01-task-publisher-feedback-route.test.ts"],
+    expectedFailingTestNames: ["编排器产出的 Worker 配置里，任务带着"],
+    rationale:
+      "编排器不再登记发布者 ⇒ '编排器产出的 Worker 配置里带着编排器自己的信箱'必须变红" +
+      "（否则这次'启用'等于没启用，反向通道又变回死代码）",
+  },
 ];
 
 function sha256OfFile(filePath) {
