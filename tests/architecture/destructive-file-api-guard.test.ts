@@ -70,11 +70,19 @@ const ALLOWED_MODULES: Record<string, { tokens: AllowedTokens; reason: string }>
       "释放与回收均**追加标记、不删除历史**（供报告追溯'当初是谁收的'），" +
       "故无 rm/rename/copyFile",
   },
+  "core/src/toolkit/tool-upgrade-authorization-grant.ts": {
+    tokens: ["writeFile"],
+    reason:
+      "TOOLKIT-01-04 工具升级重新授权的**签发资格**记录：把'谁能签发'从" +
+      "调用方自述的**自由字符串**改为**本地可核验的能力授予**" +
+      "（默认只有用户持有；可向下级逐层分发且**不得放大**；撤销/到期即失效）。" +
+      "只写自己那一个 JSON 文件（`tool-upgrade-authorization-grants.json`）；" +
+      "撤销采用**追加标记**而不删除历史，故无 rm/rename/copyFile",
+  },
   "core/src/tools/session-permission-elevation.ts": {
     tokens: ["rm", "writeFile"],
     reason: "会话提升记录持久化（writeFile + 失效记录清理 rm）",
-  },
-  "core/src/tools/session-shutdown-and-export.ts": {
+  },  "core/src/tools/session-shutdown-and-export.ts": {
     tokens: ["copyFile", "writeFile"],
     reason: "权限导出覆盖前 .bak 备份后写入（copyFile→writeFile）",
   },

@@ -80,6 +80,11 @@ export type DomainErrorCode =
    * 未锁定则**无法计算升级差异**，而"不知情"就不该签发授权。
    */
   | "tool-package-project-not-locked"
+  /**
+   * TOOLKIT-01-04（2026-10-23）：签发工具升级重新授权记录需要"**拥有该权限的角色**"。
+   * 默认只有用户本人持有；Agent 须经显式授予（**可向下级逐层分发、不得放大**）。
+   */
+  | "tool-package-upgrade-not-authorized"
   | "unknown";
 
 export class DomainError extends Error {

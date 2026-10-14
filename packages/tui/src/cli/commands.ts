@@ -5333,12 +5333,28 @@ export async function executeToolPackageAuthorizeUpgradeCommand(
     const { authorizeToolPackageUpgrade } = await import(
       "../../../core/src/toolkit/tool-package-operation-control.js"
     );
+    /**
+     * TOOLKIT-01-04（2026-10-23）：**签发资格必须经本地判定** ——
+     * 默认只有**用户本人**持有"工具升级重新授权"能力；Agent 须经显式授予
+     * （可向下级逐层分发、不得放大）。CLI 由认证会话代表用户，
+     * 故以 `authenticatedUserIdentifier` 传入；**模型自称不构成依据**。
+     */
+    const { ToolUpgradeAuthorizationController, ToolUpgradeAuthorizationStore } =
+      await import("../../../core/src/toolkit/tool-upgrade-authorization-grant.js");
+    const authorizationController = new ToolUpgradeAuthorizationController({
+      store: new ToolUpgradeAuthorizationStore({
+        stateDirectory: options.stateDirectory,
+      }),
+    });
     const outcome = await authorizeToolPackageUpgrade({
       stateDirectory: options.stateDirectory,
       projectIdentifier: options.projectIdentifier,
       toolPackageId: options.toolPackageId,
       toVersion: options.toVersion,
       issuedBy: options.issuedBy,
+      authorizationController,
+      authenticatedUserIdentifier: options.issuedBy,
+      issuingAgentInstanceId: null,
     });
     if (options.isJsonOutput) {
       printJson({

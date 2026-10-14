@@ -168,6 +168,35 @@ export const MUTATIONS = [
       "把投递步骤的地址完整性整段短路后，'无绑定记录 / 已回收的收件人不得投递'必须变红" +
       "（否则该检查只写在模块里、在真实投递路径上并不生效）",
   },
+  {
+    mutationIdentifier: "toolkit01-upgrade-authority-check-skipped",
+    targetFile: "packages/core/src/toolkit/tool-package-operation-control.ts",
+    find: `  if (input.authorizationController !== undefined) {
+    const authority = await input.authorizationController.resolveIssuingAuthority({`,
+    replace: `  if (false && input.authorizationController !== undefined) {
+    const authority = await input.authorizationController.resolveIssuingAuthority({`,
+    testFiles: ["tests/core/integration/toolkit01-reauthorization-gate.test.ts"],
+    expectedFailingTestNames: ["**无资格的 Agent** 不得签发"],
+    rationale:
+      "短路'签发资格'判定后，未获授予的 Agent 又能在**真实签发入口**上凭空签发" +
+      "（用户澄清：默认只有用户持有该权限，Agent 须经显式授予）",
+  },
+  {
+    mutationIdentifier: "toolkit01-delegation-amplification-allowed",
+    targetFile: "packages/core/src/toolkit/tool-upgrade-authorization-grant.ts",
+    find: `      if (ownValidGrant.expiresAtIso !== null) {
+        if (requestedExpiry === null) {`,
+    replace: `      if (false && ownValidGrant.expiresAtIso !== null) {
+        if (requestedExpiry === null) {`,
+    testFiles: ["tests/core/unit/toolkit01-upgrade-authorization.test.ts"],
+    expectedFailingTestNames: [
+      "**逐层分发不得放大**：自身有期限时不得授出无期限能力",
+      "**逐层分发不得放大**：授出期限不得晚于自身期限",
+    ],
+    rationale:
+      "放开'不得放大'后，下级可授出无期限/更长期限的能力 ⇒ 逐层分发变成权限膨胀" +
+      "（用户要求'向下级逐层分发'但**不得放大**）",
+  },
 ];
 
 function sha256OfFile(filePath) {

@@ -16,6 +16,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ToolPackageVersionStateStore } from "../../../packages/core/src/toolkit/tool-package-version-state-store.js";
 import { authorizeToolPackageUpgrade } from "../../../packages/core/src/toolkit/tool-package-operation-control.js";
+import {
+  ToolUpgradeAuthorizationController,
+  ToolUpgradeAuthorizationStore,
+} from "../../../packages/core/src/toolkit/tool-upgrade-authorization-grant.js";
 
 let stateDirectory: string;
 let store: ToolPackageVersionStateStore;
@@ -345,5 +349,87 @@ describe("TOOLKIT-01-04：版本状态文件的 fail-closed 与缺省字段兜�
     expect(snapshot.callHistory).toEqual([]);
     expect(snapshot.inFlightCalls).toEqual([]);
     expect(snapshot.pendingSwitches).toEqual([]);
+  });
+});
+
+describe("TOOLKIT-01-04：签发入口的**签发资格**门禁（2026-10-23）", () => {
+  it("⑫ **无资格的 Agent** 不得签发（拒绝，且不留任何记录）", async () => {
+    /**
+     * 依据用户 2026-10-22 澄清："签发者不应该根据规则表设置，应该由**拥有权限的角色**确定，
+     * **默认升级工具权限只有用户拥有**，并兼容可以**向下级逐层分发**权限的机制。"
+     *
+     * 此前 `issuedBy` 是自由字符串 ⇒ 谁都能自称签发者。本用例钉住：
+     * 未获授予的 Agent 走到真实签发入口时**必须被拒**，且**不得留下记录**。
+     */
+    await prepareOneToTwoWithNewSideEffect();
+
+    const store = new ToolPackageVersionStateStore({ stateDirectory });
+    const authorizationController = new ToolUpgradeAuthorizationController({
+      store: new ToolUpgradeAuthorizationStore({ stateDirectory }),
+    });
+
+    await expect(
+      authorizeToolPackageUpgrade({
+        stateDirectory,
+        projectIdentifier: PROJECT,
+        toolPackageId: TOOL_PACKAGE,
+        toVersion: 2,
+        issuedBy: "tertiary-agent-1",
+        authorizationController,
+        authenticatedUserIdentifier: null,
+        issuingAgentInstanceId: "tertiary-agent-1",
+      }),
+    ).rejects.toMatchObject({ errorCode: "tool-package-upgrade-not-authorized" });
+
+    // 不留记录（无资格就不该产生任何授权痕迹）
+    await expect(store.reauthorizationRecordStore.listRecords()).resolves.toEqual([]);
+  });
+
+  it("⑬ **用户本人**（认证会话）⇒ 可签发；且该判定在**真实入口**上生效", async () => {
+    await prepareOneToTwoWithNewSideEffect();
+
+    const authorizationController = new ToolUpgradeAuthorizationController({
+      store: new ToolUpgradeAuthorizationStore({ stateDirectory }),
+    });
+
+    const outcome = await authorizeToolPackageUpgrade({
+      stateDirectory,
+      projectIdentifier: PROJECT,
+      toolPackageId: TOOL_PACKAGE,
+      toVersion: 2,
+      issuedBy: "authenticated-user",
+      authorizationController,
+      authenticatedUserIdentifier: "authenticated-user",
+      issuingAgentInstanceId: null,
+    });
+
+    expect(outcome.isReauthorizationRequired).toBe(true);
+    expect(outcome.reauthorizationRecordIdentifier).not.toBeNull();
+  });
+
+  it("⑭ 用户**授予 Agent 能力**后，该 Agent 经真实入口也可签发（逐层分发可用）", async () => {
+    await prepareOneToTwoWithNewSideEffect();
+
+    const authorizationController = new ToolUpgradeAuthorizationController({
+      store: new ToolUpgradeAuthorizationStore({ stateDirectory }),
+    });
+    await authorizationController.delegateCapability({
+      authenticatedUserIdentifier: "authenticated-user",
+      grantedToAgentInstanceId: "secondary-agent-a",
+      expiresAtIso: null,
+    });
+
+    const outcome = await authorizeToolPackageUpgrade({
+      stateDirectory,
+      projectIdentifier: PROJECT,
+      toolPackageId: TOOL_PACKAGE,
+      toVersion: 2,
+      issuedBy: "secondary-agent-a",
+      authorizationController,
+      authenticatedUserIdentifier: null,
+      issuingAgentInstanceId: "secondary-agent-a",
+    });
+
+    expect(outcome.reauthorizationRecordIdentifier).not.toBeNull();
   });
 });

@@ -17,6 +17,7 @@
  */
 
 import { DomainError } from "../core/errors.js";
+import type { ToolUpgradeAuthorizationController } from "./tool-upgrade-authorization-grant.js";
 import { ToolPackageVersionStateStore } from "./tool-package-version-state-store.js";
 
 /** 管理操作类型。 */
@@ -64,11 +65,42 @@ export async function authorizeToolPackageUpgrade(input: {
   toVersion: number;
   /** 签发者（本地受控流程/人员标识，随记录落盘可追溯）。 */
   issuedBy: string;
+  /**
+   * TOOLKIT-01-04（2026-10-23）：**签发资格**判定器。
+   *
+   * 依据用户澄清："签发者不应该根据规则表设置，应该由**拥有权限的角色**确定，
+   * **默认升级工具权限只有用户拥有**，并兼容可以**向下级逐层分发**权限的机制。"
+   *
+   * 此前 `issuedBy` 是**自由字符串**，谁都能自称用户 ⇒ 等于没有授权检查。
+   * 提供本判定器后：**签发者无资格 ⇒ 拒绝签发**（fail-closed）。
+   * 未提供时保持旧行为（向后兼容），但调用方**应当**提供。
+   */
+  authorizationController?: ToolUpgradeAuthorizationController;
+  /** 认证用户身份（由**本地认证层**确定后传入；模型自称不是依据）。 */
+  authenticatedUserIdentifier?: string | null;
+  /** 若非用户本人签发，则为签发 Agent 的具体个体标识。 */
+  issuingAgentInstanceId?: string | null;
 }): Promise<ToolPackageUpgradeAuthorizationOutcome> {
   const store = new ToolPackageVersionStateStore({
     stateDirectory: input.stateDirectory,
   });
   const controller = await store.loadController();
+
+  /**
+   * **先判签发资格**（在任何判定与落盘之前）—— 无资格就不该看到/签发任何记录。
+   */
+  if (input.authorizationController !== undefined) {
+    const authority = await input.authorizationController.resolveIssuingAuthority({
+      authenticatedUserIdentifier: input.authenticatedUserIdentifier ?? null,
+      issuingAgentInstanceId: input.issuingAgentInstanceId ?? null,
+    });
+    if (!authority.isAuthorized) {
+      throw new DomainError(
+        "tool-package-upgrade-not-authorized",
+        "无权重签发工具升级重新授权记录：" + authority.reason,
+      );
+    }
+  }
 
   const fromVersion = controller
     .listProjectLocks()
