@@ -296,7 +296,16 @@ export const FAULT_INJECTION_MATRIX: readonly FaultInjectionEntry[] = [
       "**仍需注意（未据此放宽）**：`authorization-retry-closure` ① 的失败另属**产品侧** 20s Provider 超时" +
       "（测试自配），与负载抖动无关，其处置见单独记录；本条目只声明" +
       "**『默认 5s 上限 + 子进程』这一配置缺口已在全仓闭合且经连续全量实测无超时**，" +
-      "不宣称『永不抖动』。详见 " +
+      "不宣称『永不抖动』。" +
+      "**2026-10-23 补记（依据被证不完整 ⇒ 已扩大并修正）**：上条『子进程但无预算数量为 0』" +
+      "**只覆盖了子进程一类**。本轮全量 `check` 实测翻红 1 条与改动无关的用例 ——" +
+      "`anthropic-messages-runtime.test.ts > ⑰ providerIdentifier 透传` 超时，**隔离复跑全绿**、" +
+      "4 路并发也不复现；根因是它**起本地 fake HTTP 服务跑真实请求**却沿用默认 5s，" +
+      "属**同一类**（等待真实 I/O）缺口而未被首版规则扫描到。" +
+      "实测：全仓 **20 个**测试文件起服务，其中**仅这 1 个**无预算 ⇒ 已补 `testTimeout`，" +
+      "并**扩大活规则**（`createServer|\\.listen` 并入同一约定）⇒ 该类今后**当场红**。" +
+      "故本条 `fixed` 结论**依然成立**，但**依据须以本补记为准**（子进程 + 起服务两类均已闭合）。" +
+      "详见 " +
       "`docs/reports/FEEDBACK_SHUTDOWN_DUPLICATE_5S_2026-10-13.md` §9–§10。",
   },
 ];
