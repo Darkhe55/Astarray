@@ -684,8 +684,13 @@ export {
  * GUI-02-03（2026-11-08）：**历史列表与详情**只读读取层。
  *
  * 公开导出是刻意的：消费者（含 GUI 只读视图）**不得依赖内部路径**。
- * 该模块只读文件、不写、不删、不调模型，且把"不得触发"的动作声明为端口以便可证伪。
+ * 该模块只读文件、不写、不删、不调模型，且把「不得触发」的动作声明为端口以便可证伪。
+ *
+ * 注意：门面自己的 `queryMissionHistory()` 方法要**调用**它，
+ * 故这里另有具名 import（`export ... from` 只做再导出、不引入本模块作用域）。
  */
+import { queryMissionHistory } from "./gui/mission-history-reader.js";
+import type { MissionHistoryPage } from "./gui/mission-history-reader.js";
 export {
   DEFAULT_MISSION_HISTORY_PAGE_SIZE,
   MAXIMUM_MISSION_HISTORY_PAGE_SIZE,
@@ -1912,6 +1917,51 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       idempotencyId: this.nextEventIdempotencyId(),
     });
     return settings;
+  }
+
+  /**
+   * GUI-02-03（2026-11-08）：**历史列表与详情**（只读、分页按需）。
+   *
+   * 语义要点：
+   * - **只读**：不恢复 mission、不调模型、不注入上下文；
+   * - **分页按需**：只读当前页的 `summary.json`（不得全量读所有 mission）；
+   * - **历史状态与运行状态分离**：磁盘 `status` 只是「当时」的记录；
+   *   「现在是否真在跑」由**租约**判定 —— 租约**属于本进程实例**且活跃才算运行中，
+   *   否则（含进程重启后）呈现为 `interrupted-needs-reconciliation`，**不会**显示成运行中。
+   */
+  async queryMissionHistory(input?: {
+    pageSize?: number;
+    pageIndex?: number;
+    afterMissionIdentifier?: string;
+  }): Promise<MissionHistoryPage> {
+    this.assertOpen();
+    if (this.stateDirectory === null) {
+      throw new PublicApplicationError(
+        "missing-state-directory",
+        "未配置状态目录：无法读取 mission 历史（拒绝隐式读取当前目录）",
+      );
+    }
+    const missionLeaseStore = this.runtime.missionLeaseStore;
+    const currentProcessInstanceIdentifier = this.runtime.processInstanceId;
+    return await queryMissionHistory({
+      stateDirectory: this.stateDirectory,
+      ...(input?.pageSize === undefined ? {} : { pageSize: input.pageSize }),
+      ...(input?.pageIndex === undefined ? {} : { pageIndex: input.pageIndex }),
+      ...(input?.afterMissionIdentifier === undefined
+        ? {}
+        : { afterMissionIdentifier: input.afterMissionIdentifier }),
+      /**
+       * 运行态来源：**租约**。只有「租约活跃**且**属于本进程实例」才算真的在跑 ——
+       * 这一条同时满足卡内「重启前 `running` 不得显示为运行中」。
+       */
+      isMissionActivelyRunning: async (missionIdentifier: string) => {
+        const leaseSummary = await missionLeaseStore.readLeaseSummary(
+          missionIdentifier,
+          currentProcessInstanceIdentifier,
+        );
+        return leaseSummary.isActive && leaseSummary.isOwnedByCurrentProcess;
+      },
+    });
   }
 
   /** GUI-01-R-03：恢复中心只读概览（真实 RecoveryCenterController）。 */

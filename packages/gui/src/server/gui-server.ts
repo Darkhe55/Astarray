@@ -42,8 +42,7 @@ const DISALLOWED_CONTROL_CHARACTER_CODES = createDisallowedControlCharacterCodes
  * GUI 依赖的公共应用服务子集（AstarrayApplicationFacade 结构兼容）。
  * GUI 不实现第二套会话/任务/权限逻辑。
  */
-export interface GuiApplicationPort {
-  subscribe(listener: (event: PublicAstarrayEvent) => void): {
+export interface GuiApplicationPort {  subscribe(listener: (event: PublicAstarrayEvent) => void): {
     unsubscribe(): void;
   };
   submitTask(input: {
@@ -155,6 +154,18 @@ export interface GuiApplicationPort {
     missionIdentifier: string,
   ): Promise<GuiRecoveryMissionView | null>;
   listPendingVerifications?(): Promise<GuiPendingVerificationView[]>;
+  /**
+   * GUI-02-03（2026-11-08）：**历史列表与详情**（可选能力；缺失时服务端显式 501，
+   * **不静默降级**为空气泡）。
+   *
+   * 与公共门面 `queryMissionHistory({ pageSize, pageIndex, afterMissionIdentifier })` 对齐：
+   * 只读、分页按需、历史状态与运行状态分离。
+   */
+  queryMissionHistory?(input: {
+    pageSize?: number;
+    pageIndex?: number;
+    afterMissionIdentifier?: string;
+  }): Promise<GuiMissionHistoryPageView>;
   recordVerificationDecision?(input: {
     ownerAgentInstanceId: string;
     taskIdentifier: string;
@@ -297,6 +308,35 @@ export interface GuiRecoveryMissionView {
 export interface GuiRecoveryOverviewView {
   missions: GuiRecoveryMissionView[];
   requiresDecisionMissions: string[];
+}
+
+/**
+ * GUI-02-03（2026-11-08）：历史视图条目。
+ *
+ * 与门面 `MissionHistoryEntry` 对齐，但**只暴露界面需要的字段**：
+ * - `recordedStatus` 是**历史状态**（磁盘上"当时"的记录）；
+ * - `runtimeState` / `isActivelyRunning` 是**运行状态**（现在是否真在跑）；
+ *   二者**分开呈现**，故"重启前 running"不会被显示成运行中。
+ * - `projectIdentifier` 为 `null` 表示**没有项目信息**（不伪造）。
+ */
+export interface GuiMissionHistoryEntryView {
+  missionIdentifier: string;
+  prompt: string | null;
+  mode: string | null;
+  projectIdentifier: string | null;
+  createdAtIso: string | null;
+  recordedStatus: string | null;
+  runtimeState: string;
+  isActivelyRunning: boolean;
+  isCorrupted: boolean;
+}
+
+export interface GuiMissionHistoryPageView {
+  entries: GuiMissionHistoryEntryView[];
+  pageIndex: number;
+  effectivePageSize: number;
+  totalMissionCount: number;
+  hasMorePages: boolean;
 }
 
 /** GUI-01-R-03b：待追认项（按 owner Agent 隔离，不合并上下文）。 */
@@ -1529,6 +1569,56 @@ export async function startGuiServer(
       });
       return;
     }
+    /**
+     * GUI-02-03（2026-11-08）：**历史列表与详情**（只读）。
+     *
+     * - 只支持 `GET`（查看历史**从不**产生副作用：不恢复、不调模型、不注入上下文）；
+     * - **分页按需**：`pageSize` / `pageIndex` 透传，页大小上限由核心层强制；
+     * - 非法分页参数 ⇒ **400**（不静默夹到"全部"）；
+     * - 能力缺失 ⇒ **501**（不静默降级）。
+     */
+    if (request.method === "GET" && requestUrl.pathname === "/mission-history") {
+      const applicationService = options.applicationService;
+      if (applicationService.queryMissionHistory === undefined) {
+        writeCapabilityUnavailable(response);
+        return;
+      }
+      const rawPageSize = requestUrl.searchParams.get("pageSize");
+      const rawPageIndex = requestUrl.searchParams.get("pageIndex");
+      const afterMissionIdentifier = requestUrl.searchParams.get("afterMissionIdentifier");
+      let requestedPageSize: number | undefined;
+      let requestedPageIndex: number | undefined;
+      if (rawPageSize !== null) {
+        requestedPageSize = Number(rawPageSize);
+        if (!Number.isInteger(requestedPageSize) || requestedPageSize < 1) {
+          writeJsonResponse(response, 400, {
+            errorCode: "mission-history-page-size-invalid",
+            message: "pageSize 必须为正整数",
+          });
+          return;
+        }
+      }
+      if (rawPageIndex !== null) {
+        requestedPageIndex = Number(rawPageIndex);
+        if (!Number.isInteger(requestedPageIndex) || requestedPageIndex < 0) {
+          writeJsonResponse(response, 400, {
+            errorCode: "mission-history-page-index-invalid",
+            message: "pageIndex 必须为非负整数",
+          });
+          return;
+        }
+      }
+      const page = await applicationService.queryMissionHistory({
+        ...(requestedPageSize === undefined ? {} : { pageSize: requestedPageSize }),
+        ...(requestedPageIndex === undefined ? {} : { pageIndex: requestedPageIndex }),
+        ...(afterMissionIdentifier === null || afterMissionIdentifier === ""
+          ? {}
+          : { afterMissionIdentifier }),
+      });
+      writeJsonResponse(response, 200, page);
+      return;
+    }
+
     if (request.method === "GET" && requestUrl.pathname === "/verifications") {
       const applicationService = options.applicationService;
       if (applicationService.listPendingVerifications === undefined) {

@@ -92,7 +92,7 @@ export interface QueryMissionHistoryInput {
   /** 游标：只返回该 mission **之后**的条目（与 `pageIndex` 二选一，优先游标）。 */
   afterMissionIdentifier?: string;
   /** 运行态来源：给定 mission 现在是否真的在跑。缺省视为"都没在跑"（保守）。 */
-  isMissionActivelyRunning?: (missionIdentifier: string) => boolean;
+  isMissionActivelyRunning?: (missionIdentifier: string) => boolean | Promise<boolean>;
   /** 观测端口：每次读取 summary.json 时回调（测试据此断言"只读本页"）。 */
   onSummaryRead?: (summaryPath: string) => void;
   /**
@@ -168,7 +168,7 @@ async function listMissionDirectories(stateDirectory: string): Promise<MissionDi
 async function readMissionHistoryEntry(input: {
   stateDirectory: string;
   missionIdentifier: string;
-  isMissionActivelyRunning: (missionIdentifier: string) => boolean;
+  isMissionActivelyRunning: (missionIdentifier: string) => boolean | Promise<boolean>;
   onSummaryRead?: (summaryPath: string) => void;
 }): Promise<MissionHistoryEntry> {
   const summaryPath = path.join(
@@ -246,7 +246,7 @@ async function readMissionHistoryEntry(input: {
    *   `interrupted-needs-reconciliation`（重启后不得显示为运行中）。
    */
   const isActivelyRunning =
-    recordedStatus === "running" && input.isMissionActivelyRunning(input.missionIdentifier);
+    recordedStatus === "running" && (await input.isMissionActivelyRunning(input.missionIdentifier));
 
   let runtimeState: MissionRuntimeState;
   if (recordedStatus === "running") {
