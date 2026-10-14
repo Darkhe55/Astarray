@@ -48,16 +48,17 @@ import {
 } from "./orchestration/cross-project-authorization-store.js";
 // 2026-10-13：跨项目通道必须拒绝受保护存储（backup-vault / 删除审计）。
 import { ProtectedStoragePolicy } from "./tools/protected-storage-policy.js";
-// 2026-10-18（COMM-01-02 切片①）：执行层**唯一上级**归属与按地址投递授权。
-// 卡内缺口原文：`unbounded-agent-registry.ts`"无统一持久化父子归属字段与跨实例唯一性约束"。
-// 本入口把该约束暴露为**产品可达**的公开能力（此前只存在于模块内、dist 中不可达 ⇒
-// 正是卡内警告的"组件存在但产品未接通"，现已纠正）。
+// 2026-10-18（COMM-01-02 切片①）；**2026-10-22 依设计清单订正语义**。
+// 首版误把"唯一上级 = 通信授权"（只允许直属上级投递）—— 与
+// `docs/AGENT_COMMUNICATION_OVERVIEW.md` §35–54 不符：同项目主层与次级层**默认全连接**，
+// 反馈走**任务发布者反向通道**。现改为正确职责：
+// **创建来源登记**（谁创建了谁）+ **按地址投递的地址完整性**（无绑定记录 ⇒ 直接拒绝）。
 export {
-  ParentBindingController,
-  ParentBindingStore,
-  type AgentParentBindingRecord,
-  type ParentBindingControllerOptions,
-  type ParentBindingStoreOptions,
+  AgentAddressGuard,
+  AgentCreationRegistry,
+  type AgentAddressGuardOptions,
+  type AgentCreationRecord,
+  type AgentCreationRegistryOptions,
 } from "./orchestration/agent-parent-binding-store.js";
 import {
   evaluateInstructionDeadline,

@@ -108,61 +108,65 @@ export const MUTATIONS = [
       "去掉'一次性消费'后，同一条批准不得能反复升级（否则一次批准可被无限复用）",
   },
   {
-    mutationIdentifier: "comm01-single-parent-uniqueness-removed",
+    /**
+     * 2026-10-22 订正：原两条变异（`comm01-single-parent-uniqueness-removed`、
+     * `comm01-direct-parent-check-relaxed`）针对的是**错误模型**
+     * （"唯一上级 = 通信授权"），已随实现一并删除。
+     * 依 `docs/AGENT_COMMUNICATION_OVERVIEW.md` §35–54 与用户澄清，
+     * 正确语义是"创建来源登记 + 地址完整性"（无绑定记录 ⇒ 直接拒绝）。
+     */
+    mutationIdentifier: "comm01-unknown-recipient-accepted",
     targetFile: "packages/core/src/orchestration/agent-parent-binding-store.ts",
-    find: `    if (active !== null) {
-      if (active.parentAgentInstanceId === input.parentAgentInstanceId) {
-        return { isBound: true, reason: null };
-      }`,
-    replace: `    if (false && active !== null) {
-      if (active.parentAgentInstanceId === input.parentAgentInstanceId) {
-        return { isBound: true, reason: null };
-      }`,
-    testFiles: ["tests/core/integration/comm01-parent-binding.test.ts"],
-    expectedFailingTestNames: [
-      "两个上级并发绑定同一子 ⇒ 只允许一个成功",
-    ],
+    find: `    const record = await this.registry.getRecord(recipientAgentInstanceId);
+    if (record === null) {
+      return false;
+    }
+    return record.recycledAtIso === null;`,
+    replace: `    const record = await this.registry.getRecord(recipientAgentInstanceId);
+    if (false && record === null) {
+      return false;
+    }
+    return record === null || record.recycledAtIso === null;`,
+    testFiles: ["tests/core/integration/comm01-agent-creation-registry.test.ts"],
+    expectedFailingTestNames: ["**无绑定记录**的收件人 ⇒ 直接拒绝"],
     rationale:
-      "去掉'唯一上级'约束后，后到的上级会顶掉既有归属 ⇒ **并发绑定**那条必须变红" +
-      "（否则'执行层唯一上级'只是文档承诺，产品里并不成立）。" +
-      "注意：'非直属上级'那条**不能**列进来 —— 它只做一次绑定，不产生冲突绑定，" +
-      "本变异对它的判定路径没有影响（曾误列过一次，被验证器当场指出）。",
+      "放宽'无绑定记录即拒收'后，未知地址会被当作可投递主体" +
+      "（用户澄清的硬规则：投递到无绑定记录的对象**直接拒绝**）",
   },
   {
-    mutationIdentifier: "comm01-direct-parent-check-relaxed",
+    mutationIdentifier: "comm01-creation-provenance-not-persisted",
     targetFile: "packages/core/src/orchestration/agent-parent-binding-store.ts",
-    find: `    if (active.parentAgentInstanceId !== input.claimedParentAgentInstanceId) {
-      return false;
-    }`,
-    replace: `    if (false && active.parentAgentInstanceId !== input.claimedParentAgentInstanceId) {
-      return false;
-    }`,
-    testFiles: ["tests/core/integration/comm01-parent-binding.test.ts"],
-    expectedFailingTestNames: ["非直属上级不得作为被授权出口"],
+    find: `      if (parsed.schemaVersion !== 1) {
+        return;
+      }`,
+    replace: `      if (false && parsed.schemaVersion !== 1) {
+        return;
+      }`,
+    testFiles: ["tests/core/integration/comm01-agent-creation-registry.test.ts"],
+    expectedFailingTestNames: ["`schemaVersion` 不符 ⇒ 按空继续"],
     rationale:
-      "放宽'必须来自唯一直属上级'的比对后，越级/兄弟/伪造来源必须仍被拒" +
-      "（否则任何声称是上级的主体都能投递）",
+      "不再按 schemaVersion 拒收后，异版本文档里的记录会被当作**存在的主体**" +
+      "⇒ 未知地址变成可投递（伪造存在性）",
   },
   {
-    mutationIdentifier: "comm01-delivery-authorization-hook-skipped",
+    mutationIdentifier: "comm01-delivery-address-check-skipped",
     targetFile: "packages/core/src/feedback-process/delivery-worker.ts",
-    find: `    const isSourceAuthorized = this.dependencies.isDeliverySourceAuthorized;
-    if (isSourceAuthorized !== undefined) {
-      const isAuthorized = await isSourceAuthorized(nextMessage);
-      if (!isAuthorized) {`,
-    replace: `    const isSourceAuthorized = this.dependencies.isDeliverySourceAuthorized;
-    if (false && isSourceAuthorized !== undefined) {
-      const isAuthorized = await isSourceAuthorized(nextMessage);
-      if (!isAuthorized) {`,
-    testFiles: ["tests/core/integration/comm01-delivery-authorization.test.ts"],
+    find: `    const isRecipientAddressKnown = this.dependencies.isRecipientAddressKnown;
+    if (isRecipientAddressKnown !== undefined) {
+      const isKnown = await isRecipientAddressKnown(nextMessage);
+      if (!isKnown) {`,
+    replace: `    const isRecipientAddressKnown = this.dependencies.isRecipientAddressKnown;
+    if (false && isRecipientAddressKnown !== undefined) {
+      const isKnown = await isRecipientAddressKnown(nextMessage);
+      if (!isKnown) {`,
+    testFiles: ["tests/core/integration/comm01-delivery-address-integrity.test.ts"],
     expectedFailingTestNames: [
-      "钩子拒绝 ⇒ 不投递、不标记已投递",
-      "真实 ParentBindingController 端到端",
-      "上级被回收 ⇒ 其下级消息同样不得投递",
+      "收件人**无绑定记录** ⇒ 不投递、不标记已投递",
+      "真实 AgentCreationRegistry 端到端",
     ],
     rationale:
-      "把投递步骤的按地址授权整段短路后，'非直属下级/被回收上级的下级不得投递'必须变红" +
-      "（否则唯一上级约束只写在模块里、在真实投递路径上并不生效）",
+      "把投递步骤的地址完整性整段短路后，'无绑定记录 / 已回收的收件人不得投递'必须变红" +
+      "（否则该检查只写在模块里、在真实投递路径上并不生效）",
   },
 ];
 

@@ -1,56 +1,62 @@
 /**
- * COMM-01-02（2026-10-18）：执行层**唯一上级**归属与按地址投递授权。
+ * COMM-01-02（2026-10-18 首版；**2026-10-22 依设计清单与用户澄清订正**）：
+ * **Agent 创建来源登记**与**按地址投递的地址完整性**。
  *
- * 卡内缺口（COMM-01-01 审计原文）：
- *  - `unbounded-agent-registry.ts`："**无统一持久化父子归属字段与跨实例唯一性约束**"；
- *  - `quaternary-lifecycle-controller.ts`："尚不能证明所有入口、恢复和转交路径都**强制唯一上级**"。
+ * ## 订正说明（重要，避免后来者沿用错误模型）
  *
- * 本模块把"唯一上级"做成**本地确定性**约束（不联网、不调用模型）：
- *  - `ParentBindingController.bindChildToParent()`：一个子**至多一个**上级；
- *    两个上级并发绑定时**先到者胜**，后到者被拒（不得顶掉既有归属）；
- *    同一上级重复绑定同一子 ⇒ **幂等成功**（重试不应失败）。
- *  - `isDeliveryAllowed()`：投递出口**只认唯一直属上级**；非直属上级（越级、直联兄弟、
- *    伪造来源）与"未绑定的子"一律拒绝 —— 不要求叶子模型自行判断对象。
- *  - `releaseChild()`：释放后**允许重新绑定**（否则被回收的子永久不可用）；
- *    但**只有当前直属上级**能释放，避免他人抢占。
- *  - `markParentRecycled()`：上级回收后**历史归属仍可查**
- *    （`resolveHistoricalParentOf`），但**不再放行新投递**（`isDeliveryAllowed` 为 false）
- *    —— 既不双上级、也不让已消失的上级继续收件。
+ * 首版把本模块写成"**唯一上级 = 通信授权**"（一个子只能有一个上级，
+ * 且只允许直属上级投递）。**那是错的**：
  *
- * 与既有模块的分工：`UnboundedAgentInstanceRegistry` 管**个体生命周期与资源准入**，
- * 本模块只管**归属关系**（谁是谁的唯一上级），二者不互相复制规则。
+ * - `docs/AGENT_COMMUNICATION_OVERVIEW.md` §35–54（"上层受控全连接，下层唯一上级"）：
+ *   **同项目的主层与次级层默认全连接**，不逐边申请通信授权；
+ *   **跨项目**按需连接，且只有主—主（另有次级—次级建议通道）须授权；
+ *   三级/四级"只向**唯一直属上级**请示和报告"，其他协作请求由直属上级**代理转达**。
+ * - **反馈不按上下级关系走**：每条任务的消息默认走**任务发布者的反向通道**。
+ * - **绑定记录**是**创建时自动登记**的来源事实（上级 Agent 需要下级时，
+ *   由**创建工具自动产生新记录并由该工具一致管理**），**不是通信授权**。
+ * - 向**没有绑定记录**的对象投递 ⇒ **直接拒绝**（地址完整性：那不是已知主体）。
+ *
+ * ⇒ 本模块的正确职责是两件事，**都不是**"通信授权"：
+ *   1. **创建来源登记**（谁创建了谁；作为地址主体存在性的依据）；
+ *   2. **按地址投递的地址完整性**（收件人必须是已登记主体，否则拒收）。
+ *
+ * **本模块刻意不实现**"只有直属上级能给子发消息"这类规则 —— 那会**阻断**
+ * 同项目主↔次级的默认可达，属功能性破坏。
+ *
+ * ## 与既有模块的分工
+ * `UnboundedAgentInstanceRegistry` 管个体生命周期与资源准入；本模块只管
+ * "这个主体是谁创建的、以及它是否是一个已登记的可投递地址"。
  */
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-const STATE_FILE_NAME = "agent-parent-bindings.json";
+const STATE_FILE_NAME = "agent-creation-registry.json";
 
-export interface AgentParentBindingRecord {
-  childAgentInstanceId: string;
-  parentAgentInstanceId: string;
-  boundAtIso: string;
-  /** 释放时间；非 null 表示当前**无**归属（历史记录仍保留）。 */
-  releasedAtIso: string | null;
-  /** 上级被回收的时间；非 null 表示该绑定不得再放行新投递。 */
-  parentRecycledAtIso: string | null;
+export interface AgentCreationRecord {
+  /** 被创建的具体个体（不可复用）。 */
+  agentInstanceId: string;
+  /** 创建者（由创建工具自动登记，**不是**模型声明）。 */
+  createdByAgentInstanceId: string | null;
+  /** `createdByAgentInstanceId === null` 表示由用户/控制面直接创建。 */
+  createdAtIso: string;
+  /** 回收时间；非 null 表示该主体已不再活跃（历史仍保留）。 */
+  recycledAtIso: string | null;
 }
 
-export interface ParentBindingStoreOptions {
+export interface AgentCreationRegistryOptions {
   stateDirectory: string;
   /** 可注入时钟（测试用）；默认真实时间。 */
   nowIso?: () => string;
 }
 
-/** 归属关系的**持久化**存储（只读写，不含判定规则）。 */
-export class ParentBindingStore {
+/** 创建来源的**持久化**登记（只读写，不含判定规则）。 */
+export class AgentCreationRegistry {
   private readonly stateDirectory: string;
   private readonly nowIso: () => string;
-  /** 子 → 该子的**全部**历史绑定（按时间顺序追加）。 */
-  private bindingsByChild = new Map<string, AgentParentBindingRecord[]>();
-  private parentRecycledAtByParent = new Map<string, string>();
+  private readonly recordsByAgentInstanceId = new Map<string, AgentCreationRecord>();
   private isLoaded = false;
 
-  constructor(options: ParentBindingStoreOptions) {
+  constructor(options: AgentCreationRegistryOptions) {
     this.stateDirectory = options.stateDirectory;
     this.nowIso = options.nowIso ?? (() => new Date().toISOString());
   }
@@ -73,221 +79,110 @@ export class ParentBindingStore {
     try {
       const parsed = JSON.parse(rawText) as {
         schemaVersion?: unknown;
-        bindings?: unknown;
-        recycledParents?: unknown;
+        records?: unknown;
       };
-      // 版本不符 ⇒ 按空继续（不伪造历史）
+      // 版本不符 ⇒ 按空继续（不伪造主体存在性）。
       if (parsed.schemaVersion !== 1) {
         return;
       }
-      for (const raw of Array.isArray(parsed.bindings) ? parsed.bindings : []) {
-        const record = raw as AgentParentBindingRecord;
-        const existing = this.bindingsByChild.get(record.childAgentInstanceId) ?? [];
-        existing.push(record);
-        this.bindingsByChild.set(record.childAgentInstanceId, existing);
-      }
-      for (const raw of Array.isArray(parsed.recycledParents) ? parsed.recycledParents : []) {
-        const entry = raw as { parentAgentInstanceId: string; recycledAtIso: string };
-        this.parentRecycledAtByParent.set(entry.parentAgentInstanceId, entry.recycledAtIso);
+      for (const raw of Array.isArray(parsed.records) ? parsed.records : []) {
+        const record = raw as AgentCreationRecord;
+        this.recordsByAgentInstanceId.set(record.agentInstanceId, record);
       }
     } catch {
-      // 损坏状态：按空继续（不伪造历史）
+      // 损坏状态：按空继续（**不伪造存在性** —— 伪造会让未知主体变成可投递地址）。
     }
   }
 
-  /** 当前生效的归属（未被释放且上级未被回收）；无则 null。 */
-  async getActiveBinding(childAgentInstanceId: string): Promise<AgentParentBindingRecord | null> {
+  /** 登记新建主体（由**创建工具**调用）。同一主体重复登记 ⇒ 幂等（保留首次来源）。 */
+  async registerCreatedAgent(input: {
+    agentInstanceId: string;
+    createdByAgentInstanceId: string | null;
+  }): Promise<AgentCreationRecord> {
     await this.ensureLoaded();
-    const history = this.bindingsByChild.get(childAgentInstanceId) ?? [];
-    for (let index = history.length - 1; index >= 0; index -= 1) {
-      const record = history[index]!;
-      if (record.releasedAtIso === null) {
-        return record;
-      }
+    const existing = this.recordsByAgentInstanceId.get(input.agentInstanceId);
+    if (existing !== undefined) {
+      return existing;
     }
-    return null;
-  }
-
-  /** **历史**归属（含已释放/上级已回收）——供报告追溯"当初是谁收的"。 */
-  async getHistoricalBinding(childAgentInstanceId: string): Promise<AgentParentBindingRecord | null> {
-    await this.ensureLoaded();
-    const history = this.bindingsByChild.get(childAgentInstanceId) ?? [];
-    return history.length === 0 ? null : history[history.length - 1]!;
-  }
-
-  async isParentRecycled(parentAgentInstanceId: string): Promise<boolean> {
-    await this.ensureLoaded();
-    return this.parentRecycledAtByParent.has(parentAgentInstanceId);
-  }
-
-  /**
-   * 追加一条绑定记录。**唯一性由调用方（控制器）在同一临界区内判定** ——
-   * 存储层不做规则判定，避免"存储层与判定层结论不一致"。
-   */
-  async appendBinding(input: {
-    childAgentInstanceId: string;
-    parentAgentInstanceId: string;
-  }): Promise<AgentParentBindingRecord> {
-    await this.ensureLoaded();
-    const record: AgentParentBindingRecord = {
-      childAgentInstanceId: input.childAgentInstanceId,
-      parentAgentInstanceId: input.parentAgentInstanceId,
-      boundAtIso: this.nowIso(),
-      releasedAtIso: null,
-      parentRecycledAtIso: null,
+    const record: AgentCreationRecord = {
+      agentInstanceId: input.agentInstanceId,
+      createdByAgentInstanceId: input.createdByAgentInstanceId,
+      createdAtIso: this.nowIso(),
+      recycledAtIso: null,
     };
-    const history = this.bindingsByChild.get(input.childAgentInstanceId) ?? [];
-    history.push(record);
-    this.bindingsByChild.set(input.childAgentInstanceId, history);
+    this.recordsByAgentInstanceId.set(input.agentInstanceId, record);
     await this.persist();
     return record;
   }
 
-  /** 释放当前生效的绑定（追加一个 releasedAtIso 标记，不删除历史）。 */
-  async releaseActiveBinding(input: {
-    childAgentInstanceId: string;
-    parentAgentInstanceId: string;
-  }): Promise<boolean> {
+  async getRecord(agentInstanceId: string): Promise<AgentCreationRecord | null> {
     await this.ensureLoaded();
-    const history = this.bindingsByChild.get(input.childAgentInstanceId) ?? [];
-    for (let index = history.length - 1; index >= 0; index -= 1) {
-      const record = history[index]!;
-      if (
-        record.releasedAtIso === null &&
-        record.parentAgentInstanceId === input.parentAgentInstanceId
-      ) {
-        record.releasedAtIso = this.nowIso();
-        await this.persist();
-        return true;
-      }
-    }
-    return false;
+    return this.recordsByAgentInstanceId.get(agentInstanceId) ?? null;
   }
 
-  async markParentRecycled(parentAgentInstanceId: string): Promise<void> {
+  /** 是否为一个**已登记**的地址主体（地址完整性的唯一依据）。 */
+  async isRegisteredAgent(agentInstanceId: string): Promise<boolean> {
+    return (await this.getRecord(agentInstanceId)) !== null;
+  }
+
+  /** 标记回收：历史记录保留（可追溯"谁建的"），但不再是活跃地址。 */
+  async markRecycled(agentInstanceId: string): Promise<void> {
     await this.ensureLoaded();
-    if (this.parentRecycledAtByParent.has(parentAgentInstanceId)) {
+    const record = this.recordsByAgentInstanceId.get(agentInstanceId);
+    if (record === undefined || record.recycledAtIso !== null) {
       return;
     }
-    this.parentRecycledAtByParent.set(parentAgentInstanceId, this.nowIso());
+    record.recycledAtIso = this.nowIso();
     await this.persist();
   }
 
   private async persist(): Promise<void> {
     await fs.mkdir(this.stateDirectory, { recursive: true });
-    const bindings = [...this.bindingsByChild.values()].flat();
-    const recycledParents = [...this.parentRecycledAtByParent.entries()].map(
-      ([parentAgentInstanceId, recycledAtIso]) => ({ parentAgentInstanceId, recycledAtIso }),
-    );
+    const records = [...this.recordsByAgentInstanceId.values()];
     await fs.writeFile(
       this.stateFilePath,
-      JSON.stringify({ schemaVersion: 1, bindings, recycledParents }, null, 2) + "\n",
+      JSON.stringify({ schemaVersion: 1, records }, null, 2) + "\n",
       "utf8",
     );
   }
 }
 
-export interface ParentBindingControllerOptions {
-  store: ParentBindingStore;
+export interface AgentAddressGuardOptions {
+  registry: AgentCreationRegistry;
 }
 
-/** 唯一上级与按地址投递授权的**本地确定性**判定器。 */
-export class ParentBindingController {
-  private readonly store: ParentBindingStore;
+/**
+ * 按地址投递的**地址完整性**判定器。
+ *
+ * 只回答一个问题：**收件人是不是一个已登记的主体？**
+ * 刻意**不**回答"发送者是否有权给该收件人发消息" —— 按设计清单，
+ * 同项目主层与次级层默认可达、反馈走任务发布者反向通道，
+ * 都不由创建来源决定。
+ */
+export class AgentAddressGuard {
+  private readonly registry: AgentCreationRegistry;
 
-  constructor(options: ParentBindingControllerOptions) {
-    this.store = options.store;
+  constructor(options: AgentAddressGuardOptions) {
+    this.registry = options.registry;
   }
 
   /**
-   * 绑定唯一上级。
-   * - 尚无生效归属 ⇒ 绑定成功；
-   * - 已有生效归属且**同一上级** ⇒ 幂等成功（重试不失败）；
-   * - 已有生效归属且**不同上级** ⇒ 拒绝（先到者胜，不得被顶掉）。
+   * 收件人是否为可投递地址。
+   * - 已登记且未回收 ⇒ `true`；
+   * - **无绑定记录**（未登记）⇒ `false`（直接拒绝）；
+   * - 已回收 ⇒ `false`（不再活跃；历史仍可查）。
    */
-  async bindChildToParent(input: {
-    childAgentInstanceId: string;
-    parentAgentInstanceId: string;
-  }): Promise<{ isBound: boolean; reason: string | null }> {
-    const active = await this.store.getActiveBinding(input.childAgentInstanceId);
-    if (active !== null) {
-      if (active.parentAgentInstanceId === input.parentAgentInstanceId) {
-        return { isBound: true, reason: null };
-      }
-      return {
-        isBound: false,
-        reason:
-          "该子已有唯一的直属上级（" +
-          active.parentAgentInstanceId +
-          "），不得被 " +
-          input.parentAgentInstanceId +
-          " 顶替",
-      };
-    }
-    // 上一条绑定若已被释放，其上级若也被回收不阻止**重新**绑定（回收的是旧上级）。
-    await this.store.appendBinding(input);
-    return { isBound: true, reason: null };
-  }
-
-  /** 当前直属上级；无生效归属 ⇒ null。 */
-  async resolveParentOf(childAgentInstanceId: string): Promise<string | null> {
-    const active = await this.store.getActiveBinding(childAgentInstanceId);
-    return active === null ? null : active.parentAgentInstanceId;
-  }
-
-  /** 历史归属（含已释放/上级已回收）——供报告追溯。 */
-  async resolveHistoricalParentOf(childAgentInstanceId: string): Promise<string | null> {
-    const historical = await this.store.getHistoricalBinding(childAgentInstanceId);
-    return historical === null ? null : historical.parentAgentInstanceId;
-  }
-
-  /**
-   * 投递出口判定：**只认唯一直属上级**。
-   * 未绑定、非直属上级、伪造来源、上级已被回收 ⇒ 一律 false。
-   */
-  async isDeliveryAllowed(input: {
-    childAgentInstanceId: string;
-    claimedParentAgentInstanceId: string;
-  }): Promise<boolean> {
-    const active = await this.store.getActiveBinding(input.childAgentInstanceId);
-    if (active === null) {
+  async isDeliverableRecipient(recipientAgentInstanceId: string): Promise<boolean> {
+    const record = await this.registry.getRecord(recipientAgentInstanceId);
+    if (record === null) {
       return false;
     }
-    if (active.parentAgentInstanceId !== input.claimedParentAgentInstanceId) {
-      return false;
-    }
-    // 上级已被回收 ⇒ 不得再收件（历史归属仍可查）
-    if (await this.store.isParentRecycled(active.parentAgentInstanceId)) {
-      return false;
-    }
-    return true;
+    return record.recycledAtIso === null;
   }
 
-  /** 释放归属：**只有当前直属上级**能释放（防他人抢占）。 */
-  async releaseChild(input: {
-    childAgentInstanceId: string;
-    parentAgentInstanceId: string;
-  }): Promise<{ wasReleased: boolean; reason: string | null }> {
-    const active = await this.store.getActiveBinding(input.childAgentInstanceId);
-    if (active === null) {
-      return { wasReleased: false, reason: "该子当前没有生效归属，无需释放" };
-    }
-    if (active.parentAgentInstanceId !== input.parentAgentInstanceId) {
-      return {
-        wasReleased: false,
-        reason:
-          "只有当前直属上级（" +
-          active.parentAgentInstanceId +
-          "）能释放该归属",
-      };
-    }
-    const released = await this.store.releaseActiveBinding(input);
-    return released
-      ? { wasReleased: true, reason: null }
-      : { wasReleased: false, reason: "释放未生效（绑定已被改变）" };
-  }
-
-  async markParentRecycled(input: { parentAgentInstanceId: string }): Promise<void> {
-    await this.store.markParentRecycled(input.parentAgentInstanceId);
+  /** 历史创建来源（含已回收）—— 供追溯"这个主体是谁建的"。 */
+  async resolveCreatorOf(agentInstanceId: string): Promise<string | null> {
+    const record = await this.registry.getRecord(agentInstanceId);
+    return record === null ? null : record.createdByAgentInstanceId;
   }
 }
