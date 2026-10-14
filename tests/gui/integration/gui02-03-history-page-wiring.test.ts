@@ -84,4 +84,24 @@ describe("GUI-02-03：历史三视图必须真的进入页面", () => {
     // 原始文本必须走 textContent（不是 innerHTML），避免当作 HTML 执行
     expect(sourceText).toMatch(/historyRawTextElement\.textContent/);
   });
+
+  it("⑧ 【GUI-02-04】重启后空会话视图**必须解释自己**（不得让用户以为数据丢了）", () => {
+    const sourceText = readGuiServerSource();
+    // 空态说明位必须存在
+    expect(sourceText).toContain('id="tasks-empty"');
+    // 文案必须点明"不代表数据丢失"，并指向可核对处
+    expect(sourceText).toContain("不代表数据丢失");
+    expect(sourceText).toContain("恢复中心");
+    // 脚本必须**按是否为空**控制显隐（不是永远显示/永远隐藏）
+    expect(sourceText).toMatch(/tasksEmptyElement\.hidden\s*=\s*taskList\.length\s*>\s*0/);
+  });
+
+  it("⑨ 【GUI-02-04】恢复中心必须写明**三道门**（显式 / 先对账 / 重新鉴权）", () => {
+    const sourceText = readGuiServerSource();
+    expect(sourceText).toContain("显式确认");
+    expect(sourceText).toContain("先完成对账");
+    expect(sourceText).toContain("重新鉴权");
+    // 且**不得**提供"点开即恢复"的入口（读取模型里有可测闸门，这里钉住界面侧）
+    expect(sourceText).not.toMatch(/id="recover-now"/);
+  });
 });

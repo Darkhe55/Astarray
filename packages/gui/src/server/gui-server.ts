@@ -508,6 +508,15 @@ ul { margin: 8px 0 0; padding-left: 20px; }
   <section aria-labelledby="tasks-heading">
     <h2 id="tasks-heading">任务</h2>
     <ul id="tasks" aria-live="polite"></ul>
+    <!--
+      GUI-02-04：会话视图为空时的说明位。
+      进程重启后本会话任务列表必然为空 —— 必须明确"这不代表数据丢失"，
+      否则用户会误以为历史与磁盘状态也没了（卡内禁止的界面误导）。
+    -->
+    <p id="tasks-empty" role="status" aria-live="polite" hidden>
+      本会话视图为空：这不代表数据丢失。进程重启后当前会话没有任务，
+      历史任务与磁盘状态仍在——请在下方「恢复中心」核对 mission 与检查点后再决定是否恢复。
+    </p>
   </section>
   <section aria-labelledby="settings-heading">
     <h2 id="settings-heading">设置（上下文预算与权限组）</h2>
@@ -523,6 +532,11 @@ ul { margin: 8px 0 0; padding-left: 20px; }
   </section>
   <section aria-labelledby="recovery-heading">
     <h2 id="recovery-heading">恢复中心（只读状态与差异）</h2>
+    <p>
+      本区为只读：核对 mission、检查点与对账状态，不会自动恢复任何任务。
+      恢复必须同时满足三道门 —— ① 由你显式确认（不提供「点开即恢复」）、
+      ② 先完成对账（未知状态不得当成已恢复）、③ 重新鉴权（重启后旧会话授权不被默认信任）。
+    </p>
     <button id="refresh-recovery" type="button">刷新</button>
     <ul id="recovery" aria-live="polite"></ul>
   </section>
@@ -621,14 +635,26 @@ ul { margin: 8px 0 0; padding-left: 20px; }
     }).map(function (entry) { return entry.slice("gui_csrf=".length); })[0] || "";
   var statusElement = document.getElementById("status");
   var tasksElement = document.getElementById("tasks");
+  var tasksEmptyElement = document.getElementById("tasks-empty");
   var resultElement = document.getElementById("submit-result");
+  /**
+   * GUI-02-04（2026-11-08）：**空会话视图必须解释自己**。
+   *
+   * /state 的任务列表是"本会话视图"，重启后必然为空。此前这里对空数组
+   * **只清空列表、不写任何文字** ⇒ 用户会以为"数据丢了"（卡内禁止的界面误导）。
+   * 现改为：为空时显示明确说明（指向"恢复中心"核对），非空时**不显示**该说明。
+   */
   function renderTasks(tasks) {
     tasksElement.textContent = "";
-    (tasks || []).forEach(function (task) {
+    var taskList = tasks || [];
+    taskList.forEach(function (task) {
       var item = document.createElement("li");
       item.textContent = task.taskIdentifier + " · " + task.status + " · r" + task.revision;
       tasksElement.appendChild(item);
     });
+    if (tasksEmptyElement) {
+      tasksEmptyElement.hidden = taskList.length > 0;
+    }
   }
   function refreshState() {
     fetch("/state", { headers: { accept: "application/json" } })

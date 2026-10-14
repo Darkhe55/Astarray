@@ -480,7 +480,106 @@ export function buildGuiMissionHistoryRawView(
   };
 }
 
-export interface GuiTaskTrackerView {  tasksByIdentifier: Map<string, GuiTaskView>;
+/**
+ * GUI-02-04（2026-11-08）：**会话视图为空**时必须给出的说明。
+ *
+ * 为什么必须有它：`/state` 的任务列表是**本会话视图**，进程重启后**必然为空**。
+ * 若界面只把列表清空、不写任何字（实测现状），用户会理解为"数据丢了"——
+ * 这正是卡内禁止的"**重启后界面误导**"。
+ *
+ * 文案被界面与测试**共同引用同一常量**，避免两处各写一份而漂移。
+ */
+export const GUI_SESSION_VIEW_EMPTY_EXPLANATION =
+  "本会话视图为空：这不代表数据丢失。进程重启后当前会话没有任务，" +
+  "历史任务与磁盘状态仍在——请在下方「恢复中心」核对 mission 与检查点后再决定是否恢复。";
+
+export interface GuiTaskRowView {
+  taskIdentifier: string;
+  rowText: string;
+}
+
+export interface GuiTaskListView {
+  rows: GuiTaskRowView[];
+  isEmpty: boolean;
+  /** 为空时给出说明；非空时为 null（不给噪音）。 */
+  emptyExplanation: string | null;
+}
+
+/**
+ * **任务列表视图**：把"空"这件事**显式说清楚**，而不是留一片空白。
+ */
+export function buildGuiTaskListView(
+  tasks: Array<{ taskIdentifier: string; status: string; revision: number }>,
+): GuiTaskListView {
+  const rows: GuiTaskRowView[] = tasks.map((task) => ({
+    taskIdentifier: task.taskIdentifier,
+    rowText: task.taskIdentifier + " · " + task.status + " · r" + String(task.revision),
+  }));
+  return {
+    rows,
+    isEmpty: rows.length === 0,
+    emptyExplanation: rows.length === 0 ? GUI_SESSION_VIEW_EMPTY_EXPLANATION : null,
+  };
+}
+
+/** 恢复闸门的三道门（顺序固定）。 */
+export type GuiRecoveryGate = "explicit-confirmation" | "reconciliation" | "reauthorization";
+
+export interface GuiRecoveryGateDecision {
+  isAllowed: boolean;
+  /** 被拦下的**第一道**门（允许时为 null）—— 按固定顺序，避免一次抛出一堆理由。 */
+  blockedGate: GuiRecoveryGate | null;
+  /** 全部未满足的门（便于界面逐项提示"还差什么"）。 */
+  allBlockedGates: GuiRecoveryGate[];
+  reasonText: string | null;
+}
+
+/**
+ * GUI-02-04：**恢复闸门**（显式 → 对账 → 重新鉴权）。
+ *
+ * 卡内要求"恢复须**显式** + **先对账** + **重新鉴权**"，三者缺一不可：
+ * - **显式**：必须由用户主动确认 —— "点开就恢复"是禁止的；
+ * - **对账**：必须先完成对账（否则可能把未知状态当成已恢复）；
+ * - **重新鉴权**：必须重新鉴权（重启后旧会话凭据不再被默认信任）。
+ *
+ * 本函数是**纯函数**，因此这套门是**可测的契约**，而不是靠界面自觉。
+ */
+export function evaluateGuiRecoveryGate(input: {
+  hasExplicitUserConfirmation: boolean;
+  isReconciliationSatisfied: boolean;
+  isReauthorizationSatisfied: boolean;
+}): GuiRecoveryGateDecision {
+  const allBlockedGates: GuiRecoveryGate[] = [];
+  if (!input.hasExplicitUserConfirmation) {
+    allBlockedGates.push("explicit-confirmation");
+  }
+  if (!input.isReconciliationSatisfied) {
+    allBlockedGates.push("reconciliation");
+  }
+  if (!input.isReauthorizationSatisfied) {
+    allBlockedGates.push("reauthorization");
+  }
+
+  if (allBlockedGates.length === 0) {
+    return { isAllowed: true, blockedGate: null, allBlockedGates, reasonText: null };
+  }
+
+  const blockedGate = allBlockedGates[0]!;
+  const reasonTextByGate: Record<GuiRecoveryGate, string> = {
+    "explicit-confirmation": "恢复必须由你**显式**确认（不提供“点开即恢复”）",
+    reconciliation: "恢复前必须**先完成对账**（未知状态不得当成已恢复）",
+    reauthorization: "恢复前必须**重新鉴权**（重启后旧会话授权不被默认信任）",
+  };
+  return {
+    isAllowed: false,
+    blockedGate,
+    allBlockedGates,
+    reasonText: reasonTextByGate[blockedGate],
+  };
+}
+
+export interface GuiTaskTrackerView {
+  tasksByIdentifier: Map<string, GuiTaskView>;
   missions: Set<string>;
 }
 
