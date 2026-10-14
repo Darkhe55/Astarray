@@ -269,11 +269,18 @@
 > **孙进程继续运行**（进程树泄漏）；修法为 POSIX `detached: true` + `process.kill(-pid)`
 > 整组收口、Windows `taskkill /T /F`；Linux 该用例修复前**确定性失败**、修复后通过，
 > Windows 回归 2829/2829 无破坏。**该缺陷只有 Linux/macOS 证据能发现。**
-> ② 另一个 Windows 上一直通过、Linux 上确定性失败的缺陷已**定位但未修**：
+> ② 另一个 Windows 上一直通过、Linux 上确定性失败的缺陷**当时**已定位但未修：
 > 授权后重跑会因 `非法状态迁移: pending → done` 把**已落盘的成果误判为 blocked**；
 > 我尝试放宽 `markDone` 的合法前置状态，**被本仓既有契约测试否证**
 > （`task-graph-gaps.test.ts` 明确要求该迁移抛错）⇒ **已完整回退**，
 > 正确修法在调度侧的一致性，留给后续。
+> > **✅ 2026-11-08（第 54 轮）复核：该缺陷已不再复现（Linux）。** 实测（WSL2／Ubuntu 26.04／Node v22.22.1，
+> > 与 Windows 同提交）：`authorization-retry-closure.test.ts ①` 在 Linux **连跑 5 次全过**；
+> > 且 **Linux 全量 `npm run test` exit 0：431 文件全过、3253 passed ＋ 2 skipped、0 failed**。
+> > ⇒ 上句"**定位但未修**"**已不再成立**（当前 `main` 上 Linux 侧不再出现该非法迁移）。
+> > **但我没有声称"知道是谁修的"**：本轮只做**复现性判定**、**未**逐提交 bisect 归因；
+> > 若日后再现，原触发链分析（`mission-orchestrator` success 分支 → `finishTask` →
+> > `markDone` 仅接受 `running`）仍是起点。详见 `docs/reports/LINUX_PLATFORM_EVIDENCE_2026-10-10.md` 的复核块。
 > ③ Linux 侧全量：typecheck/lint/build **exit 0**；374 文件 / 2829 用例中
 > **2828 通过、1 失败**（即上述未修缺陷）。
 > ④ **仍未取得**：macOS 证据（本证据来自 WSL2，非裸机 Linux）、AR-07 各平台分支的

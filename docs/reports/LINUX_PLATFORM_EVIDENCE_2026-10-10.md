@@ -86,6 +86,23 @@ astarray: 需要权限的调用已阻断，但未能确认被请求的工具与�
 放宽它会破坏一条**有意为之**的状态机不变量（且该不变量由架构守卫保护）。
 ⇒ **已完整回退**，未把该改动留在代码里。
 
+> ### ✅ 2026-11-08（第 54 轮）复核：该缺陷**已不再复现**（Linux，5 次连跑 + 全量）
+>
+> **实测（WSL2 ／ Ubuntu 26.04 LTS ／ Node v22.22.1 ／ 源提交 `9cfc…`/当前 `main`）**：
+>
+> | 检查 | 结果 |
+> | --- | --- |
+> | `authorization-retry-closure.test.ts ①` 在 Linux 上**连跑 5 次** | **5/5 通过**（577–682ms） |
+> | **Linux 全量** `npm run test` | **exit 0：431 文件全过；3253 passed ＋ 2 skipped**，**0 failed** |
+>
+> ⇒ 本报告 §② 当时记的"**定位但未修**"**已不再成立**：当前 `main` 上，
+> Linux 侧**不再出现** `非法状态迁移: T-001 pending → done` ⇒ 也就没有"已落盘成果被误判 blocked"的现象。
+>
+> **⚠️ 我没有声称"我知道是谁修的"**：本轮只做了**复现性判定**，**未**逐提交归因
+> （那需要 bisect，属独立工作）。故这里**只声明事实**：该缺陷在当前提交上**不可复现**。
+> 若日后它再次出现，本报告 §② 的触发链分析（`mission-orchestrator.ts` success 分支
+> → `dagScheduler.finishTask` → `graph.markDone` 仅接受 `running`）仍是**起点**。
+
 **最终修法（不放宽状态机）**：把 `DagScheduler.unblockTask` **幂等化** ——
 只有 `pending`（已是目标态）与 `blocked`（真正等待裁决）需要处理；
 `running`/`done`/`failed` 下这是**冗余的迟到指令**，一律**无操作**。
