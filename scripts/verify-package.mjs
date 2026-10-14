@@ -7,11 +7,18 @@ import { execSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 
-const tarballPath = path.resolve(process.argv[2]);
-if (tarballPath === undefined) {
+/**
+ * 注意：**先校验参数再 resolve**。
+ * 原写法是 `const p = path.resolve(process.argv[2]); if (p === undefined) {...}` ——
+ * `path.resolve(undefined)` 会**先抛** `ERR_INVALID_ARG_TYPE`，
+ * 于是那句友好的用法提示**永远不会打印**（实测：无参数运行只会看到一段栈）。
+ * 现改为先判 `process.argv[2]`。
+ */
+if (process.argv[2] === undefined) {
   console.error("用法: node scripts/verify-package.mjs <tarball路径>");
   process.exit(1);
 }
+const tarballPath = path.resolve(process.argv[2]);
 
 const listingOutput = execSync(`npm pack ${JSON.stringify(tarballPath)} --dry-run --json`, {
   encoding: "utf8",

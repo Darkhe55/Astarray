@@ -13,6 +13,9 @@
   "exports": {
     ".": {
       "import": "./dist/public-sdk.js"
+    },
+    "./gui": {
+      "import": "./dist/public-gui.js"
     }
   },
   "files": [
@@ -45,6 +48,7 @@
     "verify:observability-entry-package": "node scripts/verify-observability-entry-package.mjs",
     "verify:instruction-entry-package": "node scripts/verify-instruction-entry-package.mjs",
     "verify:toolkit-package": "node scripts/verify-toolkit-package.mjs",
+    "verify:gui-package": "node scripts/verify-gui-package.mjs",
     "verify:u2-flash-probe": "node scripts/verify-u2-flash-continuous-reception.mjs --probe-only",
     "verify:u2-flash-continuous-reception": "node scripts/verify-u2-flash-continuous-reception.mjs",
     "test:scripts": "node --test \"scripts/lib/*.test.mjs\""
