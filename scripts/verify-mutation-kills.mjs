@@ -411,6 +411,48 @@ export const MUTATIONS = [
       "未给基线时又不回退默认守卫 ⇒ 目标已存在恒 target-stale-rejected（'能读不能导'）" +
       "⇒ 该端到端用例必须变红",
   },
+  {
+    mutationIdentifier: "gui0203-history-reads-all-missions",
+    targetFile: "packages/core/src/gui/mission-history-reader.ts",
+    find: `  const pageDirectories = missionDirectories.slice(
+    startOffset,
+    startOffset + effectivePageSize,
+  );`,
+    replace: `  const pageDirectories = missionDirectories;`,
+    testFiles: ["tests/gui/integration/gui02-03-mission-history.test.ts"],
+    expectedFailingTestNames: [
+      "有 97 个 mission 时，取一页**只读该页**的 summary.json",
+      "翻页不重不漏",
+    ],
+    rationale:
+      "分页按需的要害：若一页就把全部 mission 目录都读进来，97 个 mission 会读 97 个文件" +
+      "（卡内明令'不得全量读 97 mission'）⇒ '只读本页 10 条'的反例必须变红",
+  },
+  {
+    mutationIdentifier: "gui0203-history-terminal-may-run",
+    targetFile: "packages/core/src/gui/mission-history-reader.ts",
+    find: `  const isActivelyRunning =
+    recordedStatus === "running" && input.isMissionActivelyRunning(input.missionIdentifier);`,
+    replace: `  const isActivelyRunning = input.isMissionActivelyRunning(input.missionIdentifier);`,
+    testFiles: ["tests/gui/integration/gui02-03-mission-history.test.ts"],
+    expectedFailingTestNames: ["已终态（done/blocked/cancelled）不受运行态影响"],
+    rationale:
+      "去掉'recordedStatus===running'这一前置条件 ⇒ 已终态任务会被运行态查询翻回'运行中'" +
+      "⇒ 该反例必须变红（卡内要求：历史状态与运行状态分离，终态不得自称在跑）",
+  },
+  {
+    mutationIdentifier: "gui0203-history-corruption-dropped",
+    targetFile: "packages/core/src/gui/mission-history-reader.ts",
+    find: `  const totalMissionCount = missionDirectories.length;`,
+    replace: `  const totalMissionCount = missionDirectories.length;
+  // 变异：把损坏记录静默丢弃（用 0 长度占位再过滤）
+  missionDirectories.length = 0;`,
+    testFiles: ["tests/gui/integration/gui02-03-mission-history.test.ts"],
+    expectedFailingTestNames: ["有 97 个 mission 时"],
+    rationale:
+      "把枚举结果清空 ⇒ 列表为空，'损坏记录必须保留在列表中'与分页反例都会变红" +
+      "（证明'不静默丢弃'这条真的有断言在守）",
+  },
 ];
 
 function sha256OfFile(filePath) {

@@ -680,6 +680,22 @@ export {
   type RemoteSyncStatus,
   type RestoreLocalPreservationInput,
 } from "./orchestration/local-preservation-service.js";
+/**
+ * GUI-02-03（2026-11-08）：**历史列表与详情**只读读取层。
+ *
+ * 公开导出是刻意的：消费者（含 GUI 只读视图）**不得依赖内部路径**。
+ * 该模块只读文件、不写、不删、不调模型，且把"不得触发"的动作声明为端口以便可证伪。
+ */
+export {
+  DEFAULT_MISSION_HISTORY_PAGE_SIZE,
+  MAXIMUM_MISSION_HISTORY_PAGE_SIZE,
+  queryMissionHistory,
+  type MissionHistoryEntry,
+  type MissionHistoryPage,
+  type MissionRecordedStatus,
+  type MissionRuntimeState,
+  type QueryMissionHistoryInput,
+} from "./gui/mission-history-reader.js";
 export {
   ACCURACY_TIERS,
   InMemoryAccuracyAttemptJournal,
