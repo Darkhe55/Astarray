@@ -45,7 +45,20 @@ async function runMissionToTerminal(mode: "assist" | "devolve") {
     prompt: "上下文节点收口探针",
   });
   let status = "accepted";
-  const deadline = Date.now() + 30_000;
+  /**
+   * 修（2026-11-05）：**不得在 30s 处"放弃等待"并返回非终态**。
+   *
+   * 实测证据：全量覆盖率运行下本用例耗时 **30_107ms**（= 恰好撞上原 30s 上限）并断言失败
+   * `expected 'running' to be 'done'`；而**隔离复跑本文件仅 243–381ms**。
+   * ⇒ 同一工作量在满载争用下被拖慢约 **80×**；产品侧没有问题，
+   * 是**测试自己**用一个远低于其 `testTimeout`（60s）的硬上限**提前认输**。
+   *
+   * 现改为：把等待上界抬到**紧贴 `testTimeout` 之下**（55s），
+   * 于是"真的卡住"会由 vitest 以 `Test timed out` 报出（明确、可归因），
+   * 而不再是含糊的"状态断言失败"。**断言本身未放宽**：
+   * 仍然要求最终必须到达终态，只是不再人为提前放弃。
+   */
+  const deadline = Date.now() + 55_000;
   while (Date.now() < deadline && !["done", "failed", "blocked", "cancelled"].includes(status)) {
     await new Promise((resolve) => setTimeout(resolve, 15));
     status = (await application.queryTask({ sessionId: "session-1", taskIdentifier: "task-1" })).status;
@@ -57,7 +70,8 @@ async function runMissionToTerminal(mode: "assist" | "devolve") {
 describe("T09A-R1-03：产品任务节点收口", () => {
   it("Devolve：关闭为 deferred-review-closed，生成胶囊与层级 1 延迟核验任务", async () => {
     const status = await runMissionToTerminal("devolve");
-    expect(status).toBe("done");
+    // 失败时带上**实测状态**，避免只看到含糊的 expected 'running' to be 'done'
+    expect(status, "任务未到达终态（实测 status=" + status + "）").toBe("done");
 
     const owners = await listGraphOwners();
     expect(owners.length).toBeGreaterThanOrEqual(1);
@@ -93,7 +107,8 @@ describe("T09A-R1-03：产品任务节点收口", () => {
 
   it("Assist：节点等待人工验收并生成 awaiting-user-acceptance 胶囊，不自动关闭、不生成延迟任务", async () => {
     const status = await runMissionToTerminal("assist");
-    expect(status).toBe("done");
+    // 失败时带上**实测状态**（本条曾因"30s 提前放弃"报出含糊的 expected 'running' to be 'done'）
+    expect(status, "任务未到达终态（实测 status=" + status + "）").toBe("done");
 
     const owners = await listGraphOwners();
     const owner = owners[0]!;

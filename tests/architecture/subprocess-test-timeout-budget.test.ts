@@ -91,4 +91,64 @@ describe("RELIABILITY-01：起子进程 / 起服务的用例必须显式给出�
     // 违规为 0 —— 若有新增，这里会直接列出文件路径
     expect(offenders).toEqual([]);
   });
+
+  /**
+   * 2026-11-05 新增（第 36 轮，源于一条**实测抓到的抖动**）：
+   *
+   * `context-node-lifecycle.test.ts` 用 `deadline = Date.now() + 30_000` 轮询任务终态，
+   * 全量覆盖率运行下该用例耗时 **30_107ms**（恰好撞上该上限）并报出含糊的
+   * `expected 'running' to be 'done'`；而**隔离复跑仅 243–381ms**
+   * ⇒ 同一工作量在满载争用下被拖慢约 **80×**。已把上限抬到 55s（贴近其 60s `testTimeout`）。
+   *
+   * ## 本条守卫**保证**什么 / **不保证**什么（避免言过其实）
+   *
+   * **保证**：内部截止时间**严格小于** `testTimeout` ⇒ 真的卡住时由 vitest 报出明确的
+   * `Test timed out`（可直接归因），而不会被"提前认输"伪装成一条**状态断言失败**
+   * （那会让人误以为是产品语义问题）。
+   *
+   * **不保证**：它**拦不住"截止时间相对负载太紧"**这类问题 —— 修复前的 30s 相对 60s
+   * 本身就是"小于"关系，本守卫当时**会放行**（这一点我实测确认过：把 deadline 改回 30_000
+   * 时守卫仍通过）。"多紧才够"是**负载相关**的属性，静态规则无法判定；
+   * 故此处只声明上面那条更弱但**确实成立**的保证。
+   *
+   * 反证：把某个 deadline 改成**大于** `testTimeout`（实测 90_000 vs 60_000）时，
+   * 本守卫**当场报出** `context-node-lifecycle.test.ts（deadline=90000 >= testTimeout=60000）`。
+   */
+  it("内部 `deadline = Date.now() + N` 必须**小于**该文件的 `testTimeout`（真卡住要报 timeout，而不是伪装成状态断言失败）", async () => {
+    const testsRoot = path.resolve("tests");
+    const testFiles = await listTestFiles(testsRoot);
+
+    const offenders: string[] = [];
+    let deadlineOccurrenceCount = 0;
+
+    for (const filePath of testFiles) {
+      const sourceText = await fs.readFile(filePath, "utf8");
+      const testTimeoutMatch = /setConfig\(\s*\{\s*testTimeout:\s*([0-9_]+)/.exec(sourceText);
+      if (testTimeoutMatch === null) {
+        continue;
+      }
+      const testTimeoutMilliseconds = Number(testTimeoutMatch[1]!.replace(/_/g, ""));
+      for (const deadlineMatch of sourceText.matchAll(
+        /deadline\s*=\s*Date\.now\(\)\s*\+\s*([0-9_]+)/g,
+      )) {
+        deadlineOccurrenceCount += 1;
+        const deadlineMilliseconds = Number(deadlineMatch[1]!.replace(/_/g, ""));
+        if (deadlineMilliseconds >= testTimeoutMilliseconds) {
+          offenders.push(
+            path.relative(process.cwd(), filePath) +
+              "（deadline=" +
+              String(deadlineMilliseconds) +
+              " >= testTimeout=" +
+              String(testTimeoutMilliseconds) +
+              "）",
+          );
+        }
+      }
+    }
+
+    // 先证明"这条规则真的在扫东西"（否则空集合会让断言恒真）
+    expect(deadlineOccurrenceCount).toBeGreaterThan(10);
+
+    expect(offenders).toEqual([]);
+  });
 });
