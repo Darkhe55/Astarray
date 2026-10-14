@@ -50,6 +50,20 @@
 
 ⇒ 两次全量 Linux 运行**均 0 失败**。
 
+### 2.2b 最新提交复核（源提交 `5741d79`，2026-11-08 第 57 轮）
+
+| 命令 | 退出码 | 结果 |
+| --- | --- | --- |
+| `npm ci` | **0** | — |
+| `npm run build` | **0** | Build success |
+| `npm run test`（全量） | **0** | **431 文件全过；3253 passed ＋ 2 skipped；0 failed** |
+| `npm run test:coverage` | **0** | 语句 92.59 ／ **分支 85.21** ／ 函数 93.22 ／ 行 92.63 |
+
+**同步方式（一处踩坑，记以备用）**：WSL 的检出是**独立 clone**，
+新提交的对象**不会自动存在** ⇒ 必须 `git fetch <Windows 仓库路径> <sha>` **先取对象**再 checkout。
+前一版脚本直接 `checkout <sha>` 报了 `Could not parse object`（对象尚未取到），于是**静默停在旧提交**上 ——
+那会让"最新提交复核"名不副实。**已修正并确认 `linux HEAD == windows HEAD == 5741d79`。**
+
 ### 2.3 MCP 桥接闭环（源提交 `5f08ef0`）
 
 | 命令 | 退出码 | 结果 |
