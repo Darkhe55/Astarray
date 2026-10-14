@@ -205,12 +205,29 @@ describe("CLI 端到端：anthropic-messages 协议", () => {
       };
       childProcess.on("close", settle);
       const resultChecker = setInterval(() => {
-        if (stdoutText.trim().startsWith("{") && stdoutText.trim().endsWith("}")) {
-          clearInterval(resultChecker);
-          if (!isSettled) {
-            childProcess.kill();
-            settle();
-          }
+        /**
+         * 修（2026-11-03）：**必须真的能解析成功**才算"结果到齐"。
+         *
+         * 此前判据是 `startsWith("{") && endsWith("}")` —— 那**只证明首尾字符像 JSON**：
+         * 负载下 stdout 分块到达时，第一块可能已同时满足这两个条件（例如
+         * `{"status":"blocked"` 后续才补齐），于是这里**提前 kill 子进程**，
+         * 拿到**截断的** stdout ⇒ 下面 `JSON.parse` 抛
+         * `SyntaxError: Unexpected end of JSON input`。
+         * 实测：全量覆盖率运行下本用例偶发该错误，隔离复跑通过（属**测试自身竞态**，
+         * 非产品缺陷）。
+         * 现改为"`JSON.parse` 真能成功"才结算，既修掉竞态，也**不放宽任何断言**。
+         */
+        const trimmedOutput = stdoutText.trim();
+        if (trimmedOutput === "") return;
+        try {
+          JSON.parse(trimmedOutput);
+        } catch {
+          return;
+        }
+        clearInterval(resultChecker);
+        if (!isSettled) {
+          childProcess.kill();
+          settle();
         }
       }, 100);
       setTimeout(() => {
