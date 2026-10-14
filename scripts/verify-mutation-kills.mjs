@@ -332,6 +332,49 @@ export const MUTATIONS = [
       "原上级不可用却不再要求暂停存档 ⇒ 执行者可能被诱导自行另找上级" +
       "（卡内 §2.2：原上级不可用时暂停并存档，不让执行者自行找新上级）",
   },
+  {
+    mutationIdentifier: "project01-controlled-port-skips-protected-storage",
+    targetFile: "packages/core/src/tools/controlled-cross-project-resource-io.ts",
+    find: `    await this.protectedStoragePolicy.assertGenericToolAccessAllowed({
+      canonicalTargetPath: resolvedWithinWorkspace,
+      operation,
+    });`,
+    replace: `    if (false) {
+      await this.protectedStoragePolicy.assertGenericToolAccessAllowed({
+        canonicalTargetPath: resolvedWithinWorkspace,
+        operation,
+      });
+    }`,
+    testFiles: [
+      "tests/core/integration/project01-controlled-resource-io-port.test.ts",
+    ],
+    expectedFailingTestNames: [
+      "读取**保管库**内文件 ⇒ 拒绝",
+      "写入**保管库** ⇒ 拒绝",
+      "删除审计文件同样不得经该端口读取",
+      "`fileExists` 对受保护路径也必须先判定",
+    ],
+    rationale:
+      "受控端口不再过受保护存储判定 ⇒ '保管库/审计文件必须被拒'四条必须变红" +
+      "（否则该端口就退化成 CLI 那种'拿到绝对路径就能读写'，正是卡内禁止的）",
+  },
+  {
+    mutationIdentifier: "project01-controlled-port-skips-workspace-boundary",
+    targetFile: "packages/core/src/tools/controlled-cross-project-resource-io.ts",
+    find: `    const resolvedWithinWorkspace =
+      await this.workspaceBoundary.resolveWithinWorkspace(absolutePath);`,
+    replace: `    const resolvedWithinWorkspace = absolutePath;`,
+    testFiles: [
+      "tests/core/integration/project01-controlled-resource-io-port.test.ts",
+    ],
+    expectedFailingTestNames: [
+      "读取**工作区外**的绝对路径 ⇒ 拒绝",
+      "**写入**工作区外 ⇒ 拒绝",
+      "`ensureDirectory` 越界 ⇒ 拒绝",
+    ],
+    rationale:
+      "跳过工作区边界 ⇒ 工作区外路径可被读写（'拿到绝对路径就能读写'）⇒ 三条越界反例必须变红",
+  },
 ];
 
 function sha256OfFile(filePath) {

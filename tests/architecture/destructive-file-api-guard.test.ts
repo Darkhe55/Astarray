@@ -79,6 +79,15 @@ const ALLOWED_MODULES: Record<string, { tokens: AllowedTokens; reason: string }>
       "只写自己那一个 JSON 文件（`tool-upgrade-authorization-grants.json`）；" +
       "撤销采用**追加标记**而不删除历史，故无 rm/rename/copyFile",
   },
+  "core/src/tools/controlled-cross-project-resource-io.ts": {
+    tokens: ["writeFile"],
+    reason:
+      "PROJECT-01-03 **受控**跨项目资源端口：它是「包装层」而非「绕过层」——" +
+      "每次读写/建目录/存在性检查都**先过** `WorkspaceBoundary`（越界拒绝）与" +
+      "`ProtectedStoragePolicy`（保管库/审计拒绝，词法 + realpath 双重比对），" +
+      "**先判再写**，拒绝时不触达磁盘。写只用在这一条已授权的规范路径上；" +
+      "不删除、不改名、不复制（无 rm/rename/copyFile）",
+  },
   "core/src/tools/session-permission-elevation.ts": {
     tokens: ["rm", "writeFile"],
     reason: "会话提升记录持久化（writeFile + 失效记录清理 rm）",

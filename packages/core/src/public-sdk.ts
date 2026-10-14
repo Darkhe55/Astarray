@@ -48,6 +48,11 @@ import {
 } from "./orchestration/cross-project-authorization-store.js";
 // 2026-10-13：跨项目通道必须拒绝受保护存储（backup-vault / 删除审计）。
 import { ProtectedStoragePolicy } from "./tools/protected-storage-policy.js";
+// 2026-10-30（PROJECT-01-03）：SDK/GUI 路径此前 crossProjectResourceIo 恒为 null
+// ⇒ 跨项目借阅只能 fail-closed。现默认装配**受控**端口（边界 + 受保护存储双闸门），
+// 不照搬 CLI 的裸 fs 端口（那等于"拿到绝对路径就能读写"）。
+import { ControlledCrossProjectResourceIo } from "./tools/controlled-cross-project-resource-io.js";
+import { WorkspaceBoundary } from "./tools/workspace-boundary.js";
 // 2026-10-18（COMM-01-02 切片①）；**2026-10-22 依设计清单订正语义**。
 // 首版误把"唯一上级 = 通信授权"（只允许直属上级投递）—— 与
 // `docs/AGENT_COMMUNICATION_OVERVIEW.md` §35–54 不符：同项目主层与次级层**默认全连接**，
@@ -1555,8 +1560,25 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
         stateDirectory: options.stateDirectory,
         allowCorruptedIdempotencyLedger: options.allowCorruptedIdempotencyLedger === true,
       }),
-      // PROJECT-01-04：跨项目传输的真实 I/O 与人工改动守卫（未注入 ⇒ 如实失败，不伪装）。
-      crossProjectResourceIo: options.crossProjectResourceIo ?? null,
+      /**
+       * PROJECT-01-03（2026-10-30）：跨项目资源 I/O。
+       *
+       * 此前只有 CLI 的**裸 `fs`** 端口，SDK/GUI 路径恒为 `null`
+       * ⇒ 跨项目导入只能走 fail-closed 的 `cross-project-resource-io-unavailable`。
+       * 现改为**默认装配受控端口**：每次读写/建目录/存在性检查都先过
+       * `WorkspaceBoundary`（越界拒绝）与 `ProtectedStoragePolicy`（保管库/审计拒绝，
+       * 词法 + realpath 双重比对）。调用方仍可显式注入自有端口覆盖。
+       */
+      crossProjectResourceIo:
+        options.crossProjectResourceIo ??
+        new ControlledCrossProjectResourceIo({
+          workspaceBoundary: new WorkspaceBoundary(
+            options.workspaceRootPath ?? process.cwd(),
+          ),
+          protectedStoragePolicy: new ProtectedStoragePolicy({
+            stateDirectoryPath: options.stateDirectory,
+          }),
+        }),
       crossProjectHumanEditGuard: options.crossProjectHumanEditGuard ?? null,
       installationInquiryRegistry,
     });
