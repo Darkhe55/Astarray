@@ -127,6 +127,26 @@ Agent仅接收不透明授权引用和公开范围说明，不接收可外传的
 **仍未完成（不主张 PROJECT-01-03/04 通过）**：SDK/GUI 入口尚未接线（CLI 已可用）；
 多项目/多同级个体压力验收与包级验收仍待做。
 
+> **2026-10-29 复核（第 29 轮）**：上面这句"SDK/GUI 入口尚未接线"**表述仍会误导**，
+> 逐层实测结论如下（与下方 2026-10-13 复核一致，此处给出**当前是否已变**的判定）：
+>
+> - **SDK 公开方法确已存在**（`readCrossProjectResource` / `importCrossProjectResource` /
+>   `grantCrossProjectAuthorizationForAcceptance` / `listCrossProjectAuthorizations`）；
+> - **GUI 侧已有视图与断言**：`tests/gui/unit/project01-cross-project-gui-view.test.ts`（11 处）
+>   与 `gui-server.test.ts`（8 处）覆盖 `/state` 快照中的 `crossProject` 字段，
+>   且**端口缺失时返回空列表而不伪造授权**（有反例）。
+> ⇒ 故"入口尚未接线"**不是**准确说法。
+> - **真正的缺口（2026-10-29 复查仍成立）**：`CrossProjectResourceIoPort`
+>   除 **CLI 的裸 `fs` 实现**外**仍无第二个生产实现**，
+>   故 SDK/GUI 路径的 `crossProjectResourceIo` **仍为 `null`**
+>   ⇒ `importCrossProjectResource` 仍走 fail-closed 的
+>   `cross-project-resource-io-unavailable` 分支 ⇒ **SDK/GUI 在实际产品中仍无法执行跨项目借阅**。
+>   这与下方 2026-10-13 给的"下一检查点"完全一致，**该检查点仍可直接开工**（不需外部条件）。
+>
+> **本项不判通过**：需按下方 ①‑③ 实现受控端口（经 `WorkspaceBoundary` +
+> `ProtectedStoragePolicy`，**不得**照搬 CLI 裸 `fs`）与人工改动守卫的生产实现。
+
+
 > **2026-10-13 复核：把"入口未接线"收敛为一条具体、可执行的缺口**
 >
 > 逐层核实后的**准确表述**（此前只说"未接线"，无法据以开工）：
