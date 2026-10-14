@@ -555,6 +555,7 @@ ul { margin: 8px 0 0; padding-left: 20px; }
     </p>
     <button id="refresh-recovery" type="button">刷新</button>
     <ul id="recovery" aria-live="polite"></ul>
+    <p id="recovery-resume-result" role="status" aria-live="polite"></p>
   </section>
   <section aria-labelledby="verifications-heading">
     <h2 id="verifications-heading">待追认（按 Agent 隔离）</h2>
@@ -806,12 +807,95 @@ ul { margin: 8px 0 0; padding-left: 20px; }
             (mission.isLeaseActive ? " · 租约活跃" : "") +
             (mission.hasTrustedCheckpoint ? " · 有可信检查点" : "") +
             (mission.reconciliationRequired ? " · 需先对账" : "");
+          /**
+           * GUI-02-04：**逐 mission** 的恢复按钮（**没有批量恢复入口**）。
+           *
+           * 硬约束：
+           * - **不默认选中、不自动恢复**：必须用户**主动点击**；
+           * - 明显不具备恢复条件的（损坏 / 无可信检查点 / 租约活跃）**禁用**，
+           *   并在按钮旁写明"还差什么"，避免用户点了才发现不行；
+           * - 点击后带 hasExplicitUserConfirmation: true（**该值只能来自这次点击**）。
+           */
+          var resumeButton = document.createElement("button");
+          resumeButton.type = "button";
+          resumeButton.textContent = "请求恢复（需显式确认）";
+          var isBlockedByKnownConditions =
+            mission.isCorrupted === true ||
+            mission.hasTrustedCheckpoint !== true ||
+            mission.isLeaseActive === true;
+          resumeButton.disabled = isBlockedByKnownConditions;
+          if (isBlockedByKnownConditions) {
+            var blockedReasons = [];
+            if (mission.isCorrupted === true) { blockedReasons.push("记录损坏"); }
+            if (mission.hasTrustedCheckpoint !== true) { blockedReasons.push("无可信检查点"); }
+            if (mission.isLeaseActive === true) { blockedReasons.push("租约活跃（仍在运行）"); }
+            resumeButton.title = "暂不可恢复：" + blockedReasons.join("、");
+          }
+          resumeButton.addEventListener("click", function () {
+            requestMissionResume(mission.missionIdentifier);
+          });
+          item.appendChild(document.createTextNode(" "));
+          item.appendChild(resumeButton);
+          if (resumeButton.disabled) {
+            item.appendChild(
+              document.createTextNode("（暂不可恢复：" + resumeButton.title + "）"),
+            );
+          }
           recoveryElement.appendChild(item);
         });
       })
       .catch(function () {});
   }
   document.getElementById("refresh-recovery").addEventListener("click", refreshRecovery);
+  var recoveryResumeResultElement = document.getElementById("recovery-resume-result");
+  /**
+   * GUI-02-04：**恢复请求**（只在用户点击时调用 —— 绝不自动触发）。
+   *
+   * 服务端拒绝时**把理由呈现给用户**（outcome + detail），
+   * 不静默失败：否则用户只会看到"点了没反应"，更糟的是可能误以为已经恢复。
+   */
+  function requestMissionResume(missionIdentifier) {
+    recoveryResumeResultElement.textContent = "正在请求恢复 " + missionIdentifier + " …";
+    return fetch("/commands/recovery-resume", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
+      body: JSON.stringify({
+        missionIdentifier: missionIdentifier,
+        // **显式确认**：该值只来自这次用户点击，不是脚本默认。
+        hasExplicitUserConfirmation: true,
+      }),
+    })
+      .then(function (response) {
+        return response.json().then(function (payload) {
+          return { isOk: response.ok, payload: payload };
+        });
+      })
+      .then(function (outcome) {
+        if (!outcome.isOk) {
+          recoveryResumeResultElement.textContent =
+            "恢复未获准（" + String(outcome.payload.errorCode || "unknown") + "）：" +
+            String(outcome.payload.message || "");
+          return;
+        }
+        if (outcome.payload.outcome === "resumed") {
+          recoveryResumeResultElement.textContent =
+            "已恢复 " + missionIdentifier +
+            "；需重新鉴权项：" +
+            ((outcome.payload.requiredReauthorizationTypes || []).join("、") || "无");
+        } else {
+          recoveryResumeResultElement.textContent =
+            "未恢复（" + String(outcome.payload.outcome) + "）：" +
+            String(outcome.payload.detail || "") +
+            ((outcome.payload.blockedDecisionItems || []).length > 0
+              ? "；阻塞项：" + outcome.payload.blockedDecisionItems.join("、")
+              : "");
+        }
+        refreshRecovery();
+      })
+      .catch(function (error) {
+        recoveryResumeResultElement.textContent = "恢复请求失败：" + String(error);
+      });
+  }
   var verificationsElement = document.getElementById("verifications");
   var verificationResultElement = document.getElementById("verification-result");
   function decideVerification(entry, decision) {
