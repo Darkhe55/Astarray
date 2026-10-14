@@ -292,8 +292,195 @@ export function buildGuiInstructionWindowView(input: {
   };
 }
 
-export interface GuiTaskTrackerView {
-  tasksByIdentifier: Map<string, GuiTaskView>;
+/** 缺失字段的展示文案：必须是「（未知）」而不是空串 —— 空串看起来像「有值但为空」。 */
+const GUI_MISSION_UNKNOWN_TEXT = "（未知）";
+
+/** 损坏记录的展示文案。 */
+const GUI_MISSION_CORRUPTED_TEXT = "记录损坏";
+
+/**
+ * **历史状态**→展示标签（磁盘上"当时"记录的 `status`）。
+ *
+ * 注意用「（当时记录）」后缀：历史列**只说历史**，
+ * 不与运行列混同 —— 这正是卡内要求的"历史状态与运行状态分离"。
+ */
+function guiMissionRecordedStatusLabel(recordedStatus: string | null): string {
+  switch (recordedStatus) {
+    case "running":
+      return "运行中（当时记录）";
+    case "done":
+      return "已完成";
+    case "cancelled":
+      return "已取消";
+    case "blocked":
+      return "已阻塞";
+    default:
+      return "未知";
+  }
+}
+
+/** **运行状态**→展示标签（"现在是否真的在跑"）。 */
+function guiMissionRuntimeStateLabel(runtimeState: string): string {
+  switch (runtimeState) {
+    case "running":
+      return "运行中";
+    case "finished":
+      return "已结束";
+    case "interrupted-needs-reconciliation":
+      return "已中断，待对账";
+    case "corrupted-needs-attention":
+      return GUI_MISSION_CORRUPTED_TEXT;
+    default:
+      return "未知";
+  }
+}
+
+/** 输入只取展示所需字段（结构上兼容核心层 `MissionHistoryEntry`）。 */
+export interface GuiMissionHistoryEntryInput {
+  missionIdentifier: string;
+  prompt: string | null;
+  mode: string | null;
+  projectIdentifier: string | null;
+  createdAtIso: string | null;
+  recordedStatus: string | null;
+  runtimeState: string;
+  isActivelyRunning: boolean;
+  isCorrupted: boolean;
+}
+
+export interface GuiMissionHistoryPageInput {
+  entries: GuiMissionHistoryEntryInput[];
+  pageIndex: number;
+  effectivePageSize: number;
+  totalMissionCount: number;
+  hasMorePages: boolean;
+}
+
+/** **列表视图**的一行。 */
+export interface GuiMissionHistoryRowView {
+  missionIdentifier: string;
+  promptText: string;
+  projectText: string;
+  createdAtText: string;
+  recordedStatusText: string;
+  runtimeStateText: string;
+  isActivelyRunning: boolean;
+  isCorrupted: boolean;
+  corruptedText: string | null;
+}
+
+export interface GuiMissionHistoryListView {
+  rows: GuiMissionHistoryRowView[];
+  pageIndex: number;
+  pagingLabel: string;
+  totalMissionCountText: string;
+  isMoreAvailable: boolean;
+  emptyStateText: string;
+  hasRows: boolean;
+}
+
+export interface GuiMissionHistoryDetailView {
+  missionIdentifier: string;
+  promptText: string;
+  modeText: string;
+  projectText: string;
+  createdAtText: string;
+  recordedStatusText: string;
+  runtimeStateText: string;
+  isActivelyRunning: boolean;
+  isCorrupted: boolean;
+  corruptedText: string | null;
+}
+
+export interface GuiMissionHistoryRawView {
+  missionIdentifier: string;
+  rawRecord: Record<string, unknown>;
+  rawJsonText: string;
+}
+
+function toGuiMissionHistoryRow(record: GuiMissionHistoryEntryInput): GuiMissionHistoryRowView {
+  return {
+    missionIdentifier: record.missionIdentifier,
+    promptText: record.prompt ?? GUI_MISSION_UNKNOWN_TEXT,
+    projectText: record.projectIdentifier ?? GUI_MISSION_UNKNOWN_TEXT,
+    createdAtText: record.createdAtIso ?? GUI_MISSION_UNKNOWN_TEXT,
+    recordedStatusText: guiMissionRecordedStatusLabel(record.recordedStatus),
+    runtimeStateText: guiMissionRuntimeStateLabel(record.runtimeState),
+    isActivelyRunning: record.isActivelyRunning,
+    isCorrupted: record.isCorrupted,
+    corruptedText: record.isCorrupted ? GUI_MISSION_CORRUPTED_TEXT : null,
+  };
+}
+
+/**
+ * **列表视图**（三视图之一）：只渲染**本页**行 + 分页信息。
+ *
+ * `pageInput.entries` 由调用方按页取（核心层保证"只读本页"），
+ * 本函数**不会**去读任何数据、**不会**渲染整库 —— 它只看传进来的这一页。
+ */
+export function buildGuiMissionHistoryListView(
+  pageInput: GuiMissionHistoryPageInput,
+): GuiMissionHistoryListView {
+  const rows = pageInput.entries.map(toGuiMissionHistoryRow);
+  return {
+    rows,
+    pageIndex: pageInput.pageIndex,
+    // 例如「第 1 页 · 本页 2 条」
+    pagingLabel:
+      "第 " + String(pageInput.pageIndex + 1) + " 页 · 本页 " + String(rows.length) + " 条",
+    totalMissionCountText: "共 " + String(pageInput.totalMissionCount) + " 条历史",
+    isMoreAvailable: pageInput.hasMorePages,
+    emptyStateText: "暂无历史任务。",
+    hasRows: rows.length > 0,
+  };
+}
+
+/** **详情视图**（三视图之二）：单条完整字段。 */
+export function buildGuiMissionHistoryDetailView(
+  record: GuiMissionHistoryEntryInput,
+): GuiMissionHistoryDetailView {
+  return {
+    missionIdentifier: record.missionIdentifier,
+    promptText: record.prompt ?? GUI_MISSION_UNKNOWN_TEXT,
+    modeText: record.mode ?? GUI_MISSION_UNKNOWN_TEXT,
+    projectText: record.projectIdentifier ?? GUI_MISSION_UNKNOWN_TEXT,
+    createdAtText: record.createdAtIso ?? GUI_MISSION_UNKNOWN_TEXT,
+    recordedStatusText: guiMissionRecordedStatusLabel(record.recordedStatus),
+    runtimeStateText: guiMissionRuntimeStateLabel(record.runtimeState),
+    isActivelyRunning: record.isActivelyRunning,
+    isCorrupted: record.isCorrupted,
+    corruptedText: record.isCorrupted ? GUI_MISSION_CORRUPTED_TEXT : null,
+  };
+}
+
+/**
+ * **原始视图**（三视图之三）：**未归一**的原样记录，供核对。
+ *
+ * 刻意**不做**任何标签替换 —— 让用户能看到"磁盘上到底写了什么"。
+ * 同时仍带上运行态字段（原始视图也不该只给一半）。
+ */
+export function buildGuiMissionHistoryRawView(
+  record: GuiMissionHistoryEntryInput,
+): GuiMissionHistoryRawView {
+  const rawRecord: Record<string, unknown> = {
+    missionIdentifier: record.missionIdentifier,
+    prompt: record.prompt,
+    mode: record.mode,
+    projectIdentifier: record.projectIdentifier,
+    createdAtIso: record.createdAtIso,
+    recordedStatus: record.recordedStatus,
+    runtimeState: record.runtimeState,
+    isActivelyRunning: record.isActivelyRunning,
+    isCorrupted: record.isCorrupted,
+  };
+  return {
+    missionIdentifier: record.missionIdentifier,
+    rawRecord,
+    rawJsonText: JSON.stringify(rawRecord, null, 2),
+  };
+}
+
+export interface GuiTaskTrackerView {  tasksByIdentifier: Map<string, GuiTaskView>;
   missions: Set<string>;
 }
 

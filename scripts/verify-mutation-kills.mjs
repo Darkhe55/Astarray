@@ -432,8 +432,8 @@ export const MUTATIONS = [
     mutationIdentifier: "gui0203-history-terminal-may-run",
     targetFile: "packages/core/src/gui/mission-history-reader.ts",
     find: `  const isActivelyRunning =
-    recordedStatus === "running" && input.isMissionActivelyRunning(input.missionIdentifier);`,
-    replace: `  const isActivelyRunning = input.isMissionActivelyRunning(input.missionIdentifier);`,
+    recordedStatus === "running" && (await input.isMissionActivelyRunning(input.missionIdentifier));`,
+    replace: `  const isActivelyRunning = await input.isMissionActivelyRunning(input.missionIdentifier);`,
     testFiles: ["tests/gui/integration/gui02-03-mission-history.test.ts"],
     expectedFailingTestNames: ["已终态（done/blocked/cancelled）不受运行态影响"],
     rationale:
@@ -467,6 +467,37 @@ export const MUTATIONS = [
     rationale:
       "去掉'非空白'校验 ⇒ 空白项目名会被原样返回，界面显示一个'看着有值其实是空'的项目" +
       "⇒ 该反例必须变红（不得伪装项目名）",
+  },
+  {
+    mutationIdentifier: "gui0203-views-runtime-state-collapsed",
+    targetFile: "packages/gui/src/application/gui-read-model.ts",
+    find: `    case "interrupted-needs-reconciliation":
+      return "已中断，待对账";`,
+    replace: `    case "interrupted-needs-reconciliation":
+      return "运行中";`,
+    testFiles: ["tests/gui/unit/gui02-03-mission-history-views.test.ts"],
+    expectedFailingTestNames: [
+      "**历史状态与运行状态分列**：重启前 running 不得显示成运行中",
+    ],
+    rationale:
+      "把'已中断待对账'的运行态标签改成'运行中' ⇒ 重启前的 mission 会在界面上显示成正在运行" +
+      "（正是卡内明令禁止的）⇒ 该反例必须变红" +
+      "（注意：详情视图那条用的是**已终态**记录，不经过 interrupted 分支，故**不**列入点名 —— " +
+      "把它列进来会让验证器判定'变异存活'，那是我的期望写错、不是断言空）",
+  },
+  {
+    mutationIdentifier: "gui0203-views-missing-field-blank",
+    targetFile: "packages/gui/src/application/gui-read-model.ts",
+    find: `const GUI_MISSION_UNKNOWN_TEXT = "（未知）";`,
+    replace: `const GUI_MISSION_UNKNOWN_TEXT = "";`,
+    testFiles: ["tests/gui/unit/gui02-03-mission-history-views.test.ts"],
+    expectedFailingTestNames: [
+      "损坏条目在列表里**明确标注**且不消失",
+      "详情对损坏条目**明确**说明，且缺失字段为",
+    ],
+    rationale:
+      "把缺失字段文案改成空串 ⇒ 界面看起来像'有值但为空'，用户无法区分'没有这个信息'" +
+      "⇒ 这两条反例必须变红",
   },
 ];
 
