@@ -11,7 +11,17 @@
  */
 import http from "node:http";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+/*
+ * 超时预算（2026-10-23）：本文件在**真实本地 HTTP 服务**上跑 runtime（起 fake server +
+ * 真实请求），此前沿用 vitest 默认 **5_000ms**。全量并发下曾实测到
+ * `⑰ providerIdentifier 透传` 超时翻红、**隔离复跑全绿**（属负载型抖动，非产品缺陷）。
+ * 同类"起服务/起子进程却没有预算"的文件本仓一律显式给预算（另有 20 个起服务的文件均已有），
+ * 故按既有约定补上；**断言一律不放宽**。
+ * 活规则守卫：`tests/architecture/subprocess-test-timeout-budget.test.ts`。
+ */
+vi.setConfig({ testTimeout: 60_000 });
 
 import { AnthropicMessagesRuntime } from "../../../packages/core/src/runtime/anthropic-messages-runtime.js";
 import type { AgentRunInput } from "../../../packages/core/src/core/types.js";

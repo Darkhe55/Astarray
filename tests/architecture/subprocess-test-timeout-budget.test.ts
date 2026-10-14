@@ -21,6 +21,16 @@ import { describe, expect, it } from "vitest";
 const SUBPROCESS_CALL_PATTERN =
   /\b(?:spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*\(/;
 
+/**
+ * 真正会**起服务并在其上做真实请求**的形态。
+ *
+ * 为什么也要管（2026-10-23 实测教训）：本规则首版只看子进程，于是漏掉了
+ * `anthropic-messages-runtime.test.ts` —— 它起一个本地 fake HTTP 服务并跑真实请求，
+ * 却沿用 vitest 默认 5s；全量并发下 `⑰` 超时翻红、**隔离复跑全绿**。
+ * "等待真实 I/O"与"等待子进程"是同一类风险，故并入同一预算约定。
+ */
+const SERVER_CALL_PATTERN = /\b(?:createServer|\.listen)\s*\(/;
+
 /** 显式给出超时预算的形态：`vi.setConfig({ testTimeout })`，或逐例 `}, N)`。 */
 const TIMEOUT_BUDGET_PATTERN = /testTimeout|setConfig\s*\(\s*\{\s*testTimeout/;
 
@@ -45,22 +55,30 @@ async function listTestFiles(directory: string): Promise<string[]> {
   return files;
 }
 
-describe("RELIABILITY-01：子进程用例必须显式给出超时预算（活的规则）", () => {
-  it("不存在『真的起子进程却没有 testTimeout』的测试文件", async () => {
+describe("RELIABILITY-01：起子进程 / 起服务的用例必须显式给出超时预算（活的规则）", () => {
+  it("不存在『真的起子进程或起服务却没有 testTimeout』的测试文件", async () => {
     const testsRoot = path.resolve("tests");
     const testFiles = await listTestFiles(testsRoot);
     expect(testFiles.length).toBeGreaterThan(0);
 
     const offenders: string[] = [];
     let subprocessFileCount = 0;
+    let serverFileCount = 0;
 
     for (const filePath of testFiles) {
       const sourceText = await fs.readFile(filePath, "utf8");
       const codeText = stripComments(sourceText);
-      if (!SUBPROCESS_CALL_PATTERN.test(codeText)) {
+      const startsSubprocess = SUBPROCESS_CALL_PATTERN.test(codeText);
+      const startsServer = SERVER_CALL_PATTERN.test(codeText);
+      if (!startsSubprocess && !startsServer) {
         continue;
       }
-      subprocessFileCount += 1;
+      if (startsSubprocess) {
+        subprocessFileCount += 1;
+      }
+      if (startsServer) {
+        serverFileCount += 1;
+      }
       if (!TIMEOUT_BUDGET_PATTERN.test(sourceText)) {
         offenders.push(path.relative(process.cwd(), filePath));
       }
@@ -68,6 +86,7 @@ describe("RELIABILITY-01：子进程用例必须显式给出超时预算（活�
 
     // 先证明"这个规则真的在扫东西"（否则空集合会让断言恒真）
     expect(subprocessFileCount).toBeGreaterThan(10);
+    expect(serverFileCount).toBeGreaterThan(10);
 
     // 违规为 0 —— 若有新增，这里会直接列出文件路径
     expect(offenders).toEqual([]);
