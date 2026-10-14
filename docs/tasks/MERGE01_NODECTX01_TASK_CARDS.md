@@ -8,6 +8,25 @@
 
 **计划状态修改：必须，用户已授权。** 实施者在开始、阻塞和交付时同步本卡、PLAN_STATUS 当前有效表及必要索引；证据范围与并行冲突处理遵循 IMPLEMENTATION_PLAN §8.4。不是只交代码后以“未获文档授权”为由拒绝更新。
 
+> ### 📖 阅读须知（2026-11-08，第 40 轮复核后补写）
+>
+> **本文件是"逐片追加"的进展流水，不是单一状态的快照。** 下方各进展小节里出现的
+> **"仍未完成：…"是当时那一轮的如实记录**（例如早期小节写着"仍未完成：两个工具适配样本、
+> 执行组到原指令映射与合并开关、NODECTX-01 全部内容"），**这些项目在后续小节中已逐项交付**。
+> ⇒ **判断当前状态请以本页顶部结论 + §1.4／§2.5 的检查点表为准**（两处均为 01/02/03 全部 done），
+> **不要把历史小节的"仍未完成"当作现存待办**。
+>
+> **第 40 轮实测复核（可复核依据）**：
+> - 与两卡相关的测试文件 **22 个全部通过**，合计 **147 用例、exit 0**（`npx vitest run` 指定该 22 个文件）；
+> - 曾被称为"仍未完成"的**两个工具适配样本**确认已交付且**已接生产**：
+>   `packages/core/src/tools/tool-action-registry.ts` 内含
+>   `PROJECT_FILE_READ_FAMILY`（`readFile`→`read`、`searchProjectText`→`search`，**旧名保留为兼容别名并路由同一实现**）
+>   与 `PROJECT_FILE_WRITE_FAMILY`（`createProjectFile`→`create`、`replaceFileContent`→`overwrite`，
+>   **`isReadOnly: false`**，其中 overwrite **`requiresPreMutationBackup: true`** ⇒ 满足卡内
+>   "含写动作的工具不能整体伪装成 readonly"），二者均由 `public-sdk.ts` **公开导出**
+>   （消费者不依赖内部路径），且**在派发路径上可达**（见 §1.4 与 `merge01-unified-entry-dispatch.test.ts`）；
+> - 本轮**未改动任何交付事实或断言**，只补齐这份"怎么读本文件"的说明。
+
 ## 0. 共同实施范围
 
 读取 AGENTS 指定治理文档、本卡、PRODUCT_INTEGRATION_ROLLOUT 及相关 ADR。复用 SMART 指令窗口、GUIDE 安全点、T09A 节点图/胶囊/回访、SUM 摘要、权限引擎与独立反馈进程，不另建调度/权限系统。
