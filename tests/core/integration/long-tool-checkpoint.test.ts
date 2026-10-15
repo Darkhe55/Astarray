@@ -209,7 +209,7 @@ describe("GUIDE-01-03 长工具检查点与协作取消", () => {
     expect(successor.deliveredAtCheckpointCount).toBe(0);
   });
 
-  it("watchdog 不误续跑旧指令/未收敛取消", () => {
+  it("watchdog 不误续跑**未收敛取消**（cancellation-active / unknown-stop-outcome）", () => {
     const controller = new LongToolCheckpointController(() => NOW);
     beginExecution(controller);
     expect(
@@ -265,5 +265,61 @@ describe("GUIDE-01-03 长工具检查点与协作取消", () => {
         outputSummary: "x",
       }),
     ).toThrow(LongToolCoordinationError);
+  });
+
+  /**
+   * GUIDE-01-03 第 4 条验收：「**watchdog 不误续跑旧指令**」。
+   *
+   * 2026-11-08（第 91 轮）**发现并补齐的缺口**：上一条用例的**名字**里写着"不误续跑旧指令"，
+   * 但它的断言只覆盖 `cancellation-active` 与 `unknown-stop-outcome` 两条分支 ——
+   * 生产代码里真正对应"旧指令"的第三条分支 `instruction-superseded`
+   * **全仓没有任何测试覆盖**（我按内容检索 `instruction-superseded` **零命中**；
+   * 这也解释了变异探针：把该分支的 `shouldResume` 由 `false` 改成 `true`，上一条用例**照旧全绿**）。
+   *
+   * 故此处补上真正的反例：**被新指导取代的旧请求，必须拒绝"按旧 instructionRevision 续跑"**。
+   */
+  it("watchdog 不误续跑**旧指令**（被新指导取代的请求必须拒绝续跑）", () => {
+    const controller = new LongToolCheckpointController(() => NOW);
+    beginExecution(controller);
+
+    // 旧指令（revision 2）先发起协作取消
+    controller.requestCooperativeCancellation({
+      toolCallId: "tool-call-1",
+      reason: "旧指令要求停止",
+      instructionRevision: 2,
+    });
+    // 新指导（revision 3）到达 ⇒ 旧请求被标记 superseded，并生成承接新 revision 的后继请求
+    const convergence = controller.convergeSupersededRequests({
+      taskIdentifier: "task-1",
+      activeInstructionRevision: 3,
+      reason: "用户给出新指导",
+    });
+    expect(convergence.convergedRequestIdentifiers).toHaveLength(1);
+    expect(convergence.successorRequestIdentifier).not.toBeNull();
+    /**
+     * 后继请求（revision 3）确认结果为 `completed` ⇒ 其状态是 `acknowledged-completed`，
+     * **不属于** `decideWatchdogResume` 的"仍活跃取消"集合（`requested`／`acknowledged-stopped`）。
+     * 这一步是**到达** `instruction-superseded` 分支的必要条件 ——
+     * 否则会先被 `cancellation-active` 拦下（我第一版反例正是栽在这里，实测报的是
+     * `cancellation-active`，也顺带证明了**分支顺序**）。
+     */
+    controller.acknowledgeCancellation({
+      requestIdentifier: convergence.successorRequestIdentifier as string,
+      outcome: "completed",
+      observedAtIso: NOW,
+    });
+
+    /**
+     * watchdog 仍按**旧** instructionRevision（1）考虑续跑 ⇒
+     * 必须因为"该指令已被取代"而**拒绝**，不得续跑旧指令。
+     */
+    expect(
+      controller.decideWatchdogResume({
+        taskIdentifier: "task-1",
+        instructionRevision: 1,
+        maximumWaitMilliseconds: 60_000,
+        nowIso: NOW,
+      }),
+    ).toEqual({ shouldResume: false, reason: "instruction-superseded" });
   });
 });
