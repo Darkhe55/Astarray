@@ -163,4 +163,43 @@ describe("OpenAI 兼容运行时：tool_call 标识", () => {
     expect(toolCallEvent).toBeDefined();
     expect((toolCallEvent as { callId: string }).callId).toBe("call-abc-123");
   });
+
+  it("③ Provider **显式给出空 id**（`\"id\": \"\"`）时也必须合成非空标识", async () => {
+    /**
+     * ⚠️ 这一条是**真实 Provider 实测**逼出来的第三种情形，也是我上一版修复**没能生效**的原因：
+     *
+     * 上一版我只把"缺省值"从 `""` 改成合成标识，但保留着
+     * `if (toolCallDelta.id !== undefined) { currentToolCall.id = toolCallDelta.id; }`
+     * ⇒ 若 Provider **显式发送 `"id": ""`**，`"" !== undefined` 成立
+     * ⇒ **合成值被空串覆盖回去** ⇒ 检查点仍收到空标识 ⇒ 症状照旧。
+     *
+     * 实测依据：同一任务在 **u2-flash** 上正常到达权限裁决，在 **sensenova** 上
+     * 固定报「检查点非法: toolCalls[0].toolCallIdentifier Too small」——
+     * 两者都是 openai-compatible ⇒ 差异在**流形态**，而"显式空 id"正是能解释该差异的形态。
+     */
+    const sseText =
+      openAiChunk({
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "",
+                  function: { name: "createProjectFile", arguments: '{"filePath":"a.md"}' },
+                },
+              ],
+            },
+            finish_reason: null,
+          },
+        ],
+      }) +
+      openAiChunk({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }) +
+      "data: [DONE]\n\n";
+
+    const events = await drainEvents(buildFetch(sseText));
+    const toolCallEvent = events.find((event) => event.kind === "toolCallRequested");
+    expect(toolCallEvent).toBeDefined();
+    expect((toolCallEvent as { callId: string }).callId.length).toBeGreaterThan(0);
+  });
 });

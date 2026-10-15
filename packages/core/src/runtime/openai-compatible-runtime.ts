@@ -247,7 +247,21 @@ export class OpenAiCompatibleRuntime implements AgentRuntime {
             name: "",
             arguments: "",
           };
-          if (toolCallDelta.id !== undefined) {
+          /**
+           * ⚠️ 2026-11-08 修复的**第二版**（第一版不够，实测证明）：
+           *
+           * 第一版只把"缺省值"从 `""` 改成合成标识，但**保留了原来的赋值**：
+           * `if (toolCallDelta.id !== undefined) { id = toolCallDelta.id; }`
+           * ⇒ 若 Provider **显式发送 `"id": ""`**，`"" !== undefined` 成立
+           * ⇒ **合成值被空串覆盖回去** ⇒ 检查点仍收到空标识 ⇒ **症状照旧**。
+           *
+           * 实测依据（同一任务、两者都是 openai-compatible）：**u2-flash 正常到达
+           * 权限裁决**，而 **sensenova 固定报「检查点非法: toolCalls[0].toolCallIdentifier
+           * Too small」** ⇒ 差异在**流形态**，"显式空 id"正是能解释该差异的形态。
+           *
+           * 第二版：**只有非空 id 才采纳**（空串视为"没给"）。真 id 依旧优先。
+           */
+          if (toolCallDelta.id !== undefined && toolCallDelta.id !== "") {
             currentToolCall.id = toolCallDelta.id;
           }
           if (toolCallDelta.function?.name !== undefined) {
