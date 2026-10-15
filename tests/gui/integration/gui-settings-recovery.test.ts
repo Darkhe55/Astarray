@@ -301,25 +301,43 @@ describe("GUI-01-R-03 恢复中心：只读状态与差异", () => {
     const { application, port } = await startRealGui();
     await submitTaskAndWait(application);
 
-    const overview = await request({ port, method: "GET", path: "/recovery" });
+    /**
+     * 2026-11-08：`/recovery` 改为**分页视图**（可恢复项排最前）。
+     * 本用例的**原有断言一条未减**，只是从新的响应形状里取同样的字段：
+     * `missions[]` → `rows[]`；`requiresDecisionMissions` → 分页计数。
+     * 这里用 `pageSize=100`（硬上限）以确保本次提交的 mission 落在**同一页**内。
+     */
+    const overview = await request({
+      port,
+      method: "GET",
+      path: "/recovery?pageSize=100",
+    });
     expect(overview.statusCode).toBe(200);
     const payload = JSON.parse(overview.body) as {
-      missions: Array<{
+      rows: Array<{
         missionIdentifier: string;
         status: string | null;
         isCorrupted: boolean;
         hasTrustedCheckpoint: boolean;
         isLeaseActive: boolean;
+        isRecoverable: boolean;
       }>;
-      requiresDecisionMissions: string[];
+      totalMissionCount: number;
+      recoverableMissionCount: number;
+      isOutOfRange: boolean;
     };
-    expect(payload.missions.length).toBeGreaterThan(0);
-    const mission = payload.missions[0];
+    expect(payload.rows.length).toBeGreaterThan(0);
+    const mission = payload.rows[0];
     expect(mission).toBeDefined();
     expect(mission?.missionIdentifier).toBeTruthy();
     expect(mission?.isCorrupted).toBe(false);
     expect(typeof mission?.isLeaseActive).toBe("boolean");
-    expect(Array.isArray(payload.requiresDecisionMissions)).toBe(true);
+    // 分页计数替代原先的 requiresDecisionMissions（同样是"真实状态"的证据）
+    expect(payload.totalMissionCount).toBeGreaterThan(0);
+    expect(typeof payload.recoverableMissionCount).toBe("number");
+    expect(payload.isOutOfRange).toBe(false);
+    // 分页**确实在按页给**：页大小上限不允许被绕过
+    expect(payload.rows.length).toBeLessThanOrEqual(100);
     expect(overview.body).not.toContain("leaseProcessInstanceId");
     expect(overview.body).not.toContain(stateDirectory);
 

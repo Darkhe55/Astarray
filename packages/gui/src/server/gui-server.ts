@@ -16,6 +16,7 @@ import type { PublicAstarrayEvent } from "../../../core/src/public-sdk.js";
 import {
   applyGuiEventToTracker,
   buildGuiMissionHistoryListView,
+  buildGuiRecoveryMissionPageView,
   buildGuiSnapshot,
   createGuiTaskTracker,
 } from "../application/gui-read-model.js";
@@ -554,6 +555,16 @@ ul { margin: 8px 0 0; padding-left: 20px; }
       ② 先完成对账（未知状态不得当成已恢复）、③ 重新鉴权（重启后旧会话授权不被默认信任）。
     </p>
     <button id="refresh-recovery" type="button">刷新</button>
+    <!--
+      GUI-02-03/04：分页控件。恢复中心曾一次铺开 103 条（可恢复项仅 1 条）⇒ 用户找不到。
+      现在一页只渲染当页，并把**可恢复项排在最前**（服务端已排好）。
+    -->
+    <div>
+      <button id="recovery-previous-page" type="button" disabled>上一页</button>
+      <button id="recovery-next-page" type="button" disabled>下一页</button>
+      <span id="recovery-paging" role="status" aria-live="polite">未加载</span>
+      <span id="recovery-recoverable-count"></span>
+    </div>
     <ul id="recovery" aria-live="polite"></ul>
     <p id="recovery-resume-result" role="status" aria-live="polite"></p>
   </section>
@@ -789,14 +800,44 @@ ul { margin: 8px 0 0; padding-left: 20px; }
       .catch(function (error) { profileResultElement.textContent = "切换失败：" + String(error); });
   });
   function refreshRecovery() {
-    fetch("/recovery", { headers: { accept: "application/json" } })
+    fetch("/recovery?pageIndex=" + String(recoveryPageIndex), {
+      headers: { accept: "application/json" },
+    })
       .then(function (response) { return response.json(); })
       .then(function (payload) {
         recoveryElement.textContent = "";
-        var missions = payload.missions || [];
+        var missions = payload.rows || [];
+        /**
+         * GUI-02-03/04：分页计数与可用性提示。
+         *
+         * 用户实测时一次铺开 103 条、可恢复项仅 1 条 ⇒ 找不到。
+         * 现在把"共几条 / 其中几条可恢复 / 第几页"直接写在界面上，
+         * 用户不必自己数。
+         */
+        var totalMissionCount = payload.totalMissionCount || 0;
+        var recoverableMissionCount = payload.recoverableMissionCount || 0;
+        var effectivePageSize = payload.effectivePageSize || 20;
+        var pageCount = totalMissionCount === 0
+          ? 0
+          : Math.ceil(totalMissionCount / effectivePageSize);
+        recoveryPagingElement.textContent =
+          totalMissionCount === 0
+            ? "共 0 条"
+            : "第 " + String(recoveryPageIndex + 1) + " / " + String(pageCount) +
+              " 页（共 " + String(totalMissionCount) + " 条）";
+        recoveryRecoverableCountElement.textContent =
+          recoverableMissionCount === 0
+            ? "（其中可恢复：0 条）"
+            : "（其中可恢复：" + String(recoverableMissionCount) + " 条，已排在最前）";
+        recoveryPreviousPageButton.disabled = recoveryPageIndex <= 0;
+        recoveryNextPageButton.disabled =
+          payload.isOutOfRange === true || recoveryPageIndex + 1 >= pageCount;
+
         if (missions.length === 0) {
           var emptyItem = document.createElement("li");
-          emptyItem.textContent = "无可恢复 mission";
+          emptyItem.textContent = payload.isOutOfRange === true
+            ? "本页超出范围（请回到上一页）"
+            : "无可恢复 mission";
           recoveryElement.appendChild(emptyItem);
           return;
         }
@@ -805,38 +846,32 @@ ul { margin: 8px 0 0; padding-left: 20px; }
           item.textContent = mission.missionIdentifier + " · " + (mission.status || "未知") +
             (mission.isCorrupted ? " · 损坏" : "") +
             (mission.isLeaseActive ? " · 租约活跃" : "") +
-            (mission.hasTrustedCheckpoint ? " · 有可信检查点" : "") +
-            (mission.reconciliationRequired ? " · 需先对账" : "");
+            (mission.hasTrustedCheckpoint ? " · 有可信检查点" : "");
           /**
            * GUI-02-04：**逐 mission** 的恢复按钮（**没有批量恢复入口**）。
            *
            * 硬约束：
            * - **不默认选中、不自动恢复**：必须用户**主动点击**；
-           * - 明显不具备恢复条件的（损坏 / 无可信检查点 / 租约活跃）**禁用**，
-           *   并在按钮旁写明"还差什么"，避免用户点了才发现不行；
+           * - 不可恢复的**禁用**并写明"还差什么"；
            * - 点击后带 hasExplicitUserConfirmation: true（**该值只能来自这次点击**）。
+           *
+           * ⚠️ 判定与原因**一律用服务端给的** isRecoverable / blockedReasonText，
+           * 页面脚本**不再自己算一遍**（否则会出现第二套规则，迟早与读模型走样）。
            */
           var resumeButton = document.createElement("button");
           resumeButton.type = "button";
           resumeButton.textContent = "请求恢复（需显式确认）";
-          var isBlockedByKnownConditions =
-            mission.isCorrupted === true ||
-            mission.hasTrustedCheckpoint !== true ||
-            mission.isLeaseActive === true;
-          resumeButton.disabled = isBlockedByKnownConditions;
-          if (isBlockedByKnownConditions) {
-            var blockedReasons = [];
-            if (mission.isCorrupted === true) { blockedReasons.push("记录损坏"); }
-            if (mission.hasTrustedCheckpoint !== true) { blockedReasons.push("无可信检查点"); }
-            if (mission.isLeaseActive === true) { blockedReasons.push("租约活跃（仍在运行）"); }
-            resumeButton.title = "暂不可恢复：" + blockedReasons.join("、");
+          var isRecoverable = mission.isRecoverable === true;
+          resumeButton.disabled = !isRecoverable;
+          if (!isRecoverable) {
+            resumeButton.title = "暂不可恢复：" + String(mission.blockedReasonText || "原因未知");
           }
           resumeButton.addEventListener("click", function () {
             requestMissionResume(mission.missionIdentifier);
           });
           item.appendChild(document.createTextNode(" "));
           item.appendChild(resumeButton);
-          if (resumeButton.disabled) {
+          if (!isRecoverable) {
             item.appendChild(
               document.createTextNode("（暂不可恢复：" + resumeButton.title + "）"),
             );
@@ -848,6 +883,23 @@ ul { margin: 8px 0 0; padding-left: 20px; }
   }
   document.getElementById("refresh-recovery").addEventListener("click", refreshRecovery);
   var recoveryResumeResultElement = document.getElementById("recovery-resume-result");
+  var recoveryPagingElement = document.getElementById("recovery-paging");
+  var recoveryRecoverableCountElement =
+    document.getElementById("recovery-recoverable-count");
+  var recoveryPreviousPageButton = document.getElementById("recovery-previous-page");
+  var recoveryNextPageButton = document.getElementById("recovery-next-page");
+  /** 恢复中心当前页（从 0 起；服务端按页返回，界面不一次渲染全部）。 */
+  var recoveryPageIndex = 0;
+  recoveryPreviousPageButton.addEventListener("click", function () {
+    if (recoveryPageIndex > 0) {
+      recoveryPageIndex -= 1;
+      refreshRecovery();
+    }
+  });
+  recoveryNextPageButton.addEventListener("click", function () {
+    recoveryPageIndex += 1;
+    refreshRecovery();
+  });
   /**
    * GUI-02-04：**恢复请求**（只在用户点击时调用 —— 绝不自动触发）。
    *
@@ -1869,11 +1921,68 @@ export async function startGuiServer(
         writeCapabilityUnavailable(response);
         return;
       }
-      writeJsonResponse(
-        response,
-        200,
-        await applicationService.queryRecoveryOverview(),
-      );
+      /**
+       * GUI-02-03/04（2026-11-08）：**分页 + 可恢复项优先**。
+       *
+       * ## 为什么要改（真实人工体验暴露，不是推测）
+       *
+       * 用户实测时本路由一次返回 **103** 条，其中**仅 1 条可恢复**（102:1），
+       * 且它按字典序埋在中间 ⇒ 用户**肉眼找不到**，回报"所有项目都暂不可恢复"。
+       * 卡片 L60/L77 明文要求「**分页、按需加载**：不得一次读取全部 97 个 mission」。
+       *
+       * ## 视图在**服务端**构建（与 `/mission-history` 同一纪律）
+       *
+       * 排序与"是否可恢复"的判定一律来自 `buildGuiRecoveryMissionPageView`，
+       * 客户端**不自己拼** —— 否则页面脚本里会出现第二套判定，迟早与读模型走样。
+       *
+       * ## ⚠️ 一处**如实说明的残留**（未夸大已是"按需加载"）
+       *
+       * 核心门面 `queryRecoveryOverview()` **本身仍是全量**（它没有分页入参）。
+       * 故本路由是"**全量取一次 → 服务端只把一页交给浏览器**"：
+       * **界面侧不再一次渲染 103 条**（可用性问题已解决），
+       * 但**核心层的一次全量列举仍在**。要彻底满足"不得一次读取全部"，
+       * 需要给恢复概览也加**按页列举**（核心改动，另行处理）。
+       */
+      const rawRecoveryPageSize = requestUrl.searchParams.get("pageSize");
+      const rawRecoveryPageIndex = requestUrl.searchParams.get("pageIndex");
+      let requestedRecoveryPageSize: number | undefined;
+      let requestedRecoveryPageIndex = 0;
+      if (rawRecoveryPageSize !== null) {
+        requestedRecoveryPageSize = Number(rawRecoveryPageSize);
+        if (!Number.isInteger(requestedRecoveryPageSize) || requestedRecoveryPageSize < 1) {
+          writeJsonResponse(response, 400, {
+            errorCode: "recovery-page-size-invalid",
+            message: "pageSize 必须为正整数",
+          });
+          return;
+        }
+      }
+      if (rawRecoveryPageIndex !== null) {
+        const parsedRecoveryPageIndex = Number(rawRecoveryPageIndex);
+        if (!Number.isInteger(parsedRecoveryPageIndex) || parsedRecoveryPageIndex < 0) {
+          writeJsonResponse(response, 400, {
+            errorCode: "recovery-page-index-invalid",
+            message: "pageIndex 必须为非负整数",
+          });
+          return;
+        }
+        requestedRecoveryPageIndex = parsedRecoveryPageIndex;
+      }
+      const recoveryOverview = await applicationService.queryRecoveryOverview();
+      const recoveryPageView = buildGuiRecoveryMissionPageView({
+        missions: recoveryOverview.missions.map((mission) => ({
+          missionIdentifier: mission.missionIdentifier,
+          status: mission.status,
+          isCorrupted: mission.isCorrupted,
+          hasTrustedCheckpoint: mission.hasTrustedCheckpoint,
+          isLeaseActive: mission.isLeaseActive,
+        })),
+        pageIndex: requestedRecoveryPageIndex,
+        ...(requestedRecoveryPageSize === undefined
+          ? {}
+          : { pageSize: requestedRecoveryPageSize }),
+      });
+      writeJsonResponse(response, 200, recoveryPageView);
       return;
     }
     /**

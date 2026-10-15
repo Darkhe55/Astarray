@@ -578,6 +578,160 @@ export function evaluateGuiRecoveryGate(input: {
   };
 }
 
+/** 恢复中心分页：默认每页条数（与历史分页保持一致）。 */
+export const DEFAULT_GUI_RECOVERY_PAGE_SIZE = 20;
+
+/**
+ * 恢复中心分页：每页条数**硬上限**。
+ *
+ * 为什么必须有：卡片要求"**分页、按需加载** —— 不得一次读取全部 mission"。
+ * 若允许调用方传一个超大 `pageSize`，这条要求会被**一个参数绕过**，
+ * 于是"分页"变成摆设。故设硬上限，并在越限时**收敛到上限**（`effectivePageSize` 可观测）。
+ */
+export const MAXIMUM_GUI_RECOVERY_PAGE_SIZE = 100;
+
+/**
+ * 已终态的任务状态：这些状态**没有可继续的工作** ⇒ 恢复无意义（核心也会拒）。
+ *
+ * 与 `recovery-center-controller` 的 `mission-already-terminal` 判定同义。
+ */
+const GUI_TERMINAL_MISSION_STATUSES: readonly string[] = [
+  "done",
+  "cancelled",
+  "failed",
+];
+
+export interface GuiRecoveryMissionRowView {
+  missionIdentifier: string;
+  status: string | null;
+  isCorrupted: boolean;
+  hasTrustedCheckpoint: boolean;
+  isLeaseActive: boolean;
+  isRecoverable: boolean;
+  /** 不可恢复时给出**具体原因**（每种原因不同，不得一律"暂不可恢复"）。 */
+  blockedReasonText: string | null;
+}
+
+export interface GuiRecoveryMissionPageView {
+  rows: GuiRecoveryMissionRowView[];
+  pageIndex: number;
+  effectivePageSize: number;
+  totalMissionCount: number;
+  /** 可恢复（有可信检查点、未损坏、无活跃租约、且**未到终态**）的条数。 */
+  recoverableMissionCount: number;
+  isOutOfRange: boolean;
+}
+
+/**
+ * 判断一条 mission 现在**是否值得恢复**。
+ *
+ * 四个条件必须同时成立：
+ * - **未损坏**：损坏记录不得当作可恢复；
+ * - **有可信检查点**：没有检查点就无从恢复（这正是实测中那 102 条的原因）；
+ * - **无活跃租约**：仍在被别的进程跑着，不得抢;
+ * - **未到终态**：`done` 说明工作已完成 ⇒ 恢复无意义（核心会以
+ *   `mission-already-terminal` 拒绝，实测已验证）。
+ */
+function classifyGuiRecoveryMission(mission: {
+  status: string | null;
+  isCorrupted: boolean;
+  hasTrustedCheckpoint: boolean;
+  isLeaseActive: boolean;
+}): { isRecoverable: boolean; blockedReasonText: string | null } {
+  if (mission.isCorrupted) {
+    return { isRecoverable: false, blockedReasonText: "记录损坏" };
+  }
+  if (!mission.hasTrustedCheckpoint) {
+    return { isRecoverable: false, blockedReasonText: "无可信检查点" };
+  }
+  if (mission.isLeaseActive) {
+    return { isRecoverable: false, blockedReasonText: "租约活跃（仍在运行）" };
+  }
+  if (
+    mission.status !== null &&
+    GUI_TERMINAL_MISSION_STATUSES.includes(mission.status)
+  ) {
+    return {
+      isRecoverable: false,
+      blockedReasonText: "已处于终态（" + mission.status + "），无可继续的工作",
+    };
+  }
+  return { isRecoverable: true, blockedReasonText: null };
+}
+
+/**
+ * GUI-02-03/04（2026-11-08）：**恢复中心分页视图**（纯函数，无 I/O）。
+ *
+ * ## 为什么需要它（真实人工体验暴露）
+ *
+ * 用户实测时 `/recovery` 一次返回 **103** 条，其中**仅 1 条可恢复**（102:1），
+ * 且它按字典序埋在中间 ⇒ 用户**肉眼找不到**，回报"所有项目都暂不可恢复"。
+ * 卡片要求"分页、按需加载（不得一次读取全部 mission）"。
+ *
+ * ## 两条行为约定
+ *
+ * 1. **可恢复项排在最前** —— 否则可恢复项会被上百条禁用项淹没；
+ * 2. **两组各自保持原有相对顺序**（稳定排序）—— 不引入随机性，
+ *    否则同一次刷新两次的排序可能不同，用户会以为列表在跳。
+ *
+ * ## 确定性
+ *
+ * 排序只用"是否可恢复"这一位，**不使用 localeCompare 等环境相关比较**
+ * （跨平台/跨语言环境结果可能不同，反例会因此变成偶发）。
+ */
+export function buildGuiRecoveryMissionPageView(input: {
+  missions: Array<{
+    missionIdentifier: string;
+    status: string | null;
+    isCorrupted: boolean;
+    hasTrustedCheckpoint: boolean;
+    isLeaseActive: boolean;
+  }>;
+  pageIndex: number;
+  pageSize?: number;
+}): GuiRecoveryMissionPageView {
+  if (!Number.isInteger(input.pageIndex) || input.pageIndex < 0) {
+    throw new Error("pageIndex 必须为非负整数");
+  }
+  const requestedPageSize = input.pageSize ?? DEFAULT_GUI_RECOVERY_PAGE_SIZE;
+  if (!Number.isInteger(requestedPageSize) || requestedPageSize < 1) {
+    throw new Error("pageSize 必须为正整数");
+  }
+  const effectivePageSize = Math.min(
+    requestedPageSize,
+    MAXIMUM_GUI_RECOVERY_PAGE_SIZE,
+  );
+
+  // **不原地改调用方数组**：先分类到新数组，再稳定分组。
+  const classified = input.missions.map((mission) => {
+    const classification = classifyGuiRecoveryMission(mission);
+    return {
+      missionIdentifier: mission.missionIdentifier,
+      status: mission.status,
+      isCorrupted: mission.isCorrupted,
+      hasTrustedCheckpoint: mission.hasTrustedCheckpoint,
+      isLeaseActive: mission.isLeaseActive,
+      isRecoverable: classification.isRecoverable,
+      blockedReasonText: classification.blockedReasonText,
+    };
+  });
+  const recoverableRows = classified.filter((row) => row.isRecoverable);
+  const blockedRows = classified.filter((row) => !row.isRecoverable);
+  const orderedRows = [...recoverableRows, ...blockedRows];
+
+  const startIndex = input.pageIndex * effectivePageSize;
+  const pageRows = orderedRows.slice(startIndex, startIndex + effectivePageSize);
+  return {
+    rows: pageRows,
+    pageIndex: input.pageIndex,
+    effectivePageSize,
+    totalMissionCount: orderedRows.length,
+    recoverableMissionCount: recoverableRows.length,
+    // 空列表不算"越界"：那是"本来就空"，与"翻过头了"是两件事。
+    isOutOfRange: orderedRows.length > 0 && startIndex >= orderedRows.length,
+  };
+}
+
 export interface GuiTaskTrackerView {
   tasksByIdentifier: Map<string, GuiTaskView>;
   missions: Set<string>;
