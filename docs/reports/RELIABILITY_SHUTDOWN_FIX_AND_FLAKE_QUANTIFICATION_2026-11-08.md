@@ -347,5 +347,57 @@ Error: Test timed out in 5000ms.
 `inFlightWorker.cancel()` 临时改回空操作，在满载下对照这两个文件的表现）。
 **在归因完成前，不宣称这两条与我的改动无关。**
 
+## 10. 2026-11-08（第 70 轮）：**归因完成（两条都不是我的改动引起）** + 修掉其中一条的真实竞态
+
+### 10.1 归因结论
+
+| 失败 | 归因 | 依据 |
+| --- | --- | --- |
+| `feedback-process.test.ts`（真实 fork） | **与第 65 轮 `cancel()` 改动无关** | **硬证据**：该文件**完全不引用** `MissionOrchestrator` / `AstarrayApplicationFacade` / `public-sdk`（全文件 0 命中）；而我的改动只在 `MissionOrchestrator.cancel()` 内生效 ⇒ **不可能触及它** |
+| `reliability-before-dispatch-crash.test.ts` ① | **与本改动无关**（推理） | 失败断言是 `wasKilledBeforeDispatchReturned === true`，描述的是**子进程自身**"在派发返回前被杀"的注入相位；我的改动在**父进程**内中止在途 worker，而这里被硬杀的是**外部的 `dist/cli.js` 子进程** |
+
+⇒ 两条都属**测试自造的时序竞态**（本卡反复修过的第 3 类），**不是产品回归**。
+
+### 10.2 修掉 `feedback-process` 那条（**前提改为显式闸门**）
+
+**失败现场**：`AssertionError: expected 0 to be >= 1` ——
+重启后的子进程 journal 里**没有可重放的消息**。
+
+**根因**：原写法在 `enqueue` 后**固定等 500ms** 就 `SIGKILL`，隐含假设
+"入队 → 落盘 → **标记 `delivered`**"能在这 500ms 内完成；满载下不成立。
+
+**修法**：把固定等待换成**显式闸门** —— **纯被动**读邮箱 journal 文件
+（`<状态目录>/feedback/mailboxes/worker-a.json`，见 `mailbox-journal.ts:41/45`），
+等到目标消息的 **`delivered === true`**。**断言未放宽**（仍要求重启后 ≥1）。
+
+**变异探针**：把闸门判据改成恒假（等价于"完全不等待"）⇒ **当场红**；
+还原后 sha256 一致、**11 passed**（隔离 3/3 绿）⇒ 该前提**确实必须被建立**。
+
+### 10.3 ⚠️ 我这个闸门**写错了两版**（教训值得保留）
+
+**第一版**：用 `client.requestReplay("*") >= 1` 当闸门 ⇒ **稳定失败**
+（`等待超时`）。原因有两层：
+1. `handleReplay` 只统计 `delivered === true`（`entrypoint.ts:185`），
+   而该标志由父进程 `ackDelivered` 置位（`:227` → `mailbox-journal.ts:115`）；
+2. **更关键**：`handleReplay` 末尾会 `scheduleDeliveryAttempt` ——
+   **这个"观测"本身会重新触发投递、扰动被测系统** ⇒ 判据**永远不可能**成立。
+
+**第二版**：只要求"消息已落盘"（按 messageId 找）⇒ 闸门很快通过，
+但**原断言仍红**（484ms）⇒ 证明"落盘"**不是充分前提**，还必须是 **`delivered`**。
+
+**⇒ 可复用教训（本轮最有价值的一条）**：
+**给时序竞态做闸门时，观测必须是"纯被动、只读"的。**
+一个会改变被测系统状态的 API（replay／poke／flush 之类）**不能**当闸门 ——
+它会让判据永不成立，而且失败方向恰好是"看起来像产品有 bug"。
+
+### 10.4 诚实边界
+
+隔离下该闸门是**空操作**（读文件时 `delivered` 已为真）⇒
+**我无法在隔离环境证明它比固定 500ms 更好**。
+它的价值**只在满载下**体现（那正是失败现场的条件），
+故本条只主张"**前提由固定猜测改为可观测条件**"，
+**不主张**"该抖动已在满载下验证消失"。
+
+
 
 

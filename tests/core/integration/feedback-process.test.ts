@@ -175,7 +175,68 @@ describe.skipIf(!hasBuiltEntry)("独立反馈进程集成（真实 fork）", () 
     client.setAgentStatus((replayTestMessage.source as { agentInstanceId: string }).agentInstanceId, "idle");
     await client.enqueue(replayTestMessage);
     client.setAgentStatus("worker-a", "idle");
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    /**
+     * ⚠️ 2026-11-08（第 70 轮）：**用显式闸门替代固定 `setTimeout(500)`**。
+     *
+     * ## 原来的写法隐含一个时序假设
+     *
+     * 原来这里等固定 500ms 就 `SIGKILL`，**隐含假设**"入队 → 写入邮箱 journal"
+     * 能在这 500ms 内完成。满载下**不成立**。
+     *
+     * ## 失败现场（一次满载全量，实测）
+     *
+     * ```
+     * FAIL tests/core/integration/feedback-process.test.ts
+     *   > 杀死反馈进程后 supervisor 重启并重放未确认消息
+     * AssertionError: expected 0 to be >= 1
+     * ```
+     *
+     * ⇒ 重启后的子进程 journal 里没有可重放的消息 —— 因为被杀时它**还没落盘**。
+     *
+     * ## 为什么闸门是"被动读邮箱 journal 的 `delivered` 字段"（**我前两版都猜错了**）
+     *
+     * **第一版**用 `client.requestReplay("*") >= 1` 当闸门，**实测稳定失败**
+     * （`等待超时: 消息已持久化并标记为已投递`）。原因：`handleReplay` 只统计
+     * `delivered === true`（`entrypoint.ts:185`），而该标志由父进程
+     * `ackDelivered` 置位（`:227` → `mailbox-journal.ts:115`）；更关键的是
+     * **`requestReplay` 自己会重新触发投递**（`handleReplay` 末尾
+     * `scheduleDeliveryAttempt`）—— **观测本身扰动了被测系统**，于是判据永远不成立。
+     *
+     * **第二版**只要求"消息已落盘"（读 journal 文件找 messageId），
+     * 闸门很快通过，但**原断言仍红**（484ms，`expected 0 to be >= 1`）
+     * ⇒ 证明"落盘"**不是**充分前提；重启后重放还要求该消息**已被标记投递**。
+     *
+     * **第三版（本版）**：**纯被动**读同一个 journal 文件，
+     * 等到目标消息的 `delivered === true` —— 这才是重启后能被重放的真实前提，
+     * 且**不调用任何 API、不扰动系统**。
+     *
+     * **前提因此变确定；断言未放宽**（仍要求重启后 ≥1）。
+     */
+    const mailboxJournalFilePath = path.join(
+      temporaryDirectory,
+      "feedback",
+      "mailboxes",
+      "worker-a.json",
+    );
+    await waitUntil(
+      async () => {
+        try {
+          const journalText = await fs.readFile(mailboxJournalFilePath, "utf8");
+          const journalDocument = JSON.parse(journalText) as {
+            messages?: Array<{ messageId?: string; delivered?: boolean }>;
+          };
+          return (journalDocument.messages ?? []).some(
+            (journalMessage) =>
+              journalMessage.messageId === replayTestMessage.messageId &&
+              journalMessage.delivered === true,
+          );
+        } catch {
+          return false;
+        }
+      },
+      10_000,
+      "消息已在邮箱 journal 中标记为 delivered（重启后可重放的前提）",
+    );
 
     const originalPid = supervisor.getChildProcess()?.pid;
     supervisor.getChildProcess()?.kill("SIGKILL");
