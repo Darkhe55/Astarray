@@ -86,6 +86,14 @@ if (process.argv.includes("--probe-only")) {
         "content-type": "application/json",
         "x-api-key": resolvedCredential.apiKey,
         "anthropic-version": "2023-06-01",
+        /**
+         * 2026-11-08：**禁止保活**。实测（真实凭据）确认：成功路径上紧跟
+         * `await fetch` 之后的硬退出会触发 Windows/libuv 断言
+         * `!(handle->flags & UV_HANDLE_CLOSING) @ win/async.c:94`
+         * ⇒ 退出码 `-1073740791`（fail-fast），把"成功"报成崩溃。
+         * 让服务端在响应后关闭连接，可减少退出时仍在收尾的套接字。
+         */
+        connection: "close",
       },
       body: JSON.stringify({
         model: modelIdentifier,
@@ -121,6 +129,22 @@ if (process.argv.includes("--probe-only")) {
   console.log("usage: " + JSON.stringify(probeParsed.usage ?? null));
   console.log("text-preview: " + probeTextBlocks.join("").slice(0, 40));
   console.log("连通验证通过（--probe-only）。完整实测请去掉该参数。");
+  /**
+   * 2026-11-08：**不要在 `await fetch` 之后立刻硬退出**。
+   *
+   * 实测（真实凭据、Windows + Node v24.18.0）确认：紧跟 fetch 的 `process.exit(0)`
+   * 会触发 libuv 断言 `!(handle->flags & UV_HANDLE_CLOSING) @ win/async.c:94`
+   * ⇒ 退出码 `-1073740791`（fail-fast），**把"连通成功"报成崩溃**。
+   *
+   * 这里保留硬退出（它是本分支的**终止手段**：直接去掉就会落到下面的完整实测，
+   * 变成"探针模式偷偷跑了完整验收"），但先让网络套接字收尾
+   * （配合上方请求头 `connection: close`），以避开该断言。
+   *
+   * ⚠️ 若日后本改法失效（又出断言），正确方向是**让进程自然退出**
+   * （`process.exitCode = 0` + 把下方完整实测包进 `else`），而不是继续加长等待
+   * —— 那只是掩盖问题。
+   */
+  await new Promise((resolve) => setTimeout(resolve, 250));
   process.exit(0);
 }
 

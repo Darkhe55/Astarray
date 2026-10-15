@@ -90,4 +90,62 @@ describe.skipIf(!hasLiveVerdict)("SMART-01-04：真实运行判据（有产物�
     expect(checkNames.join("|")).toMatch(/派发 ≠ 完成|派发状态与成果完成可区分/);
     expect(checkNames.join("|")).toMatch(/关闭回收|收敛到终态/);
   });
+
+  it("⑦ 探针分支不得在 fetch 之后**立刻硬退出**，且必须禁止连接保活（Windows libuv 断言）", () => {
+    /**
+     * ## 由来（2026-11-08，**用真实凭据实测复现并修掉**）
+     *
+     * 卡内长期登记：`--probe-only` 在 **Windows + Node v24.18.0** 上退出路径触发
+     * libuv 断言 `!(handle->flags & UV_HANDLE_CLOSING) @ win/async.c:94`，
+     * 退出码 `-1073740791`（fail-fast）。**此前未修的理由是"走成功路径需要真实凭据，
+     * 改完无法验证"** —— 凭据可用后我实测**确认复现**，并定位为：
+     * **紧跟 `await fetch` 的 `process.exit(0)`**（成功路径）触发该断言。
+     *
+     * 修法：① 探针请求头加 `connection: "close"`（不保活）；
+     * ② 硬退出**之前**先让套接字收尾。
+     * （**不能**只把 `process.exit(0)` 换成 `process.exitCode = 0`：
+     * 那个退出同时是**本分支的终止手段**，去掉就会落到下面的完整实测。）
+     *
+     * 本用例把这两条钉成**契约**，防止坑回来。锚定**代码形态**而非裸子串
+     * —— 说明注释里就写着 `process.exit(0)` 与 `connection: close`，
+     * 裸子串匹配会得到空洞的绿（本会话已因此栽过四次）。
+     */
+    const scriptText = readFileSync(verificationScriptPath, "utf8");
+
+    // ① 探针请求必须禁止保活
+    expect(scriptText).toContain('connection: "close"');
+
+    // 取探针分支文本（用花括号计数，避免被分支内的嵌套块截断）
+    const branchMarker = 'if (process.argv.includes("--probe-only")) {';
+    const branchStart = scriptText.indexOf(branchMarker);
+    expect(branchStart, "找不到探针分支").toBeGreaterThan(-1);
+    const openIndex = scriptText.indexOf("{", branchStart);
+    let depth = 0;
+    let closeIndex = -1;
+    for (let index = openIndex; index < scriptText.length; index += 1) {
+      const character = scriptText[index];
+      if (character === "{") depth += 1;
+      else if (character === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          closeIndex = index;
+          break;
+        }
+      }
+    }
+    expect(closeIndex, "探针分支没有闭合").toBeGreaterThan(openIndex);
+    const probeBranch = scriptText.slice(branchStart, closeIndex + 1);
+
+    // ② 退出前必须有"让套接字收尾"的一步（锚定代码形态）
+    const settlePattern = /^\s*await new Promise\(\(resolve\) => setTimeout\(/m;
+    const exitPattern = /^\s*process\.exit\(0\);\s*$/m;
+    const settleIndex = probeBranch.search(settlePattern);
+    const exitIndex = probeBranch.search(exitPattern);
+    expect(settleIndex, "探针分支缺少退出前的收尾等待").toBeGreaterThan(-1);
+    expect(exitIndex, "探针分支找不到成功的退出语句").toBeGreaterThan(-1);
+    expect(
+      settleIndex < exitIndex,
+      "收尾等待必须在退出**之前**（否则等于没加）",
+    ).toBe(true);
+  });
 });
