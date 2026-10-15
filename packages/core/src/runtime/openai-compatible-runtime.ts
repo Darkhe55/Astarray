@@ -225,8 +225,25 @@ export class OpenAiCompatibleRuntime implements AgentRuntime {
         }
         for (const toolCallDelta of delta?.tool_calls ?? []) {
           const toolCallIndex = toolCallDelta.index ?? 0;
+          /**
+           * ⚠️ 2026-11-08 修复（**真实用户实测发现**）：`id` 的默认值**不能是空串**。
+           *
+           * 实测：某真实 Provider（sensenova）的流式响应**从不携带 `id`**
+           * ⇒ 原来这里留 `""` ⇒ 一路传到检查点，被 schema
+           * `toolCallIdentifier: z.string().min(1)` 拒绝 ⇒ 报
+           * 「检查点非法: toolCalls[0].toolCallIdentifier Too small」
+           * ⇒ **任务直接终止、mission 变 blocked**（实测约 6 秒内）。
+           *
+           * 影响面：**任何不返回 tool_call id 的 OpenAI 兼容 Provider，凡是需要调工具
+           * 的任务都会失败**；而且它表现为"待授权区没有内容"，因为任务在
+           * **能产生授权请求之前**就死了 —— 极易被误判成权限问题。
+           *
+           * 修法：缺 id 时**合成一个确定性标识**（含请求标识与序号 ⇒ 同一次运行内
+           * 不与其他工具调用撞名、且可复现）。若 Provider 在后续分片带来真 id，
+           * 下面的赋值会**覆盖**合成值 ⇒ **Provider 的 id 优先**。
+           */
           const currentToolCall = accumulatedToolCalls.get(toolCallIndex) ?? {
-            id: "",
+            id: requestIdentifier + ":tool-call:" + String(toolCallIndex),
             name: "",
             arguments: "",
           };
