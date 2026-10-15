@@ -9,6 +9,37 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+/**
+ * 2026-11-08（第 67 轮）：**补上文件级超时预算**。
+ *
+ * ## 依据（真实观测，不是推测）
+ *
+ * 一次全量 `check` 中本文件翻红：
+ *
+ * ```
+ * FAIL tests/core/unit/application-sdk-results-cancel.test.ts
+ *   > 成功任务的结果预览来自权威工作存档（非占位）
+ * Error: Test timed out in 5000ms.
+ * ```
+ *
+ * 本文件**不起子进程、不起服务**，因此**不被**本仓那条"活的规则"
+ * （`tests/architecture/subprocess-test-timeout-budget.test.ts`，只扫
+ * 子进程/起服务文件）覆盖 ⇒ **确实**吃着默认 5000ms。
+ *
+ * ## 量级（实测）
+ *
+ * - 隔离跑：5 条全过（毫秒级）；
+ * - 全量 JSON 报告下该条 **751ms**；
+ * - 但失败那次**超过 5000ms**（约 6.7× 拉伸）。
+ *
+ * 本仓已记录过满载争用可达 **30–200×**（见
+ * `docs/reports/RELIABILITY_SHUTDOWN_FIX_AND_FLAKE_QUANTIFICATION_2026-11-08.md`），
+ * 故该拉伸**不属异常**，属"重异步生命周期用例在满载下需要预算"这一类。
+ *
+ * **未改任何断言**（与既有先例一致：`dbbb4d7` 给两个同类文件补预算）。
+ */
+vi.setConfig({ testTimeout: 60_000 });
+
 import { AstarrayApplicationFacade } from "../../../packages/core/src/public-sdk.js";
 
 let stateDirectory: string;
