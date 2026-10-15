@@ -4001,6 +4001,28 @@ export async function executeGuiServeCommand(
     projectRootPath: process.cwd(),
   });
   let guiHandle: Awaited<ReturnType<typeof startGuiServer>> | undefined;
+  /**
+   * ⚠️ 2026-11-08 修复（**真实用户实测发现的无限递归**）：必须先 bind 出**原始方法**。
+   *
+   * 下面用 `Object.assign(application, {...})` **就地覆盖**门面方法。若某个覆盖项
+   * 在函数体里调用**同名**方法（`application.listPendingInstallationInquiries()`），
+   * 那么赋值之后那个属性**就是这段箭头函数本身** ⇒ 调用它等于调自己 ⇒
+   * `RangeError: Maximum call stack size exceeded`。
+   *
+   * **实测后果**：`GET /installation-inquiries` **恒返回 500** ⇒
+   * 「待安装询问」区块**一直不可用**；而页面脚本的 `.catch(function(){})`
+   * 把失败吞掉 ⇒ 浏览器里只看到一片空白 ⇒ **连续几轮人工体验都没发现**。
+   *
+   * 同块内另外三个覆盖项调用的是**不同名**方法
+   * （`listPendingPermissionAskRequests` / `decidePermissionAskRequest` /
+   * `answerInstallationInquiry`），故未受影响 —— 只有这一个撞名。
+   *
+   * 修法与既有集成测试同一纪律：**先取原始方法再覆盖**。
+   * （`tests/gui/integration/gui02-02-installation-not-bypassable.test.ts` 早已在赋值前
+   * `bind`，但它**自己复制了一份接线**，所以没能拦住生产接线出错。）
+   */
+  const listPendingInstallationInquiriesFromFacade =
+    application.listPendingInstallationInquiries.bind(application);
   try {
     guiHandle = await startGuiServer({
       applicationService: Object.assign(application, {
@@ -4050,7 +4072,7 @@ export async function executeGuiServeCommand(
          * 「看到待决询问」与「回答该询问」，**不代替门禁做授权决定**。
          */
         listPendingInstallationInquiries: async () =>
-          (await application.listPendingInstallationInquiries()).map((entry) => ({
+          (await listPendingInstallationInquiriesFromFacade()).map((entry) => ({
             inquiryIdentifier: entry.inquiryIdentifier,
             stage: entry.stage,
             summary: entry.summary,
