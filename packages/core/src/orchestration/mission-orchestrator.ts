@@ -34,7 +34,7 @@ const MUTATING_TOOL_NAMES_FOR_RETRY = new Set([
   "writeFileTemporary",
   "backupVault",
   "deleteBackup",
-]);import type { GuidanceSafePointPort } from "../runtime/tool-loop.js";
+]);import type { GuidanceSafePointPort, ToolLoopPerfSample } from "../runtime/tool-loop.js";
 import type { GuidanceScopeTarget } from "../runtime-guidance/runtime-guidance.js";
 import type { ContextNodeLifecyclePort } from "./worker-agent.js";
 import type { AgentWorkArchiveStore } from "./work-archive-store.js";
@@ -58,6 +58,26 @@ export interface OrchestratorWorkerFactories {
   buildPermissionExplanation: (toolName: string) => string;
   /** T07D-R2-03：实际暴露给 Provider 的工具描述符（按任务工具子集）。 */
   toolDescriptorFactory?: (task: TaskDependencyNode) => ToolDescriptor[];
+  /**
+   * PERF-01-02 采集（2026-11-08，第 83 轮）：性能样本**落库端口**。
+   *
+   * ## 为什么是"端口 + 由编排层补身份"，而不是直接传一个 sink
+   *
+   * 工具循环给出的样本载荷**不含身份**（`tool-loop.ts` 的 `ToolLoopPerfSample`），
+   * 而 `PerfSampleEvent` 的 `sourceAgentInstanceId` / `missionIdentifier` /
+   * `taskIdentifier` 都是**必填**。身份只有**编排层**知道（它持有 `missionId`，
+   * 且构造每个 worker 时知道 `agentInstanceId` 与 `task`）⇒ 由编排层补齐后再交给端口。
+   *
+   * **缺省 ⇒ 不采集**（沿用本仓"可选能力"口径；也让既有测试行为不变）。
+   */
+  perfSamplePort?: (sample: {
+    sourceAgentInstanceId: string;
+    missionIdentifier: string;
+    taskIdentifier: string;
+    operationKind: string;
+    durationMilliseconds: number;
+    outcome: "success" | "failure" | "cancelled" | "unknown";
+  }) => Promise<void> | void;
 }
 
 /**
@@ -564,6 +584,23 @@ export class MissionOrchestrator {
             requiredMutatingToolNames: [
               ...(this.pendingMutatingToolNamesByTask.get(task.id) ?? []),
             ],
+          }),
+      /**
+       * PERF-01-02 采集（2026-11-08，第 83 轮）：把工具循环的样本**补齐身份**后
+       * 交给落库端口。端口缺省 ⇒ 不传 sink ⇒ 不采集。
+       */
+      ...(this.options.workerFactories.perfSamplePort === undefined
+        ? {}
+        : {
+            perfSampleSink: (sample: ToolLoopPerfSample) =>
+              this.options.workerFactories.perfSamplePort!({
+                sourceAgentInstanceId: agentInstanceId,
+                missionIdentifier: missionId,
+                taskIdentifier: task.id,
+                operationKind: sample.operationKind,
+                durationMilliseconds: sample.durationMilliseconds,
+                outcome: sample.outcome,
+              }),
           }),
     });
     const workerPromise = (async () => {

@@ -19,6 +19,8 @@ import { WorkspaceBoundary } from "../tools/workspace-boundary.js";
 import { detectFileSystemCaseSensitivity } from "../tools/cross-platform-path-canonicalization.js";
 import { ScriptedRuntime } from "../runtime/scripted-runtime.js";
 import { MainController } from "../orchestration/main-controller.js";
+// OBS-01／PERF-01-02（第 83 轮）：性能样本落库（此前只在生产里被构造用于"查询"）
+import { PerfEventStore } from "../orchestration/perf-event-store.js";
 import { MissionManager } from "../orchestration/mission-manager.js";
 import { FeedbackProcessSupervisor } from "../feedback-process/process-supervisor.js";
 import type { ForkFeedbackClient } from "../feedback-process/transport.js";
@@ -203,6 +205,14 @@ export interface ApplicationRuntimeOptions {
   maxLoopIterations: number;
   /** 是否启动独立反馈进程（headless 单命令场景可关闭）。 */
   useFeedbackProcess: boolean;
+  /**
+   * OBS-01／PERF-01-02（2026-11-08，第 83 轮）：是否采集性能样本（缺省 false）。
+   *
+   * 打开后：工具循环样本经编排层补齐身份 → 追加到 `<stateDirectory>` 下的性能样本文件
+   * ⇒ `queryPerfOverview`（CLI/GUI 只读概览）**在生产里真的看得见数据**。
+   * **缺省关**是因为本卡要求「观察开销预算**先测再定**」。
+   */
+  isPerformanceCollectionEnabled?: boolean;
   streamOutput: (missionId: string | null, text: string) => void;
   /**
    * GUI-02-01 片①（2026-10-11）：权限询问**携带绝对身份**的上报口（可选）。
@@ -868,6 +878,64 @@ export async function createApplicationRuntime(
         : null,
     });
 
+  /**
+   * OBS-01／PERF-01-02（2026-11-08，第 83 轮）：**把性能采集接进生产装配**。
+   *
+   * 此前该链路从未接线：`perfSampleSink` 只在 `runtime/tool-loop.ts` 声明、只有测试传过，
+   * `PerfEventStore` 在生产里只被构造用于**查询** ⇒ `queryPerfOverview` 恒空
+   * （属"组件存在但产品不可达"）。此处按开关构造样本落库端口，
+   * **身份/任务由编排层补齐**（本层只知道状态目录）。
+   *
+   * **缺省关**：本卡要求「观察开销预算**先测再定**」，
+   * 故不在未测量开销的情况下默认打开"每次工具调用追加一行"的行为。
+   */
+  let performanceSampleSequence = 0;
+  const perfEventStore = options.isPerformanceCollectionEnabled === true
+    ? new PerfEventStore({ baseDirectory: options.stateDirectory })
+    : null;
+  const perfSamplePort =
+    perfEventStore === null
+      ? undefined
+      : async (sample: {
+          sourceAgentInstanceId: string;
+          missionIdentifier: string;
+          taskIdentifier: string;
+          operationKind: string;
+          durationMilliseconds: number;
+          outcome: "success" | "failure" | "cancelled" | "unknown";
+        }): Promise<void> => {
+          performanceSampleSequence += 1;
+          try {
+            await perfEventStore.append({
+              observeEventVersion: 1,
+              eventType: "perf",
+              recordedAtIso: new Date().toISOString(),
+              sourceAgentInstanceId: sample.sourceAgentInstanceId,
+              missionIdentifier: sample.missionIdentifier,
+              taskIdentifier: sample.taskIdentifier,
+              // 请求级标识：同一进程内唯一且可读（跨重启不保证稳定，见类型注释）
+              requestIdentifier:
+                sample.missionIdentifier +
+                ":" +
+                sample.taskIdentifier +
+                ":" +
+                sample.operationKind +
+                ":" +
+                String(performanceSampleSequence),
+              requestRevision: 1,
+              origin: { kind: "system" },
+              operationKind: sample.operationKind,
+              durationMilliseconds: sample.durationMilliseconds,
+              outcome: sample.outcome,
+            });
+          } catch {
+            /**
+             * **观测失败不得阻塞业务**（与 `perfSampleSink` 的既定纪律一致；
+             * 运行时的既有注释亦如此要求）⇒ 吞掉并继续，不改变任务结果。
+             */
+          }
+        };
+
   const controller = new MainController({
     modeMachine,
     sessionManager,
@@ -978,6 +1046,8 @@ export async function createApplicationRuntime(
     },
     buildPermissionExplanation: (toolName: string) =>
       `执行任务需要调用工具 ${toolName}`,
+    // PERF-01-02（第 83 轮）：性能样本落库端口（开关关时 undefined ⇒ 不采集）
+    ...(perfSamplePort === undefined ? {} : { perfSamplePort }),
     resolveToolDescriptors: (task: TaskDependencyNode): ToolDescriptor[] =>
       task.toolNames
         .map((toolName) => registry.getDescriptor(toolName))

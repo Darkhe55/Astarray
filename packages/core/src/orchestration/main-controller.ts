@@ -138,6 +138,22 @@ export interface MainControllerOptions {
     innerToolPort: ToolPort;
   }) => ToolPort;
   buildPermissionExplanation: (toolName: string) => string;
+  /**
+   * PERF-01-02 采集（2026-11-08，第 83 轮）：性能样本**落库端口**（可选）。
+   *
+   * **此前为何一直是缺口**：工具循环只声明了 `perfSampleSink`，而**应用装配从未接上**
+   * ⇒ `PerfEventStore` 在生产里只被构造用于**查询**、`queryPerfOverview` 恒空。
+   * 端口缺省 ⇒ 不采集（既有行为不变）。
+   * 身份/任务由**编排层**补齐（它持有 `missionId` 与每任务的 `agentInstanceId`）。
+   */
+  perfSamplePort?: (sample: {
+    sourceAgentInstanceId: string;
+    missionIdentifier: string;
+    taskIdentifier: string;
+    operationKind: string;
+    durationMilliseconds: number;
+    outcome: "success" | "failure" | "cancelled" | "unknown";
+  }) => Promise<void> | void;
   /** 流式输出到 UI 的回调。 */
   streamOutput: (missionId: string | null, text: string) => void;
   /**
@@ -823,6 +839,10 @@ export class MainController {
             agentInstanceId,
           ),
         buildPermissionExplanation: this.options.buildPermissionExplanation,
+        // PERF-01-02 采集（第 83 轮接线）：缺省 ⇒ 不采集
+        ...(this.options.perfSamplePort === undefined
+          ? {}
+          : { perfSamplePort: this.options.perfSamplePort }),
       },
       onReportToMain: (message) => {
         if (message.payload.kind !== "instruction") {
@@ -892,6 +912,10 @@ export class MainController {
             agentInstanceId,
           ),
         buildPermissionExplanation: this.options.buildPermissionExplanation,
+        // PERF-01-02 采集（第 83 轮接线）：缺省 ⇒ 不采集
+        ...(this.options.perfSamplePort === undefined
+          ? {}
+          : { perfSamplePort: this.options.perfSamplePort }),
       },
       onMissionFinished: (status) => {
         void this.options.missionManager.updateMissionStatus(missionId, status);

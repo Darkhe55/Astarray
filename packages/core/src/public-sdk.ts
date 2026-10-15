@@ -1198,6 +1198,18 @@ export interface PublicApplicationOptions {
    * 产品入口（CLI run / GUI）应在真实 Provider 运行时显式开启，禁止退化为进程内定时器。
    */
   useFeedbackProcess?: boolean;
+  /**
+   * OBS-01／PERF-01-02（2026-11-08，第 83 轮）：**是否采集性能样本**。
+   *
+   * **缺省 false（保持既有行为不变）** —— 本卡明写「观察开销预算**先测再定**」，
+   * 故**不在未测量开销的情况下默认打开**每次工具调用都追加一行 JSONL 的行为。
+   * 打开后，工具循环的样本会经编排层补齐身份并落库到
+   * `<stateDirectory>` 下的性能样本文件，从而让 `queryPerfOverview`（CLI/GUI 只读概览）
+   * **在生产里真的看得见数据**。
+   *
+   * 此前该链路**从未接线**（`perfSampleSink` 只被声明、只有测试传过）⇒ 概览恒空。
+   */
+  isPerformanceCollectionEnabled?: boolean;
   /** T04：反馈进程入口模块路径；缺省按包内 dist 入口自动解析。 */
   feedbackProcessModulePath?: string | null;
   /**
@@ -1576,6 +1588,8 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       // mock 离线路径保持进程内，嵌入方可用 useFeedbackProcess 显式覆盖。
       runtimeKind,
       useFeedbackProcess: options.useFeedbackProcess ?? runtimeKind === "provider",
+      // OBS-01／PERF-01-02（第 83 轮）：性能采集**缺省关**（先测再定开销）
+      isPerformanceCollectionEnabled: options.isPerformanceCollectionEnabled ?? false,
       streamOutput: options.streamOutput ?? (() => {}),
       // GUI-02-01 片①：权限询问的绝对身份透传（可选；未提供则不传字段）。
       ...(options.onPermissionAskWithIdentity === undefined

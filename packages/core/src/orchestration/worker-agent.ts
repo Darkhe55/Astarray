@@ -25,7 +25,7 @@ import { DomainError } from "../core/errors.js";
 import { resolveFeedbackRecipient } from "./task-publisher-feedback-route.js";
 import type { ContextPromptProvider } from "./context-prompt-assembler.js";
 import { runToolLoop } from "../runtime/tool-loop.js";
-import type { GuidanceSafePointPort } from "../runtime/tool-loop.js";
+import type { GuidanceSafePointPort, ToolLoopPerfSampleSink } from "../runtime/tool-loop.js";
 import type { ToolFailureCounter } from "./failure-counter.js";
 
 export type WorkerOutcome =
@@ -82,6 +82,13 @@ export interface WorkerAgentOptions {
   contextNodeLifecycle?: ContextNodeLifecyclePort | null;
   /** T09A-R1-03：当前模式（人工验收策略来源）。 */
   contextLifecycleModeKey?: string;
+  /**
+   * PERF-01-02 采集（2026-11-08，第 83 轮）：性能样本 sink。
+   *
+   * **由编排层构造**（身份/任务由它在闭包里补齐），本层只负责转交给工具循环。
+   * 缺省 ⇒ 不采集（与既有"可选能力"口径一致）。
+   */
+  perfSampleSink?: ToolLoopPerfSampleSink;
   toolPort: ToolPort;
   failureCounter: ToolFailureCounter;
   feedbackTransport: FeedbackTransportPort;
@@ -296,6 +303,10 @@ export class WorkerAgent {
         maxLoopIterations: this.options.maxLoopIterations,
         cancellationSignal: this.cancellationController.signal,
         guidanceSafePointPort: this.options.guidanceSafePointPort,
+        // PERF-01-02 采集（第 83 轮接线）：未提供 ⇒ 不采集
+        ...(this.options.perfSampleSink === undefined
+          ? {}
+          : { perfSampleSink: this.options.perfSampleSink }),
       },
     );
     for await (const event of events) {

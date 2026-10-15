@@ -50,13 +50,26 @@ export interface ToolLoopOptions {
    * PERF-01-02 进程/任务测量端口（可选，2026-10-02）：
    * 每次真实工具执行后上报一个耗时样本；**观测失败不得阻塞业务**。
    */
-  perfSampleSink?: (sample: {
-    operationKind: string;
-    durationMilliseconds: number;
-    outcome: "success" | "failure" | "cancelled" | "unknown";
-    toolName: string;
-  }) => Promise<void> | void;
+  perfSampleSink?: ToolLoopPerfSampleSink;
 }
+
+/**
+ * PERF 样本载荷（2026-11-08，第 83 轮）。
+ *
+ * **注意它不含身份**（`sourceAgentInstanceId` / mission / task）——
+ * 那些由**编排层**在构造 sink 时补齐（见 `OrchestratorWorkerFactories.perfSamplePort`）。
+ * 这正是"不能用一个全局 sink"的原因：身份必须闭包进每个个体自己的 sink。
+ */
+export interface ToolLoopPerfSample {
+  operationKind: string;
+  durationMilliseconds: number;
+  outcome: "success" | "failure" | "cancelled" | "unknown";
+  toolName: string;
+}
+
+export type ToolLoopPerfSampleSink = (
+  sample: ToolLoopPerfSample,
+) => Promise<void> | void;
 
 /**
  * 续发消息（OpenAI Chat Completions 规范）：
