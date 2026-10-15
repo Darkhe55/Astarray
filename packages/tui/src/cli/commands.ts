@@ -12,6 +12,7 @@ import { runConfigSchema } from "../../../core/src/core/schemas.js";
 import { resolveHostUserIdentifier } from "../../../core/src/core/host-user-context.js";
 import { bootstrapCli } from "./bootstrap.js";
 import { EXIT_CODES, failWith, logToStderr, printJson } from "./json-output.js";
+import { buildPermissionAskFromEscalation } from "./permission-ask-adjudication.js";
 import { writeRuntimeDiagnosticsReport } from "./runtime-diagnostics-report.js";
 import {
   RuntimeSelectionError,
@@ -3968,6 +3969,64 @@ export async function executeGuiServeCommand(
      * 「无可信交互通道」而**走不通**。
      */
     isInstallationGateOnInterface: true,
+    /**
+     * ⚠️ 2026-11-08 修复（**真实用户实测追到的根因**）：GUI 必须**登记**待决授权请求。
+     *
+     * ## 症状（用户的原始报告）
+     *
+     * 在界面上提交写文件任务后，「待授权」区**永远没有内容**（点刷新也没有）。
+     *
+     * ## 根因
+     *
+     * 登记靠门面方法 `registerPermissionAskRequest`，它**全仓只有一个调用方**：
+     * `run-command.ts`，且是在**本回调**里被调用的（`onPermissionAskWithIdentity` 是
+     * `AstarrayApplicationFacade.create` 的选项）。`gui` 命令原来**没有传它**
+     * ⇒ **没有任何人登记** ⇒ `/permission-asks` 恒空 ⇒ 界面永远列不出待决请求。
+     *
+     * **磁盘对照证据（决定性）**：CLI 各次运行的
+     * `agent-memory/<owner>/permission-ask-requests/` 都有文件；
+     * 而 GUI 那次**连 owner 目录都不存在**。worker 的工作存档却照常记了
+     * 「等待权限: createProjectFile」——所以现象看起来像"请求已产生、只是界面没显示"，
+     * **其实是压根没登记**。
+     *
+     * ## 纪律（与 `run-command.ts` 一致）
+     *
+     * - **只登记与广播**，不改裁决：`authorityPort` 与页面上的批准/否决行为不变；
+     * - 登记失败**不得**影响既有裁决流程（不静默放行、也不阻断），只把失败写入 stderr；
+     * - 事件载荷只含**结构化安全预览**（由核心生成），**绝不携带原始 `argumentsJson`**。
+     */
+    onPermissionAskWithIdentity: (input: {
+      ownerAgentInstanceId: string;
+      taskId: string;
+      message: string;
+    }) => {
+      void (async () => {
+        try {
+          const parsed = buildPermissionAskFromEscalation(input.message);
+          if (parsed === null) {
+            logToStderr(
+              "[权限请求登记] 升级文本无法结构化解析，未登记请求实体（裁决路径不受影响）。",
+            );
+            return;
+          }
+          await application.registerPermissionAskRequest({
+            ownerAgentInstanceId: input.ownerAgentInstanceId,
+            taskIdentifier: parsed.taskIdentifier,
+            toolName: parsed.toolName,
+            argumentsJson: parsed.argumentsJson,
+            explanation: parsed.explanation,
+            projectIdentifier: path.basename(process.cwd()) || "astarray",
+            sessionIdentifier: sessionId,
+            projectRootPath: process.cwd(),
+          });
+        } catch (error) {
+          logToStderr(
+            "[权限请求登记] 登记失败（裁决路径不受影响）: " +
+              (error instanceof Error ? error.message : String(error)),
+          );
+        }
+      })();
+    },
   });
   await writeRuntimeDiagnosticsReport({
     reportFilePath: options.runtimeDiagnosticsFilePath,
