@@ -965,7 +965,7 @@ export async function createApplicationRuntime(
           errorCode: string;
           messageText: string;
           component: string;
-          stage: "tool";
+          stage: "tool" | "provider";
           severity: "error";
         }): Promise<void> => {
           try {

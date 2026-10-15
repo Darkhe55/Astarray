@@ -99,7 +99,7 @@ export interface OrchestratorWorkerFactories {
     errorCode: string;
     messageText: string;
     component: string;
-    stage: "tool";
+    stage: "tool" | "provider";
     severity: "error";
   }) => Promise<void> | void;
 }
@@ -641,8 +641,16 @@ export class MissionOrchestrator {
                 taskIdentifier: task.id,
                 errorCode: failure.errorCode,
                 messageText: failure.messageText,
-                component: "tool:" + failure.toolName,
-                stage: "tool",
+                /**
+                 * 组件标识按**阶段**给（第 86 轮）：工具失败＝`tool:<工具名>`；
+                 * Provider 失败没有工具名 ⇒ `provider-runtime`。
+                 * 这样同一错误码在不同组件下**指纹不同**（卡内：相同文本不保证同因）。
+                 */
+                component:
+                  failure.toolName === null
+                    ? "provider-runtime"
+                    : "tool:" + failure.toolName,
+                stage: failure.stage,
                 severity: "error",
               }),
           }),

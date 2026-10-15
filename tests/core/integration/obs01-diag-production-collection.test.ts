@@ -110,6 +110,26 @@ async function startScriptedProviderServer(toolName: string, argumentsJson: stri
   };
 }
 
+/** **总是**回 5xx 的假服务（用于 Provider 失败路径）。 */
+async function startAlwaysFailingProviderServer() {
+  let receivedRequestCount = 0;
+  const server = http.createServer((request, response) => {
+    request.resume();
+    request.on("end", () => {
+      receivedRequestCount += 1;
+      response.writeHead(503, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "provider-unavailable" } }));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  runningServers.push(server);
+  const address = server.address() as { port: number };
+  return {
+    endpoint: "http://127.0.0.1:" + String(address.port) + "/v1/chat/completions",
+    getReceivedRequestCount: () => receivedRequestCount,
+  };
+}
+
 /** 跑一次真实任务（含一次指定工具调用），返回该次运行结果与所用状态目录。 */
 async function runScriptedTaskScenario(input: {
   toolName: string;
@@ -264,5 +284,162 @@ describe("OBS-01／DIAG：诊断事件必须由**生产路径**产生，且拒�
       baseDirectory: outcome.stateDirectory,
     }).readAll();
     expect(events.length, "开关缺省时不得写任何诊断事件").toBe(0);
+  });
+
+  it("④ Provider 失败必须被采集（stage=provider）**且失败仍照常向上传播**", async () => {
+    const stateDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "astarray-obs-diag-provider-"));
+    temporaryDirectories.push(stateDirectory);
+    // 假服务**总是**回 5xx ⇒ Provider 请求必然失败
+    const providerServer = await startAlwaysFailingProviderServer();
+    const registry = new ProviderRuntimeRegistry({
+      protectedCredentialStore: {
+        doesReferenceExist: async () => true,
+        readCredential: async () => ({ baseUrl: providerServer.endpoint, apiKey: "fake-key" }),
+      },
+    });
+    registry.register(createOpenAiCompatibleProviderRegistration());
+    const application = await AstarrayApplicationFacade.create({
+      stateDirectory,
+      mode: "assist",
+      runtime: "provider",
+      useFeedbackProcess: false,
+      isDiagnosticCollectionEnabled: true,
+      providerRuntimeRegistry: registry,
+      provider: {
+        providerId: OPENAI_COMPATIBLE_PROVIDER_ID,
+        modelIdentifier: "diag-model",
+        allowedModelIdentifiers: ["diag-model"],
+        requiredCapabilities: ["streaming", "tool-calling"],
+        baseUrl: providerServer.endpoint,
+        protectedCredentialReferenceId: "cred-diag",
+        requestTimeoutMilliseconds: 5_000,
+      },
+      statusPollIntervalMilliseconds: 20,
+    });
+
+    let status = "accepted";
+    let submissionError: unknown = null;
+    try {
+      application.createSession({ sessionId: "session-diag-provider", mode: "assist" });
+      try {
+        await application.submitTask({
+          sessionId: "session-diag-provider",
+          taskIdentifier: "task-diag-provider",
+          prompt: "这次调用会失败。",
+        });
+      } catch (error) {
+        submissionError = error;
+      }
+      const deadline = Date.now() + 30_000;
+      while (!TERMINAL_STATUSES.includes(status) && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        try {
+          status = (
+            await application.queryTask({
+              sessionId: "session-diag-provider",
+              taskIdentifier: "task-diag-provider",
+            })
+          ).status;
+        } catch {
+          break;
+        }
+      }
+    } finally {
+      await application.shutdown();
+    }
+
+    const events = await new DiagnosticEventStore({ baseDirectory: stateDirectory }).readAll();
+    const providerEvents = events.filter((event) => event.stage === "provider");
+    expect(
+      providerEvents.length,
+      "Provider 失败必须产生 stage=provider 的诊断事件（实际事件: " +
+        JSON.stringify(events.map((event) => event.stage + "/" + event.errorCode)) +
+        "）",
+    ).toBeGreaterThanOrEqual(1);
+    expect(providerEvents[0]!.severity).toBe("error");
+    expect(providerEvents[0]!.errorCode, "必须带稳定错误码").not.toBe("");
+    expect(providerEvents[0]!.component, "组件应为 provider-runtime").toBe("provider-runtime");
+    expect(providerEvents[0]!.missionIdentifier).not.toBeNull();
+
+    /**
+     * **关键**：观测**不得改变失败语义** —— Provider 失败必须仍然体现为失败
+     * （任务未完成 或 提交时报错），**绝不能**因为"上报了事件"就变成成功。
+     *
+     * ⚠️ **本条断言的边界（实测过，如实写）**：公开门面**不暴露失败原因**
+     * （实测失败任务的返回仅 `{"status":"blocked","summaryPreview":null}`）⇒
+     * 吞掉错误与照常抛出在本条上**观察等价**。我用变异探针实测确认过：
+     * **把 `reportProviderFailures` 的 `throw error` 改成 `return`，本用例仍然全绿**
+     * ⇒ **本条不覆盖"吞错"**。该纪律由下一条**直接对沙盒**的用例承重。
+     */
+    const isFailureVisible = submissionError !== null || status !== "done";
+    expect(
+      isFailureVisible,
+      "Provider 失败必须仍然体现为失败（任务不得因采集而看似成功）：status=" +
+        status +
+        "、submissionError=" +
+        String(submissionError),
+    ).toBe(true);
+  });
+
+  it("⑤ **直接对沙盒**：runtime 抛错时既上报诊断事件、又**必须 reject**（不吞错）", async () => {
+    const { runToolLoop } = await import("../../../packages/core/src/runtime/tool-loop.js");
+    const { DomainError } = await import("../../../packages/core/src/core/errors.js");
+    const reported: Array<{ stage: string; errorCode: string; toolName: string | null }> = [];
+    const throwingRuntime = {
+      // eslint-disable-next-line require-yield -- 故意抛错，不产出事件
+      async *run(): AsyncGenerator<never> {
+        throw new DomainError("provider-timeout", "provider-boom");
+      },
+    } as never;
+
+    let hasRejected = false;
+    let rejectionMessage = "";
+    const observedEvents: unknown[] = [];
+    try {
+      /** `runToolLoop` 返回的是 `Promise<AsyncIterable>` ⇒ 必须先 await 再迭代。 */
+      for await (const event of await runToolLoop(
+        {
+          agentId: "agent-diag-unit",
+          missionId: "mission-diag-unit",
+          userPrompt: "任意",
+          systemPrompt: "任意",
+        } as never,
+        {
+          runtime: throwingRuntime,
+          toolPort: { execute: async () => ({ kind: "success", outputText: "" }) } as never,
+          maxLoopIterations: 1,
+          diagnosticEventSink: (failure: {
+            stage: string;
+            errorCode: string;
+            toolName: string | null;
+          }) => {
+            reported.push({
+              stage: failure.stage,
+              errorCode: failure.errorCode,
+              toolName: failure.toolName,
+            });
+          },
+        } as never,
+      )) {
+        // 抛错路径不应产出任何事件；如有则记下来（便于失败时给出场景）
+        observedEvents.push(event);
+      }
+    } catch (error) {
+      hasRejected = true;
+      rejectionMessage = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(observedEvents, "抛错时不应产出事件").toHaveLength(0);
+    expect(
+      hasRejected,
+      "Provider 错误**必须原样向上抛出**（吞掉会让失败的 Provider 看起来像成功）",
+    ).toBe(true);
+    expect(rejectionMessage).toBe("provider-boom");
+    expect(reported, "同时必须上报一条 stage=provider 的失败事件").toHaveLength(1);
+    expect(reported[0]).toEqual({
+      stage: "provider",
+      errorCode: "provider-timeout",
+      toolName: null,
+    });
   });
 });

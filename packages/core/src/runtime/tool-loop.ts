@@ -7,6 +7,8 @@ import type { AgentEvent } from "../core/events.js";
 import { TASK_COMPLETION_MARKER } from "../core/completion-protocol.js";
 // DIAG-01（第 85 轮）：复用**既有**的"执行前拒绝"判定，拒绝不得记成故障
 import { isExecutionRefusalErrorCode } from "../tools/policy-wrapper.js";
+// DIAG-01（第 86 轮）：Provider 失败要带**稳定错误码**上报（而不是自由文本）
+import { DomainError } from "../core/errors.js";
 import type {
   AgentRunInput,
   ToolCallResult,
@@ -89,13 +91,13 @@ export type ToolLoopPerfSampleSink = (
  * 但**含 `errorCode`**：那是诊断的分类/指纹依据，必须来自**真实工具结果**而非模型文本。
  */
 export interface ToolLoopDiagnosticFailure {
-  /** 复用的稳定错误码（来自工具结果的 `errorCode`）。 */
+  /** 复用的稳定错误码（工具失败＝工具结果的 `errorCode`；Provider 失败＝`DomainError` 的码）。 */
   errorCode: string;
   /** 错误文本（**落盘前由 store 脱敏**）。 */
   messageText: string;
-  /** 工具名（组件标识的一部分）。 */
-  toolName: string;
-  stage: "tool";
+  /** 工具失败时为工具名；**Provider 失败时为 `null`**。 */
+  toolName: string | null;
+  stage: "tool" | "provider";
   severity: "error";
 }
 
@@ -220,6 +222,46 @@ export interface ToolLoopOutcome {
   iterationCount: number;
 }
 
+/**
+ * DIAG-01（2026-11-08，第 86 轮）：把**运行时（Provider）失败**也上报为诊断事件。
+ *
+ * **为什么用包装迭代器**：`runtime.run(...)` 是异步迭代器，Provider 失败发生在迭代过程中；
+ * 包一层即可**只加观测、不动循环体**（循环体近百行，为加观测去改缩进不值得）。
+ *
+ * **两条硬纪律**：
+ * ① **绝不吞掉错误** —— 上报后**原样 rethrow**（吞掉会让失败的 Provider 看起来像成功）；
+ * ② **观测失败不得阻塞业务** —— sink 抛错只丢弃观测，不改变控制流。
+ *
+ * **不上报**：调用方取消时（`cancellationSignal.aborted`）—— 卡内「取消不得记成故障」。
+ */
+async function* reportProviderFailures<EventType>(
+  options: ToolLoopOptions,
+  source: AsyncIterable<EventType>,
+): AsyncIterable<EventType> {
+  try {
+    yield* source;
+  } catch (error) {
+    if (
+      options.diagnosticEventSink !== undefined &&
+      options.cancellationSignal?.aborted !== true
+    ) {
+      try {
+        await options.diagnosticEventSink({
+          errorCode: error instanceof DomainError ? error.errorCode : "provider-request-failed",
+          messageText: error instanceof Error ? error.message : String(error),
+          toolName: null,
+          stage: "provider",
+          severity: "error",
+        });
+      } catch {
+        // 观测失败不得阻塞业务
+      }
+    }
+    // **原样抛出**：失败必须照常向上传播
+    throw error;
+  }
+}
+
 export async function runToolLoop(
   agentRunInput: AgentRunInput,
   options: ToolLoopOptions,
@@ -264,9 +306,9 @@ export async function runToolLoop(
       ...agentRunInput,
       toolResultMessages: [...conversationMessages],
     };
-    for await (const event of options.runtime.run(
-      iterationInput,
-      options.cancellationSignal,
+    for await (const event of reportProviderFailures(
+      options,
+      options.runtime.run(iterationInput, options.cancellationSignal),
     )) {
       if (event.kind === "textDelta") {
         assistantTextBuffer.push(event.deltaText);

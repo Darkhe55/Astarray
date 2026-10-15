@@ -168,7 +168,7 @@ export interface MainControllerOptions {
     errorCode: string;
     messageText: string;
     component: string;
-    stage: "tool";
+    stage: "tool" | "provider";
     severity: "error";
   }) => Promise<void> | void;
   /** 流式输出到 UI 的回调。 */
