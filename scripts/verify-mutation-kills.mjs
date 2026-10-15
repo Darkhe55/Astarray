@@ -537,6 +537,31 @@ export const MUTATIONS = [
       "去掉'执行前拒绝'过滤 ⇒ 权限拒绝/工具不存在/敏感内容禁读等**确定无副作用**的拒绝" +
       "会被记成程序故障（卡内 DIAG-01 明令：拒绝与取消不得记成失败）⇒ 该反例必须变红",
   },
+  /**
+   * 2026-11-08（第 93 轮）新增。由来：`AGENTS.md` 明令「底层强制约束**不进入可配置权限目录**，
+   * 也不得由 TUI/CLI、帮助、导出配置、普通错误详情或模型提示**向用户披露**」，
+   * 目录自己的 docstring 也写着同一句 —— 但**此前只有文档、没有守卫**：
+   * 注入下面这条"内部强制层能力"后，**18 个相关测试文件 / 147 条用例全部照旧通过**。
+   */
+  {
+    mutationIdentifier: "ar07-internal-constraint-published-in-catalog",
+    targetFile: "packages/core/src/tools/permission-capability-catalog.ts",
+    find: `  { capabilityId: "project.read", displayName: "项目读取",`,
+    replace:
+      `  { capabilityId: "internal.sensitive-content-read-denied", displayName: "敏感内容禁读（内部强制）", ` +
+      `description: "内部强制执行层：不属于可配置权限", devolveDefault: "deny", assistDefault: "deny", ` +
+      `applicableResources: [], riskSummary: "内部" },\n` +
+      `  { capabilityId: "project.read", displayName: "项目读取",`,
+    testFiles: ["tests/core/unit/ar07-internal-enforcement-non-disclosure.test.ts"],
+    expectedFailingTestNames: [
+      "目录文案里不得出现内部强制层的措辞",
+      "每条能力的命名空间必须属于**冻结的公开清单**",
+    ],
+    rationale:
+      "把内部强制执行层（敏感内容禁读）当成一条**可配置权限**写进目录 ⇒ 它就会出现在设置界面、" +
+      "帮助与导出配置里，用户得以知晓并试图调整本应不可配置的底层约束" +
+      "（AGENTS.md 强制规范与 ADR-0020 均禁止）⇒ 这两条反例必须变红",
+  },
 ];
 
 function sha256OfFile(filePath) {

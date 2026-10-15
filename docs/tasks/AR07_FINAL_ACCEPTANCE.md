@@ -177,6 +177,35 @@ backup-vault（88.1% → 需 +6）、policy-wrapper、sensitive-content（92.7%�
 | 17 | 新工具/多权限取最严格；配置变化使旧授权缓存失效 | `permission-engine-execution`、`permission-capability-catalog`(100%) | ✅动态 |
 | 18 | 帮助/导出/日志不披露内部执行层 | `permission-profiles`、`redaction`、`shutdown-and-export-gaps` | ✅动态 |
 | 19 | 主 Agent 全模式只读；次级由本地控制器创建 | `permission-policy`、`main-controller`、`session-control-surface` | ✅动态 |
+
+### 9.1 清单第 18 项补记（2026-11-08，第 93 轮）：**"不披露内部执行层"在"权限目录"这一层此前没有守卫**
+
+第 18 项原文：「**帮助/导出/日志不披露内部执行层**」，动态证据列为
+`permission-profiles`、`redaction`、`shutdown-and-export-gaps`，状态 ✅。
+
+**本轮发现（变异探针实测）**：这三者覆盖的是**帮助/导出/日志**的脱敏，
+但**没有任何测试覆盖"可配置权限目录本身"** —— 而目录恰恰决定了设置界面、帮助与导出**会显示什么**。
+实测：`AGENTS.md` 明令「底层强制约束**不进入可配置权限目录**…也不得由 TUI/CLI、帮助、导出配置、
+普通错误详情或模型提示向用户披露」，目录自己的 docstring 也写着同一句；
+但我往目录里注入一条 `internal.sensitive-content-read-denied`
+（显示名「敏感内容禁读（内部强制）」、说明「内部强制执行层：不属于可配置权限」）后，
+**18 个相关测试文件 / 147 条用例全部照旧通过** ⇒ **该规则此前只有文档、没有守卫**。
+
+**处置**：新增 `tests/core/unit/ar07-internal-enforcement-non-disclosure.test.ts`（2 条反例）：
+
+1. **词表**：逐条能力的 `capabilityId`／`displayName`／`description`／`riskSummary`
+   不得出现内部强制层措辞（敏感内容、自动备份、身份认证、工具注册、参数 schema、真实路径、
+   工作区边界、审计完整性、不可代理、内部强制、底层强制）；
+2. **命名空间**：每条能力的命名空间必须属于**冻结的公开清单**（20 个：agent/backup/browser/
+   clipboard/cloud/code-repository/connector/database/dependency/environment/extension/external/
+   financial/git/memory/network/process/project/system/task），且标识不得含 `internal`。
+
+**并已纳入永久变异验证**：`ar07-internal-constraint-published-in-catalog`
+（`scripts/verify-mutation-kills.mjs`）—— 注入该内部层能力时，上述 2 条反例**必须变红**。
+**全量变异验证 31/31 被拦下**。
+
+**边界（不改判其它证据）**：第 18 项原有的帮助/导出/日志三项证据**未受影响**；
+本轮补的是**目录这一层**的缺口。**清单第 18 项本身仍保持原状态**（我不单方改勾选）。
 | 20 | 权限组/提升只作用次级；三级不宽于次级 | `elevation-effectiveness`、`ar07-property-invariants`（属性测试） | ✅动态 |
 | 21 | 会话提升隔离，关闭/到期/撤销/回收/revision 变化即失效 | `elevation-effectiveness`、`elevation-persistence`、`session-permission-elevation`(95.7%) | ✅动态 |
 | 22 | 关闭会话可导出公开有效权限且不含敏感字段 | `shutdown-and-export-gaps` | ✅动态 |
