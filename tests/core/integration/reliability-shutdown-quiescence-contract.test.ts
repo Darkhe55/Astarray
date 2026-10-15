@@ -34,7 +34,7 @@ import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-vi.setConfig({ testTimeout: 120_000 });
+vi.setConfig({ testTimeout: 180_000 });
 
 import { AstarrayApplicationFacade } from "../../../packages/core/src/public-sdk.js";
 import {
@@ -180,9 +180,24 @@ describe("RELIABILITY 契约：shutdown() 返回即静默（返回后不得再�
       prompt: "写一句话说明你在做什么。",
     });
 
+    /**
+     * ⚠️ 2026-11-08（第 68 轮）：两条前置条件的等待上限**从 5 秒抬到 60 秒**
+     * （`attempt < 3000` × 20ms），`testTimeout` 120s → **180s**。
+     *
+     * **依据（真实观测）**：一次满载全量 `check` 中本用例翻红，报的正是
+     * `前置条件 2 不成立：Provider 未收到请求`。
+     * —— 这**不是**空洞通过，而是**前置条件在尽职**：满载下调度器在 5 秒内
+     * 还没派发 worker（第 64 轮实测过同一现象：`shutdown` 6ms 返回时
+     * `inFlightWorkerPromises` 还是空的、Provider 从未被调用）。
+     *
+     * 抬预算**不放宽**任何断言：60 秒内仍未派发 ⇒ **照样大声报错**
+     * （那意味着真的有问题，不是"再等等就好"）。
+     * 这与本仓"内部上限必须严格小于 `testTimeout`"的活规则一致
+     * （60s + 60s + 观察窗 7.5s < 180s）。
+     */
     // 前置条件 1：链文件已落盘
     let chainStateBeforeShutdown = await readChainState();
-    for (let attempt = 0; attempt < 250; attempt += 1) {
+    for (let attempt = 0; attempt < 3000; attempt += 1) {
       if (chainStateBeforeShutdown.chainText !== null) break;
       await sleep(20);
       chainStateBeforeShutdown = await readChainState();
@@ -193,7 +208,7 @@ describe("RELIABILITY 契约：shutdown() 返回即静默（返回后不得再�
     ).not.toBeNull();
 
     // 前置条件 2（**必须**）：假 Provider 真的收到过请求 ⇒ 任务**真的在途**
-    for (let attempt = 0; attempt < 250; attempt += 1) {
+    for (let attempt = 0; attempt < 3000; attempt += 1) {
       if (providerServer.getReceivedRequestCount() >= 1) break;
       await sleep(20);
     }
