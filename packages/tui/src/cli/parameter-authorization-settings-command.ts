@@ -91,8 +91,29 @@ export async function executeParameterAuthorizationSettingsCommand(
       statusPollIntervalMilliseconds: 25,
     });
     try {
+      /**
+       * ⚠️ 2026-11-08 修复（**真实用户实测踩到**）：`--tool` **本身**就是写入请求。
+       *
+       * 原写法只把两个 `--disable-*` 当作写入请求：
+       *
+       * ```js
+       * const isWriteRequested =
+       *   options.shouldDisableGranularity || options.shouldDisableParameterAuthorization;
+       * ```
+       *
+       * ⇒ 只给 `--tool "createProjectFile:allow"` 时走**只读分支**，
+       * `shapes` **被完全忽略**，命令却 `SUCCESS` 退出并打印当前设置
+       * （用户看到 `规则数: 0；配置 revision: 0`，**看起来像成功**）。
+       * 属"**静默忽略输入**"：输入被丢掉、却报告成功 —— 最难排查的一类。
+       *
+       * 既有集成测试**总是**把 `--tool` 与 `--disable-granularity` 配对使用，
+       * 恰好绕过这个分支判断 ⇒ 缺陷一直不可见。
+       * 本修复对应 `merge01-parameter-authorization-settings-entry.test.ts` 用例⑥（先红后绿）。
+       */
       const isWriteRequested =
-        options.shouldDisableGranularity || options.shouldDisableParameterAuthorization;
+        options.shouldDisableGranularity ||
+        options.shouldDisableParameterAuthorization ||
+        shapes.length > 0;
       if (!isWriteRequested) {
         const settings = await application.queryParameterAuthorizationSettings();
         if (options.isJsonOutput) {

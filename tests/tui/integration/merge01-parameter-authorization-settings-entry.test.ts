@@ -216,4 +216,77 @@ describe("MERGE-01-03：CLI 与 SDK 设置必须一致", () => {
     );
     await expect(fs.access(settingsFilePath)).rejects.toThrowError();
   });
+
+  it("⑥ 【2026-11-08】只给 `--tool`、不给任何 `--disable-*` 也必须**真的写入**（不得静默忽略）", async () => {
+    /**
+     * ## 由来（真实用户实测踩到，不是推测）
+     *
+     * 用户为"真实 Provider + 工具真执行"预先放行工具，执行：
+     *
+     * ```
+     * astarray settings parameter-authorization --tool "createProjectFile:allow" --confirm
+     * ```
+     *
+     * 命令**退出 0、并打印了当前设置**（`规则数: 0；配置 revision: 0`）——
+     * 看起来像成功，**实际上 `--tool` 被完全忽略**。
+     *
+     * ## 根因
+     *
+     * `parameter-authorization-settings-command.ts`：
+     *
+     * ```js
+     * const isWriteRequested =
+     *   options.shouldDisableGranularity || options.shouldDisableParameterAuthorization;
+     * if (!isWriteRequested) { /* 只读分支：shapes 完全没用到 *\/ }
+     * ```
+     *
+     * ⇒ **"给了 --tool"本身不算写入请求**，于是走只读分支、**静默丢弃所有 shape**，
+     * 却仍然 `SUCCESS` 退出 —— 属于"静默忽略输入"。
+     *
+     * ## ⚠️ 为什么既有测试没拦住
+     *
+     * 本文件用例 ⑤（以及其它用例）**总是**把 `--tool` 与 `--disable-granularity`
+     * 配对使用 ⇒ **"单独用 --tool"这条路径从未被测过**。
+     * 那条配对的用法恰好绕过了这个分支判断，于是缺陷一直不可见。
+     *
+     * ## 本用例的判定方式
+     *
+     * **不信任命令自己的回显**（回显正是骗人的地方）：
+     * 先用 SDK 取基线 revision，跑完 CLI 再用 SDK 复核 revision 是否真的变了。
+     */
+    const baselineApplication = await createApplication();
+    let baselineRevision: number;
+    try {
+      baselineRevision =
+        (await baselineApplication.queryParameterAuthorizationSettings())
+          .configurationRevision;
+    } finally {
+      await baselineApplication.shutdown();
+    }
+
+    const cliResult = await runCli([
+      "settings",
+      "parameter-authorization",
+      "--state-dir",
+      stateDirectory,
+      "--tool",
+      "createProjectFile:allow",
+      "--confirm",
+      "--json",
+    ]);
+    expect(cliResult.exitCode).toBe(0);
+
+    const afterApplication = await createApplication();
+    try {
+      const afterSettings =
+        await afterApplication.queryParameterAuthorizationSettings();
+      expect(
+        afterSettings.configurationRevision,
+        "只给 --tool 时设置没有被写入（被静默忽略了）：revision 仍为 " +
+          String(afterSettings.configurationRevision),
+      ).toBeGreaterThan(baselineRevision);
+    } finally {
+      await afterApplication.shutdown();
+    }
+  });
 });
