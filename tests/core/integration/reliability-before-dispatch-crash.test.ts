@@ -88,9 +88,63 @@ interface CrashedChildOutcome {
   /** 是否在派发返回前就被杀（即真的是"派发前/派发中"崩溃）。 */
   wasKilledBeforeDispatchReturned: boolean;
   phaseMarkerExists: boolean;
+  /** 为取得该相位实际尝试了几次（1 = 首次即命中）。 */
+  attemptCount: number;
 }
 
+/**
+ * ⚠️ 2026-11-08（第 71 轮）：**相位是"概率事件"，必须当前提来处理（有界重试）**。
+ *
+ * ## 为什么需要重试（实测）
+ *
+ * 一次满载全量中 ① 翻红：
+ *
+ * ```
+ * AssertionError: expected false to be true
+ *   （wasKilledBeforeDispatchReturned）
+ * ```
+ *
+ * **机制（读代码即明确）**：父进程在 `stdout` 收到 `READY_TO_DISPATCH` 的那个 chunk 里
+ * 就地判断 `!stdoutBuffer.includes("DISPATCH_RETURNED")` 然后 `SIGKILL`。
+ * 而"杀掉"这一动作**依赖父进程事件循环被及时调度**：
+ * 满载下父进程的 `data` 回调可能被推迟，而子进程已经跑完 `submitTask`
+ * 并写出 `DISPATCH_RETURNED` ⇒ 判据当场为假（分块合并也会造成同样结果）。
+ * 这与本卡修过的 `cli-anthropic-protocol` 是**镜像同类**：那边是"第一块就已满足判据 ⇒
+ * 过早 kill"，这边是"一块里已含完成标记 ⇒ 相位判据失效"。
+ *
+ * ## 为什么"重试"而不是"改判据"
+ *
+ * **无法**从外部把"派发返回前被杀"做成确定：它本质上取决于父进程被调度的时点，
+ * 而父进程无法在 JS 里做到"零延迟中止另一个进程"。**任何把判据放宽的改法
+ * （例如不再要求杀在派发返回前、或干脆不打印完成标记）都会让本用例
+ * 失去"注入相位是真的"这一意义** —— 那是**削弱**，本仓明确禁止。
+ *
+ * 故正解是：**把该相位当作"前提"来建立** —— 有界重试（每次清空状态目录，
+ * 保证是**全新**的"未使用幂等键"，
+ * 否则重试会变成"同键重放"而不再是首次派发），
+ * 直到相位真正成立；**若若干次都成立不了，最后一次的真实结果照常交给断言失败**
+ * （即"从未成立"不会被掩盖，只是不再被一次调度抖动误报）。
+ * 这与本卡既有的"有界等待前提"做法一致（断言不放宽，只让前提确定）。
+ */
 async function runCrashingChildProcess(): Promise<CrashedChildOutcome> {
+  const maximumAttemptCount = 5;
+  let lastOutcome: CrashedChildOutcome | null = null;
+  for (let attemptIndex = 1; attemptIndex <= maximumAttemptCount; attemptIndex += 1) {
+    const outcome = await runCrashingChildProcessOnce(attemptIndex);
+    lastOutcome = outcome;
+    if (outcome.wasReadyToDispatch && outcome.wasKilledBeforeDispatchReturned) {
+      return outcome;
+    }
+    // 本轮错过相位：清空状态目录，使下一次仍是"全新幂等键的首次派发"
+    await fs.rm(stateDirectory, { recursive: true, force: true });
+    await fs.mkdir(stateDirectory, { recursive: true });
+  }
+  return lastOutcome as CrashedChildOutcome;
+}
+
+async function runCrashingChildProcessOnce(
+  attemptIndex: number,
+): Promise<CrashedChildOutcome> {
   const scriptDirectory = path.resolve(".tmp", "predispatch-injection");
   await fs.mkdir(scriptDirectory, { recursive: true });
   const scriptPath = path.join(scriptDirectory, "crash-before-dispatch.mjs");
@@ -139,6 +193,7 @@ async function runCrashingChildProcess(): Promise<CrashedChildOutcome> {
         wasReadyToDispatch,
         wasKilledBeforeDispatchReturned,
         phaseMarkerExists: isPhaseMarkerPresent,
+        attemptCount: attemptIndex,
       });
     });
   });
