@@ -13,6 +13,14 @@
  *
  * 判定：任一变异"存活"（期望红却没红）⇒ 该变异**没被测住** ⇒ 退出码 1。
  *
+ * **2026-11-08（第 92 轮）扩容：28 → 30 个变异体**（全量复跑 **30/30 被拦下**）。新增两个：
+ *  - `guide01-watchdog-resumes-superseded-instruction`：把「被新指导取代的旧指令不得续跑」改成照样续跑
+ *    （第 91 轮发现该分支**全仓零覆盖**，当时只靠一次性探针发现 ⇒ 固化防回归）；
+ *  - `diag01-execution-refusal-recorded-as-failure`：去掉「执行前拒绝」过滤
+ *    （拒绝/取消不得记成故障，卡内 DIAG-01 硬约束）。
+ *
+ * 扩张原则：**只固化"已经有真实反例、且反例真能变红"的守卫** ——
+ * 不为了凑数加会产生误报的变异体（与仓库"不为凑数加守卫"同一纪律）。
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -498,6 +506,36 @@ export const MUTATIONS = [
     rationale:
       "把缺失字段文案改成空串 ⇒ 界面看起来像'有值但为空'，用户无法区分'没有这个信息'" +
       "⇒ 这两条反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 92 轮）新增：把上一轮**手工**做的两个探针固化为**永久**变异体。
+   *
+   * 由来：第 91 轮发现 `it("watchdog 不误续跑旧指令/未收敛取消")` 的**名字**承诺了
+   * "旧指令"，但其断言只覆盖取消类三条分支；生产代码里真正对应"旧指令"的
+   * `instruction-superseded` 分支**全仓零覆盖** ⇒ 该验收**有实现、无守卫**。
+   * 当时靠**一次性**变异探针发现，这类探针不会自动复跑 ⇒ 一并固化，防回归。
+   */
+  {
+    mutationIdentifier: "guide01-watchdog-resumes-superseded-instruction",
+    targetFile: "packages/core/src/runtime-guidance/long-tool-checkpoint.ts",
+    find: `      return { shouldResume: false, reason: "instruction-superseded" };`,
+    replace: `      return { shouldResume: true, reason: "instruction-superseded" };`,
+    testFiles: ["tests/core/integration/long-tool-checkpoint.test.ts"],
+    expectedFailingTestNames: ["watchdog 不误续跑**旧指令**"],
+    rationale:
+      "把'被新指导取代的旧指令不得续跑'改成'照样续跑' ⇒ watchdog 会按**已失效的** " +
+      "instructionRevision 续跑旧指令（卡内 GUIDE-01-03 明令禁止）⇒ 该反例必须变红",
+  },
+  {
+    mutationIdentifier: "diag01-execution-refusal-recorded-as-failure",
+    targetFile: "packages/core/src/runtime/tool-loop.ts",
+    find: `        !isExecutionRefusalErrorCode(toolResult.errorCode)`,
+    replace: `        true`,
+    testFiles: ["tests/core/integration/obs01-diag-production-collection.test.ts"],
+    expectedFailingTestNames: ["执行前拒绝（工具不存在）不得记成故障"],
+    rationale:
+      "去掉'执行前拒绝'过滤 ⇒ 权限拒绝/工具不存在/敏感内容禁读等**确定无副作用**的拒绝" +
+      "会被记成程序故障（卡内 DIAG-01 明令：拒绝与取消不得记成失败）⇒ 该反例必须变红",
   },
 ];
 

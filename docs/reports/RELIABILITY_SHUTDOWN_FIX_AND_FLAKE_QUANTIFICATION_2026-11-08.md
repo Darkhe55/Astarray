@@ -628,4 +628,21 @@ async function runUntilTerminal(...) {
 它**不改变**本窗口其余结论 —— 全量失败率仍由**其他类别**（跨进程时序等）主导，
 本窗口 5 轮量化仍是 **3/5 干净**。
 
+## 15. 抖动现场观测（2026-11-08，第 92 轮）：`gui-verification-decision` 负载下 30s 超时 + `EPERM rename`
 
+**现场**：在一次「**先连跑 30 个变异体**（每个都起一次 vitest）再跑全量门禁」的序列里，
+`tests/gui/integration/gui-verification-decision.test.ts` 的
+「跨 Agent 裁决被拒绝，且不写入对方存档（隔离）」失败：
+`expected 'running' to be 'done'`，该用例耗时 **30086 ms**；同一次运行还伴有一个
+`EPERM: operation not permitted, rename '…\missions\mission-161fa2c0\.summar…'`（Windows 文件锁）。
+
+**归因（不是产品回归）**：
+
+| 证据 | 结果 |
+| --- | --- |
+| 该次改动内容 | **只有 `scripts/verify-mutation-kills.mjs`**（测试不 import 它）⇒ 不可能改变运行时行为 |
+| **隔离复跑 3 次** | **3/3 通过**，每次约 **2.05–2.15 s**（对比负载下的 30 086 ms） |
+| 安静机器上重跑全量门禁 | `check` **exit 0（442 文件 / 3295 用例、无 FAIL）** |
+
+**⇒ 归因为负载相关（紧接 30 次 vitest 之后）+ Windows `rename` 文件锁**，与既有台账同类。
+**不宣称已修复**（无稳定复现），也**不**据此调整任何超时（沿用本轮既定口径：先做确定性方向）。
