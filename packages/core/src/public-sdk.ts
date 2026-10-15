@@ -1210,6 +1210,18 @@ export interface PublicApplicationOptions {
    * 此前该链路**从未接线**（`perfSampleSink` 只被声明、只有测试传过）⇒ 概览恒空。
    */
   isPerformanceCollectionEnabled?: boolean;
+  /**
+   * OBS-01／DIAG-01（2026-11-08，第 85 轮）：**是否采集诊断事件**。
+   *
+   * **缺省 false（保持既有行为不变）** —— 新写入路径不擅自默认开启；
+   * 是否默认开启**属决策事项**。
+   * 打开后：工具循环上报的**真实执行失败**（工具执行报错）经编排层补齐身份后落库，
+   * 使 `queryDiagnosticSummary`（CLI/GUI 只读诊断）**在生产里真的看得见数据**。
+   *
+   * **不会采集**（卡内硬约束：拒绝/取消与程序故障分开）：
+   * 权限拒绝、工具不存在、敏感内容禁读、作用域待授权/被拒等**执行前拒绝**，以及**取消**。
+   */
+  isDiagnosticCollectionEnabled?: boolean;
   /** T04：反馈进程入口模块路径；缺省按包内 dist 入口自动解析。 */
   feedbackProcessModulePath?: string | null;
   /**
@@ -1590,6 +1602,8 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       useFeedbackProcess: options.useFeedbackProcess ?? runtimeKind === "provider",
       // OBS-01／PERF-01-02（第 83 轮）：性能采集**缺省关**（先测再定开销）
       isPerformanceCollectionEnabled: options.isPerformanceCollectionEnabled ?? false,
+      // OBS-01／DIAG-01（第 85 轮）：诊断采集**缺省关**（不擅自改变生产行为）
+      isDiagnosticCollectionEnabled: options.isDiagnosticCollectionEnabled ?? false,
       streamOutput: options.streamOutput ?? (() => {}),
       // GUI-02-01 片①：权限询问的绝对身份透传（可选；未提供则不传字段）。
       ...(options.onPermissionAskWithIdentity === undefined

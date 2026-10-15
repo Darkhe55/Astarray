@@ -25,7 +25,11 @@ import { DomainError } from "../core/errors.js";
 import { resolveFeedbackRecipient } from "./task-publisher-feedback-route.js";
 import type { ContextPromptProvider } from "./context-prompt-assembler.js";
 import { runToolLoop } from "../runtime/tool-loop.js";
-import type { GuidanceSafePointPort, ToolLoopPerfSampleSink } from "../runtime/tool-loop.js";
+import type {
+  GuidanceSafePointPort,
+  ToolLoopDiagnosticFailureSink,
+  ToolLoopPerfSampleSink,
+} from "../runtime/tool-loop.js";
 import type { ToolFailureCounter } from "./failure-counter.js";
 
 export type WorkerOutcome =
@@ -89,6 +93,11 @@ export interface WorkerAgentOptions {
    * 缺省 ⇒ 不采集（与既有"可选能力"口径一致）。
    */
   perfSampleSink?: ToolLoopPerfSampleSink;
+  /**
+   * DIAG-01 采集（2026-11-08，第 85 轮）：诊断失败事件 sink。
+   * 同样**由编排层构造**（身份/任务在闭包里补齐），本层只转交工具循环；缺省 ⇒ 不采集。
+   */
+  diagnosticEventSink?: ToolLoopDiagnosticFailureSink;
   toolPort: ToolPort;
   failureCounter: ToolFailureCounter;
   feedbackTransport: FeedbackTransportPort;
@@ -307,6 +316,10 @@ export class WorkerAgent {
         ...(this.options.perfSampleSink === undefined
           ? {}
           : { perfSampleSink: this.options.perfSampleSink }),
+        // DIAG-01 采集（第 85 轮接线）：未提供 ⇒ 不采集
+        ...(this.options.diagnosticEventSink === undefined
+          ? {}
+          : { diagnosticEventSink: this.options.diagnosticEventSink }),
       },
     );
     for await (const event of events) {

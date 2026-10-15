@@ -125,7 +125,7 @@ export interface PolicyWrapperOptions {
  * 全程没有变更任何数据；不列入此集合同样会被按 `unknown` 结算并毒化重试，
  * 而实际只是"该资源不被允许读取"。
  */
-function isExecutionRefusalErrorCode(errorCode: string): boolean {
+export function isExecutionRefusalErrorCode(errorCode: string): boolean {
   return (
     errorCode === "permission-ask-pending" ||
     errorCode === "tool-permission-denied" ||

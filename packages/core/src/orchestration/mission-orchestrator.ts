@@ -34,7 +34,11 @@ const MUTATING_TOOL_NAMES_FOR_RETRY = new Set([
   "writeFileTemporary",
   "backupVault",
   "deleteBackup",
-]);import type { GuidanceSafePointPort, ToolLoopPerfSample } from "../runtime/tool-loop.js";
+]);import type {
+  GuidanceSafePointPort,
+  ToolLoopDiagnosticFailure,
+  ToolLoopPerfSample,
+} from "../runtime/tool-loop.js";
 import type { GuidanceScopeTarget } from "../runtime-guidance/runtime-guidance.js";
 import type { ContextNodeLifecyclePort } from "./worker-agent.js";
 import type { AgentWorkArchiveStore } from "./work-archive-store.js";
@@ -77,6 +81,26 @@ export interface OrchestratorWorkerFactories {
     operationKind: string;
     durationMilliseconds: number;
     outcome: "success" | "failure" | "cancelled" | "unknown";
+  }) => Promise<void> | void;
+  /**
+   * DIAG-01 采集（2026-11-08，第 85 轮）：**诊断失败事件落库端口**。
+   *
+   * 与 `perfSamplePort` 同理：工具循环的载荷不含身份，而 `DiagnosticEvent` 的
+   * `sourceAgentInstanceId` / `missionIdentifier` / `taskIdentifier` 必填
+   * ⇒ 由编排层（它持有 `missionId`，且构造每个 worker 时知道 `agentInstanceId` 与 `task`）补齐。
+   *
+   * **只在真实执行失败时被调用**（拒绝/取消由工具循环过滤，卡内硬约束）。
+   * **缺省 ⇒ 不采集。**
+   */
+  diagnosticEventPort?: (event: {
+    sourceAgentInstanceId: string;
+    missionIdentifier: string;
+    taskIdentifier: string;
+    errorCode: string;
+    messageText: string;
+    component: string;
+    stage: "tool";
+    severity: "error";
   }) => Promise<void> | void;
 }
 
@@ -600,6 +624,26 @@ export class MissionOrchestrator {
                 operationKind: sample.operationKind,
                 durationMilliseconds: sample.durationMilliseconds,
                 outcome: sample.outcome,
+              }),
+          }),
+      /**
+       * DIAG-01 采集（2026-11-08，第 85 轮）：把工具循环上报的**真实执行失败**
+       * 补齐身份后交给落库端口。端口缺省 ⇒ 不传 sink ⇒ 不采集。
+       * （拒绝/取消已在工具循环侧过滤，此处不再判断。）
+       */
+      ...(this.options.workerFactories.diagnosticEventPort === undefined
+        ? {}
+        : {
+            diagnosticEventSink: (failure: ToolLoopDiagnosticFailure) =>
+              this.options.workerFactories.diagnosticEventPort!({
+                sourceAgentInstanceId: agentInstanceId,
+                missionIdentifier: missionId,
+                taskIdentifier: task.id,
+                errorCode: failure.errorCode,
+                messageText: failure.messageText,
+                component: "tool:" + failure.toolName,
+                stage: "tool",
+                severity: "error",
               }),
           }),
     });

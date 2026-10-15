@@ -21,6 +21,8 @@ import { ScriptedRuntime } from "../runtime/scripted-runtime.js";
 import { MainController } from "../orchestration/main-controller.js";
 // OBS-01／PERF-01-02（第 83 轮）：性能样本落库（此前只在生产里被构造用于"查询"）
 import { PerfEventStore } from "../orchestration/perf-event-store.js";
+// OBS-01／DIAG-01（第 85 轮）：诊断事件落库（同因：此前生产里无人**写入**）
+import { DiagnosticEventStore } from "../orchestration/diagnostic-event-store.js";
 import { MissionManager } from "../orchestration/mission-manager.js";
 import { FeedbackProcessSupervisor } from "../feedback-process/process-supervisor.js";
 import type { ForkFeedbackClient } from "../feedback-process/transport.js";
@@ -213,6 +215,14 @@ export interface ApplicationRuntimeOptions {
    * **缺省关**是因为本卡要求「观察开销预算**先测再定**」。
    */
   isPerformanceCollectionEnabled?: boolean;
+  /**
+   * OBS-01／DIAG-01（2026-11-08，第 85 轮）：是否采集诊断事件（缺省 false）。
+   *
+   * 打开后：工具循环上报的**真实执行失败**经编排层补齐身份 → 追加到状态目录下的
+   * 诊断事件文件 ⇒ queryDiagnosticSummary 在生产里**真的看得见数据**。
+   * **执行前拒绝与取消不会被上报**（卡内硬约束）。缺省关 ⇒ 不擅自改变生产行为。
+   */
+  isDiagnosticCollectionEnabled?: boolean;
   streamOutput: (missionId: string | null, text: string) => void;
   /**
    * GUI-02-01 片①（2026-10-11）：权限询问**携带绝对身份**的上报口（可选）。
@@ -936,6 +946,67 @@ export async function createApplicationRuntime(
           }
         };
 
+  /**
+   * OBS-01／DIAG-01（2026-11-08，第 85 轮）：**把诊断采集接进生产装配**。
+   *
+   * 此前与 PERF 同类：生产里**无人构造 `DiagnosticEvent`**，store 只在 CLI/GUI 被构造
+   * **用于查询** ⇒ `queryDiagnosticSummary` 恒"不可报告"。
+   * 此处按开关构造落库端口；**身份/任务由编排层补齐**。
+   * **只在真实执行失败时被调用**（拒绝/取消已在工具循环侧过滤）。
+   *
+   * **缺省关**：新写入路径不擅自默认开启；是否默认开启**属决策事项**。
+   */
+  const diagnosticEventPort =
+    options.isDiagnosticCollectionEnabled === true
+      ? async (event: {
+          sourceAgentInstanceId: string;
+          missionIdentifier: string;
+          taskIdentifier: string;
+          errorCode: string;
+          messageText: string;
+          component: string;
+          stage: "tool";
+          severity: "error";
+        }): Promise<void> => {
+          try {
+            await new DiagnosticEventStore({ baseDirectory: options.stateDirectory }).append({
+              observeEventVersion: 1,
+              eventType: "diagnostic",
+              recordedAtIso: new Date().toISOString(),
+              sourceAgentInstanceId: event.sourceAgentInstanceId,
+              missionIdentifier: event.missionIdentifier,
+              taskIdentifier: event.taskIdentifier,
+              requestIdentifier:
+                event.missionIdentifier +
+                ":" +
+                event.taskIdentifier +
+                ":" +
+                event.component +
+                ":" +
+                event.errorCode,
+              requestRevision: 1,
+              origin: { kind: "system" },
+              errorCode: event.errorCode,
+              stage: event.stage,
+              severity: event.severity,
+              component: event.component,
+              messageText: event.messageText,
+              /**
+               * 恢复状态：工具调用已失败并**如实返回给模型** ⇒ 该次调用已结束，
+               * 但**是否已解决未知** ⇒ 用 `unknown`（不假装已恢复，也不假装仍在恢复）。
+               */
+              recoveryState: "unknown",
+              /** 这是**本地观测到的真实失败**，不是推测 ⇒ 确定事实。 */
+              classification: "deterministic-fact",
+              /** 故障链：此处只有被观测到的这一层错误码，不伪造包装链。 */
+              chain: { rootErrorCode: event.errorCode, wrapperErrorCodes: [] },
+            });
+          } catch {
+            // 观测失败不得阻塞业务
+          }
+        }
+      : undefined;
+
   const controller = new MainController({
     modeMachine,
     sessionManager,
@@ -1048,6 +1119,8 @@ export async function createApplicationRuntime(
       `执行任务需要调用工具 ${toolName}`,
     // PERF-01-02（第 83 轮）：性能样本落库端口（开关关时 undefined ⇒ 不采集）
     ...(perfSamplePort === undefined ? {} : { perfSamplePort }),
+    // DIAG-01（第 85 轮）：诊断事件落库端口（开关关时 undefined ⇒ 不采集）
+    ...(diagnosticEventPort === undefined ? {} : { diagnosticEventPort }),
     resolveToolDescriptors: (task: TaskDependencyNode): ToolDescriptor[] =>
       task.toolNames
         .map((toolName) => registry.getDescriptor(toolName))

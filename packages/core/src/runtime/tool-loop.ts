@@ -5,6 +5,8 @@
  */
 import type { AgentEvent } from "../core/events.js";
 import { TASK_COMPLETION_MARKER } from "../core/completion-protocol.js";
+// DIAG-01（第 85 轮）：复用**既有**的"执行前拒绝"判定，拒绝不得记成故障
+import { isExecutionRefusalErrorCode } from "../tools/policy-wrapper.js";
 import type {
   AgentRunInput,
   ToolCallResult,
@@ -51,6 +53,15 @@ export interface ToolLoopOptions {
    * 每次真实工具执行后上报一个耗时样本；**观测失败不得阻塞业务**。
    */
   perfSampleSink?: ToolLoopPerfSampleSink;
+  /**
+   * DIAG-01 生产采集（2026-11-08，第 85 轮）：**诊断事件端口**（可选）。
+   *
+   * 只在**真实执行失败**时上报 —— 卡内明令「正常计划暂停、**用户拒绝、取消**与程序故障
+   * **分开，不把等待都记成失败**」⇒ 由 `isExecutionRefusalErrorCode` 与
+   * `provider-cancelled` 两重过滤，**执行前拒绝/取消一律不上报**。
+   * **观测失败不得阻塞业务**（与 `perfSampleSink` 同一纪律）。
+   */
+  diagnosticEventSink?: ToolLoopDiagnosticFailureSink;
 }
 
 /**
@@ -69,6 +80,27 @@ export interface ToolLoopPerfSample {
 
 export type ToolLoopPerfSampleSink = (
   sample: ToolLoopPerfSample,
+) => Promise<void> | void;
+
+/**
+ * DIAG 失败事件载荷（2026-11-08，第 85 轮）：**只在真实执行失败时**产生。
+ *
+ * 与 `ToolLoopPerfSample` 同理**不含身份**（身份由编排层补齐）——
+ * 但**含 `errorCode`**：那是诊断的分类/指纹依据，必须来自**真实工具结果**而非模型文本。
+ */
+export interface ToolLoopDiagnosticFailure {
+  /** 复用的稳定错误码（来自工具结果的 `errorCode`）。 */
+  errorCode: string;
+  /** 错误文本（**落盘前由 store 脱敏**）。 */
+  messageText: string;
+  /** 工具名（组件标识的一部分）。 */
+  toolName: string;
+  stage: "tool";
+  severity: "error";
+}
+
+export type ToolLoopDiagnosticFailureSink = (
+  failure: ToolLoopDiagnosticFailure,
 ) => Promise<void> | void;
 
 /**
@@ -341,6 +373,31 @@ export async function runToolLoop(
           });
         } catch {
           // 观测失败不得阻塞业务（卡内：普通观测故障不得阻塞业务）。
+        }
+      }
+      /**
+       * DIAG-01 生产采集（2026-11-08，第 85 轮）：**真实执行失败**才上报诊断事件。
+       *
+       * **不上报的两种情况**（卡内硬约束：拒绝/取消不得记成故障）：
+       * ① `provider-cancelled`（取消）；② `isExecutionRefusalErrorCode`（执行前即被拒，
+       * 确定无副作用：权限拒绝、工具不存在、敏感内容禁读、作用域待授权/被拒、安装门禁等）。
+       */
+      if (
+        options.diagnosticEventSink !== undefined &&
+        toolResult.kind === "error" &&
+        toolResult.errorCode !== "provider-cancelled" &&
+        !isExecutionRefusalErrorCode(toolResult.errorCode)
+      ) {
+        try {
+          await options.diagnosticEventSink({
+            errorCode: toolResult.errorCode,
+            messageText: toolResult.errorMessage,
+            toolName: toolCall.toolName,
+            stage: "tool",
+            severity: "error",
+          });
+        } catch {
+          // 观测失败不得阻塞业务
         }
       }
       push({

@@ -154,6 +154,23 @@ export interface MainControllerOptions {
     durationMilliseconds: number;
     outcome: "success" | "failure" | "cancelled" | "unknown";
   }) => Promise<void> | void;
+  /**
+   * DIAG-01 采集（2026-11-08，第 85 轮）：诊断失败事件落库端口（可选）。
+   *
+   * 与 `perfSamplePort` 同因：此前生产里**无人构造 `DiagnosticEvent`**，
+   * store 只被构造用于查询 ⇒ `queryDiagnosticSummary` 恒"不可报告"。
+   * **只在真实执行失败时被调用**（拒绝/取消在工具循环侧已被过滤）。缺省 ⇒ 不采集。
+   */
+  diagnosticEventPort?: (event: {
+    sourceAgentInstanceId: string;
+    missionIdentifier: string;
+    taskIdentifier: string;
+    errorCode: string;
+    messageText: string;
+    component: string;
+    stage: "tool";
+    severity: "error";
+  }) => Promise<void> | void;
   /** 流式输出到 UI 的回调。 */
   streamOutput: (missionId: string | null, text: string) => void;
   /**
@@ -843,6 +860,10 @@ export class MainController {
         ...(this.options.perfSamplePort === undefined
           ? {}
           : { perfSamplePort: this.options.perfSamplePort }),
+        // DIAG-01 采集（第 85 轮接线）：缺省 ⇒ 不采集
+        ...(this.options.diagnosticEventPort === undefined
+          ? {}
+          : { diagnosticEventPort: this.options.diagnosticEventPort }),
       },
       onReportToMain: (message) => {
         if (message.payload.kind !== "instruction") {
@@ -916,6 +937,10 @@ export class MainController {
         ...(this.options.perfSamplePort === undefined
           ? {}
           : { perfSamplePort: this.options.perfSamplePort }),
+        // DIAG-01 采集（第 85 轮接线）：缺省 ⇒ 不采集
+        ...(this.options.diagnosticEventPort === undefined
+          ? {}
+          : { diagnosticEventPort: this.options.diagnosticEventPort }),
       },
       onMissionFinished: (status) => {
         void this.options.missionManager.updateMissionStatus(missionId, status);
