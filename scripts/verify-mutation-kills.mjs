@@ -21,6 +21,16 @@
  *
  * 扩张原则：**只固化"已经有真实反例、且反例真能变红"的守卫** ——
  * 不为了凑数加会产生误报的变异体（与仓库"不为凑数加守卫"同一纪律）。
+ * **2026-11-08（第 94 轮）再扩容：31 → 33**（全量复跑 **33/33 被拦下**）。新增两个：
+ *  - `ponder01-write-tool-added-to-readonly-allowlist`：把**写类工具**塞进思索模式只读白名单
+ *    （思索模式必须由本地 harness **直接禁用**写入，不能仅靠提示词约束）；
+ *  - `ar07-destructive-tool-without-auto-backup-accepted`：放宽 schema，使破坏性工具
+ *    **不声明**工具内自动备份也能注册（违反"变更前必须自动备份"）。
+ *
+ * **⚠️ 本轮一条方法学教训（我自己的失误）**：验证 `ar07-destructive-tool-without-auto-backup-accepted` 时，
+ * 我按"文件内容含 `mutationKind|backupPolicy`"筛出 17 个文件，却**只把其中 10 个敲进命令行**，
+ * 恰好漏掉了真正守着这条规则的 `tests/core/unit/schemas.test.ts` ⇒ 得到**假结论"变异存活"**。
+ * 跑全 17 个后立刻被拦下。**教训：变异探针的文件集必须由检索结果直接喂给命令，不能手敲。**
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -561,6 +571,45 @@ export const MUTATIONS = [
       "把内部强制执行层（敏感内容禁读）当成一条**可配置权限**写进目录 ⇒ 它就会出现在设置界面、" +
       "帮助与导出配置里，用户得以知晓并试图调整本应不可配置的底层约束" +
       "（AGENTS.md 强制规范与 ADR-0020 均禁止）⇒ 这两条反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 94 轮）新增两个：**思索模式白名单**与**破坏性工具自动备份**。
+   * 两者本轮都被拦下（本就承重）⇒ 固化防回归。
+   */
+  {
+    mutationIdentifier: "ponder01-write-tool-added-to-readonly-allowlist",
+    targetFile: "packages/core/src/tools/local-tool-policy-engine.ts",
+    find: `  "readFile",
+  "listDirectory",`,
+    replace: `  "readFile",
+  "writeFileTemporary",
+  "listDirectory",`,
+    testFiles: [
+      "tests/core/unit/local-tool-policy.test.ts",
+      "tests/core/integration/ponder-readonly-tools-production-wiring.test.ts",
+    ],
+    expectedFailingTestNames: [
+      "非白名单工具一律 fail-closed 并产生拒绝事件",
+      "思索模式暴露只读白名单工具，隐藏写/执行类工具",
+    ],
+    rationale:
+      "把**写类工具**塞进思索模式只读白名单 ⇒ 思索模式（AGENTS.md：编辑、进程执行、网络访问" +
+      "必须由本地 harness **直接禁用**，不能仅靠提示词约束）就会向模型暴露并允许写操作" +
+      "⇒ 这两条反例必须变红",
+  },
+  {
+    mutationIdentifier: "ar07-destructive-tool-without-auto-backup-accepted",
+    targetFile: "packages/core/src/core/schemas.ts",
+    find: `      destructiveToolMutationKinds.has(descriptor.mutationKind) &&
+      descriptor.backupPolicy !== "automatic-preimage"`,
+    replace: `      false &&
+      descriptor.backupPolicy !== "automatic-preimage"`,
+    testFiles: ["tests/core/unit/schemas.test.ts"],
+    expectedFailingTestNames: ["拒绝未提供工具内自动备份的破坏性工具"],
+    rationale:
+      "放宽 schema 校验 ⇒ 破坏性工具（删除/覆盖/截断…）可以**不声明**工具内自动备份即注册，" +
+      "直接违反 AGENTS.md「任何删除、文本删减、替换、截断或覆盖必须由执行工具在变更前自动备份」" +
+      "⇒ 该反例必须变红",
   },
 ];
 
