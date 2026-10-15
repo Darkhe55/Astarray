@@ -162,6 +162,34 @@ describe("PROJECT-01-04：多项目交叉借阅压力验收（公开入口 + 受
         );
         expect(current, `${source} 来源不得被修改`).toBe(sourceContents.get(source));
       }
+
+      /**
+       * 2026-11-08（第 74 轮）：**门面必须真的能列出副本回执** ——
+       * 这是 GUI `copyReceipts` 的**供数来源**（此前该端口恒为空）。
+       *
+       * 卡内如实登记过：「GUI 侧的 `copyReceipts` 恒为空列表 ——
+       * `GuiApplicationPort` 只暴露了授权列表，副本回执尚未经该端口提供」。
+       * 只补端口方法而不验证**供数方**，就等于重演本卡点名的
+       * "**组件存在但产品不可达**" ⇒ 故此处从**公开门面**读回执并逐项核对。
+       */
+      const copyReceipts = await application.listCrossProjectCopyReceipts();
+      expect(
+        copyReceipts.length,
+        "6 次 import-copy 应各自留下一条副本回执",
+      ).toBe(6);
+      for (const receipt of copyReceipts) {
+        // "人工可分辨副本与原件"：每项都显式标注是外部来源的副本
+        expect(receipt.isCopyOfExternalSource, receipt.receiptIdentifier).toBe(true);
+        expect(receipt.displayLabel, receipt.receiptIdentifier).toContain("副本");
+        expect(receipt.sourceProjectIdentifier).not.toBe(receipt.targetProjectIdentifier);
+      }
+      // 回执必须**指向各自来源**（可追溯、不串）
+      const receiptSourcePairs = new Set(
+        copyReceipts.map(
+          (receipt) => receipt.sourceProjectIdentifier + "→" + receipt.targetProjectIdentifier,
+        ),
+      );
+      expect(receiptSourcePairs.size).toBe(6);
     } finally {
       await application.shutdown();
     }

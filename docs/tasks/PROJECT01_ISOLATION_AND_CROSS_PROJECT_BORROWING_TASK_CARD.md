@@ -414,6 +414,48 @@ Agent仅接收不透明授权引用和公开范围说明，不接收可外传的
 **仍未完成（不主张 PROJECT-01-04 完全通过）**：多同级个体目前只在**授权/回执维度**验证；
 经编排器真实派发的多同级 Agent 端到端压力场景、以及 GUI `copyReceipts` 供数仍未做。
 
+### ✅ 2026-11-08（第 74 轮）：上条点名的一半已交付 —— **GUI `copyReceipts` 真的供数了**
+
+**缺口（原文，见上文 2026-10-10 段）**：
+> GUI 侧的 `copyReceipts` 目前**恒为空列表** —— `GuiApplicationPort` 只暴露了授权列表，
+> 副本回执尚未经该端口提供（未伪造、未用说明文字覆盖）。
+
+而卡内 §04 的验收要求是"**人工可分辨副本与原件**" ⇒ 拿不到回执时该要求**无法成立**。
+
+**根因（两处，缺一不可）**：
+1. `GuiApplicationPort` **没有**副本回执的读取能力；
+2. **门面也没有对应方法** —— 只有 `listCrossProjectAuthorizations()`，
+   故即便补了端口方法，**生产上也没有供数方**（会重演本卡反复点名的"组件存在但产品不可达"）；
+3. `gui-server.ts` 的 `readCrossProjectOrDefault()` 里 `copyReceipts: []` 是**硬编码**空数组。
+
+**交付（三处接线 + 反例）**：
+- **门面**：`public-sdk.ts` 新增只读 `listCrossProjectCopyReceipts()`，
+  复用**公开**的 `summarizeCopyReceipts({store})`（仅读已落盘回执，不联网、不写盘），
+  每项带 `displayLabel`（显式标注"副本"）与 `isCopyOfExternalSource`；
+- **端口**：`GuiApplicationPort` 新增可选 `listCrossProjectCopyReceipts?()`；
+- **服务端**：`readCrossProjectOrDefault()` 改为**真的去读**该能力，
+  并保持既有口径 —— **两个能力任一存在即产出视图；缺失/抛错 ⇒ 空列表，不伪造、不 500**；
+  且**回执读取失败不得连累授权列表**。
+
+**反例（先红后绿）**：
+- `gui-server.test.ts` 新增一条：端口提供回执 ⇒ `/state` 必须带上（含 `displayLabel` 含"副本"、
+  `isCopyOfExternalSource === true`）；**能力缺失 ⇒ 空列表且不 500**。
+  **首跑红**：`expected [] to have a length of 1`（端口提供的回执被忽略）；
+- `project01-multi-project-stress.test.ts` ① **追加生产可达性断言**：
+  6 次真实 `import-copy` 后，从**公开门面**读回执 ⇒ **恰好 6 条**、
+  每条 `isCopyOfExternalSource === true`、`displayLabel` 含"副本"、
+  **6 组来源→目标互不相同**（不串）。
+
+**可达性核验（用实际执行，不用字符串命中）**：构建后于**子进程**中
+`import { AstarrayApplicationFacade } from "dist/public-sdk.js"` 并判定
+`typeof prototype.listCrossProjectCopyReceipts === "function"` ⇒ **true、exit 0**
+（注：本仓构建为**分块**产物，`dist/public-sdk.js` 里连既有方法的**文本命中也是 0**，
+故只能以实际执行判定）。
+
+**门槛未变**：**经编排器真实派发的多同级 Agent 端到端压力场景**仍未做 ⇒
+**仍不主张 PROJECT-01-04 完全通过**；"人工能分辨副本与原件的人类体验结论"仍属外部条件。
+
+
 ## 9. 必测场景与交付
 
 1. 未授权跨项目读取、列目录、搜索、直接写入、命令间接读取及Git路径访问均不能绕过；覆盖Windows/POSIX路径与真实文件系统差异。

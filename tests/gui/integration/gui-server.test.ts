@@ -510,6 +510,71 @@ describe("SMART-01-04：GUI 暴露指令窗口（只读，不冒充成果完成�
     expect(barePayload.crossProject?.authorizations).toHaveLength(0);
     expect(barePayload.crossProject?.copyReceipts).toHaveLength(0);
   });
+
+  /**
+   * PROJECT-01-04（2026-11-08，第 74 轮）：**GUI 侧 `copyReceipts` 必须真的供数**。
+   *
+   * ## 这条反例针对的已登记缺口（卡内原文）
+   *
+   * > **如实登记的剩余缺口**：GUI 侧的 `copyReceipts` 目前恒为空列表 ——
+   * > `GuiApplicationPort` 只暴露了授权列表，副本回执尚未经该端口提供
+   * > （未伪造、未用说明文字覆盖）。
+   *
+   * 而卡内 §04 的验收要求正是"**人工可分辨副本与原件**"：
+   * 只读视图拿不到回执 ⇒ 该要求在产品里**无法成立**。
+   *
+   * ## 断言
+   *
+   * 端口提供回执 ⇒ `/state` 必须带上（含 `displayLabel`，即"副本"标注）；
+   * **能力缺失 ⇒ 空列表且不 500**（沿用既有"不伪造"口径）。
+   */
+  it("/state 必须携带跨项目**副本回执**（人工可分辨副本与原件），能力缺失时空列表不 500", async () => {
+    const handle = await startServer({
+      applicationService: {
+        ...createFakeApplicationPort(),
+        async listCrossProjectAuthorizations() {
+          return [];
+        },
+        async listCrossProjectCopyReceipts() {
+          return [
+            {
+              receiptIdentifier: "receipt-1",
+              displayLabel: "[副本] project-a@r3 src/a.ts → project-b:src/a.ts (sha256:abc)",
+              sourceProjectIdentifier: "project-a",
+              sourceRevision: 3,
+              sourceResourcePath: "src/a.ts",
+              targetProjectIdentifier: "project-b",
+              targetResourcePath: "src/a.ts",
+              contentHash: "sha256:abc",
+              isCopyOfExternalSource: true as const,
+              isOriginal: false as const,
+            },
+          ];
+        },
+      },
+    });
+    const response = await request({ port: handle.port, method: "GET", path: "/state" });
+    expect(response.statusCode).toBe(200);
+    const payload = JSON.parse(response.body) as {
+      crossProject?: {
+        copyReceipts: Array<{ receiptIdentifier: string; displayLabel: string; isCopyOfExternalSource: boolean }>;
+      };
+    };
+    expect(payload.crossProject?.copyReceipts).toHaveLength(1);
+    expect(payload.crossProject?.copyReceipts[0]?.receiptIdentifier).toBe("receipt-1");
+    // "人工可分辨副本与原件"的关键：标签里必须显式标注是副本
+    expect(payload.crossProject?.copyReceipts[0]?.displayLabel).toContain("副本");
+    expect(payload.crossProject?.copyReceipts[0]?.isCopyOfExternalSource).toBe(true);
+
+    // 能力缺失 ⇒ 空列表且不 500（不伪造）
+    const bareHandle = await startServer();
+    const bareResponse = await request({ port: bareHandle.port, method: "GET", path: "/state" });
+    expect(bareResponse.statusCode).toBe(200);
+    const barePayload = JSON.parse(bareResponse.body) as {
+      crossProject?: { copyReceipts: unknown[] };
+    };
+    expect(barePayload.crossProject?.copyReceipts ?? []).toHaveLength(0);
+  });
 });
 
 describe("GUI-01-R-02 按钮触发真实任务（公共应用服务）", () => {

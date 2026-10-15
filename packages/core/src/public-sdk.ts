@@ -45,6 +45,8 @@ import {
   type CrossProjectReadResult,
   type CrossProjectResourceIoPort,
   type CrossProjectTargetHumanEditGuardPort,
+  /** 2026-11-08（第 74 轮）：公开的副本回执摘要（只读）—— 供 GUI `copyReceipts` 供数。 */
+  summarizeCopyReceipts,
 } from "./orchestration/cross-project-authorization-store.js";
 // 2026-10-13：跨项目通道必须拒绝受保护存储（backup-vault / 删除审计）。
 import { ProtectedStoragePolicy } from "./tools/protected-storage-policy.js";
@@ -4486,6 +4488,49 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       operationKind: record.operationKind,
       state: record.state,
       taskIdentifier: record.taskIdentifier,
+    }));
+  }
+
+  /**
+   * PROJECT-01-04（2026-11-08，第 74 轮）：只读列出跨项目**副本回执**。
+   *
+   * **为什么补这个门面方法**：卡内如实登记着「GUI 侧的 `copyReceipts` 恒为空列表 ——
+   * `GuiApplicationPort` 只暴露了授权列表，副本回执尚未经该端口提供」。
+   * 只补端口方法而不给出供数方，就等于重演本卡反复点名的
+   * "**组件存在但产品不可达**" ⇒ 故门面必须真的能列出回执。
+   *
+   * **只读**：复用公开的 `summarizeCopyReceipts`（仅读已落盘回执，不联网、不写盘）。
+   * 每项带 `displayLabel`（显式标注"副本"）⇒ 满足卡内 §04
+   * "**人工可分辨副本与原件**"。
+   */
+  async listCrossProjectCopyReceipts(): Promise<
+    Array<{
+      receiptIdentifier: string;
+      displayLabel: string;
+      sourceProjectIdentifier: string;
+      sourceRevision: number;
+      targetProjectIdentifier: string;
+      sourceResourcePath: string;
+      targetResourcePath: string;
+      contentHash: string;
+      isCopyOfExternalSource: boolean;
+      isOriginal: boolean;
+    }>
+  > {
+    this.assertOpen();
+    const store = await this.getCrossProjectAuthorizationStore();
+    const summary = await summarizeCopyReceipts({ store });
+    return summary.receipts.map((receipt) => ({
+      receiptIdentifier: receipt.receiptIdentifier,
+      displayLabel: receipt.displayLabel,
+      sourceProjectIdentifier: receipt.sourceProjectIdentifier,
+      sourceRevision: receipt.sourceRevision,
+      targetProjectIdentifier: receipt.targetProjectIdentifier,
+      sourceResourcePath: receipt.sourceResourcePath,
+      targetResourcePath: receipt.targetResourcePath,
+      contentHash: receipt.contentHash,
+      isCopyOfExternalSource: receipt.isCopyOfExternalSource,
+      isOriginal: receipt.isOriginal,
     }));
   }
 

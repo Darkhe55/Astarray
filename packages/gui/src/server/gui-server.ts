@@ -98,6 +98,31 @@ export interface GuiApplicationPort {  subscribe(listener: (event: PublicAstarra
     }>
   >;
   /**
+   * PROJECT-01-04（2026-11-08，第 74 轮）：跨项目**副本回执**只读列表（可选能力）。
+   *
+   * **补齐的已登记缺口**：卡内原文记着「GUI 侧的 `copyReceipts` 目前恒为空列表 ——
+   * `GuiApplicationPort` 只暴露了授权列表，副本回执尚未经该端口提供」。
+   * 而卡内 §04 的验收要求是"**人工可分辨副本与原件**" ⇒ 拿不到回执时该要求无法成立。
+   *
+   * 缺失或读取抛错 ⇒ 空列表（沿用本仓"**不伪造、不 500**"口径）。
+   */
+  listCrossProjectCopyReceipts?(): Promise<
+    Array<{
+      receiptIdentifier: string;
+      /** 面向人的标签：显式标注"副本"并给出来源项目、revision 与内容哈希。 */
+      displayLabel: string;
+      sourceProjectIdentifier: string;
+      sourceRevision: number;
+      targetProjectIdentifier: string;
+      sourceResourcePath: string;
+      targetResourcePath: string;
+      contentHash: string;
+      /** 恒为 true：明确标记"这是外部来源的副本"。 */
+      isCopyOfExternalSource: boolean;
+      isOriginal: boolean;
+    }>
+  >;
+  /**
    * TOOLKIT-01-04：工具包版本与升级差异只读快照（可选能力）。
    *
    * 缺失时视图回落为空（**不伪造**条目），且**不阻塞**既有 `/state` 与 SSE 快照。
@@ -1615,15 +1640,52 @@ export async function startGuiServer(
         targetProjectIdentifier: string;
         sourceResourcePath: string;
         targetResourcePath: string;
+        isCopyOfExternalSource: boolean;
+        displayLabel: string;
       }>;
     };
   }> {
     const listAuthorizations = options.applicationService.listCrossProjectAuthorizations;
-    if (listAuthorizations === undefined) {
+    const listCopyReceipts = options.applicationService.listCrossProjectCopyReceipts;
+    /**
+     * 2026-11-08（第 74 轮）：副本回执**必须真的供数**（此前恒为 `[]`）。
+     *
+     * 两个能力都是可选的；**任一存在**即产出只读视图，各自缺失/抛错时按空列表处理
+     * —— 保持既有口径：**不伪造、不 500、不阻塞 `/state` 与 SSE 快照**。
+     */
+    if (listAuthorizations === undefined && listCopyReceipts === undefined) {
       return {};
     }
     try {
-      const authorizations = await listAuthorizations();
+      const authorizations =
+        listAuthorizations === undefined ? [] : await listAuthorizations();
+      let copyReceipts: Array<{
+        receiptIdentifier: string;
+        sourceProjectIdentifier: string;
+        sourceRevision: number;
+        targetProjectIdentifier: string;
+        sourceResourcePath: string;
+        targetResourcePath: string;
+        isCopyOfExternalSource: boolean;
+        displayLabel: string;
+      }> = [];
+      if (listCopyReceipts !== undefined) {
+        try {
+          copyReceipts = (await listCopyReceipts()).map((receipt) => ({
+            receiptIdentifier: receipt.receiptIdentifier,
+            sourceProjectIdentifier: receipt.sourceProjectIdentifier,
+            sourceRevision: receipt.sourceRevision,
+            targetProjectIdentifier: receipt.targetProjectIdentifier,
+            sourceResourcePath: receipt.sourceResourcePath,
+            targetResourcePath: receipt.targetResourcePath,
+            isCopyOfExternalSource: receipt.isCopyOfExternalSource,
+            displayLabel: receipt.displayLabel,
+          }));
+        } catch {
+          // 回执读取失败**不得**连累授权列表，也不得 500（不伪造）
+          copyReceipts = [];
+        }
+      }
       return {
         crossProject: {
           authorizations: authorizations.map((record) => ({
@@ -1634,8 +1696,7 @@ export async function startGuiServer(
             state: record.state,
             taskIdentifier: record.taskIdentifier,
           })),
-          // 副本回执由跨项目存储另行提供；此处只读视图不猜、不伪造。
-          copyReceipts: [],
+          copyReceipts,
         },
       };
     } catch {
