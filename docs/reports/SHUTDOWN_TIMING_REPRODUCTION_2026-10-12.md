@@ -59,3 +59,72 @@
 - **未改任何代码**；
 - **未取得确定性触发**（仍是概率复现 30%）；无法据此验证修复 ⇒ **不改**是刻意的选择；
 - 未查 `ledger-concurrency:172` 的具体断言（本轮未展开）。
+
+---
+
+## 7. ✅ 2026-11-08（第 64 轮）：**确定性复现已取得**，§6 第 2 条**不再成立**
+
+> **本节推翻上一节的"未取得确定性触发"**，并推翻上一节"隔离跑无法复现"的**方法性**结论：
+> 隔离跑**确实能**确定性复现 —— 只要用**受控慢 Provider** 把窗口造出来，
+> 而**不需要**并发负载。
+
+### 7.1 复现方法（可直接重跑，约 9 秒）
+
+用一个**延迟 5 秒**才回应的假 Provider（阻塞式 SSE），让任务在 `shutdown()` 时
+**必然**处于在途；关键前置条件是**假 Provider 必须真的收到过请求**。
+
+```
+① 起假 Provider：收到请求后 setTimeout(5_000) 再回 SSE（含完成标记）
+② AstarrayApplicationFacade.create({ runtime: "provider", providerRuntimeRegistry: registry,
+     provider: { requestTimeoutMilliseconds: 60_000, ... } })
+③ createSession → submitTask
+④ **同步点 A**：轮询到链文件 `task-chain.json` 首次落盘
+⑤ **同步点 B（关键）**：轮询到假 Provider 的 `receivedRequestCount >= 1`
+   ⇒ 此时任务**真的在途**（不是"刚提交还没派发"）
+⑥ await application.shutdown()
+⑦ 等到超过 5 秒延迟窗口后，读回链文件
+```
+
+### 7.2 实测结果（**确定性复现**）
+
+```
+× shutdown 返回后链文件内容**变了**（有人在其后落盘）
+  expected '{"schemaVersion":1,...}' to be '{"schemaVersion":1,...}'
+Tests  1 failed        ← 隔离单跑，约 9 秒，无需负载
+```
+
+⇒ `shutdown()` 返回**之后**仍发生了链落盘（任务状态被更新），
+**确定性、可重复**，与上一节"3/10 全量、20/20 隔离干净"的概率型现象**是同一缺陷**，
+但**触发条件已可精确构造**。
+
+### 7.3 ⚠️ 我自己第一版探针的**空洞通过**（如实记录，供后人避开）
+
+第一版只做：等链文件落盘 + 检查"仍在 5 秒延迟窗口内"，然后 shutdown。
+
+**它给出了误导性的绿**：`shutdown()` 仅耗时 **6 ms** 且"之后内容未变"。
+真相是：`cancel()` 见 `inFlightWorkerPromises.size === 0`（worker **尚未派发**）
+⇒ 直接 `stopping = true` 让调度循环停下 ⇒ **Provider 从未被调用**，
+自然不会有迟到写入 ⇒ 用例**什么都没验证到**。
+
+**教训（可复用）**：构造"在途"场景时，**只检查时间窗口不够**，
+必须检查**被调用方真的收到了请求**（外部可观测的同步点）。
+
+### 7.4 根因（与上一节一致，现已有确定性证据）
+
+`MissionOrchestrator.cancel()`：
+
+- 它**只等待、不中止**（`Promise.race([allSettled(inFlightWorkerPromises), 2_000ms])`）；
+- 编排器内**完全没有** `AbortController`（全文件 0 处）⇒ 在途 Provider 调用
+  **不会**被取消，5 秒后照常返回，worker 走到 `handleWorkerOutcome → finishTask →
+  persistChain` ⇒ **落盘发生在 shutdown 之后**。
+
+### 7.5 三个可决策方向（**本轮仍未改代码**，取舍涉及产品可见行为）
+
+| 方向 | 做法 | 代价 / 风险 |
+| --- | --- | --- |
+| **A 真等待** | 去掉或放宽 2 秒上限，等 `allSettled(inFlightWorkerPromises)` | `shutdown()` 可能阻塞到 **Provider 超时**（默认可达 120 秒）⇒ 产品可见的关停延迟 |
+| **B 写入侧 fail-soft** | 状态目录整体不存在时，落盘按**已终止**处理（明确记录，不静默吞） | **不能**让上面的复现转绿（写入仍会发生，只是不崩）；弱化 fail-closed，须严格限定范围 |
+| **C 中止在途 worker** | 为每次 worker 运行建 `AbortController`，`cancel()` 时 abort | **最优语义**（快关停 + 无迟到落盘），但需**新增基础设施**，且要定"被中止的 worker 是否/如何落盘终态" |
+
+**⇒ 需要用户/设计裁决 A 还是 C**（B 单独用不足以修好），故本轮**刻意不改**，
+把确定性复现留在本报告，使任何方向的选择都可**立即验证**。
