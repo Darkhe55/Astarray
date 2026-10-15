@@ -101,7 +101,7 @@ describe("GUI-01-R-04a 页面可访问性与离线自足", () => {
       expect(page).toContain(`id="${controlId}"`);
       expect(page).toContain(`for="${controlId}"`);
     }
-    for (const liveRegionId of [
+    for (const expectedElementId of [
       "status",
       "submit-result",
       "budget-result",
@@ -110,8 +110,18 @@ describe("GUI-01-R-04a 页面可访问性与离线自足", () => {
       "verifications",
       "verification-result",
     ]) {
-      expect(page).toContain(`id="${liveRegionId}"`);
+      expect(page).toContain(`id="${expectedElementId}"`);
     }
+    /**
+     * ⚠️ 2026-11-08：本条**只数数量、不约束位置**，曾经因此纵容了一个真实缺陷 ——
+     * `#recovery` / `#tasks` / `#verifications` 等**会被整块替换的列表容器**
+     * 也挂着 `aria-live`，于是翻页时屏幕阅读器把整批条目念一遍，
+     * 把真正的状态播报（如「第 2 / 6 页」）淹没。**由用户人工体验实测发现。**
+     *
+     * "位置"这一维已由 `gui-accessibility-live-regions.test.ts` 补上
+     * （列表容器**不得**是 live region，状态文本**必须**是）。
+     * 本条只保留"数量下限"，防止一刀切删光。
+     */
     expect((page.match(/aria-live="polite"/g) ?? []).length).toBeGreaterThanOrEqual(6);
     // 所有按钮显式 type=button，避免表单隐式提交。
     expect(page).not.toMatch(/<button(?![^>]*type=)/);

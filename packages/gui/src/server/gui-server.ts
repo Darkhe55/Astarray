@@ -524,7 +524,7 @@ ul { margin: 8px 0 0; padding-left: 20px; }
   </section>
   <section aria-labelledby="tasks-heading">
     <h2 id="tasks-heading">任务</h2>
-    <ul id="tasks" aria-live="polite"></ul>
+    <ul id="tasks"></ul>
     <!--
       GUI-02-04：会话视图为空时的说明位。
       进程重启后本会话任务列表必然为空 —— 必须明确"这不代表数据丢失"，
@@ -565,13 +565,13 @@ ul { margin: 8px 0 0; padding-left: 20px; }
       <span id="recovery-paging" role="status" aria-live="polite">未加载</span>
       <span id="recovery-recoverable-count"></span>
     </div>
-    <ul id="recovery" aria-live="polite"></ul>
+    <ul id="recovery"></ul>
     <p id="recovery-resume-result" role="status" aria-live="polite"></p>
   </section>
   <section aria-labelledby="verifications-heading">
     <h2 id="verifications-heading">待追认（按 Agent 隔离）</h2>
     <button id="refresh-verifications" type="button">刷新</button>
-    <ul id="verifications" aria-live="polite"></ul>
+    <ul id="verifications"></ul>
     <p id="verification-result" role="status" aria-live="polite"></p>
   </section>
   <section aria-labelledby="permission-asks-heading">
@@ -581,7 +581,7 @@ ul { margin: 8px 0 0; padding-left: 20px; }
       裁决只对本次这一条、当前这一版有效。
     </p>
     <button id="refresh-permission-asks" type="button">刷新</button>
-    <ul id="permission-asks" aria-live="polite"></ul>
+    <ul id="permission-asks"></ul>
     <p id="permission-ask-result" role="status" aria-live="polite"></p>
   </section>
   <section aria-labelledby="installation-inquiries-heading">
@@ -592,7 +592,7 @@ ul { margin: 8px 0 0; padding-left: 20px; }
       未回答即视为拒绝（不会自动安装）。
     </p>
     <button id="refresh-installation-inquiries" type="button">刷新</button>
-    <ul id="installation-inquiries" aria-live="polite"></ul>
+    <ul id="installation-inquiries"></ul>
     <p id="installation-inquiry-result" role="status" aria-live="polite"></p>
   </section>
   <!--
