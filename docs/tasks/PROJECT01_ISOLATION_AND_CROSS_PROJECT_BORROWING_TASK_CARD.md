@@ -496,7 +496,21 @@ TS2339: 记录上没有 receivingAgentInstanceId        （可追溯 ×2）
   需要走主→次级的完整控制流，**本轮未做**；
 - "人工能分辨副本与原件的人类体验结论"仍属**外部条件**。
 
+**次级层那半的可行性核查（2026-11-08，第 76 轮，**有界核查后决定不做**）**：
+- **事实**：次级身份由**调用方提供**，不是某处自动派发出来的 ——
+  `agent-routing-schemas.ts` 里 `targetSecondaryAgentInstanceId: z.string().min(1)`、
+  `appointingSecondaryAgentInstanceId`、`assigningSecondaryAgentInstanceId` 全是**入参**；
+  `conversation-task-insertion-controller.ts` 也是按**提案里给的**目标次级身份插任务；
+- **结论**：**没有**"mock 运行时下可驱动的次级自动派发路径"。
+  要产出**真正次级层**的同级个体，需驱动主→次级的完整控制流
+  （会话任务插入 + 次级 Agent 生命周期），**不是一条有界片**；
+- **判断**：卡内**验收原文**是"A/B/C 项目及**多个同级个体**可追溯、不串数据"
+  —— 该要求在**第 75 轮**已由**编排器真实派发**的同级个体满足；
+  括注里的 "secondary" 若要按**层级**严格理解，应**单独开片**（需先明确次级层在 mock 下的驱动方式），
+  **本轮不硬做**（避免留下半成品的"看着像端到端"的用例）。
+
 **⇒ 仍不主张 PROJECT-01-04 完全通过。**
+
 
 
 
