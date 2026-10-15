@@ -12,10 +12,10 @@
 
 | 项 | 值 |
 | --- | --- |
-| 本窗口提交 | **16 个**（见 §2） |
-| `HEAD` | `cd083ff`（`HEAD == origin/main`、`unpushed: 0`） |
+| 本窗口（第 81–95 轮）提交 | **16 个**（见 §2）；**第 96 轮起的提交**见 `PLAN_STATUS` 各行的带日期续记 |
+| `HEAD`（**写本交接时**） | `cd083ff`（当时 `HEAD == origin/main`、`unpushed: 0`）—— 之后仍有本窗口的提交，**请看 `git log`** |
 | 全量门禁 | `npm run check` **exit 0 — 443 文件 / 3297 用例、无 FAIL** |
-| 变异验证 | `npm run verify:mutation-kills` **exit 0 — 33/33 被拦下** |
+| 变异验证 | `npm run verify:mutation-kills` **exit 0 — 34/34 被拦下** |
 | 覆盖率 | 见 §1.3（本窗口实测） |
 
 ---

@@ -31,6 +31,17 @@
  * 我按"文件内容含 `mutationKind|backupPolicy`"筛出 17 个文件，却**只把其中 10 个敲进命令行**，
  * 恰好漏掉了真正守着这条规则的 `tests/core/unit/schemas.test.ts` ⇒ 得到**假结论"变异存活"**。
  * 跑全 17 个后立刻被拦下。**教训：变异探针的文件集必须由检索结果直接喂给命令，不能手敲。**
+ *
+ * **2026-11-08（第 96 轮）再扩容：33 → 34**（全量复跑 **34/34 被拦下**）。新增
+ * `project01-narrowed-derivation-widening-accepted`（整段 `isNarrower` 恒真 ⇒ 派生可扩大范围）。
+ *
+ * **⚠️ 第 96 轮的第二条方法学教训 —— 变异必须够"强"**：验证这条时，我第一次只改
+ * `isNarrower` 表达式里的**一项**条件（去掉 `pathPrefixes.length > 0`），其余条件仍在
+ * ⇒ **变异太弱、根本没改变被测行为** ⇒ 又得到一次**假结论"存活"**（这次连全量套件都跑过、照样全绿）。
+ * 换成**整段表达式恒真**后，用例立刻变红。
+ * ⇒ **纪律：注入后必须先自问"这真的改变了被测行为吗？"** ——
+ * 弱变异会把"守卫有效"**误报成**"守卫缺口"，而假缺口比漏检更浪费（会让人去补一个本来就有守卫的地方）。
+ *
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -610,6 +621,36 @@ export const MUTATIONS = [
       "放宽 schema 校验 ⇒ 破坏性工具（删除/覆盖/截断…）可以**不声明**工具内自动备份即注册，" +
       "直接违反 AGENTS.md「任何删除、文本删减、替换、截断或覆盖必须由执行工具在变更前自动备份」" +
       "⇒ 该反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 96 轮）新增。**注意这条的 `find` 是整段表达式**：
+   * 我第一次只改其中一项条件（去掉 `pathPrefixes.length > 0`），
+   * 其余条件仍生效 ⇒ **变异太弱、根本没改变行为**，于是得到假结论"存活"。
+   * 换成整段恒真后，该用例立刻变红。
+   * ⇒ **教训：注入后必须先自问"这真的改变了被测行为吗"**（见文件头部的第 3 条纪律）。
+   */
+  {
+    mutationIdentifier: "project01-narrowed-derivation-widening-accepted",
+    targetFile: "packages/core/src/orchestration/cross-project-authorization-store.ts",
+    find: `    const isNarrower =
+      input.resourceScope.pathPrefixes.length > 0 &&
+      input.resourceScope.pathPrefixes.every((candidatePrefix) =>
+        parent.resourceScope.pathPrefixes.some(
+          (parentPrefix) =>
+            candidatePrefix === parentPrefix || candidatePrefix.startsWith(parentPrefix),
+        ),
+      ) &&
+      input.resourceScope.realPaths.every((candidatePath) =>
+        parent.resourceScope.realPaths.includes(candidatePath),
+      ) &&
+      (!input.resourceScope.isDynamicSharedDirectory ||
+        parent.resourceScope.isDynamicSharedDirectory);`,
+    replace: `    const isNarrower = true;`,
+    testFiles: ["tests/core/integration/cross-project-authorization.test.ts"],
+    expectedFailingTestNames: ["任务内缩权派生：派生授权范围必须**不宽于**来源授权"],
+    rationale:
+      "让'派生范围必须不宽于父授权'恒真 ⇒ 任何任务都能凭父授权**扩大**自己的资源范围" +
+      "（跨项目只读授权可被放大成写/越界范围，属提权）⇒ 该反例必须变红",
   },
 ];
 
