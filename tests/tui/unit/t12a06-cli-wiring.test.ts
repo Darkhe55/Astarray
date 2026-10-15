@@ -8,7 +8,36 @@ import { existsSync, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * 2026-11-08（第 69 轮）：**补上文件级超时预算**（沿用本仓既定的**方案 B：逐文件**）。
+ *
+ * ## 依据（真实观测）
+ *
+ * 一次满载 `npm run check` 中本文件翻红：
+ *
+ * ```
+ * FAIL tests/tui/unit/t12a06-cli-wiring.test.ts > T12A dist 可达性
+ *   > 恢复模块全部进入最终 bundle（tarball 验收前置）
+ * Error: Test timed out in 5000ms.
+ * ```
+ *
+ * 该用例要**读 `dist` 下的大文件**校验模块可达性；它**不起子进程、不起服务**，
+ * 故**不被** `tests/architecture/subprocess-test-timeout-budget.test.ts`
+ * 那条"活的规则"覆盖 ⇒ **一直在吃默认 5000ms**；满载下读大文件超过 5 秒即误红。
+ *
+ * ## 为什么是「逐文件」而不是「改全局」
+ *
+ * `PLAN_STATUS` 记明：§12 曾把处置方式列为 **A 全局 / B 逐文件**，
+ * **用户未指定**时本仓选择**更保守的 B**。
+ * 本轮我一度加了全局 `testTimeout` 并做了量化（5 轮全量：超时文本 **0** 次，
+ * 但另有 2 轮跨进程时序失败），**随后按上述记录如实回退**（见报告 §9）。
+ * 全局方案**仍待用户决策**，故此处只补本文件自己的预算。
+ *
+ * **未改任何断言。**
+ */
+vi.setConfig({ testTimeout: 60_000 });
 
 import { TaskStore } from "../../../packages/core/src/infra/task-store.js";
 import { MissionManager } from "../../../packages/core/src/orchestration/mission-manager.js";
