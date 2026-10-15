@@ -4118,6 +4118,104 @@ export async function executeGuiServeCommand(
             projectIdentifier: path.basename(process.cwd()) || "astarray",
             sessionIdentifier: sessionId,
           });
+          /**
+           * ⚠️ 2026-11-08 修复（**自动端到端验证发现的**，比人工更硬的证据）：
+           * **批准必须真的授权并唤醒任务**，不能只记录一个 allowed 状态。
+           *
+           * ## 症状（我用 GUI 自己的 HTTP 路由跑完整链路时发现）
+           *
+           * `POST /commands/submit` → 轮询 `/permission-asks`（**出现了条目**，
+           * 登记修复有效）→ `POST /commands/permission-ask-decision`
+           * （返回 `status:"allowed"`）→ 之后**任务停在 `blocked`、产物不存在**。
+           *
+           * ## 根因
+           *
+           * 原来这里**只调了** `decidePermissionAskRequest`（记录裁决）就返回 ⇒
+           * "记了个 allowed 的状态"，但**授权没进权限引擎、任务没被唤醒** ⇒
+           * 停在 blocked、工具从未执行、产物永远不落盘。
+           *
+           * ## 修法：照 CLI（`permission-ask-adjudication.ts` 的授权分支）补齐三步，
+           * 且**顺序要紧** —— 先把两类授权登记好，**再**下发唤醒指令
+           * （唤醒会立即重新派发任务，晚登记就会又撞一次权限）。
+           *
+           * 1. 会话级授权：让重跑时该工具被判 allow；
+           * 2. 作用域一次性授权：被拦下的那次已把它消费，重跑需**重新登记**；
+           * 3. 经调度指令唤醒该任务（`action: "unblock"`）。
+           *
+           * **纪律**：参数一律取自权威记录 `decided.record`（登记时写入、
+           * 裁决不得改动）；仅在**批准**分支执行；任一步失败只写 stderr、
+           * **不静默放行**、也不把失败当成成功回报。
+           */
+          if (input.decision === "allowed-once") {
+            const nowUnixSeconds = Math.floor(Date.now() / 1000);
+            try {
+              await application.grantSessionAuthorization(
+                decided.record.toolName,
+                decided.record.argumentsJson,
+                nowUnixSeconds,
+              );
+            } catch (error) {
+              logToStderr(
+                "[权限裁决] 会话级授权登记失败: " +
+                  (error instanceof Error ? error.message : String(error)),
+              );
+            }
+            try {
+              await application.grantScopeAuthorizationForToolCall({
+                toolName: decided.record.toolName,
+                argumentsJson: decided.record.argumentsJson,
+              });
+            } catch (error) {
+              logToStderr(
+                "[权限裁决] 作用域一次性授权登记失败: " +
+                  (error instanceof Error ? error.message : String(error)),
+              );
+            }
+            try {
+              /**
+               * ⚠️ 2026-11-08 修复的**第二版**（第一版取值取错，实测证明）：
+               *
+               * 第一版我用 `queryTask({sessionId, taskIdentifier: decided.record.taskIdentifier})`
+               * 去换 mission 标识，**实测报错**：
+               * `[权限裁决] 下发唤醒指令失败: 任务不存在: T-001`。
+               *
+               * 原因：授权请求里的 `taskIdentifier` 是 **mission 内部的 `T-001`**，
+               * 而门面的任务注册表用的是**调用方提交时的 `gui-task-…`** ⇒ 两边不是一套键。
+               *
+               * 修法：mission 标识取**权威来源** —— owner 标识里内嵌了它
+               * （`worker:<missionIdentifier>:<taskIdentifier>:<instanceIndex>`，
+               * 例如 `worker:mission-f74357e6:T-001:1`）。取不到时**明确报错**，
+               * 不静默跳过（否则又变成"批准了却没反应"）。
+               */
+              const ownerSegments = decided.record.ownerAgentInstanceId.split(":");
+              const missionIdentifierFromOwner =
+                ownerSegments[0] === "worker" &&
+                typeof ownerSegments[1] === "string" &&
+                ownerSegments[1].startsWith("mission-")
+                  ? ownerSegments[1]
+                  : null;
+              if (missionIdentifierFromOwner === null) {
+                logToStderr(
+                  "[权限裁决] 无法从 owner 标识解析 mission（" +
+                    decided.record.ownerAgentInstanceId +
+                    "），未下发唤醒指令（不静默放行）。",
+                );
+              } else {
+                application.sendSchedulerInstruction(
+                  missionIdentifierFromOwner,
+                  JSON.stringify({
+                    action: "unblock",
+                    taskId: decided.record.taskIdentifier,
+                  }),
+                );
+              }
+            } catch (error) {
+              logToStderr(
+                "[权限裁决] 下发唤醒指令失败: " +
+                  (error instanceof Error ? error.message : String(error)),
+              );
+            }
+          }
           return {
             askIdentifier: decided.record.askIdentifier,
             status: decided.record.status,

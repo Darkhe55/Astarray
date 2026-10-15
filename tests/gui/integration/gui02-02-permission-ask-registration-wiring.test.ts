@@ -125,4 +125,59 @@ describe("GUI-02-02：GUI 命令必须登记待决授权请求", () => {
       ).toBe(true);
     }
   });
+
+  it("③ GUI 的**批准分支**必须真的授权并唤醒任务（不得只记录一个 allowed 状态）", async () => {
+    /**
+     * ## 由来（**自动端到端验证**发现的，比人工更硬的证据）
+     *
+     * 2026-11-08 我用 GUI 自己的 HTTP 路由把整条链路跑了一遍：
+     * `POST /commands/submit` → 轮询 `/permission-asks`（**出现了条目**，登记修复有效）
+     * → `POST /commands/permission-ask-decision`（返回 `status:"allowed"`）
+     * → 之后**任务停在 `blocked`、产物不存在**。
+     *
+     * ## 根因：GUI 的批准是**半成品实现**
+     *
+     * CLI 批准时会做三件事（`packages/tui/src/cli/permission-ask-adjudication.ts`
+     * 的授权分支），而 GUI 的覆盖项**只调了 `decidePermissionAskRequest`**（记录裁决）：
+     *
+     * | # | 必须做 | 作用 |
+     * | --- | --- | --- |
+     * | ① | `grantSessionAuthorization` | 让重跑时该工具被判 **allow** |
+     * | ② | `grantScopeAuthorizationForToolCall` | 重新登记**一次性**作用域授权（被拦下的那次已消费） |
+     * | ③ | `sendSchedulerInstruction(mission, {action:"unblock",…})` | **唤醒被阻塞的任务重派发** |
+     *
+     * 少了这三步 ⇒ "记了个 allowed 的状态"，但**授权没进权限引擎、任务没被唤醒** ⇒
+     * 停在 blocked、工具从未执行、**产物永远不落盘**。
+     */
+    const sourceText = await fs.readFile(
+      path.resolve("packages/tui/src/cli/commands.ts"),
+      "utf8",
+    );
+
+    /**
+     * ⚠️ 锚定**调用形态**（点号 + 方法名 + 左括号），不用裸子串 ——
+     * 本会话已被"自己的注释命中自己的守卫"绊倒三次（变异探针每次都能抓到）。
+     */
+    const requiredCalls: Array<{ label: string; pattern: RegExp }> = [
+      { label: "grantSessionAuthorization", pattern: /\.grantSessionAuthorization\s*\(/ },
+      {
+        label: "grantScopeAuthorizationForToolCall",
+        pattern: /\.grantScopeAuthorizationForToolCall\s*\(/,
+      },
+      { label: "sendSchedulerInstruction", pattern: /\.sendSchedulerInstruction\s*\(/ },
+    ];
+
+    for (const requiredCall of requiredCalls) {
+      expect(
+        requiredCall.pattern.test(sourceText),
+        "GUI 的批准分支缺少 `" +
+          requiredCall.label +
+          "` 调用 —— 实测后果：批准返回成功、但任务停在 blocked、" +
+          "工具从未执行、**产物不落盘**（用户目标「提交→授权→批准→落盘」的最后一环）。",
+      ).toBe(true);
+    }
+
+    // 且必须是**唤醒指令**（不能只调 sendSchedulerInstruction 却发别的指令）
+    expect(sourceText).toContain('action: "unblock"');
+  });
 });
