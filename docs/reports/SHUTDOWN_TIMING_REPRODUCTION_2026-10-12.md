@@ -128,3 +128,41 @@ Tests  1 failed        ← 隔离单跑，约 9 秒，无需负载
 
 **⇒ 需要用户/设计裁决 A 还是 C**（B 单独用不足以修好），故本轮**刻意不改**，
 把确定性复现留在本报告，使任何方向的选择都可**立即验证**。
+
+### 7.6 ✅ 2026-11-08（第 65 轮，**方向 C 已交付**）
+
+**关键发现：基础设施早已存在，方向 C 几乎免费。**
+`WorkerAgent` 一直持有 `private readonly cancellationController = new AbortController()`
+（`worker-agent.ts:125`），并有 `cancel()` 方法（`:143`），运行时收到的
+`cancellationSignal`（`:297`）正来自它。**缺的只是"编排器去调用它"这一环。**
+
+**改动（`mission-orchestrator.ts`，两处）**：
+
+1. 新增 `private readonly inFlightWorkers = new Set<WorkerAgent>()`，
+   在派发处 `add`、在收尾 `finally` 里 `delete`（与既有
+   `inFlightWorkerPromises` 同步维护）；
+2. `cancel()` 在等待**之前**，对每个在途 worker 调用其 `cancel()`
+   —— 于是运行时**立即**结束在途请求，worker 的收尾（含链落盘）落在
+   `cancel()` 返回**之前** ⇒ 上层 `shutdown()` 返回即静默；
+   **保留原有 2 秒有界等待作为兜底**（万一某个 worker 不响应中止，仍不至于永久挂住）。
+
+**不新增产品语义**：被中止的 worker 走的是**既有**的运行时异常收敛路径
+（`handleWorkerOutcome` 记失败），不产生"成功"产物。
+
+**反例（先红后绿）**：`tests/core/integration/reliability-shutdown-quiescence-contract.test.ts`
+—— 用受控慢 Provider（延迟 5 秒）确定性复现，**首跑红**
+（"`shutdown()` 返回**之后**链文件仍被改写"）；修复后绿。
+
+**变异探针**：把 `inFlightWorker.cancel()` 改成空操作 ⇒ 用例**转红**且报的正是那条诊断；
+还原后 sha256 一致 ⇒ 修复**承重**。**连跑 3 次全绿**。
+
+**门禁**：`typecheck` 0 ｜ `lint` 0（首次被 `no-useless-assignment` 拦下两条，已改）｜
+`build` 0 ｜ `check` **0（438 文件 / 3284 用例）** ⇒ **未影响任何既有用例**。
+
+**⚠️ 口径纠正（我第一版断言写错过）**：正确契约是"**`shutdown()` 返回之后**不得再写"，
+而**不是**"与 `shutdown()` 之前相同"—— 在 shutdown **期间**完成的收尾落盘是**合法**的。
+故基准快照取在 **shutdown 返回之后**。
+
+**仍未做**：方向 B（写入侧对目录消失 fail-soft）**未实施**；本轮修的是根因侧（收口），
+若日后仍需容忍"目录已被外部删除"，再单独评估 B（须严格限定范围，避免掩盖状态目录配错）。
+

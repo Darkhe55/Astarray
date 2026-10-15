@@ -173,6 +173,20 @@ export class MissionOrchestrator {
   private readonly pendingMutatingToolNamesByTask = new Map<string, Set<string>>();
   private readonly inFlightTaskIds = new Set<string>();
   private readonly inFlightWorkerPromises = new Set<Promise<void>>();
+  /**
+   * 2026-11-08（RELIABILITY「`shutdown()` 返回即静默」修复，方向 C）：
+   * 在途 worker **实例**的集合 —— 即 `inFlightWorkerPromises` 的**可控源头**。
+   *
+   * **为什么需要它**：`cancel()` 原来**只等待**这些 promise（2 秒上限）而不中止它们
+   * ⇒ 在途 Provider 调用照常跑完，`handleWorkerOutcome → persistChain` 的落盘
+   * 发生在 `shutdown()` 返回**之后**（确定性复现见
+   * `docs/reports/SHUTDOWN_TIMING_REPRODUCTION_2026-10-12.md` §7）。
+   * 拿不到 worker 实例就无法中止，故在此留存引用。
+   *
+   * `WorkerAgent.cancel()` 早已存在（abort 内部 `AbortController`，运行时收到的
+   * `cancellationSignal` 即来自它）—— 本修复只补"**编排器去调用它**"这一环。
+   */
+  private readonly inFlightWorkers = new Set<WorkerAgent>();
   /** T05B：任务 → worker 分配记录（写入型任务）。 */
   private readonly gitAllocations = new Map<string, GitWorkerAllocation>();
   private gitIntegrationSession: GitIntegrationReport | null = null;
@@ -335,6 +349,25 @@ export class MissionOrchestrator {
   async cancel(): Promise<void> {
     this.stopping = true;
     this.wake();
+    /**
+     * 2026-11-08 修复（**方向 C：中止在途 worker**，非"只等待"）：
+     *
+     * 原来这里**只等**在途 worker（2 秒上限）却**不中止**它们 ⇒ 在途 Provider
+     * 调用照常跑完，`handleWorkerOutcome → persistChain` 的落盘发生在
+     * `shutdown()` 返回**之后**；宿主若已清理状态目录则产生无人接管的 `ENOENT`
+     * （确定性复现：`docs/reports/SHUTDOWN_TIMING_REPRODUCTION_2026-10-12.md` §7）。
+     *
+     * 中止是**必要且充分**的那一步：`WorkerAgent.cancel()` 会 abort 它自己的
+     * `AbortController`，运行时据此**立即**结束在途请求 ⇒ worker 的收尾
+     * （含链落盘）落在**本次 `cancel()` 返回之前** ⇒ 上层 `shutdown()` 返回即静默。
+     *
+     * **不新增语义**：被中止的 worker 走的是**既有**的运行时异常收敛路径
+     * （`handleWorkerOutcome` 记失败），不产生"成功"产物。
+     * 保留下面的有界等待作为**兜底**（万一某个 worker 不响应中止，仍不至于永久挂住）。
+     */
+    for (const inFlightWorker of [...this.inFlightWorkers]) {
+      inFlightWorker.cancel();
+    }
     if (this.inFlightWorkerPromises.size === 0) {
       await (this.runPromise ?? Promise.resolve());
       return;
@@ -551,8 +584,10 @@ export class MissionOrchestrator {
       }
     })();
     this.inFlightWorkerPromises.add(workerPromise);
+    this.inFlightWorkers.add(worker);
     void workerPromise.finally(() => {
       this.inFlightWorkerPromises.delete(workerPromise);
+      this.inFlightWorkers.delete(worker);
       this.wake();
     });
   }
