@@ -141,6 +141,45 @@
   > **范围**：该脚本共 6 处 `process.exit`（`:98/108/115/124/199/353`），
   > 仅 `:124` 在 `await fetch` 之后 ⇒ **只改这一处**，不动其它。
 
+  > ### ✅ 2026-11-08（第 62 轮，`07331cb`）：上条**已修并验证**（用户提供了真实凭据）
+  >
+  > **凭据到位即解锁**：上条未修的唯一理由就是"走成功路径需要真实凭据、改完无法验证"。
+  > 用户提供凭据后，按上条已收敛的 4 步开工。
+  >
+  > **① 复现（真实凭据）**：
+  >
+  > ```
+  > node scripts/verify-u2-flash-continuous-reception.mjs --probe-only --credential-source state
+  > → http-status: 200 / 连通验证通过（--probe-only）
+  > → Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, line 94
+  > → 退出码 = -1073740791（0xC0000409，fail-fast 崩溃）
+  > ```
+  >
+  > ⇒ 上条"断言只出现在**成功路径**"的判断被**实测证实**；
+  > 现象即"**连通成功却被报成崩溃**"。
+  >
+  > **② 修法（与上条拟定方案有出入，已纠正）**：上条写"把硬退出改为
+  > `process.exitCode = 0`"，但那个 `process.exit(0)` **同时是探针分支的终止手段**
+  > —— 直接改成 `exitCode` 会**落到下面的完整实测**（探针模式偷偷跑完整验收）。
+  > **故未照抄**，改为：① 探针请求头加 `connection: "close"`；② 硬退出**之前**先让
+  > 套接字收尾（`await new Promise((resolve) => setTimeout(resolve, 250))`）。
+  > 并写明：**若日后失效，正确方向是让进程自然退出**（`exitCode = 0` + 把下方完整实测
+  > 包进 `else`），**而不是继续加长等待**。
+  > （实测：**仅加 `connection: close` 仍然崩** ⇒ 两步都必要。）
+  >
+  > **③ 验证**：修后单次与**连跑 3 次**均为 **退出码 0、HTTP 200、无断言**；
+  > `node --check` exit 0。
+  >
+  > **④ 全量模式不受影响**：`git diff` 两个 hunk 的上下文**都在**
+  > `if (process.argv.includes("--probe-only")) {` 之内 ⇒ **按构造未触碰分支之外任何一行**。
+  > （完整实测需多次真实调用与数分钟，**本轮未跑**，如实说明。）
+  >
+  > **契约守卫**：`smart01-04-live-u2-flash-verdict.test.ts` 新增 ⑦（探针分支必须含
+  > `connection: "close"`、且收尾等待**在退出之前**），锚定**代码形态**而非裸子串；
+  > **变异探针两条都做**：分别去掉 ⇒ ⑦ 转红；还原后 sha256 一致。
+  >
+  > **仍未取得（不因本修改变）**：**macOS 平台证据**（本项仅 Windows）⇒ **本卡仍不判通过**。
+
   四入口（SDK/CLI/TUI/GUI）接线与**包级 tarball 验收**均已落地。
 
 **SMART-01-04 包级 tarball 验收（2026-10-10，本轮续）**：
