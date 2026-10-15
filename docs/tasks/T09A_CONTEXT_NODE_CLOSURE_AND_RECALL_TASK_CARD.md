@@ -1,6 +1,12 @@
 # T09A：全局决策提升、局部上下文节点关闭与分级回访任务卡
 
 > **范围纠偏 2026-09-10**：历史 `done` 仅覆盖模块级证据；上下文组件未进入编排运行路径（完成任务后 `context status` 仍为空图），见 `docs/reports/INT00_STATUS_RECONCILIATION.md`，移交 `T09A-R1-01..04`。
+>
+> **✅ 2026-11-08（第 88 轮）补记**：`T09A-R1-01..04` **已完成**（本卡头此前只保留了 2026-09-10 的**移交**口径，未记录移交后的结果 ⇒ 读者会误以为仍在移交中）。**依据**：四份检查点报告 `T09A_R1_01_CONTEXT_ASSEMBLY_EVIDENCE.md`、`T09A_R1_02_BUDGET_DEFERRED_EVIDENCE.md`、`T09A_R1_03_CLOSURE_VERIFICATION_EVIDENCE.md`、`T09A_R1_04_METRICS_EVIDENCE.md`，其中 `T09A_R1_04` 明写「**状态：done（T09A-R1 卡四个检查点全部通过）**」。
+>
+> **本轮独立复核（不只看报告）**：纠偏报告点名的那条「**编排零装配**」在代码上**确已修** —— `packages/core/src/orchestration/main-controller.ts` 的编排选项里 `contextNodeLifecycle` **已接入**（装配层在 `application-runtime.ts` 构造并传入），即上下文组件**已进入编排运行路径**，不再是"零装配"。
+>
+> **仍如实保留的边界**：本卡的**历史 `done`** 仍只对应模块级证据（此点不变）；`T09A_R1_01` 报告里记有"免审批 threads 池全量"下 3 个真实 I/O 集成套件在高并发下超时的观察（同一批**单独运行 15/15 通过**）⇒ 那属**负载敏感**，不因此改判卡状态。
 > 状态：`done`（T09A-01~08 完成：全量 `npm run check` exit 0 / 134 文件 1264 测试全绿；恢复单元回归 34/34；npm pack 171 文件 + verify-package + smoke-install 全通过；剩余：全局分支覆盖率 83.23% < 85% 与跨平台矩阵待 AR-07 收尾）  
 > 设计日期：2026-09-09  
 > 任务来源：用户  
