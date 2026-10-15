@@ -127,7 +127,25 @@ interface CrashedChildOutcome {
  * 这与本卡既有的"有界等待前提"做法一致（断言不放宽，只让前提确定）。
  */
 async function runCrashingChildProcess(): Promise<CrashedChildOutcome> {
-  const maximumAttemptCount = 5;
+  /**
+   * ⚠️ **5 次不够 —— 这是实测反证**（2026-11-08 第 72 轮）：
+   * 本修复（`e00db17`）上线后跑了 5 轮全量，其中**一轮仍红在 ①**，
+   * 报的正是 `AssertionError: expected false to be true`
+   * ⇒ **满载下 5 次尝试全部落空**。
+   *
+   * 机制上说得通：每次尝试**都跑同一场竞速**（父进程 `data` 回调被推迟 vs
+   * 子进程跑完 `submitTask`），故重试**并不能提高父进程被及时调度的概率**；
+   * 在 CPU 饱和时单次命中率会掉到很低，5 次不足以兜住。
+   *
+   * 故按证据把上限抬到 **12**（每次约 0.3–1s，最坏约 12s，仍远低于
+   * 本文件 `testTimeout: 60_000`）。
+   *
+   * **⚠️ 仍不主张这能"消除"漏判**：这是**概率**手段，不是确定性手段。
+   * 真正的确定性方向（**留给后续**）：让子进程在派发前**等一个父进程控制的信号**，
+   * 使父进程的调度延迟**不再计入子进程的派发窗口**，从而把窗口压到
+   * "父进程写信号 → SIGKILL 送达" 这一段。
+   */
+  const maximumAttemptCount = 12;
   let lastOutcome: CrashedChildOutcome | null = null;
   for (let attemptIndex = 1; attemptIndex <= maximumAttemptCount; attemptIndex += 1) {
     const outcome = await runCrashingChildProcessOnce(attemptIndex);
