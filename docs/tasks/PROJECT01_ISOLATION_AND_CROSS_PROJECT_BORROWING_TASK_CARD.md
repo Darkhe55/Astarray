@@ -455,6 +455,50 @@ Agent仅接收不透明授权引用和公开范围说明，不接收可外传的
 **门槛未变**：**经编排器真实派发的多同级 Agent 端到端压力场景**仍未做 ⇒
 **仍不主张 PROJECT-01-04 完全通过**；"人工能分辨副本与原件的人类体验结论"仍属外部条件。
 
+### ✅ 2026-11-08（第 75 轮）：上条的另一半已做 —— 但发现它**不只是缺测试**（产品 API 确实缺能力）
+
+**先说查实的根因（比"缺测试"严重）**：`receivingAgentInstanceId` 维度在**存储层一直存在**
+（记录字段 `:269`、授权入参 `:395`、列表过滤 `:452`），**但公开门面从未暴露它** ⇒
+卡内"**多个同级个体可追溯、不串数据**"这一验收要求在**公开 API 上根本表达不出来**
+—— 正是本卡反复点名的"**能力存在但产品不可达**"。
+
+**反例先红（6 个精确 TS 错误，即不可达的铁证）**：
+新增 `tests/core/integration/project01-multi-peer-dispatched-identities.test.ts` ①，
+首跑 `typecheck` 报：
+
+```
+TS2353: 'receivingAgentInstanceId' 不是已知属性   （授权入参 ×2）
+TS2554: Expected 0 arguments, but got 1           （列表过滤 ×2）
+TS2339: 记录上没有 receivingAgentInstanceId        （可追溯 ×2）
+```
+
+**交付（门面补齐该维度）**：
+- `grantCrossProjectAuthorizationForAcceptance({ …, receivingAgentInstanceId? })` ⇒ 透传到 store；
+- `listCrossProjectAuthorizations(filter?)` ⇒ 接受
+  `sourceProjectIdentifier` / `targetProjectIdentifier` / `receivingAgentInstanceId` 过滤，
+  **并在返回记录里带回 `receivingAgentInstanceId`**（可追溯）；
+- **不带参数时行为与既有完全一致**（既有调用点、GUI 端口均不受影响）。
+
+**该用例的关键之处（与既有测试的差别）**：
+1. **接收方身份来自编排器真实派发** —— 提交两个真实任务（mock 运行时）、
+   各自从 `missions/<id>/agents/` 读回**解码后的 `agentInstanceId`**
+   （如 `worker:mission-x:T-001:1`），**不是**手工拼的 `secondary-agent-1`；
+2. **走公开门面**（`AstarrayApplicationFacade`），不再直接驱动 store/service；
+3. 断言：两个身份**不同**且为运行时形态；各自按接收身份过滤**只看得到自己那一条**
+   （**不串数据**）；记录里**带回身份**（**可追溯**）；第一条的列表**不含**第二条；不带过滤时两条都在（总数不丢）。
+
+**变异探针**：把门面过滤改成**忽略** `receivingAgentInstanceId` ⇒ 用例**当场红**；
+还原后 sha256 **一致** ⇒ 该用例**确实在验证"不串数据"**，不是空跑。
+
+**仍如实保留的边界（不夸大）**：
+- 本轮取得的是**编排器真实派发的 worker 级同级个体**（各自 mission 的独立 `agentInstanceId`）；
+  卡内括注写的是"secondary agent instance" —— 若要求**次级层**派发产生的同级个体，
+  需要走主→次级的完整控制流，**本轮未做**；
+- "人工能分辨副本与原件的人类体验结论"仍属**外部条件**。
+
+**⇒ 仍不主张 PROJECT-01-04 完全通过。**
+
+
 
 ## 9. 必测场景与交付
 

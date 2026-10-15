@@ -4445,6 +4445,14 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     argumentsHash: string;
     expiresAtIso?: string;
     taskIdentifier?: string;
+    /**
+     * PROJECT-01-04（2026-11-08，第 75 轮）：**接收方同级个体身份**。
+     *
+     * 该维度在**存储层一直存在**（记录字段 / 授权入参 / 列表过滤），但**公开门面从未暴露**
+     * ⇒ 卡内"多个同级个体**可追溯、不串数据**"这一验收要求在产品公开 API 上
+     * **根本表达不出来**。此处补上透传。
+     */
+    receivingAgentInstanceId?: string;
   }): Promise<void> {
     this.assertOpen();
     const store = await this.getCrossProjectAuthorizationStore();
@@ -4464,11 +4472,25 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       expiresAtIso: input.expiresAtIso ?? "2030-01-01T00:00:00.000Z",
       grantedByUserId: this.runtime.authenticatedUserId ?? "unauthenticated",
       taskIdentifier: input.taskIdentifier ?? "T-cross-project",
+      // 未给出时保持既有语义（存储层把 `undefined` 归一为 null）
+      ...(input.receivingAgentInstanceId === undefined
+        ? {}
+        : { receivingAgentInstanceId: input.receivingAgentInstanceId }),
     });
   }
 
-  /** 只读列出跨项目授权（不含秘密；供 SDK/GUI 只读视图使用）。 */
-  async listCrossProjectAuthorizations(): Promise<
+  /**
+   * 只读列出跨项目授权（不含秘密；供 SDK/GUI 只读视图使用）。
+   *
+   * 2026-11-08（第 75 轮）：接受**可选过滤**（含 `receivingAgentInstanceId`），
+   * 并在返回记录里带回该维度 ⇒ 让"**多个同级个体可追溯、不串数据**"
+   * 在公开 API 上**可表达、可核验**。**不带参数时行为与既有完全一致**。
+   */
+  async listCrossProjectAuthorizations(filter?: {
+    sourceProjectIdentifier?: string;
+    targetProjectIdentifier?: string;
+    receivingAgentInstanceId?: string;
+  }): Promise<
     Array<{
       authorizationIdentifier: string;
       sourceProjectIdentifier: string;
@@ -4476,11 +4498,25 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       operationKind: "read" | "import-copy";
       state: string;
       taskIdentifier: string;
+      /** 接收方同级个体身份（`null` = 未绑定到具体个体）。 */
+      receivingAgentInstanceId: string | null;
     }>
   > {
     this.assertOpen();
     const store = await this.getCrossProjectAuthorizationStore();
-    const records = await store.listAuthorizations({});
+    const records = filter === undefined
+      ? await store.listAuthorizations({})
+      : await store.listAuthorizations({
+          ...(filter.sourceProjectIdentifier === undefined
+            ? {}
+            : { sourceProjectIdentifier: filter.sourceProjectIdentifier }),
+          ...(filter.targetProjectIdentifier === undefined
+            ? {}
+            : { targetProjectIdentifier: filter.targetProjectIdentifier }),
+          ...(filter.receivingAgentInstanceId === undefined
+            ? {}
+            : { receivingAgentInstanceId: filter.receivingAgentInstanceId }),
+        });
     return records.map((record) => ({
       authorizationIdentifier: record.authorizationIdentifier,
       sourceProjectIdentifier: record.sourceProjectIdentifier,
@@ -4488,6 +4524,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       operationKind: record.operationKind,
       state: record.state,
       taskIdentifier: record.taskIdentifier,
+      receivingAgentInstanceId: record.receivingAgentInstanceId ?? null,
     }));
   }
 
