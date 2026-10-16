@@ -156,7 +156,10 @@
 
 - **完成事件协议与校验**：`core/completion-protocol.ts`（`ASTARRAY_TASK_COMPLETION_V1`、自动续跑上限默认 3）在生产中；
 - **拒绝结案**：`worker-agent.ts` 会对「缺少 `ASTARRAY_TASK_COMPLETION_V1` 完成控制事件」给出拒绝理由；
-- **任务级有界重试**：DAG 调度器有 `failureThreshold`（有界）；
+- **工具连续失败计数**：`ToolFailureCounter`（默认阈值 3，达阈值 ⇒ **暂停并反馈**）——
+  ⚠️ **它不是任务级重试**（我第 109 轮在此处写成了"任务级有界重试"，第 110 轮订正）：
+  `rg -n "requeue|reschedule|retryTask|retryCount" packages/core/src/orchestration` ⇒ **0 命中**
+  ⇒ **编排层不存在任务级重试机制**；
 - **任务级恢复检查点**：`recovery-checkpoint-recorder` / `recovery-checkpoint-store` 用于 mission 恢复（本次会话也验过其哈希链校验）。
 
 ### 7.2 但**规则点名的那条执行路径不存在**（ripgrep 逐项核实）
@@ -168,7 +171,7 @@
 | `LongToolCheckpointController`（`runtime-guidance/long-tool-checkpoint.ts`，即"**是否允许续跑**"的决策） | 装配层**构造**（`application-runtime.ts:722`）并**放进返回的运行时包**（L1200），**但全仓没有任何消费者** —— 该标识符全仓仅 **4 处**：① 装配层 import、② 装配层类型字段声明 L178、③ 构造、④ 放入返回包；第 5 处是 `docs/reports/GUIDE01_04_PRODUCT_ENTRY.md` L13 **声称它"暴露"**（暴露 ≠ 被消费） |
 
 ⇒ **"先原子保存检查点，再以新 `completionAttemptId` 续跑"这条执行路径在生产里不存在**；
-生产只有「**拒绝结案**」+「**任务级有界重试**」，**不是**"从检查点续跑"（重试会从头执行，
+生产只有「**拒绝结案**」，**且编排层没有任务级重试机制**（第 110 轮实测：`requeue|reschedule|retryTask|retryCount` 在 `packages/core/src/orchestration` **零命中**）⇒ 早停时任务**既不续跑也不重试**，只能停在拒绝结案等上级/用户处理，**不是**"从检查点续跑"（
 因此"禁止重做无法确认的非幂等副作用"这一条也**缺乏对应保障**）。
 
 ### 7.3 ⚠️ 这是**文档与生产不一致**（可复核事实，不是推断）
@@ -187,3 +190,9 @@
 - **本轮不擅自改那些架构文档**（若改，等于替它们下"未实现"的结论）；建议由对应卡所有者二选一：
   **接线**，或在文档里**如实标注"当前未接线"**；
 - 我**不夸大**为"整条规则都没实现"：§7.1 列的三项确实存在，缺的是**§7.2 那条具体执行路径**。
+
+> **⚠️ 自我订正（第 110 轮）**：本文档第 109 轮的初稿把 `failureThreshold` 写成"DAG 任务级有界重试"，
+> 实测它是 **`ToolFailureCounter`（工具连续失败计数，达阈值 ⇒ 暂停并反馈）**，且编排层**没有任务级重试机制**
+> （`requeue|reschedule|retryTask|retryCount` 在 `packages/core/src/orchestration` **零命中**）。
+> 该订正**加强**了 G5 的结论：早停时任务**既不续跑也不重试**，只能停在拒绝结案。
+
