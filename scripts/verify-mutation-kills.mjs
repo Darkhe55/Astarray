@@ -91,6 +91,18 @@
  * **⚠️ 并记一次「假存活」教训**：该轮第一次探测协同默认矩阵时，我**手敲了 5 个测试文件**，
  * 结果变异"存活"；改用**由检索结果直接喂入的 13 个文件**后 ⇒ **17 条用例变红**（其实覆盖充分）。
  * 这正是本文件开头第 (a) 条纪律（文件集必须来自检索，不得手敲）的现实案例。
+ * **2026-11-08（第 117 轮）扩容：44 → 46**（全量复跑 **46/46 被拦下**）。新增：
+ * `backup-audit-review-priority-downgraded`（删除备份审计的**高查阅优先级**被降为 normal ——
+ * 实测被 **3 条用例**拦下，含「删除备份审计记录使用高查阅优先级」「放权模式…写 HIGH 审计记录」；
+ * **该探针另有诊断价值**：若测试只是拿常量自比，改常量就抓不到 ⇒ 说明那些断言**不是同义反复**）；
+ * `cross-project-deny-precedence-bypassed`（跨项目裁决的「**显式拒绝优先**」永不触发 ——
+ * 实测被「① 显式拒绝优先：即使其它侧允许也不放行」「② deny 优先：任一侧显式拒绝即整体拒绝」拦下）。
+ *
+ * **⚠️ 第 117 轮又踩一次文件集坑（本会话第 4 次）**：我给第二条变异**手敲**了 9 个文件名，
+ * 里面凭印象写了两个不相关的文件、却**漏掉了真正守住该行为的**
+ * `tests/core/unit/cross-project-permission-matrix.test.ts` ⇒ 该变异被误判为**「存活」**。
+ * 现该条目的 `testFiles` 已改为**由检索结果直接写入**（并在条目注释里写明这次错误）。
+ * ⇒ **纪律再强调：`testFiles` 只能来自检索输出，不得凭印象书写。**
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -917,6 +929,61 @@ export const MUTATIONS = [
     rationale:
       "把内置 profile 的**兜底判定**由 `deny` 改成 `allow` ⇒ 目录里**未出现/未验证**的能力不再默认拒绝" +
       "（fail-open；AGENTS.md：`deny` 优先、未验证范围归人工裁决）⇒ 本轮实测 **2 条用例变红**",
+  },
+  /**
+   * 2026-11-08（第 117 轮）新增：**删除备份审计的"高查阅优先级"不得被降级**
+   * （AGENTS.md：放权模式不提示但写入**高查阅优先级**审计日志）。
+   *
+   * 本条探针另有**诊断价值**：若测试只是拿常量自比（`reviewPriority === BACKUP_DELETION_AUDIT_PRIORITY`），
+   * 改常量就**抓不到** ⇒ 本条会"存活"。实测**被 3 条用例拦下** ⇒ 那些断言**不是同义反复**。
+   */
+  {
+    mutationIdentifier: "backup-audit-review-priority-downgraded",
+    targetFile: "packages/core/src/core/types.ts",
+    find: `export const BACKUP_DELETION_AUDIT_PRIORITY = "high" as const;`,
+    replace: `export const BACKUP_DELETION_AUDIT_PRIORITY = "normal" as const;`,
+    /** 检索得到的完整文件集（4 个）—— 不手敲子集。 */
+    testFiles: [
+      "tests/core/unit/ar07-module-gaps-5.test.ts",
+      "tests/core/unit/backup-vault.test.ts",
+      "tests/core/unit/builtins.test.ts",
+      "tests/core/unit/frozen-decisions.test.ts",
+    ],
+    expectedFailingTestNames: ["删除备份审计记录使用高查阅优先级"],
+    rationale:
+      "把删除备份审计记录的查阅优先级由 `high` 降为 `normal` ⇒ 规则要求的「**高查阅优先级**审计日志」被静默降级，" +
+      "高优先级审计的意义（先被人看到）丢失 ⇒ 本反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 117 轮）新增：**跨项目授权裁决的第一条 —— `deny` 优先**。
+   * `AGENTS.md`：`deny` 优先；任何"显式拒绝"都必须整体拒绝，不能被其它侧允许或模式放宽覆盖。
+   */
+  {
+    mutationIdentifier: "cross-project-deny-precedence-bypassed",
+    targetFile: "packages/core/src/orchestration/cross-project-authorization-store.ts",
+    find: `  if (input.requestedResourceIsDenied === true) {`,
+    replace: `  if (false && input.requestedResourceIsDenied === true) {`,
+    /**
+     * 检索得到的完整文件集（9 个）—— **由检索结果直接写入**。
+     *
+     * ⚠️ 我第一版**手敲**了这份清单（凭印象写了两个不相关的文件、漏掉了
+     * `cross-project-permission-matrix.test.ts`）⇒ 该变异被误判为"存活"（第 117 轮，本会话第 4 次同类错误）。
+     */
+    testFiles: [
+      "tests/core/integration/cross-project-authorization.test.ts",
+      "tests/core/integration/cross-project-crash-after-write.test.ts",
+      "tests/core/integration/cross-project-isolation-multi-project.test.ts",
+      "tests/core/integration/cross-project-public-entry.test.ts",
+      "tests/core/integration/cross-project-resource-io.test.ts",
+      "tests/core/integration/cross-project-sdk-entry.test.ts",
+      "tests/core/integration/cross-project-stale-overwrite.test.ts",
+      "tests/core/unit/cross-project-permission-matrix.test.ts",
+      "tests/tui/unit/cross-project-transfer-cli-entry.test.ts",
+    ],
+    expectedFailingTestNames: ["显式拒绝优先：即使其它侧允许也不放行"],
+    rationale:
+      "让跨项目裁决里「**显式拒绝优先**」这条永不触发 ⇒ 显式 deny 会被其它侧的允许或模式放宽盖过，" +
+      "`deny` 优先这条底线失守 ⇒ 该反例必须变红",
   },
 ];
 
