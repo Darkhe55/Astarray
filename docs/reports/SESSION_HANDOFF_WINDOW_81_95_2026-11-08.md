@@ -153,7 +153,7 @@ ba7838f  fix(reliability): before-dispatch-crash 注入改为确定性
 
 | 项 | 值 |
 | --- | --- |
-| 本窗口提交 | **21 个**（自 `13c3342`） |
+| 本窗口提交 | **21 个**（自 `13c3342`，**不含**记录本节的收束提交 —— 否则口径会随本节自身变动；这正是 §8.3 教训 #9） |
 | `HEAD`（**写本节时**） | `b577c3f`（`== origin/main`、`unpushed: 0`）—— 之后请看 `git log` |
 | `npm run check` | **exit 0 — 443 文件 / 3297 用例、无 FAIL** |
 | `npm run verify:mutation-kills` | **exit 0 — 36/36 被拦下**（窗口内 **28 → 36**） |
