@@ -118,7 +118,11 @@ export interface OrchestratorWorkerFactories {
  * 类型不匹配被 `tsc` 拦下（**这正是"两处各写一份"的典型代价**）。
  */
 export interface MissionDiagnosticEvent {
-  missionIdentifier: string;
+  /**
+   * 所属使命；**会话级失败（如切换权限组）与使命无关 ⇒ 允许 `null`**
+   * （第 115 轮放宽：`DiagnosticEventStore` 本就接受 `string | null`；**不编造身份**）。
+   */
+  missionIdentifier: string | null;
   /** 具体个体（不可复用）；使命级失败通常归给发起集成的次级个体。 */
   sourceAgentInstanceId: string;
   stage: "git" | "provider" | "recovery" | "dispatch" | "config" | "unknown";

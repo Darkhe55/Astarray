@@ -509,23 +509,67 @@ export class MainController {
 
   /** 认证用户切换当前权限组（持久化；写入自动备份）。 */
   async switchPermissionProfile(reference: PermissionProfileReference): Promise<void> {
-    const selectionStore = this.options.currentPermissionSelectionStore;
-    if (selectionStore === null || selectionStore === undefined) {
-      throw new Error("当前权限组选择存储未装配");
-    }
-    // 自定义组必须先证明存在，避免持久化悬空引用（内置组恒存在，不依赖该存储）。
-    if (reference.kind === "custom") {
-      const profileStore = this.options.permissionProfileStore;
-      if (profileStore === null || profileStore === undefined) {
-        throw new Error("权限组存储未装配");
+    try {
+      const selectionStore = this.options.currentPermissionSelectionStore;
+      if (selectionStore === null || selectionStore === undefined) {
+        throw new Error("当前权限组选择存储未装配");
       }
-      await profileStore.readProfile(reference);
+      // 自定义组必须先证明存在，避免持久化悬空引用（内置组恒存在，不依赖该存储）。
+      if (reference.kind === "custom") {
+        const profileStore = this.options.permissionProfileStore;
+        if (profileStore === null || profileStore === undefined) {
+          throw new Error("权限组存储未装配");
+        }
+        await profileStore.readProfile(reference);
+      }
+      const current = await selectionStore.readSelection();
+      await selectionStore.switchSelection({
+        selectedReference: reference,
+        expectedRevision: current?.revision ?? 0,
+      });
+    } catch (error) {
+      /**
+       * DIAG-01（2026-11-08，第 115 轮）：**配置类失败**此前对诊断完全不可见 ——
+       * 用户切换权限组失败（自定义组不存在、存储未装配、revision 冲突）只把错误抛回调用方，
+       * 事后没人能从诊断里回答"为什么切不过去" ⇒ 按 `stage: "config"` 上报。
+       *
+       * 纪律：**只加观测**（下面**原样重抛**同一个错误 ⇒ 调用方看到的行为逐字不变）、
+       * 观测自身失败**不得掩盖**原错误（独立 try/catch）、缺省不采集。
+       */
+      await this.reportConfigDiagnosticEvent({
+        errorCode: error instanceof DomainError ? error.errorCode : null,
+        fallbackErrorCode: "permission-profile-switch-failed",
+        component: "permission-profile",
+        error,
+      });
+      throw error;
     }
-    const current = await selectionStore.readSelection();
-    await selectionStore.switchSelection({
-      selectedReference: reference,
-      expectedRevision: current?.revision ?? 0,
-    });
+  }
+
+  /** DIAG-01（第 115 轮）：`stage: "config"` 的统一上报入口（使命级端口；缺省不采集）。 */
+  private async reportConfigDiagnosticEvent(input: {
+    errorCode: string | null;
+    fallbackErrorCode: string;
+    component: string;
+    error: unknown;
+  }): Promise<void> {
+    const missionDiagnosticEventPort = this.options.missionDiagnosticEventPort;
+    if (missionDiagnosticEventPort === undefined) {
+      return;
+    }
+    try {
+      await missionDiagnosticEventPort({
+        /** 切换权限组是**会话级**操作、与具体使命无关 ⇒ 如实传 `null`（不编造身份）。 */
+        missionIdentifier: null,
+        sourceAgentInstanceId: "main-controller",
+        stage: "config",
+        errorCode: input.errorCode ?? input.fallbackErrorCode,
+        messageText: (input.error as Error).message,
+        component: input.component,
+      });
+    } catch {
+      // 观测失败不得阻塞业务，也不得掩盖原错误
+    }
   }
 
   // ─── B6R-06：主 Agent 永久只读 + 会话提升控制面 ───────────────────────

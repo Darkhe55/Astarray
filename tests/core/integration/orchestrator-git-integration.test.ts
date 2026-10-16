@@ -192,7 +192,7 @@ interface BuildSchedulerOptions {
    * 用于验证"Git 集成失败会被上报为诊断事件"，而不是只升级成用户消息后被吞掉。
    */
   missionDiagnosticEventPort?: (event: {
-    missionIdentifier: string;
+    missionIdentifier: string | null;
     sourceAgentInstanceId: string;
     stage: string;
     errorCode: string;
@@ -494,7 +494,7 @@ describe(
     const escalationMessages: string[] = [];
     const finishedStatuses: Array<"done" | "cancelled"> = [];
     const reportedEvents: Array<{
-      missionIdentifier: string;
+      missionIdentifier: string | null;
       sourceAgentInstanceId: string;
       stage: string;
       errorCode: string;
@@ -564,7 +564,7 @@ describe(
     const escalationMessages: string[] = [];
     const finishedStatuses: Array<"done" | "cancelled"> = [];
     const reportedEvents: Array<{
-      missionIdentifier: string;
+      missionIdentifier: string | null;
       sourceAgentInstanceId: string;
       stage: string;
       errorCode: string;

@@ -434,4 +434,65 @@ describe("MainController 门面装配分支（AR-07）", () => {
       "既有 mission-locked 提示不得因新增上报而消失",
     ).toBe(true);
   });
+
+  /**
+   * DIAG-01（2026-11-08，第 115 轮）：**配置类失败**也必须进诊断（`stage: "config"`）。
+   *
+   * 缺口：`switchPermissionProfile()` 的失败（自定义权限组不存在、存储未装配、revision 冲突）
+   * 只把错误抛回调用方，**诊断里查不到**"为什么切不过去"。
+   *
+   * 断言：① 上报一条 `stage: "config"` 的事件（错误码取 DomainError 的码）；
+   * ② **`missionIdentifier` 为 `null`** —— 切换权限组是**会话级**操作、与使命无关，**不编造身份**；
+   * ③ **调用方看到的行为逐字不变**：同一个错误照旧抛出。
+   *
+   * 本用例**不需要轮询**：上报在重抛之前被 `await` ⇒ 断言时事件已在。
+   */
+  it("切换权限组失败：必须上报 stage=config 诊断事件（missionIdentifier 为 null），且原错误照旧抛出", async () => {
+    const reportedEvents: Array<{
+      missionIdentifier: string | null;
+      sourceAgentInstanceId: string;
+      stage: string;
+      errorCode: string;
+      messageText: string;
+      component: string;
+    }> = [];
+    const controller = buildController({
+      missionDiagnosticEventPort: (event: (typeof reportedEvents)[number]) => {
+        reportedEvents.push(event);
+      },
+      /** 自定义组"不存在"：`readProfile` 抛 DomainError（这正是用户会遇到的配置类失败）。 */
+      permissionProfileStore: {
+        readProfile: async () => {
+          throw new DomainError("permission-profile-not-found", "权限组不存在: custom-404");
+        },
+        listCustomProfiles: async () => [],
+        buildBuiltinProfile: (profileId: string) => ({
+          permissionProfileId: profileId,
+          displayName: profileId,
+          isBuiltin: true,
+          revision: 1,
+        }),
+      },
+      currentPermissionSelectionStore: {
+        readSelection: async () => null,
+        switchSelection: async () => {},
+      },
+    });
+
+    await expect(
+      controller.switchPermissionProfile({ kind: "custom", profileId: "custom-404" }),
+    ).rejects.toThrow("权限组不存在: custom-404");
+
+    const configEvent = reportedEvents.find((event) => event.stage === "config");
+    expect(configEvent, "配置类失败必须上报 stage=config 的诊断事件").toBeDefined();
+    expect(configEvent!.errorCode, "DomainError 的错误码应被如实带出").toBe(
+      "permission-profile-not-found",
+    );
+    expect(configEvent!.component).toBe("permission-profile");
+    expect(
+      configEvent!.missionIdentifier,
+      "会话级配置失败与使命无关 ⇒ 必须为 null（不编造身份）",
+    ).toBeNull();
+    expect(configEvent!.messageText).toContain("权限组不存在");
+  });
 });
