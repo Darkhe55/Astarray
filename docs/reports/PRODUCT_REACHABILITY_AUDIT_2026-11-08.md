@@ -145,3 +145,45 @@
 - `EvidenceCompletionGate`（生产提及 1：仅被同样零使用的 `completion-verifier.ts` 以**类型**引用）。
 
 **待办**：对新增候选按 §4 的顺序逐个核实，**先排假阳性**再定性。
+
+## 7. ✅ 第 109 轮已核实：**"早停 → 从检查点有界续跑"这条链在生产里断了**（且**文档写成已交付**）
+
+**规则原文（`AGENTS.md`）**：
+
+> 输出提前结束、缺失完成事件或标识与本地状态不符时，**由本地看门狗从检查点有界续跑**，禁止无限重试或重复副作用。
+
+### 7.1 生产里**确实有**的部分（先说这个，免得夸大成"整条都没有"）
+
+- **完成事件协议与校验**：`core/completion-protocol.ts`（`ASTARRAY_TASK_COMPLETION_V1`、自动续跑上限默认 3）在生产中；
+- **拒绝结案**：`worker-agent.ts` 会对「缺少 `ASTARRAY_TASK_COMPLETION_V1` 完成控制事件」给出拒绝理由；
+- **任务级有界重试**：DAG 调度器有 `failureThreshold`（有界）；
+- **任务级恢复检查点**：`recovery-checkpoint-recorder` / `recovery-checkpoint-store` 用于 mission 恢复（本次会话也验过其哈希链校验）。
+
+### 7.2 但**规则点名的那条执行路径不存在**（ripgrep 逐项核实）
+
+| 组件 | 生产现状 |
+| --- | --- |
+| `ContinuationCoordinator`（`agent-run-watchdog.ts`） | **全仓只在自身文件出现** ⇒ **从未被构造/使用** |
+| `AgentRunWatchdog`（同文件） | 同上 ⇒ **从未被构造/使用** |
+| `LongToolCheckpointController`（`runtime-guidance/long-tool-checkpoint.ts`，即"**是否允许续跑**"的决策） | 装配层**构造**（`application-runtime.ts:722`）并**放进返回的运行时包**（L1200），**但全仓没有任何消费者** —— 该标识符全仓仅 **4 处**：① 装配层 import、② 装配层类型字段声明 L178、③ 构造、④ 放入返回包；第 5 处是 `docs/reports/GUIDE01_04_PRODUCT_ENTRY.md` L13 **声称它"暴露"**（暴露 ≠ 被消费） |
+
+⇒ **"先原子保存检查点，再以新 `completionAttemptId` 续跑"这条执行路径在生产里不存在**；
+生产只有「**拒绝结案**」+「**任务级有界重试**」，**不是**"从检查点续跑"（重试会从头执行，
+因此"禁止重做无法确认的非幂等副作用"这一条也**缺乏对应保障**）。
+
+### 7.3 ⚠️ 这是**文档与生产不一致**（可复核事实，不是推断）
+
+以下文档把该能力写成**已交付行为**，且**没有**任何"未接线/延后"标注：
+
+- `IMPLEMENTATION_PLAN.md` L1059–1060（`AgentRunWatchdog` / `ContinuationCoordinator` 各一条）；
+- `docs/architecture.md` L138：「输出结束但本地状态未完成时，**从原子检查点有界续跑**」；
+- `docs/adr/0015-explicit-completion-and-early-stop-recovery.md` L46；
+- `PLAN_STATUS.md` L1855–1856（历史行，逐条描述两者的语义）；
+- `docs/reports/GUIDE01_04_PRODUCT_ENTRY.md` L13（声称控制器"暴露"）。
+
+### 7.4 处置与边界
+
+- **本轮不改产品**（接它＝决定"在哪一层执行续跑、幂等键与检查点如何绑定、上限如何配置"⇒ 行为变更）；
+- **本轮不擅自改那些架构文档**（若改，等于替它们下"未实现"的结论）；建议由对应卡所有者二选一：
+  **接线**，或在文档里**如实标注"当前未接线"**；
+- 我**不夸大**为"整条规则都没实现"：§7.1 列的三项确实存在，缺的是**§7.2 那条具体执行路径**。
