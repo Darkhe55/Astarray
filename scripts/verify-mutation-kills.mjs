@@ -53,6 +53,11 @@
  * `workspace-boundary-escape-accepted`（`isPathWithin` 恒真 ⇒ 包含性判定与**符号链接逃逸**判定同时失效）。
  * **本条是"验证型"结果**：实测该守卫覆盖**非常充分** —— 一次变异使多个文件大量用例变红
  * （`..` 逃逸、符号链接逃逸、工作区外绝对路径、TOCTOU 换链拦截…）⇒ **未发现缺口**，固化以防回归。
+ * **2026-11-08（第 101 轮）两条新增：37 → 39**（全量复跑 **39/39 被拦下**）。标的：
+ * `quaternary-permission-intersection-bypassed` 与 `quaternary-permission-excess-delegation-accepted`
+ * —— **四级委派权限不得宽于三级**（AGENTS.md／ADR-0025 §5）。
+ * 「**求交**（四级决定 = 三级 ⊓ 请求）」与「**超出即拒绝分发**」是**两种不同行为**，故各锁一条。
+ * 本轮实测两条**均被拦下**（`quaternary-lifecycle.test.ts` 对应用例变红）⇒ **无缺口**。
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -732,6 +737,38 @@ export const MUTATIONS = [
     rationale:
       "让'路径是否在工作区内'恒真 ⇒ `..` 逃逸与**符号链接逃逸**同时不再被拦，工具可读写工作区之外的任意路径" +
       "（AGENTS.md：真实路径/工作区/OS 边界必须由**本地确定性**策略执行）⇒ 上述反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 101 轮）新增两条：**四级委派权限不得宽于三级**（`quaternary-boundary-guards.ts`）。
+   * 「求交」与「超出即拒绝分发」是**两种不同行为**，故各锁一条。本轮实测两条均被拦下 ⇒ 无缺口。
+   */
+  {
+    mutationIdentifier: "quaternary-permission-intersection-bypassed",
+    targetFile: "packages/core/src/orchestration/quaternary-boundary-guards.ts",
+    find: `    return this.tertiaryGuard.computeDelegatedDecision({
+      secondaryEffectiveDecision: this.options.tertiaryEffectiveDecision,
+      requestedDelegatedDecision: requestedDecision,
+    });`,
+    replace: `    return requestedDecision;`,
+    testFiles: ["tests/core/unit/quaternary-lifecycle.test.ts"],
+    expectedFailingTestNames: ["四级决定 = 三级 ⊓ 请求（不宽于三级）"],
+    rationale:
+      "让四级权限**直接等于请求值**（不做与三级有效权限的求交）⇒ 三级可把**自己都没有的**权限授予四级，" +
+      "越权沿层级向下放大（AGENTS.md：四级权限/工具/范围/期限不得宽于三级）⇒ 该反例必须变红",
+  },
+  {
+    mutationIdentifier: "quaternary-permission-excess-delegation-accepted",
+    targetFile: "packages/core/src/orchestration/quaternary-boundary-guards.ts",
+    find: `    this.tertiaryGuard.assertDelegationAllowed({
+      secondaryEffectiveDecision: this.options.tertiaryEffectiveDecision,
+      requestedDelegatedDecision: requestedDecision,
+    });`,
+    replace: `    return;`,
+    testFiles: ["tests/core/unit/quaternary-lifecycle.test.ts"],
+    expectedFailingTestNames: ["请求宽于三级 → 拒绝分发"],
+    rationale:
+      "把'超出三级上限即拒绝分发'变成**空操作** ⇒ 越权请求不再被拒（只是被静默夹紧或放行），" +
+      "调用方无从得知自己越界 ⇒ 该反例必须变红",
   },
 ];
 

@@ -372,6 +372,17 @@ describe("完成门禁：未解决的必需操作失败不得结案", () => {
       // "判词已写进工作存档"是**两件有先后的事** —— 原来只读一次磁盘，
       // 负载下归档尚未落盘就会误红。现改为在**有界窗口内**重试读取；
       // **断言本身没有放宽**：判词最终必须出现，只是不再强求"此刻已在磁盘上"。
+      //
+      // 2026-11-08（第 101 轮）：该偶发**再次实测到**，并取得**具体现场** ——
+      // 在全量门禁紧接 39 次变异验证之后运行时，本用例耗时 **10 261 ms**
+      // （同文件其他用例 300–440 ms）⇒ **10 秒窗口被耗尽**，报
+      // 「工作存档里始终没有出现门禁判词；已读到的摘要数=1」；
+      // 隔离复跑 **3/3 通过（各约 1.8 s）**、安静机器全量门禁 **exit 0**。
+      // 故把窗口放宽到 **30 秒**。
+      // **⚠️ 这是概率手段，不是确定性手段**：归档是**进程内**异步任务
+      // （本用例 `useFeedbackProcess: false`），**没有可等待的对外信号**，
+      // 故只能加宽窗口；**不主张已消除**该偶发（详见
+      // `docs/reports/RELIABILITY_SHUTDOWN_FIX_AND_FLAKE_QUANTIFICATION_2026-11-08.md` §16）。
       const doesVerdictAppear = (summaries: string[]): boolean =>
         summaries.some(
           (summary) =>
@@ -379,7 +390,7 @@ describe("完成门禁：未解决的必需操作失败不得结案", () => {
             summary.includes("必需操作未成功执行"),
         );
       let archivedSummaries = await readArchivedSummaries(stateDirectory);
-      const verdictDeadline = Date.now() + 10_000;
+      const verdictDeadline = Date.now() + 30_000;
       while (!doesVerdictAppear(archivedSummaries) && Date.now() < verdictDeadline) {
         await new Promise((resolve) => setTimeout(resolve, 50));
         archivedSummaries = await readArchivedSummaries(stateDirectory);
