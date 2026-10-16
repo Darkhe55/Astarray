@@ -49,6 +49,10 @@
  *    ⇒ 被篡改/错序的检查点会被当成可信状态接受（**审计完整性**失守）。
  *
  * 两者本轮实测**均被拦下**（本就承重）：前者 4 个文件共 6 条用例变红，后者 1 条变红。
+ * **2026-11-08（第 101 轮）扩容：36 → 37**（全量复跑 **37/37 被拦下**）。新增
+ * `workspace-boundary-escape-accepted`（`isPathWithin` 恒真 ⇒ 包含性判定与**符号链接逃逸**判定同时失效）。
+ * **本条是"验证型"结果**：实测该守卫覆盖**非常充分** —— 一次变异使多个文件大量用例变红
+ * （`..` 逃逸、符号链接逃逸、工作区外绝对路径、TOCTOU 换链拦截…）⇒ **未发现缺口**，固化以防回归。
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -700,6 +704,34 @@ export const MUTATIONS = [
     rationale:
       "跳过'前一检查点哈希必须匹配'校验 ⇒ 被篡改/错序的检查点会被当成可信状态接受，" +
       "恢复时会按**伪造的信任链**继续（审计完整性失守）⇒ 该反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 101 轮）新增：**工作区边界**（`isPathWithin` 恒真 ⇒ 包含性判定与
+   * 符号链接逃逸判定**同时**失效）。本轮实测该守卫覆盖**非常充分**（多个文件大量用例变红），
+   * 固化以防回归 —— 它失守意味着可读写工作区**之外**的文件。
+   */
+  {
+    mutationIdentifier: "workspace-boundary-escape-accepted",
+    targetFile: "packages/core/src/tools/workspace-boundary.ts",
+    find: `  const relativePath = path.relative(workspaceRootPath, candidatePath);
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith("..") && !path.isAbsolute(relativePath))
+  );`,
+    replace: `  return true;`,
+    testFiles: [
+      "tests/core/unit/tool-registry.test.ts",
+      "tests/core/unit/protected-storage-policy.test.ts",
+      "tests/core/integration/project01-controlled-resource-io-port.test.ts",
+    ],
+    expectedFailingTestNames: [
+      "工作区内文件读取成功、逃逸被拒（WorkspaceBoundary）",
+      "符号链接逃逸被拒（WorkspaceBoundary）",
+      "读取**工作区外**的绝对路径 ⇒ 拒绝，且**没有读到内容**",
+    ],
+    rationale:
+      "让'路径是否在工作区内'恒真 ⇒ `..` 逃逸与**符号链接逃逸**同时不再被拦，工具可读写工作区之外的任意路径" +
+      "（AGENTS.md：真实路径/工作区/OS 边界必须由**本地确定性**策略执行）⇒ 上述反例必须变红",
   },
 ];
 
