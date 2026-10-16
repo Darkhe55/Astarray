@@ -169,6 +169,15 @@
  * **也可显式限定具体次级**" ⇒ 个体覆盖不得外溢）。
  * 实测被 2 条**直接点名**的用例拦下：「个体提升不传播到其他次级 Agent（隔离）」、
  * 「会话级覆盖应用于全部现有及后续次级 Agent；个体覆盖隔离」⇒ 覆盖直接，固化防回归。
+ * **2026-11-08（第 126 轮）扩容：54 → 55**（全量复跑 **55/55 被拦下**）。新增
+ * `argument-fingerprint-ignores-values`：让参数规范化**只保留键名、丢掉值**
+ * ⇒ 「同一路径、**内容不同**」也复用批准 —— **这正是 R1 修掉的历史缺陷本身**。
+ * 实测被 **7 条用例**拦下，**两个方向都有直接断言**（内容变化 ⇒ 指纹不同；**键序变化 ⇒ 指纹相同**）。
+ *
+ * **⚠️ 本轮踩到一个新坑（写进纪律）**：该变异代码里含 `${…}`，我生成条目时用了**模板字符串**
+ * ⇒ `${JSON.stringify(key)}` 在**加载时被当插值求值**（`key` 未定义）⇒ harness **崩溃**、`--only` 输出为空。
+ * **改用单引号字符串**（不插值）后正常。
+ * ⇒ **纪律：变异条目里若含 `${…}`，`find`/`replace` 必须用非插值写法（单引号串）。**
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -1330,6 +1339,78 @@ export const MUTATIONS = [
     rationale:
       "让限定到**具体个体**的会话提升恒成立 ⇒ 该提升被应用到同级**所有**次级 Agent，" +
       "个体隔离失守、越权扩散（AGENTS.md：个体覆盖只作用于该具体次级）⇒ 该反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 126 轮）新增：**参数指纹必须绑定完整规范化参数**（内容变化 ⇒ 指纹变化）。
+   *
+   * 这条就是 **R1 修掉的历史缺陷本身**：旧实现只比"工具名 + 目标路径"，
+   * 导致「同一路径、**内容不同**」也复用批准（与 S3"绑定完整参数指纹"冲突）。
+   * `permission-policy.ts` 的 `serializeCanonical` 负责**递归键序规范化**后再 sha256。
+   *
+   * 变异让规范化**只保留键名、丢掉值** ⇒ 内容变化不再改变指纹 ⇒ 批准可跨内容复用。
+   *
+   * 本轮实测被 **7 条用例**拦下，**两个方向都有直接断言**：
+   * 「② 指纹绑定**完整规范化参数**：内容变化 ⇒ 指纹不同；键序变化 ⇒ 指纹相同」、
+   * 「① 【消除缺陷】同一目标路径、**内容不同** ⇒ 必须重新询问」、「① 【R1 已修】…必须 ask-user」、
+   * 「语义等价、键序不同 → 规范化与哈希一致；值/数组顺序变化仍敏感」等。
+   *
+   * ⚠️ `testFiles` **由检索结果直接写入**（不手敲）。
+   */
+  {
+    mutationIdentifier: "argument-fingerprint-ignores-values",
+    targetFile: "packages/core/src/core/permission-policy.ts",
+    /** ⚠️ 必须用**单引号字符串**：内容含 `${…}`，写成模板串会被当插值求值（本轮实测崩溃）。 */
+    find: '    .map((key) => `${JSON.stringify(key)}:${serializeCanonical(record[key])}`)',
+    replace: '    .map((key) => `${JSON.stringify(key)}`)',
+    testFiles: [
+      "tests/core/integration/auth-scope-gate.test.ts",
+      "tests/core/integration/auth-scope-resolution.test.ts",
+      "tests/core/integration/cross-mission-isolation-regression.test.ts",
+      "tests/core/integration/diagnostic-persistent-summary.test.ts",
+      "tests/core/integration/e2e01-fixture-contract.test.ts",
+      "tests/core/integration/gui02-02-permission-ask-adjudication-safety.test.ts",
+      "tests/core/integration/instruction-window-persistence-branches.test.ts",
+      "tests/core/integration/local-preservation.test.ts",
+      "tests/core/integration/permission-authorization-hit.test.ts",
+      "tests/core/integration/read-file-view.test.ts",
+      "tests/core/integration/scope-authorization-regrant.test.ts",
+      "tests/core/integration/scope-reservation-settlement.test.ts",
+      "tests/core/integration/sum01-legacy-manifest-migration.test.ts",
+      "tests/core/integration/summary-index-publish.test.ts",
+      "tests/core/integration/task-accuracy-verifier.test.ts",
+      "tests/core/unit/agent-routing-schemas.test.ts",
+      "tests/core/unit/ar07-module-gaps-3.test.ts",
+      "tests/core/unit/b6r10-diagnostic-merge-branches.test.ts",
+      "tests/core/unit/builtins.test.ts",
+      "tests/core/unit/cache-metrics.test.ts",
+      "tests/core/unit/context-closure-schemas.test.ts",
+      "tests/core/unit/craftsman-stage-controller.test.ts",
+      "tests/core/unit/diagnostic-aggregate-branches.test.ts",
+      "tests/core/unit/evidence-verification.test.ts",
+      "tests/core/unit/gui02-01-permission-ask-decision-entry.test.ts",
+      "tests/core/unit/gui02-01-permission-ask-event.test.ts",
+      "tests/core/unit/gui02-01-permission-ask-fingerprint-gap.test.ts",
+      "tests/core/unit/gui02-01-permission-ask-request-entity.test.ts",
+      "tests/core/unit/gui02-01-r1-approval-fingerprint-reuse.test.ts",
+      "tests/core/unit/human-agent-concurrent-change.test.ts",
+      "tests/core/unit/human-worktree-observer.test.ts",
+      "tests/core/unit/merge01-instruction-merge-mapping.test.ts",
+      "tests/core/unit/permission-policy.test.ts",
+      "tests/core/unit/project-reconnaissance.test.ts",
+      "tests/core/unit/read-suppression-and-guard.test.ts",
+      "tests/core/unit/stale-write-guard.test.ts",
+      "tests/core/unit/tool-registry.test.ts",
+      "tests/core/unit/toolkit01-reauthorization-record-store.test.ts",
+      "tests/core/unit/working-set-schemas.test.ts",
+      "tests/gui/integration/gui02-02-permission-ask-registration-wiring.test.ts",
+      "tests/gui/integration/gui02-02-permission-ask-routes.test.ts",
+      "tests/tui/integration/cli-anthropic-protocol.test.ts",
+      "tests/tui/unit/permission-ask-reuse.test.ts",
+    ],
+    expectedFailingTestNames: ["指纹绑定**完整规范化参数**"],
+    rationale:
+      "让规范化后的指纹**只取决于键名、不取决于值** ⇒ 「同一路径、内容不同」也复用批准" +
+      "（**这正是 R1 修掉的历史缺陷**：与 S3「绑定完整参数指纹」冲突，用户批准被跨内容沿用）⇒ 该反例必须变红",
   },
 ];
 

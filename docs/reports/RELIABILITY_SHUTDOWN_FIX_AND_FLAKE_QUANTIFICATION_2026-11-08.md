@@ -721,3 +721,28 @@ AssertionError: 工作存档里始终没有出现门禁判词；已读到的摘�
 **该诊断已实测有效**：临时把断言的期望值改成 `blocked` 触发失败 ⇒ 输出为
 `终态应为 done。诊断输出（streamOutput）：（空 —— 说明不是「调度启动失败」那条路径）`
 （即：**下一次复现时可直接判断是否走的是 `startSchedulerSafely` 那条路径**）。
+
+## 18. `e2e01-provider-write-probe` 抖动（第 126 轮实测一次，**未复现**）
+
+**现象**：第 126 轮全量门禁在**紧接全量变异验证（55 个变异体）之后**运行时，
+`tests/core/integration/e2e01-provider-write-probe.test.ts` 的 **E2E-01-02** 两条用例失败：
+
+- 「写操作失败后任务链标记为 failed，且目标文件保持桩实现」：`expected 0 to be greater than or equal to 1`
+  （**整轮没有发出任何 Provider 请求**）；
+- 「createProjectFile 在 devolve 默认下真实写」：`expected 'running' to be 'done'`；
+- 另捕获 **1 个 unhandled error**。
+
+**排查**：
+
+1. 本轮**只改了** `scripts/verify-mutation-kills.mjs`（脚本，不在测试运行路径上），
+   且 `git status` 确认**无其它改动**；
+2. **隔离复跑 3/3 通过**（各约 2.9–3.0 s）；
+3. **安静机器全量门禁 exit 0**（443 文件 / 3303 用例）。
+
+⇒ 归因为**负载**（与 `completion-gate`／`provider-tool-loop`／`gui-verification-decision` 同族：
+**"运行尚未起步或尚未收敛"** 被断言看到）。
+**⇒ 本条继续留在抖动台账，标注"未复现、未修复"，不做"已消除"声明。**
+
+**可复现的规律（值得记下）**：到目前为止，这些抖动**都出现在"紧接大量 vitest 进程之后"**的第一次全量运行里，
+而**安静机器复跑总是通过**。这提示它更可能是**主机资源排队**而非逻辑缺陷；
+但我**没有**在受控负载下稳定复现过（本轮 6 路并行同文件也未复现），**故不下定论**。
