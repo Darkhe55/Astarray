@@ -163,6 +163,12 @@
  * **⚠️ 本轮探针工具又拦住我一次**：我先传错了行号（传的是原行本身）⇒ 新加的
  * 「**trim 后相同即拒绝运行**」守卫**当场拒绝**，我改对行号后才拿到真结论。
  * （也就是说：第 122 轮补的那条守卫，本轮立刻派上用场。）
+ * **2026-11-08（第 124 轮）扩容：53 → 54**（全量复跑 **54/54 被拦下**）。新增
+ * `elevation-individual-scope-always-applies`：把限定到**具体个体**的提升范围判定改成 `return true;`
+ * ⇒ 该提升**泄漏到同级所有次级 Agent**（`AGENTS.md`：临时提升"默认作用于会话全部次级，
+ * **也可显式限定具体次级**" ⇒ 个体覆盖不得外溢）。
+ * 实测被 2 条**直接点名**的用例拦下：「个体提升不传播到其他次级 Agent（隔离）」、
+ * 「会话级覆盖应用于全部现有及后续次级 Agent；个体覆盖隔离」⇒ 覆盖直接，固化防回归。
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -1289,6 +1295,41 @@ export const MUTATIONS = [
     rationale:
       "让提升的**到期判定永不生效** ⇒ 过期提升继续放权，用户当初的临时提升被无限期延长" +
       "（`AGENTS.md`：提升绑定**有效期**、可随时撤销）⇒ 该反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 124 轮）新增：**个体提升必须只作用于该具体次级 Agent**。
+   *
+   * `AGENTS.md`：临时提升「默认作用于该会话全部现有及后续次级 Agent，**也可显式限定具体次级**」
+   * ⇒ 限定到个体的覆盖**不得外溢**到同级其他个体。
+   *
+   * 变异把个体范围判定改成 `return true;` ⇒ 个体提升**泄漏到所有次级 Agent**（越权）。
+   *
+   * 本轮实测被 2 条用例拦下，且两条**直接点名**该性质：
+   * 「个体提升不传播到其他次级 Agent（隔离）」「会话级覆盖应用于全部现有及后续次级 Agent；个体覆盖隔离」
+   * ⇒ 覆盖直接，固化防回归。
+   *
+   * ⚠️ `testFiles` **由检索结果直接写入**（不手敲）。
+   */
+  {
+    mutationIdentifier: "elevation-individual-scope-always-applies",
+    targetFile: "packages/core/src/tools/session-permission-elevation.ts",
+    find: `          return record.scope.agentInstanceId === input.agentInstanceId;`,
+    replace: `          return true;`,
+    testFiles: [
+      "tests/core/unit/b6r10-session-shutdown-record-validity.test.ts",
+      "tests/core/unit/craftsman-disclosure.test.ts",
+      "tests/core/unit/craftsman-schemas.test.ts",
+      "tests/core/unit/craftsman-stage-controller.test.ts",
+      "tests/core/unit/elevation-effectiveness.test.ts",
+      "tests/core/unit/elevation-persistence.test.ts",
+      "tests/core/unit/main-controller-facades.test.ts",
+      "tests/core/unit/session-permission-elevation.test.ts",
+      "tests/core/unit/shutdown-and-export-gaps.test.ts",
+    ],
+    expectedFailingTestNames: ["个体提升不传播到其他次级 Agent（隔离）"],
+    rationale:
+      "让限定到**具体个体**的会话提升恒成立 ⇒ 该提升被应用到同级**所有**次级 Agent，" +
+      "个体隔离失守、越权扩散（AGENTS.md：个体覆盖只作用于该具体次级）⇒ 该反例必须变红",
   },
 ];
 
