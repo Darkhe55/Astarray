@@ -15,7 +15,7 @@
 | 本窗口（第 81–95 轮）提交 | **16 个**（见 §2）；**第 96 轮起的提交**见 `PLAN_STATUS` 各行的带日期续记 |
 | `HEAD`（**写本交接时**） | `cd083ff`（当时 `HEAD == origin/main`、`unpushed: 0`）—— 之后仍有本窗口的提交，**请看 `git log`** |
 | 全量门禁 | `npm run check` **exit 0 — 443 文件 / 3297 用例、无 FAIL** |
-| 变异验证 | `npm run verify:mutation-kills` **exit 0 — 55/55 被拦下** |
+| 变异验证 | `npm run verify:mutation-kills` **exit 0 — 56/56 被拦下** |
 | 覆盖率 | 见 §1.3（本窗口实测） |
 
 ---
@@ -156,7 +156,7 @@ ba7838f  fix(reliability): before-dispatch-crash 注入改为确定性
 | 本窗口提交 | **21 个**（自 `13c3342`，**不含**记录本节的收束提交 —— 否则口径会随本节自身变动；这正是 §8.3 教训 #9） |
 | `HEAD`（**写本节时**） | `b577c3f`（`== origin/main`、`unpushed: 0`）—— 之后请看 `git log` |
 | `npm run check` | **exit 0 — 443 文件 / 3297 用例、无 FAIL** |
-| `npm run verify:mutation-kills` | **exit 0 — 55/55 被拦下**（窗口内 **28 → 55**） |
+| `npm run verify:mutation-kills` | **exit 0 — 56/56 被拦下**（窗口内 **28 → 56**） |
 | `npm run test:coverage` | **exit 0** — 语句 **92.5** / 分支 **85.11** / 函数 **93.21** / 行 **92.55**（阈值 85 全过） |
 
 ### 8.2 交付按类型汇总（21 个提交）

@@ -178,6 +178,13 @@
  * ⇒ `${JSON.stringify(key)}` 在**加载时被当插值求值**（`key` 未定义）⇒ harness **崩溃**、`--only` 输出为空。
  * **改用单引号字符串**（不插值）后正常。
  * ⇒ **纪律：变异条目里若含 `${…}`，`find`/`replace` 必须用非插值写法（单引号串）。**
+ * **2026-11-08（第 127 轮）扩容：55 → 56**（全量复跑 **56/56 被拦下**）。新增
+ * `feedback-delivery-dedup-disabled`：去掉 `feedback-process/transport.ts` 里
+ * 「该 `idempotencyKey` 已投递过 ⇒ 只回 ack、不再触发 handler」的判定
+ * ⇒ 重复投递会**重复触发处理**（重复副作用）。
+ * 实测被 `tests/core/unit/feedback-client.test.ts` 的
+ * 「同 idempotencyKey 重复投递只调用 handler 一次并自动 ack」**直接点名**拦下。
+ * 该条目 `testFiles` 用**较宽检索**（FeedbackClient 家族 + idempotencyKey，共 33 个文件），仍来自检索输出。
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -1411,6 +1418,63 @@ export const MUTATIONS = [
     rationale:
       "让规范化后的指纹**只取决于键名、不取决于值** ⇒ 「同一路径、内容不同」也复用批准" +
       "（**这正是 R1 修掉的历史缺陷**：与 S3「绑定完整参数指纹」冲突，用户批准被跨内容沿用）⇒ 该反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 127 轮）新增：**投递按 idempotencyKey 去重**（同一客户端生命周期内）。
+   *
+   * `feedback-process/transport.ts` 的 `handleDelivery`：若该 `idempotencyKey` 已投递过，
+   * **只回 ack、不再触发 handler**。变异去掉该判定 ⇒ 重复投递会**重复触发处理**
+   *（重复副作用；`AGENTS.md`：反馈消息必须携带经 schema 校验的来源，且同一消息不得重复处理）。
+   *
+   * 本轮实测被 `tests/core/unit/feedback-client.test.ts` 的
+   * 「同 idempotencyKey 重复投递只调用 handler 一次并自动 ack」**直接点名**拦下 ⇒ 覆盖直接，固化防回归。
+   *
+   * ⚠️ `testFiles` **由检索结果直接写入**（此处用较宽检索，覆盖 FeedbackClient 家族）。
+   */
+  {
+    mutationIdentifier: "feedback-delivery-dedup-disabled",
+    targetFile: "packages/core/src/feedback-process/transport.ts",
+    find: `    if (this.deliveredIdempotencyKeys.has(message.idempotencyKey)) {`,
+    replace: `    if (false && this.deliveredIdempotencyKeys.has(message.idempotencyKey)) {`,
+    testFiles: [
+      "tests/core/integration/comm01-delivery-address-integrity.test.ts",
+      "tests/core/integration/feedback-process.test.ts",
+      "tests/core/integration/guidance-safe-point.test.ts",
+      "tests/core/integration/instruction-continuous-reception.test.ts",
+      "tests/core/integration/instruction-stop-recovery.test.ts",
+      "tests/core/integration/instruction-window-persistence-branches.test.ts",
+      "tests/core/integration/instruction-window-queue.test.ts",
+      "tests/core/integration/mcp-stdio-session.test.ts",
+      "tests/core/integration/mcp-tool-bridge.test.ts",
+      "tests/core/integration/merge01-window-intention-counting.test.ts",
+      "tests/core/integration/reliability-before-dispatch-crash.test.ts",
+      "tests/core/integration/reliability-r4-ledger-concurrency.test.ts",
+      "tests/core/integration/reliability-r4-ledger-corruption.test.ts",
+      "tests/core/integration/reliability-sdk-idempotency.test.ts",
+      "tests/core/integration/smart01-window-deadline-entry.test.ts",
+      "tests/core/unit/application-sdk-task-events.test.ts",
+      "tests/core/unit/ar07-module-gaps-6.test.ts",
+      "tests/core/unit/ar07-module-gaps-8.test.ts",
+      "tests/core/unit/craftsman-disclosure-action.test.ts",
+      "tests/core/unit/craftsman-disclosure.test.ts",
+      "tests/core/unit/craftsman-schemas.test.ts",
+      "tests/core/unit/delivery-worker.test.ts",
+      "tests/core/unit/feedback-client.test.ts",
+      "tests/core/unit/feedback-entrypoint.test.ts",
+      "tests/core/unit/feedback-supervisor.test.ts",
+      "tests/core/unit/mailbox-journal.test.ts",
+      "tests/core/unit/schemas.test.ts",
+      "tests/gui/integration/gui-csrf-browser-simulation.test.ts",
+      "tests/gui/integration/gui-server.test.ts",
+      "tests/tui/unit/cli-commands.test.ts",
+      "tests/tui/unit/run-command-gaps.test.ts",
+      "tests/tui/unit/smart01-instruction-cli-entry.test.ts",
+      "tests/tui/unit/tui-launch.test.ts",
+    ],
+    expectedFailingTestNames: ["同 idempotencyKey 重复投递只调用 handler 一次并自动 ack"],
+    rationale:
+      "去掉投递去重判定 ⇒ 同一条消息被投递两次时会**重复触发 handler**（重复副作用），" +
+      "破坏\"同一消息只处理一次\"的契约 ⇒ 该反例必须变红",
   },
 ];
 
