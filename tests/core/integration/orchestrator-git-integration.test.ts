@@ -199,6 +199,8 @@ interface BuildSchedulerOptions {
     messageText: string;
     component: string;
   }) => void;
+  /** DIAG-01（第 113 轮）：可注入的租约端口（用于确定性触发"续约失败"这条**生产可达**的使命级失败路径）。 */
+  missionLeaseStore?: unknown;
 }
 
 function buildGitIntegrationOptions(isTargetMergeAllowed: boolean): {
@@ -270,6 +272,10 @@ function buildScheduler(options: BuildSchedulerOptions): AssistScheduler {
     ...(options.missionDiagnosticEventPort === undefined
       ? {}
       : { missionDiagnosticEventPort: options.missionDiagnosticEventPort }),
+    // DIAG-01（第 113 轮）：可选租约端口（缺省 ⇒ 编排器不做租约管理，行为不变）
+    ...(options.missionLeaseStore === undefined
+      ? {}
+      : { missionLeaseStore: options.missionLeaseStore as never }),
     workerFactories: {
       runtimeFactory: (_agentInstanceId, _task): AgentRuntime => {
         // 按任务选择脚本：调用方通过 toolPort 模拟写文件，runtime 只是驱动
@@ -537,6 +543,82 @@ describe(
       escalationMessages.some((message) => message.includes("Git 集成会话启动失败")),
       "用户升级消息不得因新增上报而消失",
     ).toBe(true);
+  });
+
+  /**
+   * DIAG-01（2026-11-08，第 113 轮）：**生产可达**的使命级失败也必须进诊断。
+   *
+   * 为什么选"租约续约失败"：这一轮核实发现编排器的 6 处 catch 里，**5 处都依赖 Git 集成**
+   * （而 Git 集成整层在当前产品路径上不可达 —— 见
+   * `docs/reports/T08_GIT_INTEGRATION_PRODUCT_PATH_GAP_2026-11-08.md`），
+   * **只有租约续约失败（`renewLeaseTick`）是不依赖 Git 且生产可达的**；
+   * 而且它在**任务运行循环里被 `await`**（不必等半周期定时器）⇒ 可**确定性触发**。
+   *
+   * 断言：① 上报一条 `stage: "recovery"` 的诊断事件（带稳定错误码与组件标识、使命身份）；
+   * ② **原有保护不被削弱** —— 续约失败仍然停止调度（不静默继续执行）。
+   */
+  it("租约续约失败：必须上报使命级诊断事件（stage=recovery），且仍停止调度", async () => {
+    const missionId = "mission-lease-renewal-failure";
+    const tasks = [makeTask("task-1", "code")];
+    await makeInitialChain(missionId, tasks);
+    const escalationMessages: string[] = [];
+    const finishedStatuses: Array<"done" | "cancelled"> = [];
+    const reportedEvents: Array<{
+      missionIdentifier: string;
+      sourceAgentInstanceId: string;
+      stage: string;
+      errorCode: string;
+      messageText: string;
+      component: string;
+    }> = [];
+
+    /** 只让 `renewLease` 抛错：`tryAcquire` 正常 ⇒ 编排器会拿到租约并进入续约循环。 */
+    const failingLeaseStore = {
+      leaseTtlMilliseconds: 60_000,
+      tryAcquire: async () => ({
+        status: "acquired" as const,
+        lease: {
+          schemaVersion: 1,
+          missionId,
+          leaseRevision: 1,
+          processInstanceId: "test-lease-owner",
+          claimedAtIso: new Date().toISOString(),
+          renewsUntilIso: new Date(Date.now() + 60_000).toISOString(),
+        },
+      }),
+      renewLease: async () => {
+        throw new Error("租约续约通道故障（注入）");
+      },
+      releaseLease: async () => {},
+    };
+
+    const scheduler = buildScheduler({
+      missionId,
+      tasks,
+      script: makeWriteScript("docs/a.md", "v2-from-worker"),
+      gitIntegration: null,
+      escalationMessages,
+      finishedStatuses,
+      workArchiveStore: null,
+      missionDiagnosticEventPort: (event) => {
+        reportedEvents.push(event);
+      },
+      missionLeaseStore: failingLeaseStore,
+    });
+    void scheduler.start();
+    await waitForCondition(
+      () => reportedEvents.length > 0,
+      30_000,
+      "租约续约失败被上报为使命级诊断事件",
+    );
+
+    const recoveryEvent = reportedEvents.find((event) => event.stage === "recovery");
+    expect(recoveryEvent, "租约续约失败必须上报 stage=recovery 的诊断事件").toBeDefined();
+    expect(recoveryEvent!.errorCode, "必须带稳定错误码").toBe("mission-lease-renewal-failed");
+    expect(recoveryEvent!.missionIdentifier).toBe(missionId);
+    expect(recoveryEvent!.component).toBe("mission-lease");
+    expect(recoveryEvent!.sourceAgentInstanceId).not.toBe("");
+    expect(recoveryEvent!.messageText).toContain("租约续约通道故障");
   });
   },
   60_000,

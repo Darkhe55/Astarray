@@ -110,6 +110,23 @@ export interface OrchestratorWorkerFactories {
  * 隔离 worker 分支/worktree；Worker 完成后提交由次级集成者审查，
  * 审查通过才合并；mission 完成时运行集成测试并按门禁合入目标分支。
  */
+/**
+ * DIAG-01（2026-11-08，第 113 轮）：**使命级诊断事件**。
+ *
+ * 抽成导出类型，供 `MissionOrchestratorOptions`、`MainControllerOptions` 与装配层**共用同一份定义**
+ * —— 起因是第 113 轮接线时，编排器那处 `stage` 联合含 `"provider"` 而 `MainController` 新写的不含，
+ * 类型不匹配被 `tsc` 拦下（**这正是"两处各写一份"的典型代价**）。
+ */
+export interface MissionDiagnosticEvent {
+  missionIdentifier: string;
+  /** 具体个体（不可复用）；使命级失败通常归给发起集成的次级个体。 */
+  sourceAgentInstanceId: string;
+  stage: "git" | "provider" | "recovery" | "dispatch" | "config" | "unknown";
+  errorCode: string;
+  messageText: string;
+  component: string;
+}
+
 export interface GitIntegrationOrchestrationOptions {
   coordinator: GitIntegrationCoordinator;
   repositoryPath: string;
@@ -170,15 +187,7 @@ export interface MissionOrchestratorOptions {
    * - **不取代既有提示**：原有 `onUserEscalation(...)` 照发（反例已断言）；
    * - **缺省不采集**：未提供端口时行为**逐字不变**。
    */
-  missionDiagnosticEventPort?: (event: {
-    missionIdentifier: string;
-    /** 具体个体（不可复用）；使命级失败通常归给发起集成的次级个体。 */
-    sourceAgentInstanceId: string;
-    stage: "git" | "provider" | "recovery" | "dispatch" | "config" | "unknown";
-    errorCode: string;
-    messageText: string;
-    component: string;
-  }) => Promise<void> | void;
+  missionDiagnosticEventPort?: (event: MissionDiagnosticEvent) => Promise<void> | void;
   /**
    * GUI-02-01 片①（2026-10-11）：**权限询问**的升级回调，**额外携带发起方绝对身份**。
    *
@@ -361,6 +370,18 @@ export class MissionOrchestrator {
       this.stopDueToLostLease(
         `mission 租约续约失败（${(error as Error).message}），停止调度以保护一致性: ${this.options.missionId}`,
       );
+      /**
+       * DIAG-01（2026-11-08，第 113 轮）：**这条是生产可达的使命级失败路径**
+       * （工作循环里会 `await this.renewLeaseTick()`，不必等定时器）——
+       * 原本这里只停止调度并升级消息，诊断里同样学不到发生了什么 ⇒ 现按 `stage: "recovery"` 上报。
+       */
+      await this.reportMissionDiagnosticEvent({
+        stage: "recovery",
+        errorCode: error instanceof DomainError ? error.errorCode : null,
+        fallbackErrorCode: "mission-lease-renewal-failed",
+        component: "mission-lease",
+        error,
+      });
     }
   }
 
@@ -532,29 +553,49 @@ export class MissionOrchestrator {
       this.options.onUserEscalation(
         `Git 集成会话启动失败: ${(error as Error).message}`,
       );
-      /**
-       * DIAG-01（2026-11-08，第 105 轮）：**只加观测** —— 这里原本只升级成用户消息就吞掉错误，
-       * 于是 `stage: "git"` 在诊断里**永远没有上报方**。上报**不取代**上面的升级消息，
-       * 且观测失败**不得**影响控制流（下面的 catch 只丢弃观测）。
-       */
-      const diagnosticEventPort = this.options.missionDiagnosticEventPort;
-      if (diagnosticEventPort !== undefined) {
-        try {
-          await diagnosticEventPort({
-            missionIdentifier: this.options.missionId,
-            sourceAgentInstanceId:
-              this.options.secondaryAgentInstanceId ??
-              `scheduler:${this.options.missionId}`,
-            stage: "git",
-            errorCode:
-              error instanceof DomainError ? error.errorCode : "git-session-start-failed",
-            messageText: (error as Error).message,
-            component: "git-integration-coordinator",
-          });
-        } catch {
-          // 观测失败不得阻塞业务（与既有 sink 纪律一致）
-        }
-      }
+      await this.reportMissionDiagnosticEvent({
+        stage: "git",
+        errorCode:
+          error instanceof DomainError ? error.errorCode : "git-session-start-failed",
+        fallbackErrorCode: "git-session-start-failed",
+        component: "git-integration-coordinator",
+        error,
+      });
+    }
+  }
+
+  /**
+   * DIAG-01（2026-11-08，第 105／113 轮）：**使命级失败上报**的统一入口。
+   *
+   * ## 纪律（三处 catch 共用，避免各写一份而漂移）
+   *
+   * - **只加观测**：上报**不取代**既有的用户升级消息，也不改控制流；
+   * - **观测失败只丢弃**：`catch` 吞掉（与既有 sink 纪律一致），绝不让观测拖垮业务；
+   * - **缺省不采集**：端口未提供时**什么都不做**（行为逐字不变）。
+   */
+  private async reportMissionDiagnosticEvent(input: {
+    stage: "git" | "recovery" | "dispatch" | "config" | "unknown";
+    errorCode: string | null;
+    fallbackErrorCode: string;
+    component: string;
+    error: unknown;
+  }): Promise<void> {
+    const diagnosticEventPort = this.options.missionDiagnosticEventPort;
+    if (diagnosticEventPort === undefined) {
+      return;
+    }
+    try {
+      await diagnosticEventPort({
+        missionIdentifier: this.options.missionId,
+        sourceAgentInstanceId:
+          this.options.secondaryAgentInstanceId ?? `scheduler:${this.options.missionId}`,
+        stage: input.stage,
+        errorCode: input.errorCode ?? input.fallbackErrorCode,
+        messageText: (input.error as Error).message,
+        component: input.component,
+      });
+    } catch {
+      // 观测失败不得阻塞业务（与既有 sink 纪律一致）
     }
   }
 

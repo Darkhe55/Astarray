@@ -23,6 +23,7 @@ import { MainController } from "../orchestration/main-controller.js";
 import { PerfEventStore } from "../orchestration/perf-event-store.js";
 // OBS-01／DIAG-01（第 85 轮）：诊断事件落库（同因：此前生产里无人**写入**）
 import { DiagnosticEventStore } from "../orchestration/diagnostic-event-store.js";
+import type { MissionDiagnosticEvent } from "../orchestration/mission-orchestrator.js";
 import { MissionManager } from "../orchestration/mission-manager.js";
 import { FeedbackProcessSupervisor } from "../feedback-process/process-supervisor.js";
 import type { ForkFeedbackClient } from "../feedback-process/transport.js";
@@ -1007,6 +1008,52 @@ export async function createApplicationRuntime(
         }
       : undefined;
 
+  /**
+   * DIAG-01（2026-11-08，第 113 轮）：**使命级**诊断端口。
+   *
+   * 与上面的 `diagnosticEventPort` 同一开关（`isDiagnosticCollectionEnabled`，**缺省关**）
+   * 与同一落库（`DiagnosticEventStore`），差别只在**归属**：使命级失败没有"某个任务"可归属
+   * ⇒ `taskIdentifier` 为 `null`，`stage` 取 `git`／`recovery`／`dispatch`／`config`／`unknown`。
+   *
+   * **可达性如实标注**：`recovery`（租约续约失败）这条路径**生产可达**且有反例；
+   * `git` 这条要等 T08 Git 集成整层接通后才会在生产发生
+   * （见 `docs/reports/T08_GIT_INTEGRATION_PRODUCT_PATH_GAP_2026-11-08.md`）。
+   */
+  const missionDiagnosticEventPort =
+    options.isDiagnosticCollectionEnabled === true
+      ? async (event: MissionDiagnosticEvent): Promise<void> => {
+          try {
+            await new DiagnosticEventStore({ baseDirectory: options.stateDirectory }).append({
+              observeEventVersion: 1,
+              eventType: "diagnostic",
+              recordedAtIso: new Date().toISOString(),
+              sourceAgentInstanceId: event.sourceAgentInstanceId,
+              missionIdentifier: event.missionIdentifier,
+              /** 使命级失败不归属任何具体任务（不伪造归属）。 */
+              taskIdentifier: null,
+              requestIdentifier:
+                event.missionIdentifier +
+                "::" +
+                event.component +
+                ":" +
+                event.errorCode,
+              requestRevision: 1,
+              origin: { kind: "system" },
+              errorCode: event.errorCode,
+              stage: event.stage,
+              severity: "error",
+              component: event.component,
+              messageText: event.messageText,
+              recoveryState: "unknown",
+              classification: "deterministic-fact",
+              chain: { rootErrorCode: event.errorCode, wrapperErrorCodes: [] },
+            });
+          } catch {
+            // 观测失败不得阻塞业务
+          }
+        }
+      : undefined;
+
   const controller = new MainController({
     modeMachine,
     sessionManager,
@@ -1121,6 +1168,8 @@ export async function createApplicationRuntime(
     ...(perfSamplePort === undefined ? {} : { perfSamplePort }),
     // DIAG-01（第 85 轮）：诊断事件落库端口（开关关时 undefined ⇒ 不采集）
     ...(diagnosticEventPort === undefined ? {} : { diagnosticEventPort }),
+    // DIAG-01（第 113 轮）：**使命级**诊断端口（同一开关；缺省 undefined ⇒ 不采集）
+    ...(missionDiagnosticEventPort === undefined ? {} : { missionDiagnosticEventPort }),
     resolveToolDescriptors: (task: TaskDependencyNode): ToolDescriptor[] =>
       task.toolNames
         .map((toolName) => registry.getDescriptor(toolName))

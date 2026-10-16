@@ -30,7 +30,10 @@ import { AssistScheduler } from "./assist-scheduler.js";
 import { DevolveScheduler } from "./devolve-scheduler.js";
 import type { MissionManager } from "./mission-manager.js";
 import type { MissionLeaseStore } from "../infra/mission-lease-store.js";
-import type { GitIntegrationOrchestrationOptions } from "./mission-orchestrator.js";
+import type {
+  GitIntegrationOrchestrationOptions,
+  MissionDiagnosticEvent,
+} from "./mission-orchestrator.js";
 import type { ContextPromptProvider } from "./context-prompt-assembler.js";
 import type { GuidanceControlQueue } from "../runtime-guidance/guidance-control-queue.js";
 import type { ContextNodeLifecyclePort } from "./worker-agent.js";
@@ -171,6 +174,17 @@ export interface MainControllerOptions {
     stage: "tool" | "provider";
     severity: "error";
   }) => Promise<void> | void;
+  /**
+   * DIAG-01 采集（2026-11-08，第 113 轮）：**使命级**诊断端口（可选，缺省 ⇒ 不采集）。
+   *
+   * 与上面的 `diagnosticEventPort` 的区别：上面那个是**个体/任务级**（工具与 Provider 失败，
+   * 由工具循环上报、带 `taskIdentifier`）；本端口承接**使命级**失败
+   * （如租约续约失败、Git 集成失败 —— 它们没有"某个任务"可归属，`taskIdentifier` 为 `null`）。
+   *
+   * `DiagnosticEvent.stage` 的联合类型里早有 `git`／`recovery`／`dispatch`／`config`，
+   * 但**此前只有 `tool`／`provider` 有上报方**。缺省不提供 ⇒ 行为逐字不变。
+   */
+  missionDiagnosticEventPort?: (event: MissionDiagnosticEvent) => Promise<void> | void;
   /** 流式输出到 UI 的回调。 */
   streamOutput: (missionId: string | null, text: string) => void;
   /**
@@ -839,6 +853,10 @@ export class MainController {
         `scheduler:${missionId}`,
       gitIntegration: this.options.gitIntegration ?? null,
       requireCompletionControlEvent: this.options.requireCompletionControlEvent ?? false,
+      // DIAG-01 采集（第 113 轮接线）：使命级诊断端口，缺省 ⇒ 不采集
+      ...(this.options.missionDiagnosticEventPort === undefined
+        ? {}
+        : { missionDiagnosticEventPort: this.options.missionDiagnosticEventPort }),
       ...(this.options.artifactWorkspaceRootPath === undefined
         ? {}
         : { artifactWorkspaceRootPath: this.options.artifactWorkspaceRootPath }),
@@ -916,6 +934,10 @@ export class MainController {
         `scheduler:${missionId}`,
       gitIntegration: this.options.gitIntegration ?? null,
       requireCompletionControlEvent: this.options.requireCompletionControlEvent ?? false,
+      // DIAG-01 采集（第 113 轮接线）：使命级诊断端口，缺省 ⇒ 不采集
+      ...(this.options.missionDiagnosticEventPort === undefined
+        ? {}
+        : { missionDiagnosticEventPort: this.options.missionDiagnosticEventPort }),
       ...(this.options.artifactWorkspaceRootPath === undefined
         ? {}
         : { artifactWorkspaceRootPath: this.options.artifactWorkspaceRootPath }),
