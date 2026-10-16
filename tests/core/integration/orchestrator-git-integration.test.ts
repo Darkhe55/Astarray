@@ -187,6 +187,18 @@ interface BuildSchedulerOptions {
   escalationMessages: string[];
   finishedStatuses: Array<"done" | "cancelled">;
   workArchiveStore: AgentWorkArchiveStore | null;
+  /**
+   * DIAG-01（2026-11-08，第 105 轮）：**使命级诊断事件端口**（可选）。
+   * 用于验证"Git 集成失败会被上报为诊断事件"，而不是只升级成用户消息后被吞掉。
+   */
+  missionDiagnosticEventPort?: (event: {
+    missionIdentifier: string;
+    sourceAgentInstanceId: string;
+    stage: string;
+    errorCode: string;
+    messageText: string;
+    component: string;
+  }) => void;
 }
 
 function buildGitIntegrationOptions(isTargetMergeAllowed: boolean): {
@@ -254,6 +266,10 @@ function buildScheduler(options: BuildSchedulerOptions): AssistScheduler {
     secondaryAgentInstanceId: `scheduler:${options.missionId}:instance`,
     gitIntegration: options.gitIntegration,
     workArchiveStore: options.workArchiveStore,
+    // DIAG-01（第 105 轮）：把使命级诊断端口透传给编排器（缺省 ⇒ 不采集）
+    ...(options.missionDiagnosticEventPort === undefined
+      ? {}
+      : { missionDiagnosticEventPort: options.missionDiagnosticEventPort }),
     workerFactories: {
       runtimeFactory: (_agentInstanceId, _task): AgentRuntime => {
         // 按任务选择脚本：调用方通过 toolPort 模拟写文件，runtime 只是驱动
@@ -452,6 +468,75 @@ describe(
       "worktree 分配失败 escalation",
     );
     expect(finishedStatuses).toEqual([]);
+  });
+
+  /**
+   * DIAG-01（2026-11-08，第 105 轮）：**Git 集成失败必须被上报为诊断事件**。
+   *
+   * 缺口：`ensureGitIntegrationSession()` 的 catch 只 `onUserEscalation(...)` 就把错误**吞掉了**
+   * ⇒ 诊断存储永远学不到"这次使命的 Git 集成会话没起来"
+   * （`DiagnosticEvent.stage` 类型里早有 `"git"`，但**此前没有任何上报方**）。
+   *
+   * 本反例用**真实抛错的 coordinator**（`Object.create` 保留原型上的其余方法）驱动该 catch，断言：
+   * ① 上报一条 `stage: "git"` 的诊断事件（带稳定错误码与使命身份）；
+   * ② **原有行为不变** —— 用户升级消息仍照发。
+   */
+  it("Git 集成会话启动失败：必须上报诊断事件，且用户升级消息照旧", async () => {
+    const missionId = "mission-git-session-failure";
+    const tasks = [makeTask("task-1", "code")];
+    await makeInitialChain(missionId, tasks);
+    const escalationMessages: string[] = [];
+    const finishedStatuses: Array<"done" | "cancelled"> = [];
+    const reportedEvents: Array<{
+      missionIdentifier: string;
+      sourceAgentInstanceId: string;
+      stage: string;
+      errorCode: string;
+      messageText: string;
+      component: string;
+    }> = [];
+    const gitIntegration = buildGitIntegrationOptions(true);
+    /** 只覆盖 `startIntegrationSession`（其余方法经原型保留）⇒ 该 catch 会被真实触发。 */
+    const failingCoordinator = Object.create(gitIntegration.coordinator) as {
+      startIntegrationSession: () => Promise<never>;
+    };
+    failingCoordinator.startIntegrationSession = async () => {
+      throw new Error("不是 git 仓库");
+    };
+
+    const scheduler = buildScheduler({
+      missionId,
+      tasks,
+      script: makeWriteScript("docs/a.md", "v2-from-worker"),
+      gitIntegration: {
+        ...gitIntegration,
+        coordinator: failingCoordinator as never,
+      },
+      escalationMessages,
+      finishedStatuses,
+      workArchiveStore: null,
+      missionDiagnosticEventPort: (event) => {
+        reportedEvents.push(event);
+      },
+    });
+    void scheduler.start();
+    await waitForCondition(
+      () => reportedEvents.length > 0,
+      30_000,
+      "Git 集成失败被上报为诊断事件",
+    );
+
+    const gitEvent = reportedEvents.find((event) => event.stage === "git");
+    expect(gitEvent, "Git 集成失败必须上报 stage=git 的诊断事件").toBeDefined();
+    expect(gitEvent!.errorCode, "必须带稳定错误码").not.toBe("");
+    expect(gitEvent!.missionIdentifier, "必须带使命身份（可追溯）").toBe(missionId);
+    expect(gitEvent!.sourceAgentInstanceId).not.toBe("");
+    expect(gitEvent!.component).toContain("git");
+    // 原有行为不变：用户升级消息照发（上报**不得**取代既有提示）
+    expect(
+      escalationMessages.some((message) => message.includes("Git 集成会话启动失败")),
+      "用户升级消息不得因新增上报而消失",
+    ).toBe(true);
   });
   },
   60_000,

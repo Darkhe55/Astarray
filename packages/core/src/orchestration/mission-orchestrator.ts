@@ -155,6 +155,31 @@ export interface MissionOrchestratorOptions {
   /** 无法由调度层裁决、需要用户输入时回调（ambiguity / 裁决指令无法解析）。 */
   onUserEscalation: (message: string) => void;
   /**
+   * DIAG-01（2026-11-08，第 105 轮）：**使命级诊断事件端口**（可选，缺省 ⇒ 不采集）。
+   *
+   * ## 为什么需要它
+   *
+   * `DiagnosticEvent.stage` 的联合类型里早有 `"git"`／`"recovery"`／`"dispatch"`／`"config"`，
+   * 但**此前只有 `tool`／`provider` 两个 stage 有上报方**（工具循环那两处）。
+   * 使命级的失败（例如 `ensureGitIntegrationSession()` 的 catch）**只升级成用户消息就吞掉了**
+   * ⇒ 诊断存储永远学不到"这次使命的 Git 集成会话没起来"。
+   *
+   * ## 纪律
+   *
+   * - **只加观测，不改控制流**：上报失败只丢弃观测，**不得**影响既有升级/降级行为；
+   * - **不取代既有提示**：原有 `onUserEscalation(...)` 照发（反例已断言）；
+   * - **缺省不采集**：未提供端口时行为**逐字不变**。
+   */
+  missionDiagnosticEventPort?: (event: {
+    missionIdentifier: string;
+    /** 具体个体（不可复用）；使命级失败通常归给发起集成的次级个体。 */
+    sourceAgentInstanceId: string;
+    stage: "git" | "provider" | "recovery" | "dispatch" | "config" | "unknown";
+    errorCode: string;
+    messageText: string;
+    component: string;
+  }) => Promise<void> | void;
+  /**
    * GUI-02-01 片①（2026-10-11）：**权限询问**的升级回调，**额外携带发起方绝对身份**。
    *
    * 为什么需要它：`PermissionAskRequestStore` 按
@@ -507,6 +532,29 @@ export class MissionOrchestrator {
       this.options.onUserEscalation(
         `Git 集成会话启动失败: ${(error as Error).message}`,
       );
+      /**
+       * DIAG-01（2026-11-08，第 105 轮）：**只加观测** —— 这里原本只升级成用户消息就吞掉错误，
+       * 于是 `stage: "git"` 在诊断里**永远没有上报方**。上报**不取代**上面的升级消息，
+       * 且观测失败**不得**影响控制流（下面的 catch 只丢弃观测）。
+       */
+      const diagnosticEventPort = this.options.missionDiagnosticEventPort;
+      if (diagnosticEventPort !== undefined) {
+        try {
+          await diagnosticEventPort({
+            missionIdentifier: this.options.missionId,
+            sourceAgentInstanceId:
+              this.options.secondaryAgentInstanceId ??
+              `scheduler:${this.options.missionId}`,
+            stage: "git",
+            errorCode:
+              error instanceof DomainError ? error.errorCode : "git-session-start-failed",
+            messageText: (error as Error).message,
+            component: "git-integration-coordinator",
+          });
+        } catch {
+          // 观测失败不得阻塞业务（与既有 sink 纪律一致）
+        }
+      }
     }
   }
 
