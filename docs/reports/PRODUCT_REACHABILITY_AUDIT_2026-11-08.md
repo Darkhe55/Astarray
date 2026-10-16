@@ -196,3 +196,22 @@
 > （`requeue|reschedule|retryTask|retryCount` 在 `packages/core/src/orchestration` **零命中**）。
 > 该订正**加强**了 G5 的结论：早停时任务**既不续跑也不重试**，只能停在拒绝结案。
 
+## 8. 第 111 轮：口径缺口 #5（**动态导入的成员调用构造**被漏掉）与一处已排除的假阳性
+
+**缺口 #5**：生产里存在两种构造写法 ——
+
+```ts
+const { X } = await import("…"); const instance = new X(…);   // ① 能被 `new X(` 命中
+const instance = (await import("…")).X(…);                    // ② **命中不了** ⇒ 被误判"零构造"
+```
+
+**实测例子**：`TaskSequenceManageController` 被脚本列为"零构造"候选，但它在
+`packages/core/src/application/application-runtime.ts` L497 是以 ② 的形式**真实构造**的
+⇒ **假阳性**（我的口径漏报）。
+
+**处置**：脚本新增**「成员调用」信号列**（统计 `.X(`），**只作为提示、不直接排除** ——
+因为 `.X(` 也可能是**静态方法调用**而非构造，直接排除会造成**漏报**（比误报更危险）。
+现在 `TaskSequenceManageController` 在该列显示 **1**，一眼可辨。
+
+**⚠️ 教训**：这是本勘测的**第 5 个口径缺口**（前四个：排除定义文件、按类名统计提及、
+后缀白名单太窄、PowerShell 版 import 检查不可靠）。**每个候选都必须人工抽查**，脚本只用于**缩小范围**。

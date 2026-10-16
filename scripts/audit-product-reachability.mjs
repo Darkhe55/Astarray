@@ -110,6 +110,17 @@ for (const { name, definedIn } of classes) {
     const matches = entry.text.match(new RegExp("new\\s+" + name + "\\s*\\(", "g"));
     return total + (matches === null ? 0 : matches.length);
   }, 0);
+  /**
+   * **口径缺口 #5（2026-11-08，第 111 轮）**：生产里存在
+   * `const { X } = await import("…"); new X(` 与 **`(await import("…")).X(`** 两种写法，
+   * 前者能被 `new X(` 命中，**后者不能** ⇒ 会被误判为"零构造"（实测 `TaskSequenceManageController` 即此例）。
+   * 这里**单独统计"成员调用"信号**（`.X(`），把它作为**降级候选**的提示列，而不是直接排除
+   * —— 因为 `.X(` 也可能是**静态方法调用**而非构造，直接排除会造成**漏报**（比误报更危险）。
+   */
+  const memberCallCount = productionEntries.reduce((total, entry) => {
+    const matches = entry.text.match(new RegExp("\\.\\s*" + name + "\\s*\\(", "g"));
+    return total + (matches === null ? 0 : matches.length);
+  }, 0);
   if (constructionCount > 0) continue;
 
   /** 按**模块路径**统计生产提及（不含定义文件自身）。 */
@@ -137,6 +148,7 @@ for (const { name, definedIn } of classes) {
     productionMentionCount: mentionCount,
     testConstructionCount,
     isMentionedByPublicSdk,
+    memberCallCount,
   });
 }
 
@@ -149,7 +161,7 @@ candidates.sort((left, right) => {
 
 console.log("候选数 = " + String(candidates.length) + "（按「生产提及」升序；提及为 0 者最可疑）");
 console.log(
-  "  " + "名称".padEnd(42) + "生产提及  测试构造  门面提及  定义文件",
+  "  " + "名称".padEnd(42) + "生产提及  测试构造  门面提及  成员调用  定义文件",
 );
 for (const candidate of candidates) {
   console.log(
@@ -159,6 +171,7 @@ for (const candidate of candidates) {
       String(candidate.testConstructionCount).padStart(10) +
       "  " +
       (candidate.isMentionedByPublicSdk ? "是" : "否").padEnd(8) +
+      String(candidate.memberCallCount).padStart(8) +
       "  " +
       candidate.definedIn.replace("packages/core/src/", ""),
   );
