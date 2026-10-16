@@ -130,6 +130,19 @@
  * `expect(memoryB?.observations[0]?.sourceAgentInstanceId).toBe("tertiary-a")`
  * （注释原文「B 的观察保留原始来源与附件哈希」）⇒ 覆盖**直接且正确**。
  * 另注：该条目的 `testFiles` **由检索结果直接写入**（不手敲）。
+ * **2026-11-08（第 121 轮）扩容：49 → 51**（全量复跑 **51/51 被拦下**）。新增两条都在
+ * `scope-resolution.ts`（范围解析）：
+ *  - `scope-dedicated-flow-relaxed`：专用流程（远端发布／备份删除）由 `ask-user` 放宽为 `allow`
+ *    ⇒ 本模块替专用授权门放行（文件头明写「专用流程**不被本模块放宽**」）。
+ *    实测被 `auth-scope-resolution.test.ts` 拦下 —— 该文件里是**直接断言**
+ *    （放权 + 配置 allow 下 `S7-special-flow` 必须得到 `{ask-user, dedicated-flow}`）。
+ *  - `scope-installation-switch-bypassed`：S5 安装类的「开关关闭 ⇒ 拒绝」永不触发。
+ *    实测被 3 条用例拦下，含**直接点名**的「安装类：开关关闭一律拒绝（协同/放权相同）」。
+ *
+ * **⚠️ 本轮又被本脚本自己拦下一次（这次是"设计生效"）**：第二条的锚点
+ * `if (!input.isInstallationEnabled) {` 在文件里**命中 2 次**（S5 与 S1+安装两条分支同形），
+ * 脚本按"**恰好 1 次**"的规则**拒绝执行并报脚本错误**，而不是静默跳过 ⇒ 我随后把锚点
+ * 扩成带 S5 分支头的**唯一片段**。**教训：锚点必须唯一，且脚本必须对重复命中报错。**
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -1120,6 +1133,78 @@ export const MUTATIONS = [
     rationale:
       "把观察的来源记成**接收方自己** ⇒ 去除来源、**冒充自身记忆**（比「记错来源」更严重：" +
       "接受方会把他人条目当成自己的经验，跨 Agent 归属与附件哈希都失去意义）⇒ 该反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 121 轮）新增：**专用流程不得被范围解析放宽**。
+   *
+   * `scope-resolution.ts` 文件头明写「deny 一律优先；安装类必须有独立开关；
+   * **专用流程（远端发布/备份删除）不被本模块放宽**」——`S7-special-flow` 必须恒为 `ask-user`。
+   *
+   * 本轮实测被 `tests/core/integration/auth-scope-resolution.test.ts` 拦下，且该文件里是**直接断言**：
+   * 放权模式 + `configuredDecision: "allow"` 下 `S7-special-flow` 必须得到
+   * `{decision: "ask-user", adjudicator: "dedicated-flow"}`（位于「矩阵」用例内）。
+   *
+   * ⚠️ `testFiles` **由检索结果直接写入**（不手敲）。
+   */
+  {
+    mutationIdentifier: "scope-dedicated-flow-relaxed",
+    targetFile: "packages/core/src/tools/scope-resolution.ts",
+    find: `      decision: "ask-user",\n      adjudicator: "dedicated-flow",`,
+    replace: `      decision: "allow",\n      adjudicator: "dedicated-flow",`,
+    testFiles: [
+      "tests/core/integration/auth-scope-install-routing.test.ts",
+      "tests/core/integration/auth-scope-resolution.test.ts",
+      "tests/core/integration/scope-tool-mapping.test.ts",
+      "tests/core/unit/gui02-02-installation-gate-guard-branches.test.ts",
+      "tests/core/unit/gui02-02-installation-gate-interface-port.test.ts",
+      "tests/core/unit/gui02-02-installation-inquiry-registry.test.ts",
+      "tests/gui/integration/gui02-02-installation-not-bypassable.test.ts",
+      "tests/gui/integration/gui02-02-permission-ask-ui-constraints.test.ts",
+    ],
+    expectedFailingTestNames: ["矩阵：协同项目内上级批准、项目外/未知人工、放权未知上级、思索只读"],
+    rationale:
+      "把专用流程（远端发布／备份删除这类独立授权门）的裁决由 `ask-user` 放宽为 `allow` ⇒ " +
+      "本模块**替专用流程放行**、绕开那套逐次授权 ⇒ 该反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 121 轮）新增：**安装类操作必须受独立开关约束**（开关关闭一律拒绝）。
+   *
+   * `AGENTS.md`：安装/外部软件操作必须先由本地控制面判定实际作用范围；
+   * 「**开关不得代替授权**，不得使用会话记忆、Agent 推断或批量许可放行」。
+   *
+   * 本轮实测被 3 条用例拦下，其中 `tests/core/integration/auth-scope-resolution.test.ts` 的
+   * 「安装类：开关关闭一律拒绝（协同/放权相同）」是**直接点名**该行为的用例。
+   *
+   * ⚠️ `testFiles` **由检索结果直接写入**（不手敲）。
+   */
+  {
+    mutationIdentifier: "scope-installation-switch-bypassed",
+    targetFile: "packages/core/src/tools/scope-resolution.ts",
+    /** ⚠️ 锚点必须**唯一**：`if (!input.isInstallationEnabled)` 在文件里出现**两次**
+     *（S5 安装类与 S1+安装操作两条分支同形）⇒ 带上 S5 分支头一起匹配。 */
+    find: `  if (input.scopeClass === "S5-installation") {\n    if (!input.isInstallationEnabled) {`,
+    replace: `  if (input.scopeClass === "S5-installation") {\n    if (false && !input.isInstallationEnabled) {`,
+    testFiles: [
+      "tests/core/integration/auth-scope-gate.test.ts",
+      "tests/core/integration/auth-scope-install-routing.test.ts",
+      "tests/core/integration/auth-scope-resolution.test.ts",
+      "tests/core/integration/permission-refusal-side-effect.test.ts",
+      "tests/core/integration/reliability-fault-injection-reservation.test.ts",
+      "tests/core/integration/scope-authorization-regrant.test.ts",
+      "tests/core/integration/scope-consumption-semantics.test.ts",
+      "tests/core/integration/scope-reservation-settlement.test.ts",
+      "tests/core/integration/scope-tool-mapping.test.ts",
+      "tests/core/unit/ar07-module-gaps-5.test.ts",
+      "tests/core/unit/assist-installation-gate.test.ts",
+      "tests/core/unit/gui02-02-installation-gate-guard-branches.test.ts",
+      "tests/core/unit/gui02-02-installation-gate-interface-port.test.ts",
+      "tests/core/unit/installation-gate-execution.test.ts",
+      "tests/gui/integration/gui02-02-installation-not-bypassable.test.ts",
+    ],
+    expectedFailingTestNames: ["安装类：开关关闭一律拒绝（协同/放权相同）"],
+    rationale:
+      "让 S5 安装类的「独立安装开关关闭 ⇒ 拒绝」永不触发 ⇒ 安装开关形同虚设、" +
+      "**开关之外再无门禁**（`AGENTS.md` 明令开关不得被替代、不得被绕过）⇒ 该反例必须变红",
   },
 ];
 
