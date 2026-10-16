@@ -122,6 +122,14 @@
  * 「② 转达**保留原始来源、转达者与任务关联**，且**显式标注为转达**（不冒充原创）」拦下 ⇒ 覆盖确证。
  * 该条目只有 **1 个**测试文件 —— 已另行核实**不是漏覆盖**：该模块的导出函数
  * `routeCollaborationViaUniqueParent` 恰好只被这 **1 个**测试文件引用（其余两个导出是类型）。
+ * **2026-11-08（第 120 轮）扩容：48 → 49**（全量复跑 **49/49 被拦下**）。新增
+ * `memory-observation-source-replaced-by-owner`：把个体记忆观察的 `sourceAgentInstanceId`
+ * 记成**接收方自己** ⇒ 等于「**去除来源、冒充自身记忆**」（该文件注释明令禁止）。
+ * 实测被 `tests/core/unit/agent-lifecycle-and-memory.test.ts` 的
+ * 「两个同级 Agent 相同任务文本下记忆完全隔离」拦下，且该用例是**直接断言**：
+ * `expect(memoryB?.observations[0]?.sourceAgentInstanceId).toBe("tertiary-a")`
+ * （注释原文「B 的观察保留原始来源与附件哈希」）⇒ 覆盖**直接且正确**。
+ * 另注：该条目的 `testFiles` **由检索结果直接写入**（不手敲）。
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -1063,6 +1071,55 @@ export const MUTATIONS = [
     rationale:
       "把转达请求里的 `originalSourceAgentInstanceId` 记成**转达者（直属上级）**⇒ " +
       "原始来源被顶替、转达冒充原创（`core/types.ts` 明令禁止）⇒ 该反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 120 轮）新增：**个体记忆追加观察必须保留原始来源**
+   * （`agent-individual-memory.ts`：「接收方保留原始来源与附件哈希；**不得去除来源冒充自身记忆**」；
+   * `AGENTS.md`：跨 Agent 仅可经本地控制器显式选择条目，附件只用于当前任务且**不得自动并入接收方长期记忆**）。
+   *
+   * 变异把观察的 `sourceAgentInstanceId` 记成**接收方自己**（等于"去除来源冒充自身记忆"）。
+   * 本轮实测被 `tests/core/unit/agent-lifecycle-and-memory.test.ts` 的
+   * 「两个同级 Agent 相同任务文本下记忆完全隔离」拦下 —— 且该用例是**直接断言**：
+   * `expect(memoryB?.observations[0]?.sourceAgentInstanceId).toBe("tertiary-a")`
+   * （注释原文「B 的观察保留原始来源与附件哈希」）⇒ 覆盖**直接且正确**，固化防回归。
+   *
+   * ⚠️ 该条目的 `testFiles` **由检索结果直接写入**（不手敲）。
+   */
+  {
+    mutationIdentifier: "memory-observation-source-replaced-by-owner",
+    targetFile: "packages/core/src/orchestration/agent-individual-memory.ts",
+    find: `            sourceAgentInstanceId: input.sourceAgentInstanceId,`,
+    replace: `            sourceAgentInstanceId: input.runtimeAgentInstanceId,`,
+    testFiles: [
+      "tests/architecture/destructive-file-api-guard.test.ts",
+      "tests/core/integration/anthropic-messages-runtime.test.ts",
+      "tests/core/integration/diagnostic-persistent-summary.test.ts",
+      "tests/core/integration/diagnostic-readonly-query.test.ts",
+      "tests/core/integration/obs01-diag-production-collection.test.ts",
+      "tests/core/integration/obs01-perf-production-collection.test.ts",
+      "tests/core/integration/orchestration-wiring.test.ts",
+      "tests/core/integration/orchestrator-git-integration.test.ts",
+      "tests/core/integration/perf-overview-command.test.ts",
+      "tests/core/integration/perf-persistent-aggregation.test.ts",
+      "tests/core/integration/provider-request-usage-capture.test.ts",
+      "tests/core/integration/usage-ledger-persistence.test.ts",
+      "tests/core/integration/usage-overview-query.test.ts",
+      "tests/core/unit/agent-lifecycle-and-memory.test.ts",
+      "tests/core/unit/b6r10-diagnostic-merge-branches.test.ts",
+      "tests/core/unit/craftsman-schemas.test.ts",
+      "tests/core/unit/craftsman-workflow-lifecycle.test.ts",
+      "tests/core/unit/diagnostic-aggregate-branches.test.ts",
+      "tests/core/unit/main-controller-facades.test.ts",
+      "tests/core/unit/memory-and-report-security.test.ts",
+      "tests/core/unit/memory-read-gaps.test.ts",
+      "tests/gui/integration/gui-observability-overview.test.ts",
+      "tests/tui/unit/doctor-errors-command-branches.test.ts",
+      "tests/tui/unit/usage-overview-command-branches.test.ts",
+    ],
+    expectedFailingTestNames: ["两个同级 Agent 相同任务文本下记忆完全隔离"],
+    rationale:
+      "把观察的来源记成**接收方自己** ⇒ 去除来源、**冒充自身记忆**（比「记错来源」更严重：" +
+      "接受方会把他人条目当成自己的经验，跨 Agent 归属与附件哈希都失去意义）⇒ 该反例必须变红",
   },
 ];
 
