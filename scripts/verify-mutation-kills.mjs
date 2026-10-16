@@ -58,6 +58,13 @@
  * —— **四级委派权限不得宽于三级**（AGENTS.md／ADR-0025 §5）。
  * 「**求交**（四级决定 = 三级 ⊓ 请求）」与「**超出即拒绝分发**」是**两种不同行为**，故各锁一条。
  * 本轮实测两条**均被拦下**（`quaternary-lifecycle.test.ts` 对应用例变红）⇒ **无缺口**。
+ * **2026-11-08（第 102 轮）扩容：39 → 40**（全量复跑 **40/40 被拦下**）。
+ * **本轮探针先"存活"、补完反例后才被拦下** —— 这是本文件的价值所在：
+ * 把 `parameter-authorization.ts` 的 `doesRuleMatch` 里「无 `match` 一律匹配」与
+ * 「参数不可解析返回 false」**两块顺序对调**后，**12 个相关文件 / 102 条用例全部照旧通过**
+ * ⇒ 「**仅按 action 的规则 + 参数不可解析**」此前**没有任何断言**（且文件里两处表述互相矛盾）。
+ * 已补反例 ⑨（钉住"仅按 action 的规则**不依赖参数文本**" + 依赖参数的规则**不可解析即回退基线**），
+ * 并把该变异固化 ⇒ 现在 40/40 全被拦下。
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -769,6 +776,37 @@ export const MUTATIONS = [
     rationale:
       "把'超出三级上限即拒绝分发'变成**空操作** ⇒ 越权请求不再被拒（只是被静默夹紧或放行），" +
       "调用方无从得知自己越界 ⇒ 该反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 102 轮）新增。由来：**本轮探针一次存活** ——
+   * 把 `doesRuleMatch` 里「无 `match` 一律匹配」与「参数不可解析返回 false」两块**顺序对调**后，
+   * **12 个相关文件 / 102 条用例全部照旧通过** ⇒ 该情形**此前无任何断言**；
+   * 而文件自身两处表述在此情形下互相矛盾（L86-88「一律匹配」 vs L120「不套用任何规则」）。
+   * 已补反例 ⑨（钉住"**仅按 action 的规则不依赖参数文本**"），并把本变异固化。
+   */
+  {
+    mutationIdentifier: "merge01-unparseable-parameters-change-action-only-decision",
+    targetFile: "packages/core/src/tools/parameter-authorization.ts",
+    find: `  if (rule.match === undefined) {
+    // 无 match：该 action 一律匹配（仍是显式的 action 绑定，不是通配）。
+    return true;
+  }
+  if (parsedArguments === null) {
+    return false;
+  }`,
+    replace: `  if (parsedArguments === null) {
+    return false;
+  }
+  if (rule.match === undefined) {
+    // 无 match：该 action 一律匹配（仍是显式的 action 绑定，不是通配）。
+    return true;
+  }`,
+    testFiles: ["tests/core/unit/merge01-parameter-authorization.test.ts"],
+    expectedFailingTestNames: ["仅按 action 的规则**不依赖参数文本**"],
+    rationale:
+      "对调两块后，**仅按 action 的规则**（不读参数）的判定会被'参数是否可解析'改变 ⇒ " +
+      "**调用方可控的文本**（把 JSON 弄坏）就能翻转授权结果，凭空多出一个攻击面；" +
+      "同时与文件自身「不可解析时不套用任何规则」的契约冲突 ⇒ 该反例必须变红",
   },
 ];
 

@@ -278,4 +278,69 @@ describe("MERGE-01：参数级规则在权限引擎裁决中生效", () => {
       await fs.rm(baseDirectory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     }
   });
+
+  /**
+   * MERGE-01 §1.2：「**认识不到的参数拒绝**」；文件自身的注释也写着
+   * 「解析完整规范化参数；不可解析时返回 null（**调用方据此不套用任何规则**）」。
+   *
+   * ## 2026-11-08（第 102 轮）变异探针发现的**未受测情形**
+   *
+   * 把 `doesRuleMatch` 里「`rule.match === undefined` 短路」与「`parsedArguments === null` 返回 false」
+   * **两块的顺序对调**后，**12 个相关文件 / 102 条用例全部照旧通过** ⇒
+   * 「**仅按 action 的规则（无 `match`）+ 参数不可解析**」这一情形**没有任何断言**。
+   * 而该文件里两处表述在此情形下**互相矛盾**（L86-88「该 action 一律匹配」 vs L120「不套用任何规则」）。
+   *
+   * ## 本条钉住的语义（并说明为什么这样钉）
+   *
+   * 1. **仅按 action 的规则不依赖参数文本** ⇒ 参数合法与**不可解析**必须**同判**：
+   *    这类规则根本不读参数，若让"参数不可解析"改变其判定，等于让**调用方可控的文本**影响授权结果
+   *    （无意义的攻击面）。⇒ 两条断言必须一致。
+   * 2. **依赖参数的规则**在参数不可解析时**必须回退基线**（fail-closed，与用例 ⑧ 同向）。
+   *
+   * **⚠️ 边界（如实写）**：若卡的所有者认为「不可解析 ⇒ 连 action-only 规则也不得套用」（更保守），
+   * 那么**代码与本条应一起改**（把 `parsedArguments === null` 的判断提到前面）——
+   * 本条钉的是"**不依赖参数文本**"这一性质，而不是"哪种更保守"。
+   */
+  it("⑨ 仅按 action 的规则**不依赖参数文本**；依赖参数的规则在参数不可解析时回退基线", () => {
+    // ① 仅按 action 的规则（无 match）：合法参数与不可解析参数**必须同判**
+    const actionOnlyWithValidArguments = evaluateParameterAuthorization({
+      toolName: FILE_TOOL,
+      action: "create",
+      argumentsJson: JSON.stringify({ filePath: "docs/a.md", mode: "append" }),
+      baselineDecision: "ask",
+      settings: enabledSettings,
+      rules: [rule({ decision: "allow" })],
+    });
+    expect(actionOnlyWithValidArguments.decision).toBe("allow");
+
+    const actionOnlyWithUnparseableArguments = evaluateParameterAuthorization({
+      toolName: FILE_TOOL,
+      action: "create",
+      // **不是合法 JSON**：调用方（或篡改者）可控的文本
+      argumentsJson: "{not-json",
+      baselineDecision: "ask",
+      settings: enabledSettings,
+      rules: [rule({ decision: "allow" })],
+    });
+    expect(
+      actionOnlyWithUnparseableArguments.decision,
+      "仅按 action 的规则不读参数 ⇒ 参数不可解析不得改变其判定（不得让参数文本影响授权结果）",
+    ).toBe(actionOnlyWithValidArguments.decision);
+
+    // ② 依赖参数的规则：参数不可解析 ⇒ **回退基线**（fail-closed）
+    const parameterDependentWithUnparseableArguments = evaluateParameterAuthorization({
+      toolName: FILE_TOOL,
+      action: "create",
+      argumentsJson: "{not-json",
+      baselineDecision: "ask",
+      settings: enabledSettings,
+      rules: [
+        rule({ decision: "allow", match: { kind: "fixed-value", field: "mode", value: "append" } }),
+      ],
+    });
+    expect(
+      parameterDependentWithUnparseableArguments.decision,
+      "依赖参数的规则在参数不可解析时必须回退基线（不得凭不可解析的参数放行）",
+    ).toBe("ask");
+  });
 });
