@@ -185,6 +185,38 @@ describe("feedbackMessageSchema", () => {
     expect(feedbackMessageSchema.safeParse(message).success).toBe(true);
   });
 
+  /**
+   * `AGENTS.md`：每条反馈消息必须携带**经过 schema 校验**的信息来源；
+   * **Agent 来源必须具体到不可复用的 `agentInstanceId`**，转发时保留原始来源。
+   *
+   * ## 2026-11-08（第 118 轮）变异探针：该要求此前**无人守**
+   *
+   * 把 agent 分支的 `agentInstanceId` 由 `z.string().min(1)` 放宽为 `z.string()`（**允许空串**）后，
+   * **由检索结果直接喂入的 12 个相关文件 / 150 条用例全部照旧通过** ⇒
+   * 「来源必须**具体到某个个体**」这条规则**没有任何断言**（本会话第 3 个"存活"探针、
+   * 也是本窗口第 1 个**真缺口**）⇒ 补本反例并固化为永久变异体。
+   */
+  it("Agent 来源必须具体到某个个体：空 agentInstanceId 一律拒绝", () => {
+    const validMessage = {
+      ...baseMessage,
+      priority: "success",
+      payload: { kind: "success", summary: "ok" },
+    };
+    expect(
+      feedbackMessageSchema.safeParse(validMessage).success,
+      "合法的 agent 来源必须被接受（避免用例变成恒假）",
+    ).toBe(true);
+
+    const emptyAgentIdentity = {
+      ...validMessage,
+      source: { ...baseMessage.source, agentInstanceId: "" },
+    };
+    expect(
+      feedbackMessageSchema.safeParse(emptyAgentIdentity).success,
+      "空 agentInstanceId 不得通过：来源必须具体到不可复用的个体（否则身份归属丢失）",
+    ).toBe(false);
+  });
+
   it("接受合法的 failure 消息", () => {
     const message = {
       ...baseMessage,

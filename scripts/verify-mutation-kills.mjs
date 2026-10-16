@@ -103,6 +103,17 @@
  * `tests/core/unit/cross-project-permission-matrix.test.ts` ⇒ 该变异被误判为**「存活」**。
  * 现该条目的 `testFiles` 已改为**由检索结果直接写入**（并在条目注释里写明这次错误）。
  * ⇒ **纪律再强调：`testFiles` 只能来自检索输出，不得凭印象书写。**
+ * **2026-11-08（第 118 轮）扩容：46 → 47，并且这是本窗口第 1 个"探针存活 ⇒ 补守卫"的真缺口**。
+ * 新增 `feedback-agent-source-identity-emptied`：把反馈消息 agent 来源的 `agentInstanceId`
+ * 由 `z.string().min(1)` 放宽为 `z.string()`（**允许空串**）。
+ *
+ * **原状：无人守** —— 该变异在**由检索直接喂入的 12 个文件 / 150 条用例**里**全部通过**，
+ * 而 `AGENTS.md` 明写「Agent 来源必须**具体到不可复用的 `agentInstanceId`**，转发时保留原始来源」
+ * ⇒ 该要求此前**没有任何断言**。
+ *
+ * **处置**：补反例（`tests/core/unit/schemas.test.ts`
+ * 「Agent 来源必须具体到某个个体：空 agentInstanceId 一律拒绝」，**并含一条合法消息必须被接受**，
+ * 以免用例变成恒假）⇒ 该变异**当场被拦下**，随即固化为永久变异体。
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -984,6 +995,42 @@ export const MUTATIONS = [
     rationale:
       "让跨项目裁决里「**显式拒绝优先**」这条永不触发 ⇒ 显式 deny 会被其它侧的允许或模式放宽盖过，" +
       "`deny` 优先这条底线失守 ⇒ 该反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 118 轮）新增：**反馈消息的来源必须具体到某个个体**
+   * （`AGENTS.md`：每条反馈消息必须携带经过 schema 校验的信息来源；**Agent 来源必须具体到
+   * 不可复用的 `agentInstanceId`**，转发时保留原始来源）。
+   *
+   * **本条是"探针存活 ⇒ 补守卫 ⇒ 固化"的产物**：把 agent 分支的 `agentInstanceId`
+   * 由 `z.string().min(1)` 放宽为 `z.string()`（允许空串）后，原本 **12 个检索命中文件 / 150 条用例
+   * 全部照旧通过** ⇒ 规则无人守。已补反例（`tests/core/unit/schemas.test.ts`
+   * 「Agent 来源必须具体到某个个体：空 agentInstanceId 一律拒绝」）并把本变异固化。
+   *
+   * ⚠️ 该条目的 `testFiles` **由检索结果直接写入**（本会话已因手敲清单出现过两次假结论）。
+   */
+  {
+    mutationIdentifier: "feedback-agent-source-identity-emptied",
+    targetFile: "packages/core/src/core/schemas.ts",
+    find: `      agentInstanceId: z.string().min(1),`,
+    replace: `      agentInstanceId: z.string(),`,
+    testFiles: [
+      "tests/core/integration/comm01-delivery-address-integrity.test.ts",
+      "tests/core/integration/feedback-process.test.ts",
+      "tests/core/integration/guidance-safe-point.test.ts",
+      "tests/core/unit/ar07-module-gaps-8.test.ts",
+      "tests/core/unit/delivery-worker.test.ts",
+      "tests/core/unit/feedback-client.test.ts",
+      "tests/core/unit/feedback-entrypoint.test.ts",
+      "tests/core/unit/mailbox-journal.test.ts",
+      "tests/core/unit/main-controller.test.ts",
+      "tests/core/unit/mission-orchestrator-lease.test.ts",
+      "tests/core/unit/orchestration.test.ts",
+      "tests/core/unit/schemas.test.ts",
+    ],
+    expectedFailingTestNames: ["Agent 来源必须具体到某个个体：空 agentInstanceId 一律拒绝"],
+    rationale:
+      "让反馈消息 agent 来源的 `agentInstanceId` 接受**空串** ⇒ 来源不再\"具体到某个个体\"，" +
+      "身份归属在执行层丢失（转发时也无法保留原始来源）⇒ 本反例必须变红",
   },
 ];
 
