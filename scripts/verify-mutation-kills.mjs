@@ -154,6 +154,15 @@
  *（原行与新行打印出来一模一样），语义上是**空操作**，却被当成"存活"（**假结果**）。
  * 已加守卫：**trim 后相同 ⇒ 拒绝运行**。
  * ⇒ **纪律再补一条：变异必须"真的改变语义"，只差空白不算变异。**
+ * **2026-11-08（第 123 轮）扩容：52 → 53**（全量复跑 **53/53 被拦下**）。新增
+ * `elevation-expiry-invalidation-disabled`：把会话提升的到期判定改成 `false &&`
+ * ⇒ **到期永不生效**，已过期的提升继续放权（`AGENTS.md`：提升绑定**有效期**、可随时撤销）。
+ * 实测被 `tests/core/unit/session-permission-elevation.test.ts` 的
+ * 「到期/profile revision/目录版本变化/Agent 回收使覆盖失效」拦下 ⇒ 覆盖直接。
+ *
+ * **⚠️ 本轮探针工具又拦住我一次**：我先传错了行号（传的是原行本身）⇒ 新加的
+ * 「**trim 后相同即拒绝运行**」守卫**当场拒绝**，我改对行号后才拿到真结论。
+ * （也就是说：第 122 轮补的那条守卫，本轮立刻派上用场。）
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -1245,6 +1254,41 @@ export const MUTATIONS = [
     rationale:
       "把三级期限求交的真分支改成**请求值** ⇒ 求交永不收紧，三级拿到比次级**更长的有效期**" +
       "（AGENTS.md：次级分发给三级的权限必须是其**当前有效权限的等于或更窄子集**）⇒ 该反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 123 轮）新增：**会话提升的"到期"必须使其失效**。
+   *
+   * `AGENTS.md`：当前会话允许认证用户临时提升次级 Agent 的公开权限；提升绑定会话、作用域、
+   * 权限项、**有效期**和 revision，**可随时撤销**，关闭会话即失效。
+   *
+   * 变异把 `record.expiresAtIso !== null &&` 改成 `false &&` ⇒ **到期判定永不生效**，
+   * 已过期的提升会继续生效（权限被无限期延长）。
+   *
+   * 本轮实测被 `tests/core/unit/session-permission-elevation.test.ts` 的
+   * 「到期/profile revision/目录版本变化/Agent 回收使覆盖失效」拦下（该用例内直接有
+   * 「// 未到期生效」与到期边界断言）⇒ 覆盖直接，固化防回归。
+   *
+   * ⚠️ `testFiles` **由检索结果直接写入**（不手敲）。
+   */
+  {
+    mutationIdentifier: "elevation-expiry-invalidation-disabled",
+    targetFile: "packages/core/src/tools/session-permission-elevation.ts",
+    find: `          record.expiresAtIso !== null &&`,
+    replace: `          false &&`,
+    testFiles: [
+      "tests/core/unit/ar07-module-gaps-5.test.ts",
+      "tests/core/unit/ar07-module-gaps-8.test.ts",
+      "tests/core/unit/b6r10-session-shutdown-record-validity.test.ts",
+      "tests/core/unit/elevation-effectiveness.test.ts",
+      "tests/core/unit/elevation-persistence.test.ts",
+      "tests/core/unit/session-control-surface.test.ts",
+      "tests/core/unit/session-permission-elevation.test.ts",
+      "tests/core/unit/shutdown-and-export-gaps.test.ts",
+    ],
+    expectedFailingTestNames: ["到期/profile revision/目录版本变化/Agent 回收使覆盖失效"],
+    rationale:
+      "让提升的**到期判定永不生效** ⇒ 过期提升继续放权，用户当初的临时提升被无限期延长" +
+      "（`AGENTS.md`：提升绑定**有效期**、可随时撤销）⇒ 该反例必须变红",
   },
 ];
 
