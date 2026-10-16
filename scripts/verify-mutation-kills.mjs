@@ -42,6 +42,13 @@
  * ⇒ **纪律：注入后必须先自问"这真的改变了被测行为吗？"** ——
  * 弱变异会把"守卫有效"**误报成**"守卫缺口"，而假缺口比漏检更浪费（会让人去补一个本来就有守卫的地方）。
  *
+ * **2026-11-08（第 98 轮）再扩容：34 → 36**（全量复跑 **36/36 被拦下**）。新增两个，**都刻意用"整段条件"的强变异**（吸取第 96 轮"弱变异造成假缺口"的教训）：
+ *  - `ar07-repeat-read-suppression-removed`：把"资源确实变了"判定改成恒真
+ *    ⇒ **反自指/活锁保护**失效（同一来源可反复读未变化的资源）；
+ *  - `ar07-recovery-checkpoint-chain-break-accepted`：跳过检查点哈希链校验
+ *    ⇒ 被篡改/错序的检查点会被当成可信状态接受（**审计完整性**失守）。
+ *
+ * 两者本轮实测**均被拦下**（本就承重）：前者 4 个文件共 6 条用例变红，后者 1 条变红。
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -651,6 +658,48 @@ export const MUTATIONS = [
     rationale:
       "让'派生范围必须不宽于父授权'恒真 ⇒ 任何任务都能凭父授权**扩大**自己的资源范围" +
       "（跨项目只读授权可被放大成写/越界范围，属提权）⇒ 该反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 98 轮）新增两个（**均用"整段条件"的强变异**，吸取"弱变异"教训）：
+   * 反自指/活锁保护，以及恢复检查点哈希链。
+   */
+  {
+    mutationIdentifier: "ar07-repeat-read-suppression-removed",
+    targetFile: "packages/core/src/tools/read-suppression-ledger.ts",
+    find: `      currentFingerprint === null ||
+      currentFingerprint.deviceInode !== entry.resourceIdentity.deviceInode ||
+      (entry.contentFingerprint !== null &&
+        currentFingerprint.contentFingerprint !== entry.contentFingerprint)
+    ) {`,
+    replace: `      true
+    ) {`,
+    testFiles: [
+      "tests/core/integration/cross-mission-isolation-regression.test.ts",
+      "tests/core/integration/read-file-view.test.ts",
+      "tests/core/unit/ar07-fault-and-counterexample-gaps.test.ts",
+    ],
+    expectedFailingTestNames: [
+      "同一 agentInstanceId 重复读取才是真正的自指读取（必须抑制）",
+      "同一视图窗口内重复读取被抑制（resource-already-read）",
+      "路径别名与相对段不能绕过抑制键",
+    ],
+    rationale:
+      "把'资源确实变了'判定改成**恒真** ⇒ 同一来源短时间内重复读取**未变化**的资源不再被抑制，" +
+      "模型可被诱导反复读同一文件（AGENTS.md 明令必须有本地**反自指/活锁**保护）⇒ 上述反例必须变红",
+  },
+  {
+    mutationIdentifier: "ar07-recovery-checkpoint-chain-break-accepted",
+    targetFile: "packages/core/src/orchestration/recovery-checkpoint-store.ts",
+    find: `      if (
+        previousTrusted !== null &&
+        checkpoint.previousCheckpointHash !== previousTrusted.checkpointHash
+      ) {`,
+    replace: `      if (false) {`,
+    testFiles: ["tests/core/unit/recovery-checkpoint-store.test.ts"],
+    expectedFailingTestNames: ["哈希链断裂：前一检查点哈希不匹配 → 拒绝写入"],
+    rationale:
+      "跳过'前一检查点哈希必须匹配'校验 ⇒ 被篡改/错序的检查点会被当成可信状态接受，" +
+      "恢复时会按**伪造的信任链**继续（审计完整性失守）⇒ 该反例必须变红",
   },
 ];
 
