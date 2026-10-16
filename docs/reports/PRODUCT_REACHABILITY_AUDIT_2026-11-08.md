@@ -133,8 +133,15 @@
 ⇒ 像 `EvidenceCompletionGate`、`ToolDocumentationRecallInjector` 这类**规则点名的组件根本进不了候选**。
 已补齐后候选从 **29 → 38**，新增里包含：
 
-- `AzureOpenAiAdapter`、`BedrockConverseAdapter`（`runtime/`）—— **待核实**：Provider 注册表是否只注册了
-  OpenAI 兼容那一条，而这两个适配器只有测试在用（若属实，属"多 Provider 支持在产品里不可达"）；
+- `AzureOpenAiAdapter`、`BedrockConverseAdapter`（`runtime/`）—— **已核实（同日，第 108 轮）**：
+  生产里**只出现在各自文件**（未注册、**未从公开门面导出**）⇒ **产品与宿主都无法使用**；
+  **但这不是新缺口** —— 既有报告**早已记录**该"产品接线未接"状态
+  （见 `docs/reports/PRODUCT_PATH_ACCEPTANCE_DUAL_VENDOR_2026-10-02.md` L104–105 与
+  `docs/reports/T07D_R2_01_PROVIDER_BASELINE.md` L13）⇒ **属既定延后项**。
+  **同批表述里"CLI 的 `run` 只注册 `openai-compatible`"已部分过期**：
+  `anthropic-messages` 现已接通（`packages/tui/src/cli/runtime-selection.ts` L124–129 与 L199–204
+  按协议二选一注册，且两个注册器都已从门面导出）⇒ 详见新增状态补丁
+  `docs/reports/STATUS_UPDATE_T07D_PROVIDER_PROTOCOL_WIRING_DRIFT_2026-11-08.md`。
 - `EvidenceCompletionGate`（生产提及 1：仅被同样零使用的 `completion-verifier.ts` 以**类型**引用）。
 
 **待办**：对新增候选按 §4 的顺序逐个核实，**先排假阳性**再定性。
