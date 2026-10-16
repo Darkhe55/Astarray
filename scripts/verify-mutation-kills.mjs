@@ -114,6 +114,14 @@
  * **处置**：补反例（`tests/core/unit/schemas.test.ts`
  * 「Agent 来源必须具体到某个个体：空 agentInstanceId 一律拒绝」，**并含一条合法消息必须被接受**，
  * 以免用例变成恒假）⇒ 该变异**当场被拦下**，随即固化为永久变异体。
+ * **2026-11-08（第 119 轮）扩容：47 → 48**（全量复跑 **48/48 被拦下**）。新增
+ * `relay-records-relayer-as-original-source`：把转达请求里的 `originalSourceAgentInstanceId`
+ * 记成**转达者（直属上级）** ⇒ 原始来源被顶替、转达**冒充原创**
+ * （`core/types.ts` 明写「转发消息必须保留原始来源，**不能把路由或转发 Agent 记录为原始来源**」）。
+ * 实测被 `tests/core/unit/comm01-collaboration-relay.test.ts` 的
+ * 「② 转达**保留原始来源、转达者与任务关联**，且**显式标注为转达**（不冒充原创）」拦下 ⇒ 覆盖确证。
+ * 该条目只有 **1 个**测试文件 —— 已另行核实**不是漏覆盖**：该模块的导出函数
+ * `routeCollaborationViaUniqueParent` 恰好只被这 **1 个**测试文件引用（其余两个导出是类型）。
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -1031,6 +1039,30 @@ export const MUTATIONS = [
     rationale:
       "让反馈消息 agent 来源的 `agentInstanceId` 接受**空串** ⇒ 来源不再\"具体到某个个体\"，" +
       "身份归属在执行层丢失（转发时也无法保留原始来源）⇒ 本反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 119 轮）新增：**转达必须保留原始来源**（不得冒充原创）。
+   *
+   * `AGENTS.md`：每条反馈消息必须携带经过 schema 校验的信息来源；**转发时保留原始来源**；
+   * 且仓库里 `core/types.ts` 明写「转发消息必须保留原始来源，**不能把路由或转发 Agent 记录为原始来源**」。
+   *
+   * 本轮实测被 `tests/core/unit/comm01-collaboration-relay.test.ts` 的
+   * 「② 转达**保留原始来源、转达者与任务关联**，且**显式标注为转达**（不冒充原创）」拦下 ⇒ 覆盖确证，固化防回归。
+   *
+   * ⚠️ 该条目的 `testFiles` **由检索结果直接写入**（不手敲）。
+   */
+  {
+    mutationIdentifier: "relay-records-relayer-as-original-source",
+    targetFile: "packages/core/src/orchestration/collaboration-relay-via-parent.ts",
+    find: `      originalSourceAgentInstanceId: input.originalSourceAgentInstanceId,`,
+    replace: `      originalSourceAgentInstanceId: directParentAgentInstanceId,`,
+    testFiles: [
+      "tests/core/unit/comm01-collaboration-relay.test.ts",
+    ],
+    expectedFailingTestNames: ["转达**保留原始来源、转达者与任务关联**"],
+    rationale:
+      "把转达请求里的 `originalSourceAgentInstanceId` 记成**转达者（直属上级）**⇒ " +
+      "原始来源被顶替、转达冒充原创（`core/types.ts` 明令禁止）⇒ 该反例必须变红",
   },
 ];
 
