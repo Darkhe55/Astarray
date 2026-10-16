@@ -114,6 +114,16 @@ function completionMarkerLine(): string {
   );
 }
 
+/**
+ * **2026-11-08（第 125 轮）：只加诊断，不加判定。**
+ *
+ * 由来：本文件曾**偶发一次** `expected 'blocked' to be 'done'`（满载下），当时**看不出原因** ——
+ * 因为"调度启动失败／mission 被置 blocked"只走 `streamOutput`（`startSchedulerSafely` 用
+ * `void …catch(…)`，**不抛**，所以 `submitTask` 不会报错）。这里把该输出捕获下来，
+ * **仅在失败时打印**；**不新增任何断言、不改变任何判定**。
+ */
+const streamedDiagnostics: string[] = [];
+
 async function createProviderApplication(endpoint: string) {
   const registry = new ProviderRuntimeRegistry({
     protectedCredentialStore: {
@@ -129,6 +139,9 @@ async function createProviderApplication(endpoint: string) {
     // 测试显式隔离：默认路径集成验收见 tests/core/integration/feedback-process-default-path.test.ts
     useFeedbackProcess: false,
     providerRuntimeRegistry: registry,
+    streamOutput: (_missionIdentifier, text) => {
+      streamedDiagnostics.push(text);
+    },
     provider: {
       providerId: OPENAI_COMPATIBLE_PROVIDER_ID,
       modelIdentifier: "fake-model",
@@ -181,6 +194,7 @@ describe("T07D-R2-03：Provider 工具循环与完成门禁", () => {
   });
 
   it("未注册/禁用工具无法旁路，错误回填给 Provider", async () => {
+    streamedDiagnostics.length = 0;
     const server = await startFakeServer(async (_body, response, requestIndex) => {
       response.writeHead(200, { "content-type": "text/event-stream" });
       if (requestIndex === 0) {
@@ -195,7 +209,18 @@ describe("T07D-R2-03：Provider 工具循环与完成门禁", () => {
     const { result } = await runToTerminal(application, "尝试调用禁用工具");
     await application.shutdown();
 
-    expect(result.status).toBe("done");
+    /**
+     * **只加诊断**：本文件曾偶发 `expected 'blocked' to be 'done'` 而**看不出原因**。
+     * 失败时把 `streamOutput`（`startSchedulerSafely` 把 `[mission-locked] …` 写在这里）
+     * 一并打印出来，使**下次复现自带原因**。判定本身**未改变**。
+     */
+    expect(
+      result.status,
+      "终态应为 done。诊断输出（streamOutput）：" +
+        (streamedDiagnostics.length === 0
+          ? "（空 —— 说明不是「调度启动失败」那条路径）"
+          : streamedDiagnostics.join(" / ")),
+    ).toBe("done");
     const secondRequest = server.receivedBodies[1] ?? "";
     expect(secondRequest).toMatch(/未注册|tool-not-found|不在本 Worker/);
     // 禁用工具的拒绝必须以工具结果回填（OpenAI 规范 role="tool"），
