@@ -74,6 +74,11 @@
  * 只有**写入方**、**全仓没有链校验方** —— 但仓库规则只要求「写高查阅优先级审计日志」，
  * **不要求产品内校验**（链是给外部审计的）⇒ 这是**设计取舍、不是缺口**，故**不为它加守卫**
  * （与"不为凑数加会产生误报的守卫"同一纪律）。
+ * **2026-11-08（第 104 轮）扩容：41 → 42**（全量复跑 **42/42 被拦下**）。新增
+ * `permission-ask-succeeded-target-replay-allowed`：让「已成功写入过同一目标 ⇒ 一律不得复用」整条失效
+ * ⇒ 同一次批准被反复套用、**同一个写操作被再次执行**（重放）。
+ * 实测被 **3 个独立文件**同时拦下（`gui02-01-r1-approval-fingerprint-reuse` ⑤、
+ * `permission-ask-reuse` ⑤、`gui02-01-permission-ask-fingerprint-gap` ④）⇒ **覆盖扎实**，固化防回归。
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -831,6 +836,33 @@ export const MUTATIONS = [
     rationale:
       "跳过'批准已过期'判定 ⇒ 一份**早已失效**的批准会被无限期复用，" +
       "用户当初的逐次授权被悄悄延长（S3 明令过期不得复用）⇒ 该反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 104 轮）新增：**重放保护**（已成功写入过同一目标 ⇒ 一律不得复用）。
+   * 本轮实测被 **3 个独立文件**同时拦下 ⇒ 覆盖扎实，固化防回归。
+   */
+  {
+    mutationIdentifier: "permission-ask-succeeded-target-replay-allowed",
+    targetFile: "packages/core/src/orchestration/permission-ask-contract.ts",
+    find: `  if (previousApproval.hasSucceededWithSameTarget) {
+    return "already-executed";
+  }`,
+    replace: `  if (false) {
+    return "already-executed";
+  }`,
+    testFiles: [
+      "tests/core/unit/gui02-01-r1-approval-fingerprint-reuse.test.ts",
+      "tests/tui/unit/permission-ask-reuse.test.ts",
+      "tests/core/unit/gui02-01-permission-ask-fingerprint-gap.test.ts",
+    ],
+    expectedFailingTestNames: [
+      "已成功写入过同一目标 ⇒ 一律不得复用（fail-closed 不放宽）",
+      "该目标路径已成功写入过 → fail-closed（不得靠抖动绕过重放保护）",
+      "已成功写入过同一目标 ⇒ 不得复用（fail-closed，现有行为已正确）",
+    ],
+    rationale:
+      "让'已成功写入过同一目标'整条失效 ⇒ 同一次批准会被**反复套用**、" +
+      "同一个写操作被**再次执行**（重放），破坏'逐次授权'语义 ⇒ 上述反例必须变红",
   },
 ];
 
