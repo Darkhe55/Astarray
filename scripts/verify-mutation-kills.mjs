@@ -143,6 +143,17 @@
  * `if (!input.isInstallationEnabled) {` 在文件里**命中 2 次**（S5 与 S1+安装两条分支同形），
  * 脚本按"**恰好 1 次**"的规则**拒绝执行并报脚本错误**，而不是静默跳过 ⇒ 我随后把锚点
  * 扩成带 S5 分支头的**唯一片段**。**教训：锚点必须唯一，且脚本必须对重复命中报错。**
+ * **2026-11-08（第 122 轮）扩容：51 → 52**（全量复跑 **52/52 被拦下**）。新增
+ * `tertiary-delegated-expiry-never-narrowed`：把三级期限求交的三元真分支改成**请求值**
+ * ⇒ 求交永不收紧，三级可拿到比次级**更长的有效期**（AGENTS.md：次级分发给三级的权限
+ * 必须是其**当前有效权限的等于或更窄子集**）。实测被 **3 条用例**拦下，含
+ * 「期限求交结果不晚于任一输入且取自输入之一」「三级权限逐项求交：三态/资源范围/期限均不得宽于次级」
+ * ⇒ 覆盖直接，固化防回归。
+ *
+ * **⚠️ 同轮补强了我的探针工具（一次性工具，不入库）**：本轮我先写出过一次**仅空白差异**的替换
+ *（原行与新行打印出来一模一样），语义上是**空操作**，却被当成"存活"（**假结果**）。
+ * 已加守卫：**trim 后相同 ⇒ 拒绝运行**。
+ * ⇒ **纪律再补一条：变异必须"真的改变语义"，只差空白不算变异。**
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -1205,6 +1216,35 @@ export const MUTATIONS = [
     rationale:
       "让 S5 安装类的「独立安装开关关闭 ⇒ 拒绝」永不触发 ⇒ 安装开关形同虚设、" +
       "**开关之外再无门禁**（`AGENTS.md` 明令开关不得被替代、不得被绕过）⇒ 该反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 122 轮）新增：**三级期限求交必须"取更早"**（不得晚于次级有效期限）。
+   *
+   * `session-permission-elevation.ts` 的 `TertiaryPermissionDelegationGuard.computeDelegatedExpiry`：
+   * 「三级请求期限**不得晚于**次级有效期限（取更早）」。变异把三元真分支改成请求值
+   * ⇒ 求交**永不收紧**，三级可拿到比次级更长的有效期。
+   *
+   * 本轮实测被 3 条用例拦下（含「期限求交结果不晚于任一输入且取自输入之一」、
+   * 「三级权限逐项求交：三态/资源范围/期限均不得宽于次级」）⇒ 覆盖直接，固化防回归。
+   *
+   * ⚠️ `testFiles` **由检索结果直接写入**（不手敲）。
+   */
+  {
+    mutationIdentifier: "tertiary-delegated-expiry-never-narrowed",
+    targetFile: "packages/core/src/tools/session-permission-elevation.ts",
+    find: `      ? input.secondaryExpiresAtIso`,
+    replace: `      ? input.requestedExpiresAtIso`,
+    testFiles: [
+      "tests/core/unit/ar07-module-gaps-5.test.ts",
+      "tests/core/unit/ar07-property-invariants.test.ts",
+      "tests/core/unit/elevation-effectiveness.test.ts",
+      "tests/core/unit/session-permission-elevation.test.ts",
+      "tests/core/unit/toolkit01-upgrade-authorization.test.ts",
+    ],
+    expectedFailingTestNames: ["期限求交结果不晚于任一输入且取自输入之一"],
+    rationale:
+      "把三级期限求交的真分支改成**请求值** ⇒ 求交永不收紧，三级拿到比次级**更长的有效期**" +
+      "（AGENTS.md：次级分发给三级的权限必须是其**当前有效权限的等于或更窄子集**）⇒ 该反例必须变红",
   },
 ];
 
