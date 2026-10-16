@@ -1004,6 +1004,29 @@ export class MainController {
       void this.options.missionManager
         .updateMissionStatus(missionId, "blocked")
         .catch(() => {});
+      /**
+       * DIAG-01（2026-11-08，第 114 轮）：**调度启动失败**此前只输出一行消息并把 mission 置 blocked，
+       * 诊断存储**学不到**发生了什么 ⇒ 按 `stage: "dispatch"` 上报。
+       *
+       * 纪律同工具循环／编排器：**只加观测**（不取代上面那行输出、不改状态流转）、
+       * **观测失败只丢弃**、**缺省不采集**（端口未提供 ⇒ 什么都不做）。
+       */
+      const missionDiagnosticEventPort = this.options.missionDiagnosticEventPort;
+      if (missionDiagnosticEventPort !== undefined) {
+        void Promise.resolve(
+          missionDiagnosticEventPort({
+            missionIdentifier: missionId,
+            sourceAgentInstanceId: `scheduler:${missionId}`,
+            stage: "dispatch",
+            errorCode:
+              error instanceof DomainError ? error.errorCode : "mission-start-failed",
+            messageText: error.message,
+            component: "mission-start",
+          }),
+        ).catch(() => {
+          // 观测失败不得阻塞业务
+        });
+      }
     });
   }
 

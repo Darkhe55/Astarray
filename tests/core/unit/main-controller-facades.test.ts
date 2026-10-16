@@ -359,4 +359,79 @@ describe("MainController 门面装配分支（AR-07）", () => {
       }),
     );
   });
+
+  /**
+   * DIAG-01（2026-11-08，第 114 轮）：**调度启动失败**也必须进诊断。
+   *
+   * 缺口：`startSchedulerSafely()` 的 catch 原本只 `streamOutput` 一行 `[mission-locked] …`
+   * 并把 mission 置 `blocked`，**诊断存储学不到**发生了什么 ——
+   * 而这条路径（mission 被其他进程的活跃租约占住）**在生产里是可达的**。
+   *
+   * 断言：① 上报一条 `stage: "dispatch"` 的诊断事件（错误码取 DomainError 的 `mission-locked`）；
+   * ② **原有保护不变** —— 仍然向用户输出 `[mission-locked]` 那一行（上报不得取代它）。
+   */
+  it("调度启动失败（mission-locked）：必须上报使命级诊断事件（stage=dispatch），且原有提示不变", async () => {
+    const reportedEvents: Array<{
+      missionIdentifier: string;
+      sourceAgentInstanceId: string;
+      stage: string;
+      errorCode: string;
+      messageText: string;
+      component: string;
+    }> = [];
+    const streamedOutput: string[] = [];
+    /** `tryAcquire` 返回"被其他进程占住" ⇒ 编排器 `start()` 会以 `mission-locked` 拒绝。 */
+    const lockedLeaseStore = {
+      leaseTtlMilliseconds: 60_000,
+      tryAcquire: async () => ({
+        status: "locked-active" as const,
+        lease: {
+          schemaVersion: 1,
+          missionId: "mission-locked-case",
+          leaseRevision: 7,
+          processInstanceId: "another-process",
+          claimedAtIso: new Date().toISOString(),
+          renewsUntilIso: new Date(Date.now() + 60_000).toISOString(),
+        },
+      }),
+      renewLease: async () => null,
+      releaseLease: async () => {},
+    };
+    const controller = buildController({
+      missionLeaseStore: lockedLeaseStore,
+      missionDiagnosticEventPort: (event: (typeof reportedEvents)[number]) => {
+        reportedEvents.push(event);
+      },
+      streamOutput: (_missionId: string | null, text: string) => {
+        streamedOutput.push(text);
+      },
+    });
+
+    await controller.handleUserMessage("把结论写进 docs/out.md");
+    /**
+     * `startSchedulerSafely` 用 `void …catch(…)` ⇒ 有界等待其异步 catch 落地。
+     *
+     * **⚠️ 等待上限必须小于本用例的超时（默认 5s）**：设为 5s 时，一旦上报缺失，
+     * 失败会表现为「Test timed out」而**不是**下面那句说明问题的断言（第 114 轮实测踩到）。
+     * 这里取 2.5s —— 正常路径下事件在**毫秒级**出现，2.5s 只用于"确实没有"时快速失败。
+     */
+    const waitDeadline = Date.now() + 2_500;
+    while (reportedEvents.length === 0 && Date.now() < waitDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    const dispatchEvent = reportedEvents.find((event) => event.stage === "dispatch");
+    expect(dispatchEvent, "调度启动失败必须上报 stage=dispatch 的诊断事件").toBeDefined();
+    expect(dispatchEvent!.errorCode, "DomainError 的错误码应被如实带出").toBe(
+      "mission-locked",
+    );
+    expect(dispatchEvent!.component).toBe("mission-start");
+    expect(dispatchEvent!.missionIdentifier).toMatch(/^mission-/);
+    expect(dispatchEvent!.sourceAgentInstanceId).toContain("scheduler:");
+    // 原有行为不变：`[mission-locked]` 提示照发（上报不得取代它）
+    expect(
+      streamedOutput.some((text) => text.startsWith("[mission-locked]")),
+      "既有 mission-locked 提示不得因新增上报而消失",
+    ).toBe(true);
+  });
 });
