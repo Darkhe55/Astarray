@@ -65,6 +65,15 @@
  * ⇒ 「**仅按 action 的规则 + 参数不可解析**」此前**没有任何断言**（且文件里两处表述互相矛盾）。
  * 已补反例 ⑨（钉住"仅按 action 的规则**不依赖参数文本**" + 依赖参数的规则**不可解析即回退基线**），
  * 并把该变异固化 ⇒ 现在 40/40 全被拦下。
+ * **2026-11-08（第 103 轮）扩容：40 → 41**（全量复跑 **41/41 被拦下**）。新增
+ * `permission-ask-expired-approval-reused`：跳过「批准已过期」判定 ⇒ 失效批准被无限期复用。
+ * 实测在 **47 个相关文件 / 427 条用例**中，仅点名那条（`gui02-01-r1-approval-fingerprint-reuse`
+ * 「⑧ **超出有效期**的批准不得复用」）变红 ⇒ **无缺口**，固化防回归。
+ *
+ * **本轮另记一条"不做的结论"**：备份库审计链（`backup-vault.ts` 的 `recordHash`／`previousRecordHash`）
+ * 只有**写入方**、**全仓没有链校验方** —— 但仓库规则只要求「写高查阅优先级审计日志」，
+ * **不要求产品内校验**（链是给外部审计的）⇒ 这是**设计取舍、不是缺口**，故**不为它加守卫**
+ * （与"不为凑数加会产生误报的守卫"同一纪律）。
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -807,6 +816,21 @@ export const MUTATIONS = [
       "对调两块后，**仅按 action 的规则**（不读参数）的判定会被'参数是否可解析'改变 ⇒ " +
       "**调用方可控的文本**（把 JSON 弄坏）就能翻转授权结果，凭空多出一个攻击面；" +
       "同时与文件自身「不可解析时不套用任何规则」的契约冲突 ⇒ 该反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 103 轮）新增：**过期的批准不得复用**（S3「过期…不得复用批准」）。
+   * 本轮实测被拦下（在 **47 个相关文件 / 427 条用例**中，仅点名那条变红）⇒ 无缺口，固化防回归。
+   */
+  {
+    mutationIdentifier: "permission-ask-expired-approval-reused",
+    targetFile: "packages/core/src/orchestration/permission-ask-contract.ts",
+    find: `  if (expiresAtIso !== null && Date.parse(expiresAtIso) <= Date.now()) {`,
+    replace: `  if (false) {`,
+    testFiles: ["tests/core/unit/gui02-01-r1-approval-fingerprint-reuse.test.ts"],
+    expectedFailingTestNames: ["**超出有效期**的批准不得复用"],
+    rationale:
+      "跳过'批准已过期'判定 ⇒ 一份**早已失效**的批准会被无限期复用，" +
+      "用户当初的逐次授权被悄悄延长（S3 明令过期不得复用）⇒ 该反例必须变红",
   },
 ];
 
