@@ -94,3 +94,47 @@
 （AGENTS.md 有"沟通句柄转交"整条规则）与 `LocalRigorPolicyEngine`（"高严谨性任务必须强制事实核验"），
 以及 `ToolDocumentationRecallController`（工具用法首次/回访规则）。
 **每一项都应先核实再决定**，不直接当缺口上报。
+
+## 5. 第 107 轮**已核实**的三个候选（都用 ripgrep 按模块路径+特征符号核过）
+
+判定顺序同 §4（先排假阳性）。以下三个都过了第 1–3 步（生产无引用、无子类、门面未导出），
+第 4 步（**生产里是否有等价内联实现**）也核过 —— 结论：**没有**。
+
+### 5.1 `LocalRigorPolicyEngine`：**"高严谨性由本地规则标记"这一半没接**
+
+- **规则原文（AGENTS.md）**：「高严谨性任务由**本地规则标记**，并**强制**调用事实验证工具形成证据包。」
+- **生产现状**：`rigorLevel` 在整个 `packages/` 里只出现在 ① `core/schemas.ts` 的 schema、
+  ② `local-rigor-policy-engine.ts`（本引擎，**零使用**）—— **没有任何地方产生或传递 `rigorLevel`**；
+  `requiredClaimIdentifier` 只出现在 `evidence-completion-gate.ts` 与 `completion-verifier.ts`
+  （后者**本身也是零使用的候选**）⇒ **"强制"这半同样没有生产调用方**。
+- **已接通的是"工具与构建器本身"**：装配层确有 `new EvidenceBundleBuilder()`（`application-runtime.ts`），
+  `factVerification` 工具可用且会校验证据包 ⇒ **模型可以调用**，但**没有任何东西强制它调用**。
+- **性质**：**规则未实现**（两半都缺），不是"死抽象"。
+
+### 5.2 `ToolDocumentationRecallController` / `ToolDocumentationRecallInjector`：工具说明回执未接
+
+- **规则原文（AGENTS.md）**：「次级和三级 Agent **第一次**接收某工具组时获得**完整公开用法**；
+  同一工具组 revision 后续**只注入固定的 `ASTARRAY_TOOL_HELP_REQUEST_V1` 提醒**。」
+- **生产现状**：`首次接收|完整公开用法|工具组 revision|工具说明回执` 在 `packages/` 内**只有 3 处命中**，
+  且都在 `tool-help-recall-controller.ts` 与 `tool-documentation-recall.ts`（**两者都零使用**）
+  ⇒ **生产里没有首次/回访的区分逻辑**（生产确实会把工具描述符交给 Provider，但是**统一**给的）。
+- **性质**：**规则未实现**。
+
+### 5.3 `AgentCommunicationDelegationController` / `DelegatedAgentCommunicationGrantStore`：沟通句柄转交未接
+
+- **规则原文（AGENTS.md）**：「直属上级经当前权限和用户裁决授权后，**可**把直属低一级 Agent 的
+  不透明沟通句柄转交给一个具体同级 Agent。」
+- **生产现状**：两个类只出现在 `agent-communication-delegation.ts` 自身；特征字段 `replyRoute` 亦然。
+- **性质**：规则是**许可式**（"**可**"）⇒ 未接线是**能力缺失**，**不是规则违反**（如实区分，不夸大）。
+
+## 6. 第 107 轮**新增口径缺口 #4**（少报比误报更危险）
+
+原后缀白名单漏掉 `Gate`／`Builder`／`Injector`／`Source`／`Sink`／`Adapter`／`Projector`／`Dispatcher`
+⇒ 像 `EvidenceCompletionGate`、`ToolDocumentationRecallInjector` 这类**规则点名的组件根本进不了候选**。
+已补齐后候选从 **29 → 38**，新增里包含：
+
+- `AzureOpenAiAdapter`、`BedrockConverseAdapter`（`runtime/`）—— **待核实**：Provider 注册表是否只注册了
+  OpenAI 兼容那一条，而这两个适配器只有测试在用（若属实，属"多 Provider 支持在产品里不可达"）；
+- `EvidenceCompletionGate`（生产提及 1：仅被同样零使用的 `completion-verifier.ts` 以**类型**引用）。
+
+**待办**：对新增候选按 §4 的顺序逐个核实，**先排假阳性**再定性。

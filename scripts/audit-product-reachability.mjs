@@ -79,6 +79,19 @@ const capabilitySuffixes = [
   "Client",
   "Runtime",
   "Driver",
+  /**
+   * 2026-11-08（第 107 轮）**口径缺口 #4 修正**：原白名单漏掉这几类后缀，
+   * 导致 `EvidenceCompletionGate`／`EvidenceBundleBuilder`／`ToolDocumentationRecallInjector`
+   * 这类**规则点名的组件**根本进不了候选（**少报**比误报更危险）。
+   */
+  "Gate",
+  "Builder",
+  "Injector",
+  "Source",
+  "Sink",
+  "Adapter",
+  "Projector",
+  "Dispatcher",
 ];
 
 const classes = [];
