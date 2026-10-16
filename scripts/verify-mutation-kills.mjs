@@ -79,6 +79,18 @@
  * ⇒ 同一次批准被反复套用、**同一个写操作被再次执行**（重放）。
  * 实测被 **3 个独立文件**同时拦下（`gui02-01-r1-approval-fingerprint-reuse` ⑤、
  * `permission-ask-reuse` ⑤、`gui02-01-permission-ask-fingerprint-gap` ④）⇒ **覆盖扎实**，固化防回归。
+ * **2026-11-08（第 116 轮）扩容：42 → 44**（全量复跑 **44/44 被拦下**）。新增两条**提权方向**的变异：
+ * `permission-profile-assist-default-allowed`（协同模式默认矩阵绕过 `assistDefault` 一律 `allow`）与
+ * `permission-profile-fallback-allow`（兜底判定 `deny` → `allow`，fail-open）。两条均被拦下。
+ *
+ * **⚠️ 同轮修正本脚本一处「假保证」**：原判据 `missingExpectations.length === 0` 在
+ * `expectedFailingTestNames` 为**空数组**时**必然成立** ⇒ 会把"根本没让任何用例变红"的变异
+ * **误判为「被拦下」**（本轮我自己写出过两条空列表，差点当证据用）。现**禁止空期望列表**：
+ * 空列表一律记为脚本错误，要求写明被测用例名。
+ *
+ * **⚠️ 并记一次「假存活」教训**：该轮第一次探测协同默认矩阵时，我**手敲了 5 个测试文件**，
+ * 结果变异"存活"；改用**由检索结果直接喂入的 13 个文件**后 ⇒ **17 条用例变红**（其实覆盖充分）。
+ * 这正是本文件开头第 (a) 条纪律（文件集必须来自检索，不得手敲）的现实案例。
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -864,6 +876,48 @@ export const MUTATIONS = [
       "让'已成功写入过同一目标'整条失效 ⇒ 同一次批准会被**反复套用**、" +
       "同一个写操作被**再次执行**（重放），破坏'逐次授权'语义 ⇒ 上述反例必须变红",
   },
+  /**
+   * 2026-11-08（第 116 轮）新增两条：**模式默认权限矩阵**（`permission-profile-store.ts`）。
+   * 两条都是**提权方向**的变异；本轮实测均被拦下（覆盖充分）⇒ 固化防回归。
+   */
+  {
+    mutationIdentifier: "permission-profile-assist-default-allowed",
+    targetFile: "packages/core/src/tools/permission-profile-store.ts",
+    find: `        capabilityDecisions[capability.capabilityId] = capability.assistDefault;`,
+    replace: `        capabilityDecisions[capability.capabilityId] = "allow";`,
+    /** 检索得到的完整文件集（13 个）—— 不手敲子集（本会话曾因此得到「假存活」）。 */
+    testFiles: [
+      "tests/core/unit/ar07-fault-and-counterexample-gaps.test.ts",
+      "tests/core/unit/ar07-module-gaps-5.test.ts",
+      "tests/core/unit/ar07-module-gaps-8.test.ts",
+      "tests/core/unit/b6r10-session-shutdown-record-validity.test.ts",
+      "tests/core/unit/craftsman-stage-controller.test.ts",
+      "tests/core/unit/elevation-effectiveness.test.ts",
+      "tests/core/unit/elevation-persistence.test.ts",
+      "tests/core/unit/main-controller-facades.test.ts",
+      "tests/core/unit/permission-profiles.test.ts",
+      "tests/core/unit/profile-cli-contract.test.ts",
+      "tests/core/unit/session-control-surface.test.ts",
+      "tests/core/unit/session-permission-elevation.test.ts",
+      "tests/core/unit/shutdown-and-export-gaps.test.ts",
+    ],
+    expectedFailingTestNames: ["会话权限 revision 变化后旧提升仍生效（应失效）"],
+    rationale:
+      "让**协同模式**默认矩阵绕过目录里的 `assistDefault`、一律 `allow` ⇒ AGENTS.md 要求的" +
+      "「协同模式使用**独立默认矩阵**」被抹平，危险能力在协同模式下静默放权（提权）" +
+      "⇒ 本轮实测：**13 个检索命中文件**（**由检索结果直接喂入**）里 **17 条用例变红**",
+  },
+  {
+    mutationIdentifier: "permission-profile-fallback-allow",
+    targetFile: "packages/core/src/tools/permission-profile-store.ts",
+    find: `      fallbackDecision: "deny",`,
+    replace: `      fallbackDecision: "allow",`,
+    testFiles: ["tests/core/unit/elevation-persistence.test.ts"],
+    expectedFailingTestNames: ["baseProfileRevision/catalogVersion 不匹配 → 覆盖失效（305）"],
+    rationale:
+      "把内置 profile 的**兜底判定**由 `deny` 改成 `allow` ⇒ 目录里**未出现/未验证**的能力不再默认拒绝" +
+      "（fail-open；AGENTS.md：`deny` 优先、未验证范围归人工裁决）⇒ 本轮实测 **2 条用例变红**",
+  },
 ];
 
 function sha256OfFile(filePath) {
@@ -965,6 +1019,27 @@ function runMutation(mutation, options) {
     (expectedNameFragment) =>
       ![...failedTestNames].some((failedName) => failedName.includes(expectedNameFragment)),
   );
+
+  /**
+   * **2026-11-08（第 116 轮）修正一处"假保证"**：原判据是 `missingExpectations.length === 0`，
+   * 于是 **`expectedFailingTestNames` 为空数组时**（`filter` 结果必然为空）**无条件判为"被拦下"**
+   * —— 哪怕这个变异**根本没有让任何用例变红**。本轮我自己就写出过两条空列表的变异，
+   * 差点把它们当成"覆盖充分"的证据。
+   *
+   * 现要求：**必须点名至少一条用例**，且该用例确实变红。
+   * （若某个变异确实只能用"整体失败"判定，请**写明被测用例名**，不要留空。）
+   */
+  if (mutation.expectedFailingTestNames.length === 0) {
+    return {
+      mutationIdentifier: mutation.mutationIdentifier,
+      isKilled: false,
+      isScriptError: true,
+      errorMessage:
+        "变异未点名任何期望失败的用例 ⇒ 无法判定被拦下（禁止空期望列表；请写明用例名）",
+      failedTestNames: [...failedTestNames],
+      expectedFailingTestNames: mutation.expectedFailingTestNames,
+    };
+  }
 
   return {
     mutationIdentifier: mutation.mutationIdentifier,
