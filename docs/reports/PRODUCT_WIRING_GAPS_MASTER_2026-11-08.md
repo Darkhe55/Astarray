@@ -1372,3 +1372,26 @@ buildWorkerToolPortWithRecoveryCheckpointing(missionId, task, agentInstanceId)
 2. **G4 工具说明回执**：组件在（`tool-help-recall-controller.ts`）、**接线为零**（§20.3）；
 3. **Step 3 受控合并**（需用户授权）；
 4. 外部证据：macOS、GUI 人工体验、`SUM-01` 人工标注、真实 Provider 凭据。
+### 20.4 编排层接线的**剩余两步**（第 251–252 轮已拆掉前置阻塞）
+
+#### 已完成（第 251 轮，`201231e`）
+
+`buildGitWorktreeToolPort` 签名加 `agentInstanceId`（权限按具体个体判定），调用点已传。
+`typecheck`／`eslint` 0，G1 端到端 + G3b 回归 **4/4 通过**。**前置阻塞（身份不明）已消除。**
+
+#### 第 252 轮：我**没有**提交接线（如实）
+
+我起草了「中间类型 + 控制器补全」，但在写入前发现一个**未定事实**：
+补全方法里 `buildGitWorktreeToolPort` 需要 `missionId`，而**控制器里 `missionId` 的权威来源我尚未确认**
+（`this.options.missionIdentifier`？由 `buildOrchestratorOptions(missionId)` 参数传入？）。
+**按纪律（不猜）我没有提交**，把脚本丢弃，树保持全绿。
+
+#### 下一步（两步，可直接照做）
+
+1. **先确认 missionId 来源**（1 次检索）：控制器里构造编排器选项的方法签名（是否 `buildOrchestratorOptions(missionId: string)`）；
+2. **再一次性提交**：
+   - `mission-orchestrator.ts` 导出 `GitIntegrationPartialOptions`（coordinator/repositoryPath/targetBranchName/allowedPathsByTaskType/integrationTestCommands）；
+   - 控制器：选项类型改 partial + 两个传递点改调 `completeGitIntegrationOrchestrationOptions(missionId)`（内含 `buildGitWorktreeToolPort` 带身份、`isTargetBranchMergeAllowed: () => false`）；
+   - 装配层：构造四件套 + 协调器，传 partial 给控制器（`new MainController({...})` 里，锚点 `maxLoopIterations: options.maxLoopIterations,` 之后）。
+
+**验收**：G1 端到端 2/2 保持绿；新增断言"编排器选项里的 `isTargetBranchMergeAllowed()` 恒为 false"。
