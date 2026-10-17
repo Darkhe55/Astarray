@@ -5,6 +5,8 @@
  * 权限询问转达用户并记录会话授权。
  */
 import { randomUUID } from "node:crypto";
+// G1 Step 3（2026-11-08 第 261 轮）：受控合并的五门禁评估（纯函数）。
+import { evaluateGitMergeReadiness } from "./git-merge-readiness.js";
 
 import { DomainError } from "../core/errors.js";
 import { runToolLoop } from "../runtime/tool-loop.js";
@@ -907,7 +909,21 @@ export class MainController {
       integrationTestCommands: partial.integrationTestCommands,
       buildGitWorktreeToolPort: (task, worktreePath, agentInstanceId) =>
         this.buildWorkerToolPortWithRecoveryCheckpointing(missionId, task, agentInstanceId),
-      isTargetBranchMergeAllowed: () => false,
+      /**
+       * G1 Step 3（第 261 轮）：**五门禁评估**（不再是无条件 `false`）。
+       *
+       * 当前**门④人工体验 / 门⑤操作授权没有装配来源**（只能由用户/平台提供），
+       * 且前三门也尚无记录 ⇒ 结果恒为 `false`（行为与之前一致），但机制已可评估、可测试。
+       * 接入来源后无需改这里，只需让证据字段非空。
+       */
+      isTargetBranchMergeAllowed: () =>
+        evaluateGitMergeReadiness({
+          commitHash: null,
+          areTestsPassed: false,
+          isAcceptancePassed: false,
+          humanExperienceConclusion: null,
+          operationAuthorizationIdentifier: null,
+        }).isMergeReady,
     };
   }
 
