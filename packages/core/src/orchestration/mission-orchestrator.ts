@@ -903,6 +903,13 @@ export class MissionOrchestrator {
           return {};
         }
       })(),
+      /** G4（第 290 轮，§31.5）：**只透传原料**；说明由 WorkerAgent 用自身描述符构造。 */
+      ...(this.options.workerFactories.toolDocumentationRegistry === undefined
+        ? {}
+        : { toolDocumentationRegistry: this.options.workerFactories.toolDocumentationRegistry }),
+      ...(this.options.workerFactories.toolDocumentationInjector === undefined
+        ? {}
+        : { toolDocumentationInjector: this.options.workerFactories.toolDocumentationInjector }),
       onEarlyStopDetected: (observation) => {
         this.earlyStopObservationsByTask.set(options.task.id, observation);
         options.onEarlyStopDetected?.(observation);

@@ -32,6 +32,9 @@ import type {
   ToolDocumentationRecallInjector,
   ToolGroupDocumentation,
 } from "../tools/tool-documentation-recall.js";
+import { buildToolPublicDocumentation } from "../tools/tool-public-documentation-registry.js";
+import type { ToolPublicDocumentationRegistryEntry } from "../tools/tool-public-documentation-registry.js";
+import { buildFullDocumentation } from "../tools/tool-documentation-recall.js";
 import { renderToolGroupDocumentation } from "../tools/tool-documentation-renderer.js";
 import { runToolLoop } from "../runtime/tool-loop.js";
 import type {
@@ -125,6 +128,10 @@ export interface WorkerAgentOptions {
    * 同一 revision 后续 ⇒ **只追加固定提醒**（`ASTARRAY_TOOL_HELP_REQUEST_V1`）。
    * **未提供 ⇒ 完全不执行**（提示词逐字不变）。
    */
+  /** G4（第 290 轮）：注入原料之一 —— 工具公开用法登记（缺省 ⇒ 不注入）。 */
+  toolDocumentationRegistry?: Record<string, ToolPublicDocumentationRegistryEntry>;
+  /** G4（第 290 轮）：注入原料之二 —— 注入器（缺省 ⇒ 不注入）。 */
+  toolDocumentationInjector?: ToolDocumentationRecallInjector | null;
   toolDocumentationInjection?: {
     injector: ToolDocumentationRecallInjector;
     documentation: ToolGroupDocumentation;
@@ -396,30 +403,55 @@ export class WorkerAgent {
      * 未提供注入器 ⇒ 整段不执行（提示词逐字不变）。注入失败 ⇒ 记录原因并**继续**（说明缺失
      * 不得让任务无法开始，但也不得静默——回执/注入由上层负责可观测性）。
      */
-    const toolDocumentationInjection = this.options.toolDocumentationInjection;
-    if (toolDocumentationInjection !== null && toolDocumentationInjection !== undefined) {
+    /**
+     * G4（第 290 轮，§31.5）：**本类自建**工具说明注入。
+     *
+     * 原料（登记表 + 注入器）由上层透传；描述符用**本实例**的 `availableToolDescriptors`
+     * （此处一定已装配，而编排器的 `buildWorkerAgent` 时机过早）。
+     *
+     * - 只对**已登记**的工具构成注入组（组内仍为完整公开用法）；
+     * - 完整用法送达后**必须** `recordDelivery`，否则同 revision 会重复全文注入；
+     * - 任何异常都吞掉：说明注入失败不得阻塞任务。
+     */
+    const toolDocumentationRegistry = this.options.toolDocumentationRegistry;
+    const toolDocumentationInjector = this.options.toolDocumentationInjector;
+    if (
+      toolDocumentationRegistry !== undefined &&
+      toolDocumentationInjector !== null &&
+      toolDocumentationInjector !== undefined
+    ) {
       try {
-        const injection = await toolDocumentationInjection.injector.planInjection({
-          agentInstanceId: this.options.agentInstanceId,
-          documentation: toolDocumentationInjection.documentation,
-          isDeltaProvenComplete: true,
-        });
-        if (injection.kind === "subsequent-reminder") {
-          systemPrompt += "\n\n" + buildReminderText();
-        } else {
-          systemPrompt += "\n\n" + renderToolGroupDocumentation(toolDocumentationInjection.documentation);
-          /**
-           * 2026-11-08 第 283 轮修复：**完整用法送达后必须写回执**，
-           * 否则同一 agent 同 revision 的后续激活会**再次**被判定为首次 ⇒ 每次都全文注入
-           * （违反 `AGENTS.md`「同 revision 后续只给固定提醒」）。
-           */
-          await toolDocumentationInjection.injector.recordDelivery({
-            agentInstanceId: this.options.agentInstanceId,
-            documentation: toolDocumentationInjection.documentation,
+        const registeredTools = (this.options.availableToolDescriptors ?? [])
+          .filter((descriptor) => toolDocumentationRegistry[descriptor.name] !== undefined)
+          .map((descriptor) =>
+            buildToolPublicDocumentation({
+              descriptor,
+              registryEntry: toolDocumentationRegistry[descriptor.name],
+            }),
+          );
+        if (registeredTools.length > 0) {
+          const documentation = buildFullDocumentation({
+            toolGroupIdentifier: "assigned-tools",
+            toolGroupRevision: 1,
+            assignedTools: registeredTools,
           });
+          const injection = await toolDocumentationInjector.planInjection({
+            agentInstanceId: this.options.agentInstanceId,
+            documentation,
+            isDeltaProvenComplete: true,
+          });
+          if (injection.kind === "subsequent-reminder") {
+            systemPrompt += "\n\n" + buildReminderText();
+          } else {
+            systemPrompt += "\n\n" + renderToolGroupDocumentation(documentation);
+            await toolDocumentationInjector.recordDelivery({
+              agentInstanceId: this.options.agentInstanceId,
+              documentation,
+            });
+          }
         }
       } catch {
-        // 说明注入失败不得阻塞任务（权限/验收/合并语义均不依赖本段）
+        // 说明注入失败不得阻塞任务
       }
     }
 
