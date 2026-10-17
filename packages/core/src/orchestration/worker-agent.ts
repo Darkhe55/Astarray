@@ -227,7 +227,7 @@ export class WorkerAgent {
       .filter((toolName) => !this.successfullyExecutedRequiredTools.has(toolName));
     if (requiredNotYetSucceeded.length > 0) {
       return (
-        "必需操作未成功执行：本任务此前因权限询问被打断、且以下写类工具至今从未成功（" +
+        "必需操作未成功执行：本任务此前因权限询问被打断、且以下必需工具至今从未成功（" +
         requiredNotYetSucceeded.join("、") +
         "）（验收缺失，不得以文本声明结案）"
       );
