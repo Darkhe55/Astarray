@@ -1866,3 +1866,25 @@ let systemPrompt = buildWorkerSystemPrompt(...);   // ← 在此之后追加
 - **组合层**（真实注入器 + 真实回执存储 + 真实生产者/渲染器）：①首次完整用法 ②同 agent 同 revision 仅提醒 ③缺登记抛错 ⇒ **3/3 绿**；
 - **渲染器**：10 字段 + 末尾提醒 ⇒ 5/5 绿；
 - **生产者**：缺登记/空示例/空失败码/空局限/空返回 schema ⇒ fail-closed ⇒ 6/6 绿。
+
+### 30.5 诊断结果（第 285 轮）：worker 有**三条构造路径**，注入放错层
+
+| 证据 | 结果 |
+| --- | --- |
+| 任务是否派发 worker | ✅ 是（`[G4-OUTCOME] status=done`） |
+| `buildWorkerAgent` 是否被调用 | ✅ 是（`mission-orchestrator.ts:708` 调用、`:869` 定义） |
+| 注入 lambda 是否执行 | ❌ **探针一次未打印** |
+| `new WorkerAgent(` 的站点 | **3 处**：`:842`、`:870`、`:987` |
+
+⇒ **结论：实际使用的构造路径不是 `:870`（我插注入的那一处）** ⇒ 注入放错了层。
+
+### 30.6 正解（下轮执行，预计 2 轮）
+
+**把注入从"编排器的某一个构造点"下沉到 `worker-agent.ts` 内部**（它已被接线，见 `8ed737d`）：
+
+1. `WorkerAgentOptions` 加两个字段：`toolDocumentationRegistry?`、`toolDocumentationInjector?`（**不是**注入结果，而是原料）；
+2. **三条构造路径都从 `workerFactories` 透传这两个字段**（因为都 spread worker 选项）；
+3. `worker-agent.ts` 的注入块（已存在）改为**自己构造** `ToolGroupDocumentation`（用 `this.options.availableToolDescriptors` + registry）；
+4. 端到端用例（`.tmp` 草稿）应转绿 ⇒ 再拔线。
+
+**这样只依赖 `buildWorkerAgent` 是否 spread 选项**，不依赖"注入写在哪个构造点"，对三条路径都成立。
