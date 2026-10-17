@@ -918,6 +918,14 @@ export class MainController {
       guidanceControlQueue: this.options.guidanceControlQueue,
       contextNodeLifecycle: this.options.contextNodeLifecycle ?? null,
       contextLifecycleModeKey: "assist",
+      /**
+       * G5（2026-11-08 第 241 轮修复）：**必须放在顶层**。
+       * 此前第 235 轮把它插进了 `workerFactories` 里 ⇒ 编排器读顶层 `this.options.isCheckpointResumeEnabled`
+       * 永远 `undefined`（探针实测 `enabled=false`）。
+       */
+      ...(this.options.isCheckpointResumeEnabled === true
+        ? { isCheckpointResumeEnabled: true }
+        : {}),
       workerFactories: {
         runtimeFactory: this.options.workerRuntimeFactory,
         toolDescriptorFactory: this.options.resolveToolDescriptors,
@@ -940,9 +948,6 @@ export class MainController {
         ...(this.options.isHighRigorEnforcementEnabled === undefined
           ? {}
           : { isHighRigorEnforcementEnabled: this.options.isHighRigorEnforcementEnabled }),
-          ...(this.options.isCheckpointResumeEnabled === undefined
-            ? {}
-            : { isCheckpointResumeEnabled: this.options.isCheckpointResumeEnabled }),
         // DIAG-01 采集（第 85 轮接线）：缺省 ⇒ 不采集
         ...(this.options.diagnosticEventPort === undefined
           ? {}
@@ -1032,9 +1037,6 @@ export class MainController {
         ...(this.options.isHighRigorEnforcementEnabled === undefined
           ? {}
           : { isHighRigorEnforcementEnabled: this.options.isHighRigorEnforcementEnabled }),
-          ...(this.options.isCheckpointResumeEnabled === undefined
-            ? {}
-            : { isCheckpointResumeEnabled: this.options.isCheckpointResumeEnabled }),
         // DIAG-01 采集（第 85 轮接线）：缺省 ⇒ 不采集
         ...(this.options.diagnosticEventPort === undefined
           ? {}

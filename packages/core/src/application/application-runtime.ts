@@ -1122,6 +1122,12 @@ export async function createApplicationRuntime(
     concurrency: options.concurrency,
     failureThreshold: options.failureThreshold,
     maxLoopIterations: options.maxLoopIterations,
+    /**
+     * G5（2026-11-08 第 241 轮修复）：**开关必须进控制器选项**。
+     * 此前第 235 轮的透传被插到了别的对象上（L1228 的 spread 不在 `new MainController({` 里）
+     * ⇒ 控制器永远收到 `undefined` ⇒ 编排器 `enabled=false`（探针实测）。
+     */
+    ...(options.isCheckpointResumeEnabled === true ? { isCheckpointResumeEnabled: true } : {}),
     backupVault,
     backupDeletionController,
     workArchiveStore,
