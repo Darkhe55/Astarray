@@ -507,6 +507,24 @@ export class WorkerAgent {
             const unresolvedMutatingTools = [
               ...this.unresolvedMutatingToolFailures,
             ];
+            /**
+             * G5（2026-11-08 第 237 轮）：**早停的准确判据在完成事件校验处**。
+             *
+             * 实测：截断输出（无 `ASTARRAY_TASK_COMPLETION_V1`）时，工具循环的 `outcome.reason` 仍是
+             * **`success`**（不是 `error`）⇒ 在工具循环里按 `error` 判定永远不触发（第 5 个缺陷）。
+             * 这里 `completionGateFailure !== null` 才是"缺失或非法完成事件"的真凭据。
+             */
+            if (completionGateFailure !== null && this.options.onEarlyStopDetected !== undefined) {
+              try {
+                this.options.onEarlyStopDetected({
+                  producedTextLength: this.outputTextChunks.join("").length,
+                  iterationCount: 0,
+                  outcomeDetail: completionGateFailure,
+                });
+              } catch {
+                // 观测失败不得阻塞业务
+              }
+            }
             if (completionGateFailure !== null) {
               finalReason = {
                 outcome: "failure",
