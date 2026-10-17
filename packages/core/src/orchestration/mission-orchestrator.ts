@@ -724,6 +724,8 @@ export class MissionOrchestrator {
       new LocalRigorPolicyEngine().classifyRigor(task.description).rigorLevel === "high"
         ? {
             requiredToolNames: ["factVerification"],
+            // G3b（第 219 轮）：高严谨同时要求**合格证据包**（缺省关的开关在此一并打开）
+            isHighRigorEvidenceRequired: true,
           }
         : {}),
       /**
