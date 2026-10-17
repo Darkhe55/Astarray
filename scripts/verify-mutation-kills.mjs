@@ -1726,7 +1726,7 @@ function runMutation(mutation, options) {
       // 期望路径：存在失败用例。
     }
     try {
-      const report = parseJsonReport(reportPath);       /**        * 2026-10-17（第 4 轮）守卫：**变异体自身语法错误 ⇒ 脚本错误，不是"存活"**。        *        * 现象（我踩过 2 次）：`find` 只截取表达式的一部分 ⇒ 变异后语法错误 ⇒ 测试文件**无法收集**        * （`assertionResults` 为空但有 `message`）⇒ 命名用例根本不会运行 ⇒ 若不特判会被误算为"存活"。        */       const collectFailures = (report.testResults ?? []).filter(         (testResult) =>           (testResult.assertionResults ?? []).length === 0 &&           typeof testResult.message === "string" &&           testResult.message.trim() !== "",       );       if (collectFailures.length > 0) {         return {           mutationIdentifier: mutation.mutationIdentifier,           isKilled: false,           isScriptError: true,           errorMessage:             "变异使测试文件无法收集（语法/转换错误）：请把 find 改为完整表达式，或让 replace 语法合法。首条信息：" +             String(collectFailures[0].message).slice(0, 300),           failedTestNames: [],           expectedFailingTestNames: mutation.expectedFailingTestNames,         };       }       failedTestNames = collectFailedTestNames(report);
+      failedTestNames = collectFailedTestNames(parseJsonReport(reportPath));
     } catch (error) {
       if (runError === null) {
         runError = `无法解析 vitest JSON 报告：${String(error)}`;
