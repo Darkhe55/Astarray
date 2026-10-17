@@ -381,3 +381,47 @@
 - 因此 Step 1 可以先做（缺省关、可验、可在隔离包里验证），**Step 3 必须等用户明确授权**。
 
 **状态：G1 = 未开始（本轮仅完成评估与验收条件，未接线、未宣称支持完整 Git 集成）。**
+
+## 9. 待验证反例库（下个窗口开工即用）
+
+以下反例**已写好但未入库**（纪律：仍红或尚不可判别的反例不得留在 `main`），暂存 `.tmp/*.draft`。
+价值在于：**下个窗口第一步就能跑**，不必重新推导。
+
+### 9.1 `g3a-positive-path.test.ts.draft` —— G3a 的**正向**反例（最关键）
+
+**场景**：高严谨 prompt + 开关开 + 假 Provider 先调 `factVerification(record-reasoning)`（会成功）
+再发完成事件 ⇒ **断言 `done`**。
+
+**当前表现**：**失败**。诊断已确认拦截理由是
+「必需操作未成功执行：**本任务此前因权限询问被打断、且以下写类工具至今从未成功（factVerification）**」
+⇒ 即 `requiredMutatingToolNames` 的**跨运行契约**误伤了非变更工具。
+
+**用途**：它必须**转绿**，才说明 G3a 的强制"可满足"而不是"一律拦"。
+
+### 9.2 `g3b1-evidence-bundle-required.test.ts.draft` —— G3b-1 负向反例（**尚不可判别**）
+
+**场景**：高严谨 + 开关开 + 只 `record-reasoning`（**成功**、但**无证据包**）后宣布完成 ⇒ 断言**不得 `done`**。
+
+**当前表现**：**通过**，但**原因是 G3a 的缺陷**（任务本来就被拦），**不是**内容门禁 ⇒ **不可判别**。
+
+**用途**：只有 §9.1 转绿之后，它才成为真正检验内容门禁的反例。
+
+### 9.3 `.tmp/g2-progress-guard.test.ts.pending` —— 历史副本，可删
+
+G2 的正式反例已入库为 `tests/core/integration/g2-progress-guard.test.ts`（2 条、绿）。
+
+### 9.4 下一步（唯一正确的顺序 + 纪律）
+
+1. 加 worker `requiredToolNames` 选项；
+2. 加 worker 的独立检查块；
+3. 把编排器 G3a 块改成 `requiredToolNames: ["factVerification"]`；
+4. 跑 §9.1（应绿）→ 再跑 §9.2（此时"调用了但没有证据包"才是唯一原因）；
+5. 再做 G3b 的内容门禁（`EvidenceCompletionGate`）—— 那时 §9.2 才有判别力。
+
+**纪律**：第 1–3 步**每步单独提交、单独跑 `typecheck`**，不要一次改三处
+（第 139–141 轮三次失败的教训）。
+
+### 9.5 本窗口终局核对（第 145 轮实测）
+
+- `npm run check`：**exit 0 —— 446 文件 / 3312 用例**；
+- `npm run verify:mutation-kills`：**exit 0 —— 59/59 被拦下**。
