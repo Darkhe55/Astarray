@@ -156,3 +156,15 @@
 **影响**：这两个状态视图**用户无法从 CLI 调用**（G9 的假保证因此也**到不了用户** —— 这降低了 G9 的危害，
 但 G10 本身是缺口）。**处置**：记入本表，**待用户决定**接不接（属"命令接线"，不在当前 G9–G1 五阶段内）。
 
+### 5.3 阶段一的**隔离包验证**（已完成）
+
+按用户要求「每阶段最后做隔离包验证」，本轮（第 129 轮）实测：
+
+| 步骤 | 结果 |
+| --- | --- |
+| `npm pack --pack-destination .tmp`（`prepack` 会再跑一次 `check`） | **exit 0** —— `prepack` 门禁 **444 文件 / 3307 用例**；tarball `.tmp/astarray-0.1.0.tgz`，**273 文件 / 1.6 MB** |
+| `node scripts/verify-package.mjs .tmp/astarray-0.1.0.tgz` | **exit 0** —— 「打包校验通过: 273 个文件，shebang/BOM 正确，反馈进程入口已包含」（无 `.env`／密钥／日志） |
+| `node scripts/verify-sdk-consumer.mjs .tmp/astarray-0.1.0.tgz` | **exit 0** —— 「added 41 packages in 6s」后在**临时目录隔离安装**并跑消费者场景，输出 `finalStatus: done` ⇒ 「SDK 消费者行为验证通过」 |
+
+⇒ **阶段一（G9 + 状态纠偏）按用户标准收尾完成**：真实（命令函数级）入口验收 + 「拔掉接线 4/4 失败」+ 隔离包验证三项齐备。
+**下一阶段 = G2（活锁与循环守卫）**，其验收同样须满足这三项。
