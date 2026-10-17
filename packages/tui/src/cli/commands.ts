@@ -2541,13 +2541,30 @@ export async function executePresetListCommand(
     "../../../core/src/orchestration/bounded-provider-fallback-guard.js"
   );
   const presets = presetController.listPresets();
-  const componentsReady = {
-    assignmentController: AgentModelAssignmentController !== null,
-    fallbackGuard: BoundedProviderFallbackGuard !== null,
+  /**
+   * **G9（2026-11-08，第 129 轮）：这里原来是**假保证**。**
+   *
+   * 旧写法是 `AgentModelAssignmentController !== null` —— 而 `await import(...)` **成功后必然非 null**
+   * ⇒ 该判定**恒真**，人类可读输出**永远打印「已装配」**；但这两个类在本命令里
+   * **并没有被构造或使用**（见 `docs/reports/PRODUCT_WIRING_GAPS_MASTER_2026-11-08.md` 的 G9）。
+   *
+   * 现改为**如实的语义**：只说明**模块可加载**（`typeof … === "function"`），
+   * 并在 JSON 里用 `componentsReadySemantics` **显式标注**"不代表已装配"；
+   * 人类可读输出也不再声称「已装配」。
+   */
+  const modulesLoadable = {
+    assignmentController: typeof AgentModelAssignmentController === "function",
+    fallbackGuard: typeof BoundedProviderFallbackGuard === "function",
   };
+  const componentsReadySemantics = "module-loadable-not-assembly";
   if (options.isJsonOutput) {
     process.stdout.write(
-      `${JSON.stringify({ presets, totalCount: presets.length, componentsReady })}\n`,
+      `${JSON.stringify({
+        presets,
+        totalCount: presets.length,
+        modulesLoadable,
+        componentsReadySemantics,
+      })}\n`,
     );
   } else {
     process.stdout.write(
@@ -2557,8 +2574,9 @@ export async function executePresetListCommand(
             `${preset.presetId}\t${preset.displayName}\t用途 ${preset.targetAgentUsage}`,
         )
         .join("\n") +
-        `\n分配控制器: ${componentsReady.assignmentController ? "已装配" : "未装配"}\n` +
-        `fallback 守卫: ${componentsReady.fallbackGuard ? "已装配" : "未装配"}\n`,
+        `\n分配控制器模块: ${modulesLoadable.assignmentController ? "可加载" : "不可加载"}\n` +
+        `fallback 守卫模块: ${modulesLoadable.fallbackGuard ? "可加载" : "不可加载"}\n` +
+        `（⚠️ 仅表示**模块可加载**；**是否装入运行时另需核实**）\n`,
     );
   }
   return EXIT_CODES.SUCCESS;
@@ -2958,11 +2976,19 @@ async function loadConcurrentInfra() {
         `reconcile-${conflictIdentifier}`,
     },
   });
-  const componentsReady = {
-    worktreeObserver: HumanWorktreeObserver !== null,
-    staleWriteGuard: StaleWriteGuard !== null,
+  /**
+   * **G9（2026-11-08，第 129 轮）：这里原来也是**假保证**。**
+   *
+   * 旧写法 `HumanWorktreeObserver !== null` / `StaleWriteGuard !== null` 在 `await import(...)`
+   * 成功后**恒真** ⇒ 永远显示「已装配」，而这两个类**在本命令里并未被构造或使用**。
+   *
+   * 现改为如实语义（**仅模块可加载**），并由调用方在 JSON 里标注 `componentsReadySemantics`。
+   */
+  const modulesLoadable = {
+    worktreeObserver: typeof HumanWorktreeObserver === "function",
+    staleWriteGuard: typeof StaleWriteGuard === "function",
   };
-  return { classifier, coordinator, componentsReady };
+  return { classifier, coordinator, modulesLoadable };
 }
 
 export interface ConcurrentStatusCommandOptions {
@@ -2973,7 +2999,7 @@ export interface ConcurrentStatusCommandOptions {
 export async function executeConcurrentStatusCommand(
   options: ConcurrentStatusCommandOptions,
 ): Promise<number> {
-  const { classifier, componentsReady } = await loadConcurrentInfra();
+  const { classifier, modulesLoadable } = await loadConcurrentInfra();
   const classification = classifier.classifyChange({
     humanChangedPaths: ["src/human-edit.ts"],
     humanAffectedContractIdentifiers: [],
@@ -2990,7 +3016,9 @@ const view = {
       agentSource: "agentInstanceId 不可复用",
     },
     availableActions: ["revalidate", "appoint-reconcile-agent", "blocked-human-review"],
-    componentsReady,
+    modulesLoadable,
+    /** **G9**：显式标注——这些布尔值只表示**模块可加载**，不代表已装配到运行时。 */
+    componentsReadySemantics: "module-loadable-not-assembly",
   };
   if (options.isJsonOutput) {
     process.stdout.write(`${JSON.stringify(view)}\n`);
@@ -2999,7 +3027,10 @@ const view = {
       `冲突分类: ${classification.decision}\n` +
         `受影响节点: ${classification.impactedNodeIdentifiers.join(",") || "无"}\n` +
         `人工来源: ${view.sources.humanSource}\n` +
-        `可选操作: ${view.availableActions.join(", ")}\n`,
+        `可选操作: ${view.availableActions.join(", ")}\n` +
+        `模块可加载: worktreeObserver=${modulesLoadable.worktreeObserver ? "可加载" : "不可加载"}, ` +
+        `staleWriteGuard=${modulesLoadable.staleWriteGuard ? "可加载" : "不可加载"}\n` +
+        `（⚠️ 仅表示**模块可加载**；**是否装入运行时另需核实**）\n`,
     );
   }
   return EXIT_CODES.SUCCESS;
