@@ -1224,6 +1224,8 @@ export interface PublicApplicationOptions {
   isDiagnosticCollectionEnabled?: boolean;
   /** G2（第 130 轮）：活锁/循环守卫开关。**缺省 false**。 */
   isProgressGuardEnabled?: boolean;
+  /** G2（第 162 轮）：任务链总调用预算（缺省 undefined ⇒ 200，**默认行为不变**）。 */
+  progressGuardTaskTotalCallBudget?: number;
   /** G3（第 133 轮）：高严谨性强制事实验证开关。**缺省 false**。 */
   isHighRigorEnforcementEnabled?: boolean;
   /** T04：反馈进程入口模块路径；缺省按包内 dist 入口自动解析。 */
@@ -1609,6 +1611,9 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       // OBS-01／DIAG-01（第 85 轮）：诊断采集**缺省关**（不擅自改变生产行为）
       isDiagnosticCollectionEnabled: options.isDiagnosticCollectionEnabled ?? false,
       isProgressGuardEnabled: options.isProgressGuardEnabled ?? false,
+      ...(options.progressGuardTaskTotalCallBudget === undefined
+        ? {}
+        : { progressGuardTaskTotalCallBudget: options.progressGuardTaskTotalCallBudget }),
       isHighRigorEnforcementEnabled: options.isHighRigorEnforcementEnabled ?? false,
       streamOutput: options.streamOutput ?? (() => {}),
       // GUI-02-01 片①：权限询问的绝对身份透传（可选；未提供则不传字段）。

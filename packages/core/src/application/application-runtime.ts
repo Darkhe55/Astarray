@@ -24,6 +24,7 @@ import { PerfEventStore } from "../orchestration/perf-event-store.js";
 // OBS-01／DIAG-01（第 85 轮）：诊断事件落库（同因：此前生产里无人**写入**）
 import { DiagnosticEventStore } from "../orchestration/diagnostic-event-store.js";
 import { LocalProgressAndCycleGuard } from "../tools/local-progress-and-cycle-guard.js";
+import { TaskCallBudgetLedger } from "../infra/task-call-budget-ledger.js";
 import type { MissionDiagnosticEvent } from "../orchestration/mission-orchestrator.js";
 import { MissionManager } from "../orchestration/mission-manager.js";
 import { FeedbackProcessSupervisor } from "../feedback-process/process-supervisor.js";
@@ -227,6 +228,8 @@ export interface ApplicationRuntimeOptions {
   isDiagnosticCollectionEnabled?: boolean;
   /** G2（第 130 轮）：活锁/循环守卫开关。**缺省 false**（不擅自改默认行为）。 */
   isProgressGuardEnabled?: boolean;
+  /** G2（第 162 轮）：任务链总调用预算（缺省 undefined ⇒ 200，**默认行为不变**）。 */
+  progressGuardTaskTotalCallBudget?: number;
   /** G3（第 133 轮）：高严谨性强制事实验证开关。**缺省 false**（不擅自改默认行为）。 */
   isHighRigorEnforcementEnabled?: boolean;
   streamOutput: (missionId: string | null, text: string) => void;
@@ -1063,7 +1066,18 @@ export async function createApplicationRuntime(
   const progressGuardPort =
     options.isProgressGuardEnabled === true
       ? (() => {
-          const progressGuard = new LocalProgressAndCycleGuard();
+          /**
+           * 任务链总调用预算**持久化**（2026-11-08，第 162 轮）：按 ADR-0017 与
+           * `T07E` L27「进程重启不能清零任务链累计预算」，把守卫的两个端口接到磁盘账本。
+           */
+          const taskCallBudgetLedger = new TaskCallBudgetLedger({ stateDirectory: options.stateDirectory });
+          const progressGuard = new LocalProgressAndCycleGuard({
+            taskTotalCallBudget: options.progressGuardTaskTotalCallBudget,
+            readTaskBudget: (taskExecutionId) =>
+              taskCallBudgetLedger.readTaskCallCount(taskExecutionId),
+            writeTaskBudget: (taskExecutionId, callCount) =>
+              taskCallBudgetLedger.writeTaskCallCount(taskExecutionId, callCount),
+          });
           return async (input: {
             phase: "before-tool-execution" | "after-tool-execution";
             callerKey: string;
