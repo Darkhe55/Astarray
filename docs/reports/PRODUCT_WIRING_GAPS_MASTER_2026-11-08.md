@@ -1682,3 +1682,18 @@ let systemPrompt = buildWorkerSystemPrompt(...);   // ← 在此之后追加
 而我当前上下文已不足以安全完成，硬写会导致"半成品 + 红树"（G5 曾因此烧 7 轮）。
 
 **⇒ 配方已完整，下个会话可机械执行**（预算 4–6 轮）。
+
+### 27.5 **第二个缺口（第 269 轮）**：没有"完整用法"的**文本渲染器**
+
+| 已有 | 缺失 |
+| --- | --- |
+| `buildFullDocumentation({...})` ⇒ 构造 `ToolGroupDocumentation`（**结构化**：`toolIdentifier`/`purpose`/`inputSchemaJson`/`returnSchemaJson`/`examples`/`failureCodes`/`isIdempotent`/`sideEffectCategory`） | **把该结构渲染成提示词文本**的函数 —— 全仓检索无 `renderToolDocumentation` 一类实现 |
+| `buildReminderText()` ⇒ 固定提醒**文本** ✓ | 仅覆盖"后续提醒"分支，**完整用法分支没有文本产出** |
+
+⇒ 因此 G4 的接线还差**第三步**：实现 `renderToolGroupDocumentation(documentation): string`（把结构化字段拼成可读提示词），
+再在 `worker-agent.ts` 的 `systemPrompt` 追加（§27.2）。
+
+**这是"新建渲染器"，不是"接线"** —— 也是我在第 269 轮停手的直接原因（不能在上下文不足时自创提示词格式，它会永久影响所有 Worker 行为）。
+
+**设计建议**：渲染格式应含——工具标识、用途、参数 schema、返回 schema、示例、失败码、幂等性、副作用类别；
+且**必须**在末尾附 `buildReminderText()`（提醒模型如何请求帮助）。
