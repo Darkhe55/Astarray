@@ -723,10 +723,7 @@ export class MissionOrchestrator {
       ...(this.options.workerFactories.isHighRigorEnforcementEnabled === true &&
       new LocalRigorPolicyEngine().classifyRigor(task.description).rigorLevel === "high"
         ? {
-            requiredMutatingToolNames: [
-              ...(this.pendingMutatingToolNamesByTask.get(task.id) ?? []),
-              "factVerification",
-            ],
+            requiredToolNames: ["factVerification"],
           }
         : {}),
       /**
