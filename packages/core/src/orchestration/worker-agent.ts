@@ -230,6 +230,22 @@ export class WorkerAgent {
      * 即使本次运行根本没有请求它们（模型可能直接宣称完成），也不得结案——
      * 否则"授权后续跑 → 不再请求工具 → 假 done"会绕过上面的单次运行规则。
      */
+    /**
+     * G3a（B 路线，第 171 轮）：**必需工具**检查（独立于下面的"变更类 + 跨运行"契约）。
+     *
+     * 判定依据是 `successfullyExecutedRequiredTools`（**所有**成功工具，含非变更类）；
+     * 缺省未配置 `requiredToolNames` ⇒ 本段恒不触发 ⇒ **行为不变**。
+     */
+    const requiredToolNamesNotYetSucceeded = (this.options.requiredToolNames ?? []).filter(
+      (toolName) => !this.successfullyExecutedRequiredTools.has(toolName),
+    );
+    if (requiredToolNamesNotYetSucceeded.length > 0) {
+      return (
+        "必需操作未成功执行：本次运行从未成功调用以下工具（" +
+        requiredToolNamesNotYetSucceeded.join("、") +
+        "）（验收缺失，不得以文本声明结案）"
+      );
+    }
     const requiredNotYetSucceeded = (this.options.requiredMutatingToolNames ?? [])
       .filter((toolName) => !this.successfullyExecutedRequiredTools.has(toolName));
     if (requiredNotYetSucceeded.length > 0) {
