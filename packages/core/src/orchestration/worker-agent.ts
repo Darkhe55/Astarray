@@ -26,6 +26,13 @@ import { resolveFeedbackRecipient } from "./task-publisher-feedback-route.js";
 import type { ContextPromptProvider } from "./context-prompt-assembler.js";
 import { EvidenceCompletionGate } from "../tools/evidence-completion-gate.js";
 import type { EvidenceBundle } from "../core/types.js";
+// G4（2026-11-08 第 271 轮）：工具说明注入（首次完整用法 / 后续固定提醒）。
+import { buildReminderText } from "../tools/tool-documentation-recall.js";
+import type {
+  ToolDocumentationRecallInjector,
+  ToolGroupDocumentation,
+} from "../tools/tool-documentation-recall.js";
+import { renderToolGroupDocumentation } from "../tools/tool-documentation-renderer.js";
 import { runToolLoop } from "../runtime/tool-loop.js";
 import type {
   GuidanceSafePointPort,
@@ -111,6 +118,17 @@ export interface WorkerAgentOptions {
    */
   /** G3b（第 217 轮）：**成功工具输出回调**（可选；缺省 ⇒ 不采集）。 */
   onToolSucceeded?: (toolName: string, outputText: string) => void;
+  /**
+   * G4（2026-11-08 第 271 轮）：**工具说明注入**（可选）。
+   *
+   * 由上层提供已构造好的注入器与工具组公开用法：首次 ⇒ 完整用法；
+   * 同一 revision 后续 ⇒ **只追加固定提醒**（`ASTARRAY_TOOL_HELP_REQUEST_V1`）。
+   * **未提供 ⇒ 完全不执行**（提示词逐字不变）。
+   */
+  toolDocumentationInjection?: {
+    injector: ToolDocumentationRecallInjector;
+    documentation: ToolGroupDocumentation;
+  } | null;
   onEarlyStopDetected?: (observation: {
     producedTextLength: number;
     iterationCount: number;
@@ -372,6 +390,30 @@ export class WorkerAgent {
         requiredMutatingToolNames.join("、") +
         "。如仍被拒绝，请如实上报阻塞，不要声称已完成。";
     }
+    /**
+     * 工具说明注入（G4，第 271 轮）：首次给**完整公开用法**，同 revision 后续**只给固定提醒**。
+     *
+     * 未提供注入器 ⇒ 整段不执行（提示词逐字不变）。注入失败 ⇒ 记录原因并**继续**（说明缺失
+     * 不得让任务无法开始，但也不得静默——回执/注入由上层负责可观测性）。
+     */
+    const toolDocumentationInjection = this.options.toolDocumentationInjection;
+    if (toolDocumentationInjection !== null && toolDocumentationInjection !== undefined) {
+      try {
+        const injection = await toolDocumentationInjection.injector.planInjection({
+          agentInstanceId: this.options.agentInstanceId,
+          documentation: toolDocumentationInjection.documentation,
+          isDeltaProvenComplete: true,
+        });
+        if (injection.kind === "subsequent-reminder") {
+          systemPrompt += "\n\n" + buildReminderText();
+        } else {
+          systemPrompt += "\n\n" + renderToolGroupDocumentation(toolDocumentationInjection.documentation);
+        }
+      } catch {
+        // 说明注入失败不得阻塞任务（权限/验收/合并语义均不依赖本段）
+      }
+    }
+
     const contextPromptProvider = this.options.contextPromptProvider;
     if (contextPromptProvider !== undefined) {
       const assembledContext = await contextPromptProvider({
