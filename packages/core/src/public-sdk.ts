@@ -513,6 +513,13 @@ export {
 import type { AgentMode, AgentRuntime, TaskDependencyNode } from "./core/types.js";
 import type { MainController } from "./orchestration/main-controller.js";
 import type { PermissionProfileReference } from "./tools/permission-profile-store.js";
+// G1（2026-11-08 第 245 轮）：Git 集成四件套 + 协调器。
+import { GitContributionVerifier } from "./orchestration/git-contribution-verifier.js";
+import { GitIntegrationCoordinator } from "./orchestration/git-integration-coordinator.js";
+import type { GitIntegrationReport } from "./core/types.js";
+import { GitIntegrationReportStore } from "./orchestration/git-integration-report-store.js";
+import { GitRecoveryPointService } from "./orchestration/git-recovery-point-service.js";
+import { GitWorktreeAllocator } from "./orchestration/git-worktree-allocator.js";
 import { ProviderConfigurationError } from "./runtime/provider-runtime-registry.js";
 import type {
   ProviderRuntimeCapability,
@@ -1232,6 +1239,9 @@ export interface PublicApplicationOptions {
    * 仅当工具循环明确上报早停、且本任务续跑次数 < 2 时续跑。
    */
   isCheckpointResumeEnabled?: boolean;
+  /** G1（第 245 轮）：**Git 集成**（缺省不启用）。传入即构造分配器/验证器/报告存储/恢复点/协调器。
+   *  ⚠️ 不含目标分支合并（AGENTS.md 五道门禁）⇒ 本层无"自动合并"开关。 */
+  gitIntegration?: { repositoryPath: string; targetBranchName: string };
   isHighRigorEnforcementEnabled?: boolean;
   /** T04：反馈进程入口模块路径；缺省按包内 dist 入口自动解析。 */
   feedbackProcessModulePath?: string | null;
@@ -1642,7 +1652,9 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
         ? {}
         : { workspaceRootPath: options.workspaceRootPath }),
     });
-    return new AstarrayApplicationFacade(runtime, {
+    return new AstarrayApplicationFacade(runtime, {      ...(options.gitIntegration === undefined
+        ? {}
+        : { gitIntegration: options.gitIntegration }),
       statusPollIntervalMilliseconds: options.statusPollIntervalMilliseconds ?? 25,
       stateDirectory: options.stateDirectory,
       // 幂等账目跨进程持久化（R4）：重启后同键同参复用，不重复执行。
@@ -1685,7 +1697,12 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     });
   }
 
+  /** G1（第 245 轮）：Git 集成配置（null ⇒ 未启用）。 */
+  private readonly gitIntegration: { repositoryPath: string; targetBranchName: string } | null;
+
   constructor(
+
+
     private readonly runtime: ApplicationRuntime,
     options: {
       statusPollIntervalMilliseconds?: number;
@@ -1695,11 +1712,14 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       crossProjectHumanEditGuard?: CrossProjectTargetHumanEditGuardPort | null;
       /** GUI-02-02 专用流程：界面承载安装询问时的待决注册表（未开启则为 null）。 */
       installationInquiryRegistry?: InstallationInquiryRegistry | null;
+      /** G1（第 245 轮）：Git 集成配置。 */
+      gitIntegration?: { repositoryPath: string; targetBranchName: string };
     } = {},
   ) {
     this.statusPollIntervalMilliseconds =
       options.statusPollIntervalMilliseconds ?? 25;
     this.stateDirectory = options.stateDirectory ?? null;
+    this.gitIntegration = options.gitIntegration ?? null;
     this.crossProjectResourceIo = options.crossProjectResourceIo ?? null;
     /**
      * PROJECT-01-03（2026-10-31）：**这里曾经无条件 `?? null`**，
@@ -1901,6 +1921,38 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
 
   transitionMode(mode: AgentMode): void {
     this.runtime.controller.transitionMode(mode);
+  }
+
+  /**
+   * G1（2026-11-08 第 245 轮）：**开始一次 Git 集成会话**（未启用 ⇒ 抛错）。
+   *
+   * 构造：分配器 + 验证器 + 报告存储 + 恢复点服务 + 协调器，全部落在 `stateDirectory` 下。
+   * **不含**目标分支合并（Step 3 需另行授权，且须满足 `AGENTS.md` 的五道门禁）。
+   */
+  async startIntegrationSession(input: {
+    missionId: string;
+    integratingAgentInstanceId: string;
+  }): Promise<GitIntegrationReport> {
+    const gitIntegration = this.gitIntegration;
+    const stateDirectory = this.stateDirectory;
+    if (gitIntegration === null || stateDirectory === null) {
+      throw new PublicApplicationError(
+        "git-integration-disabled",
+        "未启用 Git 集成：创建应用时需传 gitIntegration 且提供 stateDirectory",
+      );
+    }
+    const coordinator = new GitIntegrationCoordinator({
+      worktreeAllocator: new GitWorktreeAllocator({ baseDirectory: stateDirectory }),
+      verifier: new GitContributionVerifier(),
+      reportStore: new GitIntegrationReportStore({ baseDirectory: stateDirectory }),
+      recoveryPointService: new GitRecoveryPointService({ baseDirectory: stateDirectory }),
+    });
+    return coordinator.startIntegrationSession({
+      missionId: input.missionId,
+      integratingAgentInstanceId: input.integratingAgentInstanceId,
+      repositoryPath: gitIntegration.repositoryPath,
+      targetBranchName: gitIntegration.targetBranchName,
+    });
   }
 
   async getCurrentPermissionProfileReference() {
