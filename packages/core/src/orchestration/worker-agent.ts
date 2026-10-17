@@ -24,6 +24,8 @@ import { DomainError } from "../core/errors.js";
 // COMM-01-02（2026-10-25）：反馈默认走**任务发布者的反向通道**（不再按上下级/硬编码推断）。
 import { resolveFeedbackRecipient } from "./task-publisher-feedback-route.js";
 import type { ContextPromptProvider } from "./context-prompt-assembler.js";
+import { EvidenceCompletionGate } from "../tools/evidence-completion-gate.js";
+import type { EvidenceBundle } from "../core/types.js";
 import { runToolLoop } from "../runtime/tool-loop.js";
 import type {
   GuidanceSafePointPort,
@@ -146,6 +148,8 @@ export interface WorkerAgentOptions {
    * 把非变更工具塞进去会让要求**永远无法满足**（第 136／139 轮两次实测的过度拦截）。
    */
   requiredToolNames?: readonly string[];
+  /** G3b（第 218 轮）：高严谨任务**必须产出合格证据包**（缺省关 ⇒ 行为不变）。 */
+  isHighRigorEvidenceRequired?: boolean;
 }
 
 /**
@@ -182,8 +186,28 @@ export class WorkerAgent {
    * 高严谨任务会**永远无法结案**（第 136 轮实测的过度拦截）。
    */
   private readonly successfullyExecutedRequiredTools = new Set<string>();
+  /** G3b（第 218 轮）：最近一次 `factVerification` 的完整输出（供证据包门禁）。 */
+  private capturedFactVerificationOutput: string | null = null;
   /** 本 AGENT **尝试过**的写类工具（含被门禁拦下、执行失败的调用）。 */
   private readonly attemptedMutatingTools = new Set<string>();
+
+  /** G3b（第 218 轮）：把捕获输出解析为证据包（形状不符 ⇒ null）。 */
+  private parseCapturedEvidenceBundle(): EvidenceBundle | null {
+    if (this.capturedFactVerificationOutput === null) return null;
+    try {
+      const parsed = JSON.parse(this.capturedFactVerificationOutput) as Record<string, unknown>;
+      if (typeof parsed["claimIdentifier"] !== "string" || !Array.isArray(parsed["entries"])) {
+        return null;
+      }
+      return {
+        claimIdentifier: parsed["claimIdentifier"],
+        entries: parsed["entries"],
+        relation: typeof parsed["relation"] === "string" ? parsed["relation"] : "unknown",
+      } as unknown as EvidenceBundle;
+    } catch {
+      return null;
+    }
+  }
 
   constructor(private readonly options: WorkerAgentOptions) {}
 
@@ -249,6 +273,20 @@ export class WorkerAgent {
      * 判定依据是 `successfullyExecutedRequiredTools`（**所有**成功工具，含非变更类）；
      * 缺省未配置 `requiredToolNames` ⇒ 本段恒不触发 ⇒ **行为不变**。
      */
+    /** G3b（第 218 轮）：**证据包内容门禁**（缺省关 ⇒ 不执行）。 */
+    if (this.options.isHighRigorEvidenceRequired === true) {
+      const evidenceGateResult = new EvidenceCompletionGate().evaluateEvidenceBundle(
+        this.parseCapturedEvidenceBundle(),
+        { requiredClaimIdentifier: "default-claim", requireSourceText: true },
+      );
+      if (!evidenceGateResult.isPassable) {
+        return (
+          "高严谨任务证据包不合格（纯推理/缺来源不足，不得结案）：" +
+          evidenceGateResult.unmetRequirements.join("；")
+        );
+      }
+    }
+
     const requiredToolNamesNotYetSucceeded = (this.options.requiredToolNames ?? []).filter(
       (toolName) => !this.successfullyExecutedRequiredTools.has(toolName),
     );
@@ -369,10 +407,13 @@ export class WorkerAgent {
           : { diagnosticEventSink: this.options.diagnosticEventSink }),
         /** G2（第 130 轮）：守卫端口 + 任务键。缺省 ⇒ 不传 ⇒ 不启用。 */
         /** G5（2026-11-08 第 201 轮）：早停回调透传（缺省不提供 ⇒ 工具循环不触发）。 */
-        /** G3b（第 217 轮）：成功工具输出回调透传（缺省不提供 ⇒ 不采集）。 */
-        ...(this.options.onToolSucceeded === undefined
-          ? {}
-          : { onToolSucceeded: this.options.onToolSucceeded }),
+        /** G3b（第 217–218 轮）：本地捕获 `factVerification` 输出，再透传上游回调。 */
+        onToolSucceeded: (toolName: string, outputText: string) => {
+          if (toolName === "factVerification") {
+            this.capturedFactVerificationOutput = outputText;
+          }
+          this.options.onToolSucceeded?.(toolName, outputText);
+        },
         ...(this.options.onEarlyStopDetected === undefined
           ? {}
           : { onEarlyStopDetected: this.options.onEarlyStopDetected }),
