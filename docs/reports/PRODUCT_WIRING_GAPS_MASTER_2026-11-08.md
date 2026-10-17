@@ -1481,3 +1481,39 @@ buildWorkerToolPortWithRecoveryCheckpointing(missionId, task, agentInstanceId)
    需调用方提供才让写入型任务的 Git 分流有实际意义；
 3. **G4 工具说明回执**：组件在（`tool-help-recall-controller.ts`）、**接线为零**（§20.3）；
 4. 外部证据：macOS、GUI 人工体验、`SUM-01` 人工标注、真实 Provider 凭据。
+
+## 23. G4 的真实形状（第 261 轮实读）：**不是"接线"，而是新建交付链路**
+
+### 23.1 已有的组件（都存在，且都未接线）
+
+| 组件 | 位置 | 作用 |
+| --- | --- | --- |
+| `ToolDocumentationReceiptStore` | `tool-documentation-recall.ts:L61` | 按 `agentInstanceId + toolGroupIdentifier` 持久化"已交付回执" |
+| `ToolDocumentationRecallController` | `tool-help-recall-controller.ts:L120` | 处理 `ASTARRAY_TOOL_HELP_REQUEST_V1` 请求（`handleRequest`） |
+| 固定提醒文案 | `tool-documentation-recall.ts:L25` | 「如果忘记工具用法…请返回 `ASTARRAY_TOOL_HELP_REQUEST_V1`…」 |
+
+**检索证据**：`new .*ToolHelp.*(` / `shouldSendFullHelp` / `recordToolGroupDelivery` ⇒ 零命中；
+`ASTARRAY_TOOL_HELP_REQUEST_V1` 仅出现在这两个文件的注释/文案里 ⇒ **请求路径与回执路径都不存在**。
+
+### 23.2 缺失的关键环节（决定性）
+
+`worker-agent.ts` 里检索 `toolDocumentation` / `工具说明` / `toolDescriptions` ⇒ **零命中**
+⇒ **Worker 的提示词里根本没有"工具说明"注入点** ✗
+
+因此 G4 不是"把组件 `new` 出来"，而是需要**新建三段链路**：
+
+1. **提示词装配**：Worker 首次拿到某工具组 ⇒ 注入**完整公开用法**；同 revision 再次 ⇒ 只注入固定提醒；
+2. **回执持久化**：装配时写 `ToolDocumentationReceiptStore`（键：`agentInstanceId + toolGroupIdentifier + revision`）；
+3. **回访处理**：模型输出 `ASTARRAY_TOOL_HELP_REQUEST_V1` ⇒ 由 `ToolDocumentationRecallController.handleRequest` 回应，
+   且"已分配工具直接返回用法 / 未分配逐级上报"的语义要由本地控制面保证。
+
+### 23.3 我的判断（按轮次预算纪律）
+
+预算 4 轮，而实测至少需要 **8–10 轮**（提示词装配 + 存储 + 请求路径 + 三条反例 + 拔线 + 门禁）。
+**⇒ 停手，不半实现**（第 261 轮无可提交代码，树保持全绿）。
+
+### 23.4 给下窗口的设计要点（可直接照做）
+
+- 注入点：Worker 构造提示词处（`worker-agent.ts` 的 system prompt 装配）——**先找到该函数**（本轮未找到，因为连"工具说明"字样都不存在）；
+- 分组键：`toolGroupIdentifier` + `revision`（仓库已有 `TOOLKIT01` 相关卡与 `tool-action-registry` 的能力族，可复用作为组标识）；
+- 反例（先行写、确认红）：① 首次 ⇒ 提示词含完整用法；② 同 revision 第二次 ⇒ 只含固定提醒、**不含**完整用法；③ 未分配工具请求 ⇒ 逐级上报。
