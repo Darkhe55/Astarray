@@ -227,6 +227,8 @@ export interface ApplicationRuntimeOptions {
   isDiagnosticCollectionEnabled?: boolean;
   /** G2（第 130 轮）：活锁/循环守卫开关。**缺省 false**（不擅自改默认行为）。 */
   isProgressGuardEnabled?: boolean;
+  /** G3（第 133 轮）：高严谨性强制事实验证开关。**缺省 false**（不擅自改默认行为）。 */
+  isHighRigorEnforcementEnabled?: boolean;
   streamOutput: (missionId: string | null, text: string) => void;
   /**
    * GUI-02-01 片①（2026-10-11）：权限询问**携带绝对身份**的上报口（可选）。
@@ -1203,6 +1205,10 @@ export async function createApplicationRuntime(
     ...(missionDiagnosticEventPort === undefined ? {} : { missionDiagnosticEventPort }),
     // G2（第 130 轮）：守卫端口（缺省 undefined ⇒ 不启用）
     ...(progressGuardPort === undefined ? {} : { progressGuardPort }),
+    // G3（第 133 轮）：高严谨性强制事实验证开关（缺省关 ⇒ 不传）
+    ...(options.isHighRigorEnforcementEnabled === true
+      ? { isHighRigorEnforcementEnabled: true }
+      : {}),
     resolveToolDescriptors: (task: TaskDependencyNode): ToolDescriptor[] =>
       task.toolNames
         .map((toolName) => registry.getDescriptor(toolName))

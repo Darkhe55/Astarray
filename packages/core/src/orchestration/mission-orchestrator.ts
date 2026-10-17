@@ -41,6 +41,7 @@ const MUTATING_TOOL_NAMES_FOR_RETRY = new Set([
   ToolLoopProgressGuardPort,
 } from "../runtime/tool-loop.js";
 import type { GuidanceScopeTarget } from "../runtime-guidance/runtime-guidance.js";
+import { LocalRigorPolicyEngine } from "../tools/local-rigor-policy-engine.js";
 import type { ContextNodeLifecyclePort } from "./worker-agent.js";
 import type { AgentWorkArchiveStore } from "./work-archive-store.js";
 import { DomainError } from "../core/errors.js";
@@ -95,6 +96,13 @@ export interface OrchestratorWorkerFactories {
    */
   /** G2（第 130 轮）：守卫端口（缺省 ⇒ 不传 ⇒ 不启用）。 */
   progressGuardPort?: ToolLoopProgressGuardPort;
+  /**
+   * G3（2026-11-08，第 133 轮）：**高严谨性任务强制事实验证**开关。
+   *
+   * 打开后：被 `LocalRigorPolicyEngine` 本地规则判为 `high` 的任务，完成前**必须**
+   * 成功调用过 `factVerification`（否则完成被拒、任务不结案）。**缺省关**。
+   */
+  isHighRigorEnforcementEnabled?: boolean;
   diagnosticEventPort?: (event: {
     sourceAgentInstanceId: string;
     missionIdentifier: string;
@@ -705,6 +713,22 @@ export class MissionOrchestrator {
               ...(this.pendingMutatingToolNamesByTask.get(task.id) ?? []),
             ],
           }),
+      /**
+       * G3（2026-11-08，第 133 轮）：**高严谨性 ⇒ 完成前必须成功调用 `factVerification`**。
+       *
+       * 对象字面量**后者胜** ⇒ 本条覆盖上面的 `requiredMutatingToolNames`；
+       * 即"标记"（本地规则）与"强制"（必须调用）都在本地完成，不经模型判断。
+       * 开关缺省关 ⇒ 该 spread 为空对象 ⇒ 行为逐字不变。
+       */
+      ...(this.options.workerFactories.isHighRigorEnforcementEnabled === true &&
+      new LocalRigorPolicyEngine().classifyRigor(task.description).rigorLevel === "high"
+        ? {
+            requiredMutatingToolNames: [
+              ...(this.pendingMutatingToolNamesByTask.get(task.id) ?? []),
+              "factVerification",
+            ],
+          }
+        : {}),
       /**
        * PERF-01-02 采集（2026-11-08，第 83 轮）：把工具循环的样本**补齐身份**后
        * 交给落库端口。端口缺省 ⇒ 不传 sink ⇒ 不采集。
