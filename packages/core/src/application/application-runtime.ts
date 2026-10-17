@@ -26,6 +26,12 @@ import { DiagnosticEventStore } from "../orchestration/diagnostic-event-store.js
 import { LocalProgressAndCycleGuard } from "../tools/local-progress-and-cycle-guard.js";
 import { TaskCallBudgetLedger } from "../infra/task-call-budget-ledger.js";
 import type { MissionDiagnosticEvent } from "../orchestration/mission-orchestrator.js";
+// G1（2026-11-08 第 255 轮）：Git 集成四件套（装配层构造，缺省不启用）。
+import { GitContributionVerifier } from "../orchestration/git-contribution-verifier.js";
+import { GitIntegrationCoordinator } from "../orchestration/git-integration-coordinator.js";
+import { GitIntegrationReportStore } from "../orchestration/git-integration-report-store.js";
+import { GitRecoveryPointService } from "../orchestration/git-recovery-point-service.js";
+import { GitWorktreeAllocator } from "../orchestration/git-worktree-allocator.js";
 import { MissionManager } from "../orchestration/mission-manager.js";
 import { FeedbackProcessSupervisor } from "../feedback-process/process-supervisor.js";
 import type { ForkFeedbackClient } from "../feedback-process/transport.js";
@@ -236,6 +242,11 @@ export interface ApplicationRuntimeOptions {
    * 仅当工具循环明确上报早停、且本任务续跑次数 < 2 时续跑。
    */
   isCheckpointResumeEnabled?: boolean;
+  /**
+   * G1（2026-11-08 第 255 轮）：**Git 集成**（缺省不启用）。
+   * 传入即构造四件套并交给控制器补全（worktree 端口带身份；永不自动合并）。
+   */
+  gitIntegration?: { repositoryPath: string; targetBranchName: string };
   isHighRigorEnforcementEnabled?: boolean;
   streamOutput: (missionId: string | null, text: string) => void;
   /**
@@ -1107,6 +1118,23 @@ export async function createApplicationRuntime(
       : undefined;
 
   const controller = new MainController({
+    /** G1（第 255 轮）：构造 Git 集成四件套并交给控制器补全（worktree 端口带身份；永不自动合并）。 */
+    ...(options.gitIntegration === undefined
+      ? {}
+      : {
+          gitIntegration: {
+            coordinator: new GitIntegrationCoordinator({
+              worktreeAllocator: new GitWorktreeAllocator({ baseDirectory: options.stateDirectory }),
+              verifier: new GitContributionVerifier(),
+              reportStore: new GitIntegrationReportStore({ baseDirectory: options.stateDirectory }),
+              recoveryPointService: new GitRecoveryPointService({ baseDirectory: options.stateDirectory }),
+            }),
+            repositoryPath: options.gitIntegration.repositoryPath,
+            targetBranchName: options.gitIntegration.targetBranchName,
+            allowedPathsByTaskType: {},
+            integrationTestCommands: [],
+          },
+        }),
     modeMachine,
     sessionManager,
     taskStore,
