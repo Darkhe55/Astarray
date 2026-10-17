@@ -1769,3 +1769,59 @@ let systemPrompt = buildWorkerSystemPrompt(...);   // ← 在此之后追加
 1. G1 合并：默认装配下**永不通过**（证据提供者缺省 ⇒ 空证据）；两门人提供证据无法由代码补上；
 2. G4：**未提供注入器 ⇒ 提示词逐字不变**；注入失败不得阻塞任务；
 3. G4 生产者：**缺登记即抛错**（不得注入"半套"说明、不得编造示例/局限）。
+
+### 29.5 四层接线的**可机械执行补丁清单**（锚点原文，第 278 轮）
+
+目标：把 `toolDocumentationRegistry?: Record<string, ToolPublicDocumentationRegistryEntry>` 从门面透传到 worker，
+使"提供登记 ⇒ 注入完整用法；未提供 ⇒ 提示词逐字不变"。
+
+**照抄对象**：`gitIntegration` 那条线（第 254–255 轮已成功，位置与形状完全相同）。
+
+| # | 文件 | 锚点（原文） | 补什么 |
+| --- | --- | --- | --- |
+| 1 | `public-sdk.ts` | `  gitIntegration?: { repositoryPath: string; targetBranchName: string };` | 其后加 `  toolDocumentationRegistry?: Record<string, ToolPublicDocumentationRegistryEntry>;` + 类型 import |
+| 2 | `public-sdk.ts` | `          ...(options.gitIntegration === undefined` | 其前后加同样形状的 `...(options.toolDocumentationRegistry === undefined ? {} : { toolDocumentationRegistry: options.toolDocumentationRegistry }),` |
+| 3 | `application-runtime.ts` | `  gitIntegration?: { repositoryPath: string; targetBranchName: string };`（在 `ApplicationRuntimeOptions` 内） | 其后加同名字段（同类型） |
+| 4 | `application-runtime.ts` | `const controller = new MainController({` | 其后（与 gitIntegration 块并列）加 `...(options.toolDocumentationRegistry === undefined ? {} : { toolDocumentationRegistry: options.toolDocumentationRegistry }),` |
+| 5 | `main-controller.ts` | `  gitIntegration?: GitIntegrationPartialOptions \| null;` | 其后加 `  toolDocumentationRegistry?: Record<string, ToolPublicDocumentationRegistryEntry>;` |
+| 6 | `main-controller.ts` | `              : { isHighRigorEnforcementEnabled: this.options.isHighRigorEnforcementEnabled }),` | 其后加 `...(this.options.toolDocumentationRegistry === undefined ? {} : { toolDocumentationRegistry: this.options.toolDocumentationRegistry }),`（放在 `workerFactories` **内**即可——worker 选项由 workerFactories 组装） |
+| 7 | `mission-orchestrator.ts`（`OrchestratorWorkerFactories`） | `  isHighRigorEnforcementEnabled?: boolean;` | 其后加 `  toolDocumentationRegistry?: Record<string, ToolPublicDocumentationRegistryEntry>;` |
+| 8 | `mission-orchestrator.ts` 的 `buildWorkerAgent` | `      onEarlyStopDetected: (observation) => {` | 其**之前**（同对象字面量内）加"构造注入"逻辑： |
+
+```ts
+      /**
+       * G4（第 278 轮计划）：提供登记 ⇒ 构造注入（首次完整用法 / 同 revision 仅提醒）；
+       * 未提供或登记不完整 ⇒ **不注入**（生产者抛错时此处吞掉，提示词逐字不变）。
+       */
+      ...(() => {
+        const registry = this.options.workerFactories.toolDocumentationRegistry;
+        const injector = this.options.workerFactories.toolDocumentationInjector;
+        if (registry === undefined || injector === undefined || injector === null) return {};
+        try {
+          const assignedTools = (options.allowedToolNames ?? []).map((toolName) => {
+            const descriptor = /* 该 agent 可见的描述符 */;
+            const entry = registry[toolName];
+            return buildToolPublicDocumentation({ descriptor, registryEntry: entry });
+          });
+          if (assignedTools.length === 0) return {};
+          return {
+            toolDocumentationInjection: {
+              injector,
+              documentation: buildFullDocumentation({
+                toolGroupIdentifier: "assigned-tools",
+                toolGroupRevision: 1,
+                assignedTools,
+              }),
+            },
+          };
+        } catch {
+          return {};
+        }
+      })(),
+```
+
+**注意**：`assignedTools` 的构造需要「该 agent 可见的工具描述符」——`buildWorkerAgent(options)` 里是否有权威来源需**先取证**
+（若没有，则把 `assignedTools` 的构造放到 **worker 内部**（`this.options.availableToolDescriptors`），注入器与注册表仍按上表透传）。
+
+**验收（§29.3 第 3 步）**：① 提供完整登记 ⇒ 提示词含完整用法；② 同一 agent 第二次 ⇒ 只含固定提醒；
+③ 登记缺项 ⇒ 提示词不变（fail-closed）；④ 全都不提供 ⇒ 提示词逐字不变。
