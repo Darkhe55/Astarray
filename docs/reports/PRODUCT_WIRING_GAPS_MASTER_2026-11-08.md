@@ -1109,3 +1109,43 @@ G3a 修好后它变成：
 | 隔离包（第 221 轮） | 273 文件；`verify-package` + `verify-sdk-consumer` 均 exit 0 |
 
 **⇒ G3a／G3b 在本窗口完整闭合（门禁 + 正负配对 + 4 个缺陷修复 + 开关缺省关）。**
+### 16.5 G5 接线现状（第 232–238 轮）：**六步已落地、行为未验证**
+
+#### 16.5.1 已提交的六步（每步单独提交、`typecheck` 均 0）
+
+| 步 | 内容 | 提交 |
+| --- | --- | --- |
+| 1 | 工具循环新增 `onEarlyStopDetected`（**上报事实，不续跑**） | `36abd27` |
+| 2 | worker 声明类型契约 | `76e3f04` |
+| 3 | worker 转发到工具循环 | `d1da326` |
+| 4 | 编排器记录早停观测 + 预留续跑计数 | `8785038` |
+| 5 | 失败分支 → 提前到 `switch` 之前：覆盖 `failure`／`ambiguous`，**≤2 次**，用 `releaseTaskBackToPending` 重派 | `28d09cf`、`b17bac1` |
+| 6 | 四层开关透传（门面→装配→控制器×2→编排器），缺省 `false` | `b17bac1` |
+| 7 | 早停上报点修正：从工具循环（`reason` 恒为 `success`）移到 worker 的 `completionGateFailure` | `6e95cdb` |
+
+**关键实测（第 236 轮探针）**：截断输出（无完成事件）时工具循环的 `[G5-REASON] reason=success textLen=7`
+⇒ 在工具循环按 `reason === "error"` 判定**永远不触发**（第 5 个缺陷，已修）。
+
+#### 16.5.2 **仍未验证的两个点**（下窗口第一步）
+
+1. 编排器的 `onEarlyStopDetected` 是否**真的收到**（`earlyStopObservationsByTask` 是否被填充）；
+2. 若收到，`switch` 前的续跑守卫为何**未触发**（`blocked` 而非 `done`）。
+
+**诊断动作（10 分钟内可完成）**：在 `handleWorkerOutcome` 的 `switch` 之前加一行
+
+```ts
+console.error("[G5-GUARD] earlyStop=" + String(this.earlyStopObservationsByTask.has(taskId)) +
+  " attempts=" + String(this.resumeAttemptsByTask.get(taskId) ?? 0) +
+  " enabled=" + String(this.options.isCheckpointResumeEnabled === true) +
+  " outcome=" + outcome.outcome);
+```
+
+⇒ 三种可能一目了然：`earlyStop=false`（上报没到）／`enabled=false`（开关没透传到编排器）／
+`outcome="success"`（根本没进失败/歧义分支）。
+
+#### 16.5.3 反例状态
+
+`.tmp/g5-early-stop-resume.test.ts.draft`（**未入库**，仍红）：
+① 首次截断、随后完成 ⇒ 期望 `done`（实测 `blocked`）；② 每次截断 ⇒ 期望失败且尝试 **≤3**（实测 1 次）。
+
+**⇒ G5 状态：接线完整、开关缺省关、行为未验证。不得声称完成。**
