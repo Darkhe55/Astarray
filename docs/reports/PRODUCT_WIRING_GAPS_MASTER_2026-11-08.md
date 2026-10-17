@@ -1431,3 +1431,53 @@ buildWorkerToolPortWithRecoveryCheckpointing(missionId, task, agentInstanceId)
 2. **`integrationTestCommands` / `allowedPathsByTaskType` 的实际取值**：当前装配层传 `[]` 与 `{}`
    ⇒ 写入型任务的 Git 分流**需要调用方提供这两项才有意义**（已在装配层留出扩展位）；
 3. **G4**：工具说明回执仍**未接线**（§20.3）。
+
+## 22. 窗口 241–258 终账（效率窗口）
+
+### 22.1 用户要求与执行情况
+
+**要求**：提高效率（上限 240 → 260）。
+
+| 纪律 | 执行结果 |
+| --- | --- |
+| 先取证再假设 | ✅ G5 用**一条探针**（`[G5-GUARD]`）定位；**没有**连猜 |
+| 插入前先确认语句位置 | ⚠️ 仍有 3 次插错（数组字面量内、两个同名接口、缩进）⇒ 最终改为**行号精确定位**成功 |
+| 合并同类改动 | ✅ G1 控制器 4 处一次改完；G1 装配层 3 处一次改完 |
+| 文档一次写完 | ✅ 终账只在窗口末写（§21.6、§22） |
+| 单项轮次预算 | ✅ G5 **2 轮**；G1 门面+接口+编排层 **6 轮**（超 4 轮预算，因两次插入点猜错） |
+
+### 22.2 闭合项（本轮窗口）
+
+| 项 | 证据 |
+| --- | --- |
+| **G5 有界续跑** | 反例 **2/2**；拔线 **2/2 红**；开关缺省关（§16.6） |
+| **G1 三层贯通**（Step 1/2 + 编排层接线） | 门面 → 装配 → 控制器 → 编排器；端到端 **2/2**（真实 `git init`）；**合并恒 `false`** 有检索证据（§21.6） |
+| **G3b 补充反例** | `requireSourceText` 拒绝路径（`a23836b`） |
+
+### 22.3 本窗口修掉的缺陷（7 个）
+
+1. G5 开关被转发进 `workerFactories` ⇒ 编排器恒 `undefined`（`abea537`）
+2. 早停判据错层：工具循环 `reason` 恒 `success`（`6e95cdb`）
+3. 门面 `GitIntegrationReport` 从错模块导入（`8e4402d`）
+4. `buildGitWorktreeToolPort` 缺 `agentInstanceId`（权限语义）（`201231e`）
+5. 装配层 `gitIntegration` 字段加到错接口（第 255 轮，行号定位修正）
+6. `wiring-manifest` 与新接线不一致（`2f69333`）
+7. 门禁用例删临时目录与后台写盘竞态 ⇒ `check` exit 1（`b801556`）
+
+### 22.4 最终验证（第 257 轮实测）
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run check` | **exit 0 —— 456 文件 / 3328 用例** |
+| `npm run verify:mutation-kills` | **exit 0 —— 60/60** |
+| `npm pack` + 两个 verify | **273 文件**；三项 **exit 0** |
+
+**开关默认值**：G2／G3a／G3b／G5／`gitIntegration` **全部缺省关** ✓
+
+### 22.5 未做（清晰交接）
+
+1. **G1 的受控合并（Step 3 允许分支）**：需用户授权 + `AGENTS.md` 五道门禁 ⇒ 本层**永不判通过**；
+2. **G1 的 `integrationTestCommands` / `allowedPathsByTaskType` 实际取值**：装配层现传 `[]` / `{}`，
+   需调用方提供才让写入型任务的 Git 分流有实际意义；
+3. **G4 工具说明回执**：组件在（`tool-help-recall-controller.ts`）、**接线为零**（§20.3）；
+4. 外部证据：macOS、GUI 人工体验、`SUM-01` 人工标注、真实 Provider 凭据。
