@@ -1643,3 +1643,42 @@ isTargetBranchMergeAllowed: (input: {
 - `finalizeIntegration` 逐次决定是否把集成分支并入目标 ⇒ 逐次"人工体验/操作授权"可在此处校验。
 
 **⇒ 若将来要做 Step 3，优先在这两个逐次 API 处加证据校验，而不是扩展 `isTargetBranchMergeAllowed`（无参回调）—— 这是更小的改动面，也更符合逐次语义。**
+
+## 27. G4 的**完整实现配方**（第 267–268 轮取证完成，可直接照做）
+
+### 27.1 构建块全部存在（无需新建）
+
+| 组件 | 位置 | 用途 |
+| --- | --- | --- |
+| `ToolDocumentationRecallInjector` | `tool-documentation-recall.ts:134` | 决定"首次给完整用法 / 后续只给提醒" |
+| `buildFullDocumentation({...})` | 同文件 `:203` | 生成**完整公开用法**文本 |
+| `buildReminderText()` | 同文件 `:198` | 生成固定提醒（`ASTARRAY_TOOL_HELP_REQUEST_V1`） |
+| `ToolDocumentationReceiptStore` | 同文件 `:61` | 按 `agentInstanceId + toolGroupIdentifier` 持久化"已交付回执" |
+| `TOOL_HELP_REMINDER_TEXT` | 同文件 `:24` | 固定提醒常量 |
+
+### 27.2 注入点（已定位）
+
+`packages/core/src/orchestration/worker-agent.ts:326`：
+
+```ts
+let systemPrompt = buildWorkerSystemPrompt(...);   // ← 在此之后追加
+// L352、L369 已有两次 `systemPrompt += ...`（既有模式，照抄即可）
+```
+
+**⇒ 追加一段「工具说明」**：首次 ⇒ 完整用法；同 revision ⇒ 只追加 `buildReminderText()`。
+
+### 27.3 实现步骤（预计 4–6 轮）
+
+1. **控制器构造** `ToolDocumentationReceiptStore`（`baseDirectory: stateDirectory`）+ `ToolDocumentationRecallInjector`，
+   经 `workerFactories` 传给 worker（与 `progressGuardPort` 同模式）；
+2. **worker 选项**：加 `toolDocumentationInjector?: ...` 与 `toolGroupIdentifier`/`toolGroupRevision`（来自工具集分配处）；
+3. **提示词追加**：在 `worker-agent.ts:326` 之后，按注入器结果追加"完整用法"或"固定提醒"；
+4. **回执落盘**：追加完整用法时写 receipt（键：`agentInstanceId + toolGroupIdentifier + revision`）；
+5. **反例先行**：① 首次交付 ⇒ 提示词**含**完整用法；② 同 revision 第二次 ⇒ **不含**完整用法、**含**固定提醒；③ 未分配工具的请求 ⇒ 逐级上报（`handleRequest` 语义）。
+
+### 27.4 我为什么这轮不硬写
+
+需要：控制器构造 + worker 选项 + 提示词追加 + 回执落盘 + 3 条反例，共 **5 处改动**——
+而我当前上下文已不足以安全完成，硬写会导致"半成品 + 红树"（G5 曾因此烧 7 轮）。
+
+**⇒ 配方已完整，下个会话可机械执行**（预算 4–6 轮）。
