@@ -713,3 +713,28 @@ macOS 平台证据 · Linux/macOS GUI 人工体验 · 人工体验结论（`pend
 并且在开闸前必须提供"如何在高严谨任务里获得该授权"的操作路径。
 
 **在 (a)／(b) 任一落地前：G3a 不得开闸，也不得声称完成。**
+
+### 5.7 G10（已完成，第 184–187 轮）：两个状态命令接入 CLI
+
+**问题（原 §5.2）**：`executePresetListCommand` 与 `executeConcurrentStatusCommand` **早已实现**，
+但全仓**没有任何 argv 分发** ⇒ 用户无法从 CLI 调用（也是 G9 那个"假保证"到不了用户的原因）。
+
+**修法**：`packages/tui/src/cli.tsx` 按**既有 commander 风格**（与 `doctor` 一致的 `.command(...).action(...)`）注册：
+
+- `preset list [--json]` → `executePresetListCommand`
+- `concurrent status [--json]` → `executeConcurrentStatusCommand`
+
+两者都是**只读状态视图**（不执行进程、不联网、不写文件），输出语义按 **G9** 如实（`modulesLoadable` + `componentsReadySemantics`）。
+
+### 验收（与用户三项标准一致）
+
+| 项 | 证据 |
+| --- | --- |
+| **真实应用装配入口** | 新增 `tests/tui/integration/g10-cli-status-commands.test.ts`：**真实子进程**跑 `dist/cli.js`（照抄既有 CLI 集成测试：隔离 `cwd`，状态落 `cwd/.astarray`） |
+| **拔掉接线 ⇒ 必须失败** | 回退 `cli.tsx` 到接线前并重建 ⇒ **2/2 失败**（`error: unknown option '--json'`）；恢复并重建 ⇒ **2/2 通过**（diff 0） |
+| **隔离包验证** | `npm pack` **273 文件 / exit 0**；`verify-package` **exit 0**；`verify-sdk-consumer` **exit 0**（「SDK 消费者行为验证通过」） |
+| **门禁** | `npm run check` **exit 0 —— 450 文件 / 3319 用例** |
+
+**⇒ G10 闭合**（第 184 轮接线、185 轮 argv 验收、186 轮拔线证明与门禁、187 轮隔离包）。
+
+**未做的**：尚未给"CLI 分发"加**永久变异体**（下轮补：删掉 `.command("preset")` 块 ⇒ argv 测试必须红）。
