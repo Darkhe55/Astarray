@@ -111,3 +111,9 @@
 > **已 `git checkout 0da8313 -- scripts/verify-mutation-kills.mjs` 回退**，复验：`node --check` 0、`collectFailures` 0 处、变异 **62/62** ✓。
 > **教训**：改这个文件必须用 **Node 脚本 + 显式 '\n'.join**（已验证可靠），**不要用 PowerShell 数组拼多行**。
 > 守卫本身**仍未加**（下次按此方式重做，并用一个故意写坏的 `find` 验证"语法错⇒脚本错误"）。
+
+> **2026-10-17（第 5 轮）—— 守卫已按正确方式重做并验证**：
+> 用 **Node 脚本 + `'\n'.join`** 插入（不再用 PowerShell 数组），逐行确认结构正确、`node --check` 0、`eslint` 0 错。
+> **反例验证（关键）**：临时加入一个 `find` 只截三元表达式第一行的探针变异体 ⇒ harness 正确报
+> **「❌ 脚本错误：变异使测试文件无法收集（语法/转换错误）…首条信息：Transform failed with 1 error」**（而非"存活"）✓
+> 随后移除探针 ⇒ 变异体数回到 **62**、`syntax-break-probe` 残留 **0**、**62/62** 全拦下 ✓
