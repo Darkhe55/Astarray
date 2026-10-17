@@ -1222,6 +1222,8 @@ export interface PublicApplicationOptions {
    * 权限拒绝、工具不存在、敏感内容禁读、作用域待授权/被拒等**执行前拒绝**，以及**取消**。
    */
   isDiagnosticCollectionEnabled?: boolean;
+  /** G2（第 130 轮）：活锁/循环守卫开关。**缺省 false**。 */
+  isProgressGuardEnabled?: boolean;
   /** T04：反馈进程入口模块路径；缺省按包内 dist 入口自动解析。 */
   feedbackProcessModulePath?: string | null;
   /**
@@ -1604,6 +1606,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       isPerformanceCollectionEnabled: options.isPerformanceCollectionEnabled ?? false,
       // OBS-01／DIAG-01（第 85 轮）：诊断采集**缺省关**（不擅自改变生产行为）
       isDiagnosticCollectionEnabled: options.isDiagnosticCollectionEnabled ?? false,
+      isProgressGuardEnabled: options.isProgressGuardEnabled ?? false,
       streamOutput: options.streamOutput ?? (() => {}),
       // GUI-02-01 片①：权限询问的绝对身份透传（可选；未提供则不传字段）。
       ...(options.onPermissionAskWithIdentity === undefined

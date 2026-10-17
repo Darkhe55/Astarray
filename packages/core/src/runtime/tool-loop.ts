@@ -7,6 +7,7 @@ import type { AgentEvent } from "../core/events.js";
 import { TASK_COMPLETION_MARKER } from "../core/completion-protocol.js";
 // DIAG-01（第 85 轮）：复用**既有**的"执行前拒绝"判定，拒绝不得记成故障
 import { isExecutionRefusalErrorCode } from "../tools/policy-wrapper.js";
+import { canonicalizeToolArguments } from "../core/permission-policy.js";
 // DIAG-01（第 86 轮）：Provider 失败要带**稳定错误码**上报（而不是自由文本）
 import { DomainError } from "../core/errors.js";
 import type {
@@ -64,6 +65,30 @@ export interface ToolLoopOptions {
    * **观测失败不得阻塞业务**（与 `perfSampleSink` 同一纪律）。
    */
   diagnosticEventSink?: ToolLoopDiagnosticFailureSink;
+  /**
+   * G2（2026-11-08，第 130 轮）：**活锁/循环守卫端口**（可选）。
+   *
+   * ## 为什么需要它
+   *
+   * `AGENTS.md`：「**循环调用、无进展重试和 Agent 互相回派必须有本地检测与有界中止**」。
+   * `LocalProgressAndCycleGuard`（T07B / ADR-0017）早已实现并有测试，
+   * 但**生产里零使用**（见 `docs/reports/PRODUCT_WIRING_GAPS_MASTER_2026-11-08.md` 的 G2）。
+   *
+   * ## 语义（两个相位）
+   *
+   * - `"before-tool-execution"`：`outcomeSignature: null`、`isNewProgress: true`
+   *   ⇒ 让守卫检查自环/环/深度/扇出/图节点/任务预算；
+   * - `"after-tool-execution"`：带**结果签名**与 `isNewProgress`
+   *   ⇒ 让守卫累计「同一路径连续无进展」并在达阈值时报违反。
+   *
+   * 端口返回**非 null** ⇒ 本循环**立即有界中止**（不再执行后续工具、不再请求模型），
+   * 并把违反原因写进 `runFinished.detail`。
+   *
+   * **缺省不提供端口 ⇒ 行为逐字不变**（这是本项"缺省关"的落点）。
+   */
+  progressGuardPort?: ToolLoopProgressGuardPort;
+  /** G2：任务级预算键（守卫用；缺省 null ⇒ 不计任务预算）。 */
+  progressGuardTaskExecutionId?: string | null;
 }
 
 /**
@@ -79,6 +104,24 @@ export interface ToolLoopPerfSample {
   outcome: "success" | "failure" | "cancelled" | "unknown";
   toolName: string;
 }
+
+/**
+ * G2（2026-11-08，第 130 轮）：活锁/循环守卫端口签名。
+ *
+ * 返回 `null` 表示无违反；返回结构化违反 ⇒ 调用方必须**有界中止**。
+ */
+export type ToolLoopProgressGuardPort = (input: {
+  phase: "before-tool-execution" | "after-tool-execution";
+  /** 调用者（本 Agent 的 `agentId`）。 */
+  callerKey: string;
+  /** 被调用者的规范键（工具名 + 规范化参数；同一调用折叠为同一节点）。 */
+  calleeKey: string;
+  taskExecutionId: string | null;
+  /** 结果签名（仅 `after` 相位提供；`before` 传 `null`）。 */
+  outcomeSignature: string | null;
+  /** 与同路径上次结果相比是否算"有进展"（仅 `after` 相位有意义）。 */
+  isNewProgress: boolean;
+}) => Promise<{ kind: string; message: string; cycleChain: string[] } | null>;
 
 export type ToolLoopPerfSampleSink = (
   sample: ToolLoopPerfSample,
@@ -280,6 +323,12 @@ export async function runToolLoop(
     eventStream.push(event);
   };
 
+  /**
+   * G2（2026-11-08，第 130 轮）：**同路径上次结果签名**，用于判定"有进展/无进展"。
+   * 仅在提供了 `progressGuardPort` 时被写入（缺省不启用时此表保持为空）。
+   */
+  const lastOutcomeSignatureByPath = new Map<string, string>();
+
   while (iterationCount < options.maxLoopIterations) {
     iterationCount += 1;
     let iterationReason: Extract<AgentEvent, { kind: "runFinished" }>["reason"] =
@@ -379,6 +428,45 @@ export async function runToolLoop(
           application.behaviorTier === "gate-and-request-pause",
       );
       const toolExecutionStartedAtMilliseconds = Date.now();
+      /**
+       * G2（2026-11-08，第 130 轮）：**执行前**让守卫检查自环/环/深度/扇出/图节点/任务预算。
+       * 端口缺省 ⇒ 跳过（行为逐字不变）；守卫自身抛错**不得**拖垮业务（只丢弃该次观测）。
+       */
+      const guardCallerKey = agentRunInput.agentId;
+      const guardCalleeKey =
+        "tool:" + toolCall.toolName + ":" + canonicalizeToolArguments(toolCall.argumentsJson);
+      let guardViolation: { kind: string; message: string; cycleChain: string[] } | null =
+        null;
+      if (options.progressGuardPort !== undefined && !isGated) {
+        try {
+          guardViolation = await options.progressGuardPort({
+            phase: "before-tool-execution",
+            callerKey: guardCallerKey,
+            calleeKey: guardCalleeKey,
+            taskExecutionId: options.progressGuardTaskExecutionId ?? null,
+            outcomeSignature: null,
+            isNewProgress: true,
+          });
+        } catch {
+          // 守卫自身故障不得阻塞业务（与观测 sink 同一纪律）
+        }
+      }
+      if (guardViolation !== null) {
+        /** **有界中止**：不再执行该调用，把违反原因写进结局并结束循环。 */
+        outcome = {
+          reason: "error",
+          detail: `活锁/循环守卫拦截（${guardViolation.kind}）：${guardViolation.message}`,
+          iterationCount,
+        };
+        push({
+          kind: "toolCallFinished",
+          callId: toolCall.callId,
+          result: "error",
+          outputSummary: truncate(guardViolation.message),
+          errorCode: "progress-guard-violation",
+        });
+        break;
+      }
       const toolResult: ToolCallResult = isGated
         ? {
             kind: "error",
@@ -440,6 +528,49 @@ export async function runToolLoop(
           });
         } catch {
           // 观测失败不得阻塞业务
+        }
+      }
+      /**
+       * G2（2026-11-08，第 130 轮）：**执行后**把结果签名交给守卫累计「同一路径连续无进展」。
+       * 端口缺省 ⇒ 跳过；守卫抛错 ⇒ 只丢弃该次观测，不改变业务结果。
+       */
+      if (options.progressGuardPort !== undefined) {
+        const outcomeSignature =
+          toolResult.kind === "success"
+            ? "success:" + toolResult.outputText
+            : "error:" + toolResult.errorCode + ":" + toolResult.errorMessage;
+        const pathKey = guardCallerKey + "->" + guardCalleeKey;
+        const previousSignature = lastOutcomeSignatureByPath.get(pathKey);
+        const isNewProgress = previousSignature !== outcomeSignature;
+        lastOutcomeSignatureByPath.set(pathKey, outcomeSignature);
+        let afterViolation: { kind: string; message: string; cycleChain: string[] } | null =
+          null;
+        try {
+          afterViolation = await options.progressGuardPort({
+            phase: "after-tool-execution",
+            callerKey: guardCallerKey,
+            calleeKey: guardCalleeKey,
+            taskExecutionId: options.progressGuardTaskExecutionId ?? null,
+            outcomeSignature,
+            isNewProgress,
+          });
+        } catch {
+          // 守卫自身故障不得阻塞业务
+        }
+        if (afterViolation !== null) {
+          outcome = {
+            reason: "error",
+            detail: `活锁/循环守卫拦截（${afterViolation.kind}）：${afterViolation.message}`,
+            iterationCount,
+          };
+          push({
+            kind: "toolCallFinished",
+            callId: toolCall.callId,
+            result: "error",
+            outputSummary: truncate(afterViolation.message),
+            errorCode: "progress-guard-violation",
+          });
+          break;
         }
       }
       push({

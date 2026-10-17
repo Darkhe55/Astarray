@@ -28,6 +28,7 @@ import { runToolLoop } from "../runtime/tool-loop.js";
 import type {
   GuidanceSafePointPort,
   ToolLoopDiagnosticFailureSink,
+  ToolLoopProgressGuardPort,
   ToolLoopPerfSampleSink,
 } from "../runtime/tool-loop.js";
 import type { ToolFailureCounter } from "./failure-counter.js";
@@ -98,6 +99,8 @@ export interface WorkerAgentOptions {
    * 同样**由编排层构造**（身份/任务在闭包里补齐），本层只转交工具循环；缺省 ⇒ 不采集。
    */
   diagnosticEventSink?: ToolLoopDiagnosticFailureSink;
+  /** G2（第 130 轮）：活锁/循环守卫端口（缺省 ⇒ 不启用守卫）。 */
+  progressGuardPort?: ToolLoopProgressGuardPort;
   toolPort: ToolPort;
   failureCounter: ToolFailureCounter;
   feedbackTransport: FeedbackTransportPort;
@@ -320,6 +323,13 @@ export class WorkerAgent {
         ...(this.options.diagnosticEventSink === undefined
           ? {}
           : { diagnosticEventSink: this.options.diagnosticEventSink }),
+        /** G2（第 130 轮）：守卫端口 + 任务键。缺省 ⇒ 不传 ⇒ 不启用。 */
+        ...(this.options.progressGuardPort === undefined
+          ? {}
+          : {
+              progressGuardPort: this.options.progressGuardPort,
+              progressGuardTaskExecutionId: this.options.task.id,
+            }),
       },
     );
     for await (const event of events) {

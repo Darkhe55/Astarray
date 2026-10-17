@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 
 import { DomainError } from "../core/errors.js";
 import { runToolLoop } from "../runtime/tool-loop.js";
+import type { ToolLoopProgressGuardPort } from "../runtime/tool-loop.js";
 
 import type {
   AgentMode,
@@ -185,6 +186,8 @@ export interface MainControllerOptions {
    * 但**此前只有 `tool`／`provider` 有上报方**。缺省不提供 ⇒ 行为逐字不变。
    */
   missionDiagnosticEventPort?: (event: MissionDiagnosticEvent) => Promise<void> | void;
+  /** G2（第 130 轮）：守卫端口（缺省 ⇒ 不传 ⇒ 不启用）。 */
+  progressGuardPort?: ToolLoopProgressGuardPort;
   /** 流式输出到 UI 的回调。 */
   streamOutput: (missionId: string | null, text: string) => void;
   /**
@@ -922,6 +925,10 @@ export class MainController {
         ...(this.options.perfSamplePort === undefined
           ? {}
           : { perfSamplePort: this.options.perfSamplePort }),
+        /** G2（第 130 轮）：守卫端口转发。 */
+        ...(this.options.progressGuardPort === undefined
+          ? {}
+          : { progressGuardPort: this.options.progressGuardPort }),
         // DIAG-01 采集（第 85 轮接线）：缺省 ⇒ 不采集
         ...(this.options.diagnosticEventPort === undefined
           ? {}
@@ -1003,6 +1010,10 @@ export class MainController {
         ...(this.options.perfSamplePort === undefined
           ? {}
           : { perfSamplePort: this.options.perfSamplePort }),
+        /** G2（第 130 轮）：守卫端口转发。 */
+        ...(this.options.progressGuardPort === undefined
+          ? {}
+          : { progressGuardPort: this.options.progressGuardPort }),
         // DIAG-01 采集（第 85 轮接线）：缺省 ⇒ 不采集
         ...(this.options.diagnosticEventPort === undefined
           ? {}

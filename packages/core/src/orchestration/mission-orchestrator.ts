@@ -38,6 +38,7 @@ const MUTATING_TOOL_NAMES_FOR_RETRY = new Set([
   GuidanceSafePointPort,
   ToolLoopDiagnosticFailure,
   ToolLoopPerfSample,
+  ToolLoopProgressGuardPort,
 } from "../runtime/tool-loop.js";
 import type { GuidanceScopeTarget } from "../runtime-guidance/runtime-guidance.js";
 import type { ContextNodeLifecyclePort } from "./worker-agent.js";
@@ -92,6 +93,8 @@ export interface OrchestratorWorkerFactories {
    * **只在真实执行失败时被调用**（拒绝/取消由工具循环过滤，卡内硬约束）。
    * **缺省 ⇒ 不采集。**
    */
+  /** G2（第 130 轮）：守卫端口（缺省 ⇒ 不传 ⇒ 不启用）。 */
+  progressGuardPort?: ToolLoopProgressGuardPort;
   diagnosticEventPort?: (event: {
     sourceAgentInstanceId: string;
     missionIdentifier: string;
@@ -747,6 +750,10 @@ export class MissionOrchestrator {
                 severity: "error",
               }),
           }),
+    /** G2（第 130 轮）：守卫端口透传。缺省 ⇒ 不传 ⇒ 不启用。 */
+    ...(this.options.workerFactories.progressGuardPort === undefined
+      ? {}
+      : { progressGuardPort: this.options.workerFactories.progressGuardPort }),
     });
     const workerPromise = (async () => {
       try {

@@ -23,6 +23,7 @@ import { MainController } from "../orchestration/main-controller.js";
 import { PerfEventStore } from "../orchestration/perf-event-store.js";
 // OBS-01／DIAG-01（第 85 轮）：诊断事件落库（同因：此前生产里无人**写入**）
 import { DiagnosticEventStore } from "../orchestration/diagnostic-event-store.js";
+import { LocalProgressAndCycleGuard } from "../tools/local-progress-and-cycle-guard.js";
 import type { MissionDiagnosticEvent } from "../orchestration/mission-orchestrator.js";
 import { MissionManager } from "../orchestration/mission-manager.js";
 import { FeedbackProcessSupervisor } from "../feedback-process/process-supervisor.js";
@@ -224,6 +225,8 @@ export interface ApplicationRuntimeOptions {
    * **执行前拒绝与取消不会被上报**（卡内硬约束）。缺省关 ⇒ 不擅自改变生产行为。
    */
   isDiagnosticCollectionEnabled?: boolean;
+  /** G2（第 130 轮）：活锁/循环守卫开关。**缺省 false**（不擅自改默认行为）。 */
+  isProgressGuardEnabled?: boolean;
   streamOutput: (missionId: string | null, text: string) => void;
   /**
    * GUI-02-01 片①（2026-10-11）：权限询问**携带绝对身份**的上报口（可选）。
@@ -1054,6 +1057,34 @@ export async function createApplicationRuntime(
         }
       : undefined;
 
+  /** G2（第 130 轮）：活锁/循环守卫端口（缺省不构造 ⇒ 工具循环不启用守卫）。 */
+  const progressGuardPort =
+    options.isProgressGuardEnabled === true
+      ? (() => {
+          const progressGuard = new LocalProgressAndCycleGuard();
+          return async (input: {
+            phase: "before-tool-execution" | "after-tool-execution";
+            callerKey: string;
+            calleeKey: string;
+            taskExecutionId: string | null;
+            outcomeSignature: string | null;
+            isNewProgress: boolean;
+          }) => {
+            const violation = await progressGuard.recordCallAndDetectViolation({
+              callerKey: input.callerKey,
+              calleeKey: input.calleeKey,
+              nodeKind: "tool",
+              taskExecutionId: input.taskExecutionId,
+              outcomeSignature: input.outcomeSignature,
+              isNewProgress: input.isNewProgress,
+            });
+            return violation === null
+              ? null
+              : { kind: violation.kind, message: violation.message, cycleChain: violation.cycleChain };
+          };
+        })()
+      : undefined;
+
   const controller = new MainController({
     modeMachine,
     sessionManager,
@@ -1170,6 +1201,8 @@ export async function createApplicationRuntime(
     ...(diagnosticEventPort === undefined ? {} : { diagnosticEventPort }),
     // DIAG-01（第 113 轮）：**使命级**诊断端口（同一开关；缺省 undefined ⇒ 不采集）
     ...(missionDiagnosticEventPort === undefined ? {} : { missionDiagnosticEventPort }),
+    // G2（第 130 轮）：守卫端口（缺省 undefined ⇒ 不启用）
+    ...(progressGuardPort === undefined ? {} : { progressGuardPort }),
     resolveToolDescriptors: (task: TaskDependencyNode): ToolDescriptor[] =>
       task.toolNames
         .map((toolName) => registry.getDescriptor(toolName))
