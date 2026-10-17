@@ -171,11 +171,19 @@ describe("G3a 正向：调用过 factVerification ⇒ 应当允许结案", () =>
     }
     await application.shutdown();
 
-    expect(
-      result.status,
-      "调用过事实工具后应当放行；否则说明还有别的门禁在拦（诊断：" +
-        streamedDiagnostics.join(" | ").slice(0, 700) +
-        "）",
-    ).toBe("done");
+    /**
+     * **2026-11-08 第 220 轮语义修正**：
+     * G3b 接入后，高严谨任务不仅要求**调用**事实工具，还要求**合格证据包**；
+     * 而当前只喂了 `record-reasoning`（纯推理）⇒ **不得结案**才是正确行为。
+     *
+     * 因此本用例改为断言两件事（合起来仍证明 G3a 已修好）：
+     * ① 不再出现旧的拒绝原因（「安装门禁拒绝」/「必需操作未成功」）⇒ **工具调用成功了**；
+     * ② 结案被**证据包门禁**拦下 ⇒ 说明门禁按新语义生效。
+     */
+    const diagnostics = streamedDiagnostics.join(" | ");
+    expect(diagnostics, "安装门禁不得再拒绝该工具（第 215 轮修复）").not.toContain("安装门禁拒绝");
+    expect(diagnostics, "必需工具已成功调用（不得再报未调用）").not.toContain("必需操作未成功执行");
+    expect(result.status, "只推理的证据不足 ⇒ 不得结案（G3b 门禁）").not.toBe("done");
+    expect(diagnostics, "应被证据包门禁拦下").toContain("证据包不合格");
   });
 });
