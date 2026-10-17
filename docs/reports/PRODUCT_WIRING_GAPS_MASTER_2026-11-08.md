@@ -1395,3 +1395,39 @@ buildWorkerToolPortWithRecoveryCheckpointing(missionId, task, agentInstanceId)
    - 装配层：构造四件套 + 协调器，传 partial 给控制器（`new MainController({...})` 里，锚点 `maxLoopIterations: options.maxLoopIterations,` 之后）。
 
 **验收**：G1 端到端 2/2 保持绿；新增断言"编排器选项里的 `isTargetBranchMergeAllowed()` 恒为 false"。
+### 21.6 **G1 编排层接线闭合（第 251–256 轮）**：三层贯通、合并门禁恒关
+
+#### 21.6.1 三层贯通（每层单独提交）
+
+| 层 | 内容 | 提交 |
+| --- | --- | --- |
+| 门面 | `gitIntegration?` 选项 + `startIntegrationSession`（构造五件套、真实建分支） | `8e4402d` |
+| 中间类型 + 控制器 | `GitIntegrationPartialOptions`；控制器补全 `buildGitWorktreeToolPort`（**带 `agentInstanceId`**）与 `isTargetBranchMergeAllowed: () => false` | `7d8bbcf` |
+| 装配层 | `ApplicationRuntimeOptions.gitIntegration?` + 在 `new MainController({` 处构造四件套并传 partial | `5f32cc3` |
+| 签名（前置） | `buildGitWorktreeToolPort` 增加 `agentInstanceId`（权限按具体个体判定） | `201231e` |
+
+**缺省不启用**：不传 `gitIntegration` ⇒ 整条链不构造、不传递（回归 6/6 绿）。
+
+#### 21.6.2 **Step 3「合并永不通过」的核对证据**（第 256 轮检索）
+
+`isTargetBranchMergeAllowed` 在产品代码（`packages/core/src`）里只有这些出现：
+
+| 位置 | 性质 |
+| --- | --- |
+| `mission-orchestrator.ts:154` | 接口声明 `() => boolean` |
+| `mission-orchestrator.ts:1167` | 编排器调用点（`gitIntegration.isTargetBranchMergeAllowed()`） |
+| `main-controller.ts:910` | **唯一注入点**：`isTargetBranchMergeAllowed: () => false` |
+| `git-integration-coordinator.ts:48/294` | 协调器接受的 **boolean** 入参 + 合并分支判定 |
+
+⇒ **产品路径上该布尔值只能来自 `() => false`** ⇒ 目标分支合并**不可能**发生 ✓
+
+**说明**：`tests/e2e01-vertical-integration-report.test.ts` 与 `tests/git-coordinator-branches.test.ts`
+会直接给协调器传 `isTargetBranchMergeAllowed: true` —— 那是**单元级**验证协调器自身的合并能力，
+**不是**产品路径绕过门禁（产品路径的唯一注入点仍是 `() => false`）。
+
+#### 21.6.3 仍未做（不夸大）
+
+1. **受控合并（Step 3 的"允许"分支）**：需用户授权 + `AGENTS.md` 五道门禁，**本层永不判通过**；
+2. **`integrationTestCommands` / `allowedPathsByTaskType` 的实际取值**：当前装配层传 `[]` 与 `{}`
+   ⇒ 写入型任务的 Git 分流**需要调用方提供这两项才有意义**（已在装配层留出扩展位）；
+3. **G4**：工具说明回执仍**未接线**（§20.3）。
