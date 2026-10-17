@@ -36,7 +36,7 @@
 
 | 顺序 | 卡 | 初判方向（**待读取确认**） |
 | --- | --- | --- |
-| 1 | `GUI02_AUTHORIZATION_AND_HISTORY_VIEW_TASK_CARD` | 授权与历史视图；本会话只做了 CLI 分发，GUI 侧与人工体验仍未验 |
+| ~~1~~ | ~~`GUI02_AUTHORIZATION_AND_HISTORY_VIEW_TASK_CARD`~~ | **第 1 轮结论（2026-10-17）：剩余项均非本地可证** —— ①GUI-02-01④ 退出码需 CLI 级真实 Provider 接线、**TTY 逐字输出需真实 TTY**（外部）；②GUI-02-03/04 的 UI/路由与"重启真实操作证据"需 GUI 人工体验（外部）。已有回归 `b6r10-permission-ask-wait`（8 条）只覆盖等待语义，**未**断言退出码/TTY。⇒ 移入 Tier 4 |
 | 2 | `PROJECT01_ISOLATION_AND_CROSS_PROJECT_BORROWING_TASK_CARD` | 跨项目借用与 worktree 相关能力（与 G1 现状交叉） |
 | 3 | `COMM01_ADDRESSABLE_UPPER_LAYER_AND_SINGLE_PARENT_TASK_CARD` | 可寻址上层与单父链；通信句柄转交 |
 | 4 | `SESSION_SUMMARY_AND_STEERING_TASK_CARDS` | 会话摘要与驾驶 |
