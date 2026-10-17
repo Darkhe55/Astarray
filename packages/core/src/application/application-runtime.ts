@@ -25,6 +25,11 @@ import { PerfEventStore } from "../orchestration/perf-event-store.js";
 import { DiagnosticEventStore } from "../orchestration/diagnostic-event-store.js";
 import { LocalProgressAndCycleGuard } from "../tools/local-progress-and-cycle-guard.js";
 import { TaskCallBudgetLedger } from "../infra/task-call-budget-ledger.js";
+import type { ToolPublicDocumentationRegistryEntry } from "../tools/tool-public-documentation-registry.js";
+import {
+  ToolDocumentationRecallInjector,
+  ToolDocumentationReceiptStore,
+} from "../tools/tool-documentation-recall.js";
 import type { MissionDiagnosticEvent } from "../orchestration/mission-orchestrator.js";
 // G1（2026-11-08 第 255 轮）：Git 集成四件套（装配层构造，缺省不启用）。
 import { GitContributionVerifier } from "../orchestration/git-contribution-verifier.js";
@@ -247,6 +252,11 @@ export interface ApplicationRuntimeOptions {
    * 传入即构造四件套并交给控制器补全（worktree 端口带身份；永不自动合并）。
    */
   gitIntegration?: { repositoryPath: string; targetBranchName: string };
+  /**
+   * G4（2026-11-08 第 281 轮）：**工具公开用法登记**（缺省空 ⇒ 不注入任何说明）。
+   * 产品**默认不内置**登记内容（examples/limitations 无法从描述符推导，禁止编造）。
+   */
+  toolDocumentationRegistry?: Record<string, ToolPublicDocumentationRegistryEntry>;
   isHighRigorEnforcementEnabled?: boolean;
   streamOutput: (missionId: string | null, text: string) => void;
   /**
@@ -1118,6 +1128,18 @@ export async function createApplicationRuntime(
       : undefined;
 
   const controller = new MainController({
+    /**
+     * G4（第 281 轮）：构造**工具说明注入器**（回执存储落 stateDirectory）+ 透传登记表。
+     * 未提供登记表 ⇒ 不构造、不注入（提示词逐字不变）。
+     */
+    ...(options.toolDocumentationRegistry === undefined
+      ? {}
+      : {
+          toolDocumentationRegistry: options.toolDocumentationRegistry,
+          toolDocumentationInjector: new ToolDocumentationRecallInjector(
+            new ToolDocumentationReceiptStore({ baseDirectory: options.stateDirectory }),
+          ),
+        }),
     /** G1（第 255 轮）：构造 Git 集成四件套并交给控制器补全（worktree 端口带身份；永不自动合并）。 */
     ...(options.gitIntegration === undefined
       ? {}

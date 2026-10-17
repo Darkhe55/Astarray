@@ -6,6 +6,8 @@
  */
 import { randomUUID } from "node:crypto";
 // G1 Step 3（2026-11-08 第 261 轮）：受控合并的五门禁评估（纯函数）。
+import type { ToolPublicDocumentationRegistryEntry } from "../tools/tool-public-documentation-registry.js";
+import type { ToolDocumentationRecallInjector } from "../tools/tool-documentation-recall.js";
 import { evaluateMergeReadinessWithProvider } from "./git-merge-readiness.js";
 import type { GitMergeReadinessEvidence } from "./git-merge-readiness.js";
 
@@ -228,6 +230,10 @@ export interface MainControllerOptions {
   workArchiveStore?: AgentWorkArchiveStore | null;
   /** T05B → T08：Git 集成装配（可选；缺省时编排行为与旧版一致）。 */
   gitIntegration?: GitIntegrationPartialOptions | null;
+  /** G4（第 281 轮）：工具公开用法登记（缺省 ⇒ 不注入）。 */
+  toolDocumentationRegistry?: Record<string, ToolPublicDocumentationRegistryEntry>;
+  /** G4（第 281 轮）：工具说明注入器（缺省 ⇒ 不注入）。 */
+  toolDocumentationInjector?: ToolDocumentationRecallInjector;
   /**
    * G1 Step 3（2026-11-08 第 264 轮）：**合并证据提供者**（可选）。
    *
@@ -991,6 +997,13 @@ export class MainController {
         ...(this.options.isHighRigorEnforcementEnabled === undefined
           ? {}
           : { isHighRigorEnforcementEnabled: this.options.isHighRigorEnforcementEnabled }),
+        /** G4（第 281 轮）：工具说明登记与注入器透传（缺省 ⇒ 不注入）。 */
+        ...(this.options.toolDocumentationRegistry === undefined
+          ? {}
+          : { toolDocumentationRegistry: this.options.toolDocumentationRegistry }),
+        ...(this.options.toolDocumentationInjector === undefined
+          ? {}
+          : { toolDocumentationInjector: this.options.toolDocumentationInjector }),
         // DIAG-01 采集（第 85 轮接线）：缺省 ⇒ 不采集
         ...(this.options.diagnosticEventPort === undefined
           ? {}
@@ -1080,6 +1093,13 @@ export class MainController {
         ...(this.options.isHighRigorEnforcementEnabled === undefined
           ? {}
           : { isHighRigorEnforcementEnabled: this.options.isHighRigorEnforcementEnabled }),
+        /** G4（第 281 轮）：工具说明登记与注入器透传（缺省 ⇒ 不注入）。 */
+        ...(this.options.toolDocumentationRegistry === undefined
+          ? {}
+          : { toolDocumentationRegistry: this.options.toolDocumentationRegistry }),
+        ...(this.options.toolDocumentationInjector === undefined
+          ? {}
+          : { toolDocumentationInjector: this.options.toolDocumentationInjector }),
         // DIAG-01 采集（第 85 轮接线）：缺省 ⇒ 不采集
         ...(this.options.diagnosticEventPort === undefined
           ? {}
