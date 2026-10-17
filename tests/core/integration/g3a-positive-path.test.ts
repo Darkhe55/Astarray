@@ -44,10 +44,6 @@ afterEach(async () => {
 
 async function startFakeServer() {
   const server = http.createServer((request, response) => {
-    let rawBody = "";
-    request.on("data", (chunk) => {
-      rawBody += String(chunk);
-    });
     request.on("end", () => {
       response.writeHead(200, { "content-type": "text/event-stream" });
       const requestIndex = (server as unknown as { __count?: number }).__count ?? 0;
