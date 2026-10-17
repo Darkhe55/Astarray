@@ -154,6 +154,14 @@ export class WorkerAgent {
   private readonly persistedArtifactPaths = new Set<string>();
   /** 本 AGENT 成功执行过的写类工具（用于"必需操作是否真的执行过"的完成门禁）。 */
   private readonly successfullyExecutedMutatingTools = new Set<string>();
+  /**
+   * G3（2026-11-08，第 138 轮）：**所有**成功执行过的工具名（含**非变更类**，如 `factVerification`）。
+   *
+   * 为什么需要它：`successfullyExecutedMutatingTools` 只在 `MUTATING_TOOL_NAMES` 命中时写入
+   * （`mutationKind: "none"` 的工具永远进不去）⇒ 若"必需工具"判定只查那个集合，
+   * 高严谨任务会**永远无法结案**（第 136 轮实测的过度拦截）。
+   */
+  private readonly successfullyExecutedRequiredTools = new Set<string>();
   /** 本 AGENT **尝试过**的写类工具（含被门禁拦下、执行失败的调用）。 */
   private readonly attemptedMutatingTools = new Set<string>();
 
@@ -216,7 +224,7 @@ export class WorkerAgent {
      * 否则"授权后续跑 → 不再请求工具 → 假 done"会绕过上面的单次运行规则。
      */
     const requiredNotYetSucceeded = (this.options.requiredMutatingToolNames ?? [])
-      .filter((toolName) => !this.successfullyExecutedMutatingTools.has(toolName));
+      .filter((toolName) => !this.successfullyExecutedRequiredTools.has(toolName));
     if (requiredNotYetSucceeded.length > 0) {
       return (
         "必需操作未成功执行：本任务此前因权限询问被打断、且以下写类工具至今从未成功（" +
@@ -380,6 +388,8 @@ export class WorkerAgent {
           } else {
             this.options.failureCounter.recordSuccess(toolName);
             this.unresolvedMutatingToolFailures.delete(toolName);
+            /** G3（第 138 轮）：**所有**成功工具都登记（含非变更类）。 */
+            this.successfullyExecutedRequiredTools.add(toolName);
             if (MUTATING_TOOL_NAMES.has(toolName)) {
               this.successfullyExecutedMutatingTools.add(toolName);
             }
