@@ -1331,3 +1331,44 @@ buildWorkerToolPortWithRecoveryCheckpointing(missionId, task, agentInstanceId)
 | 影响面 | 提示词层（首次下发/回访），不涉及权限或数据安全 ⇒ 风险低于 G1／G5 |
 
 **⇒ G4 若要开工，需先明确接入点**（worker 的工具组交付路径）；本窗口剩余轮次不足以安全完成。
+
+## 21. 窗口 241–249 收尾总账：G5 闭合 + G1（Step 1/2）落地
+
+### 21.1 本窗口闭合的两项
+
+| 项 | 范围 | 证据 |
+| --- | --- | --- |
+| **G5 有界续跑** | 早停 → 有界续跑（≤2 次）→ 失败收口 | 反例 2/2 绿；拔线 2/2 红；`check` 454/3325；变异 60/60；隔离包三项 exit 0（§16.6） |
+| **G1（Step 1／2）** | 门面 `gitIntegration?`（缺省不启用）+ 四件套构造 + `startIntegrationSession` + 临时 `git init` 仓库验收；**Step 3 合并门禁不得判通过** | 端到端 2/2（未启用⇒拒绝；真实仓库⇒建分支 + 目标分支未被改动）；`check` **456/3328**；变异 **60/60**；隔离包三项 exit 0 |
+
+### 21.2 G1 的边界（**不声称**完整 Git 集成）
+
+- **编排器侧未接**：`GitIntegrationOrchestrationOptions`（含 `buildGitWorktreeToolPort`、`isTargetBranchMergeAllowed`）**尚未传给编排器**
+  ⇒ Worker 的 **worktree 分流 / 贡献审查 / 报告落盘** 都还没走通；
+- 阻塞原因是**权限语义**（worktree 端口缺 `agentInstanceId`），三条方案见 **§20.2**（推荐 A）；
+- **Step 3 受控合并未实现**（需用户授权 + `AGENTS.md` 五道门禁）。
+
+### 21.3 本窗口修掉的缺陷（累计）
+
+| # | 缺陷 | 修复 |
+| --- | --- | --- |
+| 1 | G5 开关被转发进 `workerFactories` ⇒ 编排器恒 `undefined` | `abea537` |
+| 2 | 早停判据错层（工具循环 `reason` 恒 `success`） | `6e95cdb` |
+| 3 | 门面 `GitIntegrationReport` 从错模块导入 | `8e4402d` |
+
+### 21.4 最终验证（第 247 轮实测）
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run check` | **exit 0 —— 456 文件 / 3328 用例** |
+| `npm run verify:mutation-kills` | **exit 0 —— 60/60** |
+| `npm pack` + 两个 verify | **273 文件**；三项 **exit 0** |
+
+**所有开关缺省关**（G2／G3a／G3b／G5／`gitIntegration`）✓
+
+### 21.5 未做（清晰交接）
+
+1. **G1 编排层接线**（需先在 §20.2 选 A/B/C）；
+2. **G4 工具说明回执**：组件在（`tool-help-recall-controller.ts`）、**接线为零**（§20.3）；
+3. **Step 3 受控合并**（需用户授权）；
+4. 外部证据：macOS、GUI 人工体验、`SUM-01` 人工标注、真实 Provider 凭据。
