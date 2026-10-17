@@ -44,6 +44,8 @@ afterEach(async () => {
 
 async function startFakeServer() {
   const server = http.createServer((request, response) => {
+    // 必须消费请求体，否则 `end` 不会按预期触发（无参数 ⇒ 不产生未使用变量）。
+    request.on("data", () => {});
     request.on("end", () => {
       response.writeHead(200, { "content-type": "text/event-stream" });
       const requestIndex = (server as unknown as { __count?: number }).__count ?? 0;
