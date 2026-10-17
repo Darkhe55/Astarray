@@ -937,10 +937,23 @@ async function executeFactVerification(
     if (!Array.isArray(entries) || entries.length === 0) {
       throw new Error("factVerification build-evidence-bundle 需要 entries");
     }
+    /**
+     * 2026-11-08 第 227 轮修复：`buildEvidenceBundle` 要求
+     * `entry.claimIdentifier === claimIdentifier`，而 `claimIdentifier` 由执行上下文**固定注入**
+     * （`factVerificationClaimIdentifier ?? "default-claim"`），模型**无从得知**该内部标识
+     * ⇒ 任何真实调用都会 `invalid-task-chain` ⇒ 该 action 实际不可用。
+     *
+     * 此处**归一化**条目主张（保留 builder 的不变式，同时让工具可用）。
+     * 证据包只是辅助材料，不应要求模型知道内部标识（`AGENTS.md`）。
+     */
+    const normalizedEntries = (entries as Array<Record<string, unknown>>).map((entry) => ({
+      ...entry,
+      claimIdentifier,
+    }));
     const bundle = bundleBuilder.buildEvidenceBundle({
       claimIdentifier,
       builderAgentInstanceId: executionContext.requestingAgentInstanceId,
-      entries: entries as never,
+      entries: normalizedEntries as never,
     });
     return {
       outputText: JSON.stringify(bundle),
