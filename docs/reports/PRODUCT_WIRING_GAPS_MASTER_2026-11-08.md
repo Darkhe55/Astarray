@@ -418,6 +418,20 @@
 
 **状态：G1 = 未开始（本轮仅完成评估与验收条件，未接线、未宣称支持完整 Git 集成）。**
 
+### 8.5 已备好的**有效**红反例（第 193 轮）
+
+文件：`.tmp/g1-git-integration-entry.test.ts.draft`（**未入库**，红着）。
+
+**断言**：门面传入 `gitIntegration: { integrationBranchName }` 后，**必须**暴露集成会话入口
+（`startIntegrationSession` / `submitIntegrationContribution` / `finalizeIntegration` 之一）。
+
+**实测失败原因（正是 G1 的缺口）**：`expected false to be true` —— 门面**接受**了该选项
+（未抛错）但**没有任何集成入口**。
+
+**⚠️ 踩过的坑（记录）**：初版用了 `runtime: "scripted"` ⇒ 失败原因是「不支持的运行时」**与 G1 无关**
+⇒ 无效反例。**`public-sdk.ts:1173` 的合法值是 `"mock" | "provider"`**（改用 `"mock"` 后才有判别力）。
+**纪律**：写反例后**先看失败原因**，原因必须命中目标缺口，否则不登记。
+
 ## 9. 待验证反例库（下个窗口开工即用）
 
 以下反例**已写好但未入库**（纪律：仍红或尚不可判别的反例不得留在 `main`），暂存 `.tmp/*.draft`。
@@ -538,6 +552,13 @@ G2 的正式反例已入库为 `tests/core/integration/g2-progress-guard.test.ts
 
 ⇒ 一致性重扫（第 156 轮）做法：**不改历史数字**（改了就等于篡改当时的证据），
 只在此声明口径；新增记录一律用**当轮实测值并标注轮次**。
+
+### 9.7 第 190／193 轮新增的两份草稿
+
+| 草稿 | 目标 | 当前表现 | 判别力 |
+| --- | --- | --- | --- |
+| `.tmp/g5-early-stop-resume.test.ts.draft` | G5：早停 → 有界续跑 | ① `expected 'blocked' to be 'done'`；② `expected 1 to be >= 2` | ✓ 两条都命中"没有续跑" |
+| `.tmp/g1-git-integration-entry.test.ts.draft` | G1：门面暴露集成入口 | `expected false to be true` | ✓ 命中"无集成入口" |
 
 ### 9.6 草稿可运行性确认（第 157 轮实测）
 
