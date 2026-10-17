@@ -6,6 +6,7 @@
  * 会话/任务状态迁移在此冻结；提交/查询/取消委托给同一主控制器。
  */
 import { createHash } from "node:crypto";
+import type { ToolPublicDocumentationRegistryEntry } from "./tools/tool-public-documentation-registry.js";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -1242,6 +1243,13 @@ export interface PublicApplicationOptions {
   /** G1（第 245 轮）：**Git 集成**（缺省不启用）。传入即构造分配器/验证器/报告存储/恢复点/协调器。
    *  ⚠️ 不含目标分支合并（AGENTS.md 五道门禁）⇒ 本层无"自动合并"开关。 */
   gitIntegration?: { repositoryPath: string; targetBranchName: string };
+  /**
+   * G4（2026-11-08 第 281 轮）：**工具公开用法登记**（缺省空 ⇒ 不注入任何说明）。
+   *
+   * 产品**默认不内置**任何登记内容：`examples`/`limitations` 无法从描述符推导，
+   * 必须由使用方显式登记（禁止编造）。
+   */
+  toolDocumentationRegistry?: Record<string, ToolPublicDocumentationRegistryEntry>;
   isHighRigorEnforcementEnabled?: boolean;
   /** T04：反馈进程入口模块路径；缺省按包内 dist 入口自动解析。 */
   feedbackProcessModulePath?: string | null;
@@ -1655,6 +1663,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
     return new AstarrayApplicationFacade(runtime, {      ...(options.gitIntegration === undefined
         ? {}
         : { gitIntegration: options.gitIntegration }),
+          toolDocumentationRegistry: options.toolDocumentationRegistry,
       statusPollIntervalMilliseconds: options.statusPollIntervalMilliseconds ?? 25,
       stateDirectory: options.stateDirectory,
       // 幂等账目跨进程持久化（R4）：重启后同键同参复用，不重复执行。
@@ -1714,6 +1723,13 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
       installationInquiryRegistry?: InstallationInquiryRegistry | null;
       /** G1（第 245 轮）：Git 集成配置。 */
       gitIntegration?: { repositoryPath: string; targetBranchName: string };
+  /**
+   * G4（2026-11-08 第 281 轮）：**工具公开用法登记**（缺省空 ⇒ 不注入任何说明）。
+   *
+   * 产品**默认不内置**任何登记内容：`examples`/`limitations` 无法从描述符推导，
+   * 必须由使用方显式登记（禁止编造）。
+   */
+  toolDocumentationRegistry?: Record<string, ToolPublicDocumentationRegistryEntry>;
     } = {},
   ) {
     this.statusPollIntervalMilliseconds =
