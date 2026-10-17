@@ -56,6 +56,9 @@ const TOOL_NAME_CLASS: Record<string, SensitiveOperationClass> = {
   backupVault: "backup-access",
   deleteBackup: "backup-access",
   taskSequenceStatus: "state-query",
+    // G3a（第 215 轮）：内置证据工具。此前未登记 ⇒ 被判 unknown ⇒ 走安装门禁被 fail-closed 拒绝；
+    // 其网络检索由权限能力 network.read 管辖，不需安装门禁。
+    factVerification: "network-access",
   gitReadonlyView: "git-readonly",
 };
 
