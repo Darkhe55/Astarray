@@ -1617,6 +1617,41 @@ export const MUTATIONS = [
       "拔掉装配层的构造点 ⇒ 接线清单与 G2 行为反例都必须变红；" +
       "若它们不变红，说明那张清单只是注释、没有判别力",
   },
+  /**
+   * 2026-10-17（第 2 轮）新增：**五门禁必须 fail-closed**：任何一门缺失都不得判定 merge-ready
+   *
+   * ⚠️ `testFiles` **由检索结果直接写入**。
+   */
+  {
+    mutationIdentifier: "merge-readiness-always-allowed",
+    targetFile: "packages/core/src/orchestration/git-merge-readiness.ts",
+    find: `  return unmetGateNames.length === 0
+    ? { isMergeReady: true, unmetGateNames: [] }
+    : { isMergeReady: false, unmetGateNames };`,
+    replace: `  return { isMergeReady: true, unmetGateNames: [] }; // MUTANT`,
+    testFiles: [
+      "tests/core/unit/g1-merge-readiness.test.ts",
+    ],
+    expectedFailingTestNames: ["缺提交哈希 ⇒ 不可合并，且点名「提交哈希」"],
+    rationale: "把【缺项即不可合并】改成【永远可合并】⇒ 缺项反例必须变红",
+  },
+  /**
+   * 2026-10-17（第 2 轮）新增：**完整用法末尾必须附固定提醒**（`AGENTS.md`：后续只注入提醒）
+   *
+   * ⚠️ `testFiles` **由检索结果直接写入**。
+   */
+  {
+    mutationIdentifier: "tool-documentation-renderer-omits-reminder",
+    targetFile: "packages/core/src/tools/tool-documentation-renderer.ts",
+    find: `  sections.push(buildReminderText());`,
+    replace: `  // MUTANT：漏掉固定提醒`,
+    testFiles: [
+      "tests/core/integration/g4-tool-documentation-injection.test.ts",
+      "tests/core/unit/g4-tool-documentation-renderer.test.ts",
+    ],
+    expectedFailingTestNames: ["整组：**末尾必须附固定提醒**（模型据此请求帮助）"],
+    rationale: "漏掉提醒 ⇒ 渲染器【末尾提醒】反例必须变红",
+  },
 ];
 
 function sha256OfFile(filePath) {
