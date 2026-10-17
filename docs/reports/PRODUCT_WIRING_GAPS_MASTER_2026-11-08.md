@@ -1234,3 +1234,63 @@ console.error("[G5-GUARD] earlyStop=" + String(this.earlyStopObservationsByTask.
 **开关 `isCheckpointResumeEnabled` 仍缺省 `false`** —— 按 §D.6，开闸需用户确认形式。
 **未接线**：`RecoveryCheckpointStore.selectLatestTrustedCheckpoint` 的"续跑前取检查点"（当前续跑由调度重派，
 上下文由 worker 自身重建；接入检查点属后续增强，不在本次声称范围）。
+### 8.6 G1 Step 1 的**确切构造配方**（第 243 轮解析完毕，可直接照做）
+
+#### 8.6.1 依赖契约（全部已实读，无需再查）
+
+```ts
+// packages/core/src/orchestration/git-worktree-allocator.ts
+new GitWorktreeAllocator({ baseDirectory: <stateDirectory>, gitProcess? })
+
+// packages/core/src/orchestration/git-recovery-point-service.ts
+new GitRecoveryPointService({ baseDirectory: <stateDirectory>, gitProcess? })
+
+// packages/core/src/orchestration/git-contribution-verifier.ts
+new GitContributionVerifier()          // 可选 gitProcess
+
+// packages/core/src/orchestration/git-integration-report-store.ts
+new GitIntegrationReportStore({ baseDirectory: <stateDirectory> })
+
+// packages/core/src/orchestration/git-integration-coordinator.ts
+new GitIntegrationCoordinator({ worktreeAllocator, verifier, reportStore, recoveryPointService })
+// 公开方法：startIntegrationSession / submitContribution / finalizeIntegration / worktreeAllocator
+```
+
+#### 8.6.2 编排器要的完整形状（`GitIntegrationOrchestrationOptions`，mission-orchestrator.ts:145）
+
+```ts
+{ coordinator, repositoryPath, targetBranchName, allowedPathsByTaskType,
+  integrationTestCommands, isTargetBranchMergeAllowed, buildGitWorktreeToolPort }
+```
+
+**关键约束**：其中最后两项**必须由控制器补全**（只有控制器持有 `buildWorkerToolPortWithRecoveryCheckpointing`）：
+
+- `buildGitWorktreeToolPort: (task, worktreePath) => this.buildWorkerToolPort...(…)`
+- `isTargetBranchMergeAllowed: () => false` ← **Step 3 门禁：永不判通过**（`AGENTS.md` 要求提交哈希+测试+验收+人工体验+操作授权全满足才 merge-ready）
+
+#### 8.6.3 因此需要的新中间类型（这是唯一还没定的设计点）
+
+```ts
+// 装配层产出、控制器补全
+export interface GitIntegrationPartialOptions {
+  coordinator: GitIntegrationCoordinator;
+  repositoryPath: string;
+  targetBranchName: string;
+  allowedPathsByTaskType: Record<string, string[]>;
+  integrationTestCommands: string[];
+}
+```
+
+控制器 `buildOrchestratorOptions()` 里：若 `this.options.gitIntegration !== null`，则补成完整对象：
+```ts
+gitIntegration: { ...partial,
+  buildGitWorktreeToolPort: (task, worktreePath) => this.buildWorkerToolPortWithRecoveryCheckpointing(missionId, task, /* agentInstanceId */ …),
+  isTargetBranchMergeAllowed: () => false }
+```
+
+#### 8.6.4 验收（反例已就绪）
+
+`.tmp/g1-git-integration-entry.test.ts.draft`（门面传入 `gitIntegration` ⇒ 必须暴露入口之一）
+⇒ 接线后应转绿；随后补**临时 `git init` 仓库**的端到端用例（建分支 → 提交 → 报告）。
+
+**⇒ 我在第 243 轮停止于此**：依赖已全部解析、配方已完整，**但没有在上下文不足时半实现**（避免又留一个红树）。
