@@ -680,3 +680,36 @@ macOS 平台证据 · Linux/macOS GUI 人工体验 · 人工体验结论（`pend
 - **G3a**：按 §9.4 五小步、每步一提交（需先修 `requiredToolNames` 独立通道）；
 - **G3b**：待 G3a 正向转绿后才有判别力；
 - **接线清单**：新组件落地时必须同步 `wiring-manifest`（否则清单与代码不一致会红）。
+
+## 15. **G3a 的阻断性 finding**（第 181 轮）：`factVerification` 无法被授权
+
+### 15.1 证据链（逐步排除，每步都有实测）
+
+| 轮次 | 假设 | 实测 | 结论 |
+| --- | --- | --- | --- |
+| 174 | 登记点没跑？ | 探针显示 `[G3-DBG-REG]` **一次未打印**、`[G3-DBG-CHECK] set=[]` | 成功分支从未执行 ⇒ 工具**没成功** |
+| 175–176 | claim 未注入？白名单缺工具？ | `createPolicyWrapperForAgent` 对 worker **已设** `factVerificationClaimIdentifier`；工具集来自 `allowedToolNames` | claim 没问题 |
+| 178 | 模型没发调用？ | 工具循环探针：`[G3-TOOL] name=factVerification result=error code=**tool-permission-denied**` | **权限层拒绝** |
+| 179 | 是模式问题？ | 改 `devolve`（可配置权限默认 allow）⇒ **仍被拒** | 不是模式矩阵能放行的 |
+| 180 | 会话授权能解决？ | `grantSessionAuthorization(工具名, 参数指纹, now)` ⇒ **仍被拒** | worker 路径由 `ConfigurablePermissionPolicyEngine` 判定，**不查会话授权** |
+| **181** | 能否配成 allow？ | `permission-capability-catalog` 的 **45 项可配置能力**里**没有任何一项**对应 `factVerification` | **无法通过权限矩阵授权** |
+
+### 15.2 结论（必须如实写清）
+
+**在 `assist` 与 `devolve` 两种模式下，worker 调用 `factVerification` 均返回 `tool-permission-denied`；
+该工具也不在 45 项可配置能力中 ⇒ 目前没有"通过权限配置放行"的路径。**
+
+⇒ 因此：
+
+1. **G3a 的"强制调用事实工具"在当前构建中不可满足** —— 一旦开闸，**所有高严谨任务都无法结案**；
+2. **开关必须保持缺省关**（已如此）；
+3. **正向证明（"调用了 ⇒ 应放行"）无法由我自动化完成** —— 它需要**人工参与**的授权路径，或**产品侧把该工具映射到某个可配置能力**（属产品决策，需用户批准）。
+
+### 15.3 需要用户决策的两条路
+
+**(a) 产品侧**：把 `factVerification` 映射到一个**可配置能力**（如新增 `evidence.verify`，或用既有的 `network.read`/`local-experiment` 组合），
+使高严谨任务在获得该能力后可正常调用 ⇒ 之后正向反例可自动化；
+**(b) 流程侧**：承认该工具只能经**人工逐次授权**，则 G3a 的正向验收**转为 `pending-manual`**（我不会伪造自动化绿），
+并且在开闸前必须提供"如何在高严谨任务里获得该授权"的操作路径。
+
+**在 (a)／(b) 任一落地前：G3a 不得开闸，也不得声称完成。**
