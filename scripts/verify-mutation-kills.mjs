@@ -185,6 +185,17 @@
  * 实测被 `tests/core/unit/feedback-client.test.ts` 的
  * 「同 idempotencyKey 重复投递只调用 handler 一次并自动 ack」**直接点名**拦下。
  * 该条目 `testFiles` 用**较宽检索**（FeedbackClient 家族 + idempotencyKey，共 33 个文件），仍来自检索输出。
+ * **2026-11-08（第 128 轮）扩容：56 → 57**（全量复跑 **57/57 被拦下**）。新增
+ * `instruction-idempotency-conflict-overwrites`：去掉 `instruction-window-store.ts` 里
+ * 「同键异参（同 `idempotencyKey`、内容哈希不同）→ **拒绝**、不覆盖」的判定
+ * ⇒ 同键异参被当作新指令接纳，**既有用户指导可能被静默覆盖**。
+ * 实测被 `tests/core/integration/instruction-window-persistence-branches.test.ts` 的
+ * 「② 同键异参：必须拒绝，不得覆盖既有指令」**直接点名**拦下。
+ *
+ * **⚠️ 本轮改了一个"证据实践"顺序，并验证有效**：此前连续 3 轮出现
+ * 「**紧接全量变异之后的那次门禁**失败」（安静机器复跑必过）。本轮改为
+ * **先跑门禁、再跑全量变异** ⇒ 门禁 **exit 0（443 文件 / 3303 用例）**、变异 **57/57**。
+ * ⇒ **建议固定顺序：先 `npm run check`，再 `npm run verify:mutation-kills`。**
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -1475,6 +1486,37 @@ export const MUTATIONS = [
     rationale:
       "去掉投递去重判定 ⇒ 同一条消息被投递两次时会**重复触发 handler**（重复副作用），" +
       "破坏\"同一消息只处理一次\"的契约 ⇒ 该反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 128 轮）新增：**指令幂等：同键异参必须拒绝、不得覆盖**。
+   *
+   * `instruction-window-store.ts` 文件头：「② 同键异参（`idempotencyKey` 相同但内容哈希不同）
+   * → **拒绝**，不覆盖」。变异去掉该判定 ⇒ 同键异参被**当作新指令接纳/覆盖**，
+   * 既有用户指导可能被静默替换。
+   *
+   * 本轮实测被 `tests/core/integration/instruction-window-persistence-branches.test.ts` 的
+   * 「② 同键异参：必须拒绝，不得覆盖既有指令」**直接点名**拦下 ⇒ 覆盖直接，固化防回归。
+   *
+   * ⚠️ `testFiles` **由检索结果直接写入**（不手敲）。
+   */
+  {
+    mutationIdentifier: "instruction-idempotency-conflict-overwrites",
+    targetFile: "packages/core/src/orchestration/instruction-window-store.ts",
+    find: `        if (existing.contentHash !== contentHash) {`,
+    replace: `        if (false && existing.contentHash !== contentHash) {`,
+    testFiles: [
+      "tests/core/integration/instruction-continuous-reception.test.ts",
+      "tests/core/integration/instruction-stop-recovery.test.ts",
+      "tests/core/integration/instruction-window-persistence-branches.test.ts",
+      "tests/core/integration/instruction-window-queue.test.ts",
+      "tests/core/integration/merge01-window-intention-counting.test.ts",
+      "tests/core/integration/usage-ledger-persistence.test.ts",
+      "tests/tui/unit/smart01-instruction-cli-entry.test.ts",
+    ],
+    expectedFailingTestNames: ["同键异参：必须拒绝，不得覆盖既有指令"],
+    rationale:
+      "让「同键异参」不再被拒绝 ⇒ 内容不同的同键指令被当作新指令接纳，" +
+      "**既有指令可能被静默覆盖**（同键异参必须拒绝这一契约失守）⇒ 该反例必须变红",
   },
 ];
 
