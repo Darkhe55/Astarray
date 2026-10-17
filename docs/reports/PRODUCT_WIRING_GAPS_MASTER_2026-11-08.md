@@ -1200,3 +1200,37 @@ console.error("[G5-GUARD] earlyStop=" + String(this.earlyStopObservationsByTask.
 1. **G5 第一步**：按 §16.5.2 打 `[G5-GUARD]` 探针（10 分钟定位）；
 2. **G1 可直接开工**（反例与卡内门禁都已备好，无需等用户决策）；
 3. **插入任何 `console`/语句前，先确认是语句位置**（函数体/块内；数组、对象、实参列表内部不可插）。
+### 16.6 **G5 闭合（第 241–242 轮）**：探针定位 → 修 → 拔线 → 门禁 → 隔离包
+
+#### 16.6.1 真因（一条探针定位，未再猜）
+
+`[G5-GUARD] earlyStop=true attempts=0 **enabled=false** outcome=failure`
+
+⇒ 上报到了、也进了失败分支，但**开关没到编排器**：第 235 轮把 `isCheckpointResumeEnabled` 的转发
+插进了 **`workerFactories`** 里，而编排器读**顶层** `this.options.isCheckpointResumeEnabled` ⇒ 恒 `undefined`。
+
+**修法**：控制器里移到**顶层**（并删掉错位那一处）；装配层把它放进 `new MainController({...})` 的选项。
+
+#### 16.6.2 端到端验收（`tests/core/integration/g5-early-stop-resume.test.ts`，开关开）
+
+| 用例 | 断言 | 结果 |
+| --- | --- | --- |
+| ① 首次截断、随后完成 | 最终 **`done`**（续跑确实发生） | ✅ |
+| ② 每次截断 | 最终失败，尝试 **≥2 且 ≤3**（**有界**，不无限重试） | ✅ |
+
+#### 16.6.3 拔线必失败
+
+回退 `main-controller.ts` 到修复前（`abea537^`）⇒ **2/2 红**（`blocked`≠`done`）；恢复 ⇒ **2/2 绿**（diff 0）。
+
+#### 16.6.4 最终验证（第 242 轮）
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run check` | **exit 0 —— 454 文件 / 3325 用例** |
+| `npm run verify:mutation-kills` | **exit 0 —— 60/60** |
+| `npm pack` + 两个 verify | **273 文件**；三项 **exit 0** |
+
+**⇒ G5 闭合**（`AGENTS.md` 的「输出提前结束…由本地看门狗从检查点有界续跑，禁止无限重试」已落地）。
+**开关 `isCheckpointResumeEnabled` 仍缺省 `false`** —— 按 §D.6，开闸需用户确认形式。
+**未接线**：`RecoveryCheckpointStore.selectLatestTrustedCheckpoint` 的"续跑前取检查点"（当前续跑由调度重派，
+上下文由 worker 自身重建；接入检查点属后续增强，不在本次声称范围）。
