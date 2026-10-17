@@ -107,6 +107,8 @@ export interface WorkerAgentOptions {
    * 工具循环在「以 error 收尾、已产出文本、无合法完成事件」时上报；
    * 本层只**透传**，是否续跑由编排层决定（有界 + 取检查点）。**缺省不提供 ⇒ 行为不变**。
    */
+  /** G3b（第 217 轮）：**成功工具输出回调**（可选；缺省 ⇒ 不采集）。 */
+  onToolSucceeded?: (toolName: string, outputText: string) => void;
   onEarlyStopDetected?: (observation: {
     producedTextLength: number;
     iterationCount: number;
@@ -367,6 +369,10 @@ export class WorkerAgent {
           : { diagnosticEventSink: this.options.diagnosticEventSink }),
         /** G2（第 130 轮）：守卫端口 + 任务键。缺省 ⇒ 不传 ⇒ 不启用。 */
         /** G5（2026-11-08 第 201 轮）：早停回调透传（缺省不提供 ⇒ 工具循环不触发）。 */
+        /** G3b（第 217 轮）：成功工具输出回调透传（缺省不提供 ⇒ 不采集）。 */
+        ...(this.options.onToolSucceeded === undefined
+          ? {}
+          : { onToolSucceeded: this.options.onToolSucceeded }),
         ...(this.options.onEarlyStopDetected === undefined
           ? {}
           : { onEarlyStopDetected: this.options.onEarlyStopDetected }),

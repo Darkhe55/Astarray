@@ -91,6 +91,13 @@ export interface ToolLoopOptions {
   /** G2：任务级预算键（守卫用；缺省 null ⇒ 不计任务预算）。 */
   progressGuardTaskExecutionId?: string | null;
   /**
+   * G3b（2026-11-08 第 217 轮）：**成功工具的输出回调**（可选）。
+   *
+   * 供上层核对"证据包"类结果（`toolCallFinished.outputSummary` 是**截断**的，拿不到完整文本）。
+   * 回调抛错**不得**影响业务；**缺省不提供 ⇒ 行为逐字不变**。
+   */
+  onToolSucceeded?: (toolName: string, outputText: string) => void;
+  /**
    * G5（2026-11-08 第 199 轮）：**早停检测回调**（可选）。
    *
    * 触发条件：本轮循环以 `error` 收尾、且**已产出文本**但**没有**合法完成事件
@@ -511,6 +518,14 @@ export async function runToolLoop(
        * PERF-01-02 进程/任务测量（2026-10-02）：在**真实工具执行路径**上采集耗时样本，
        * 交给可选 sink 持久化（JSONL）供复算/分页/告警。测量失败不得影响业务。
        */
+      /** G3b（第 217 轮）：把**成功工具**的完整输出交给上层（观测失败不得阻塞业务）。 */
+      if (toolResult.kind === "success" && options.onToolSucceeded !== undefined) {
+        try {
+          options.onToolSucceeded(toolCall.toolName, toolResult.outputText);
+        } catch {
+          // 观测失败不得阻塞业务
+        }
+      }
       if (options.perfSampleSink !== undefined) {
         try {
           await options.perfSampleSink({
