@@ -830,3 +830,13 @@ macOS 平台证据 · Linux/macOS GUI 人工体验 · 人工体验结论（`pend
 | 仓库 | `HEAD == origin/main`，`unpushed: 0` |
 | 开关 | G2／G3 **均 `false`**（未动） |
 | 草稿 | `.tmp` 4 份（G1／G3a 正向／G3b-1／G5），**均未入库** |
+
+### 17.6 隔离包证据（第 197 轮实测）
+
+| 项 | 结果 |
+| --- | --- |
+| `npm pack`（prepack 再跑一次 `check`） | **exit 0** —— **273 文件 / 1.6 MB** |
+| `verify-package` | **exit 0** |
+| `verify-sdk-consumer`（隔离安装 + 消费者场景） | **exit 0** —— 「SDK 消费者行为验证通过」 |
+
+⇒ 与 §17.5 的门禁（450/3319、60/60）一起，构成**窗口末段的完整证据**。
