@@ -78,7 +78,7 @@ export class EvidenceBundleBuilder {
     if (!parsed.success) {
       throw new DomainError(
         "invalid-task-chain",
-        `证据包非法: ${parsed.error.message}`,
+        `证据包非法: ${parsed.error.issues.map((issue) => (issue.path.join(".") || "<root>") + ": " + issue.message).join("；")}`,
       );
     }
     return parsed.data;
