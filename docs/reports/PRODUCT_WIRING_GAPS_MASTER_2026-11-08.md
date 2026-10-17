@@ -1918,3 +1918,24 @@ console.error("[P-A] reg=" + String(options.toolDocumentationRegistry !== undefi
 2. **同名/近名对象有多处**：`gitIntegration`、`toolDocumentationRegistry` 都曾被我加进"门面自己的构造函数选项"而不是"传给装配层的选项"。
 
 **⇒ G4 当前状态：三构件完整、四层接线代码齐全、单测/组合测全绿；但"提示词真被注入"未证明（e2e 红）。**
+
+### 31.4 第 289 轮探针结论：原料已到位，**注入点在过早的时机**
+
+| 探针 | 结果 | 含义 |
+| --- | --- | --- |
+| `[P-A]` 装配层（修复后） | **`reg=true keys=1`** ✓ | 门面 → 装配**已通**（`f0f2182` 生效） |
+| `[P-O]` 编排器（修复后） | **`wfReg=true wfInj=true`** ✓ | 装配 → 控制器 → `workerFactories` **已通** |
+| 同一次 `[P-O]` | **`optsReg=false`** / 注入结果为空 | `buildWorkerAgent` 里构造出的注入**没有内容** |
+
+**推断**：在 `buildWorkerAgent(options)` 被调用时，`options.availableToolDescriptors` **还是空**（描述符在 worker 内部才装配），
+因此 `assignedTools` 为空 ⇒ 不注入 ⇒ `toolDocumentationInjection` 缺失。
+
+### 31.5 正解（与第 286 轮的设计一致，但那轮我中途回滚了）
+
+**把"构造说明"下沉到 `worker-agent.ts`**（那里 `this.options.availableToolDescriptors` 一定已装配，见 `worker-agent.ts:440`）：
+
+1. `WorkerAgentOptions` 加**原料**字段：`toolDocumentationRegistry?`、`toolDocumentationInjector?`（不是注入结果）；
+2. `buildWorkerAgent` 只 **spread 这两个原料**（`workerFactories` 已有它们，`[P-O]` 已证明）；
+3. worker 内部用原料 + 自己的描述符构造 `ToolGroupDocumentation` ⇒ `planInjection` ⇒ 追加提示词 ⇒ `recordDelivery`。
+
+**代价**：第 286 轮我已写过这段 worker 代码，但当时因上游未通而误判为无效并回滚；现在上游已通，只需重做一次并保留。
