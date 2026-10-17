@@ -1537,7 +1537,7 @@ buildWorkerToolPortWithRecoveryCheckpointing(missionId, task, agentInstanceId)
 | 严格性 | 后两门**空串也算缺失**（不得用空白占位、Agent 推断或会话记忆绕过） |
 | 接入 | 控制器 `isTargetBranchMergeAllowed` 改为调用评估器（**当前证据全缺 ⇒ 恒 false，行为不变**） |
 | 反例 | `tests/core/unit/g1-merge-readiness.test.ts`：**8 条全绿**（含"五门齐 ⇒ 允许"、"空串不算满足"、"当前装配 ⇒ 五项全缺"） |
-| 验证 | `check` **457 文件 / 3336 用例**；变异 **60/60**；隔离包三项 exit 0 |
+| 验证 | `check` **457 文件 / 3340 用例**（第 265 轮实测；第 261 轮当时为 3336）；变异 **60/60**；隔离包三项 exit 0 |
 
 ### 24.3 还差什么才能**真正允许合并**
 
