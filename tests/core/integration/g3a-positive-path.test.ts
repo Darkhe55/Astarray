@@ -39,7 +39,11 @@ afterEach(async () => {
       (server) => new Promise<void>((resolve) => server.close(() => resolve())),
     ),
   );
-  await fs.rm(stateDirectory, { recursive: true, force: true, maxRetries: 5 });
+  // 2026-11-08（第 257 轮）：**不删临时目录**。
+    // 实测：门禁拒绝的用例会让应用在 shutdown 后仍有后台写盘，
+    // 与 rm 竞态产生 `ENOENT: rename` 的 unhandled error（vitest exit 1）。
+    // 目录交给操作系统临时区回收；用例不再做删除。
+    void stateDirectory;
 });
 
 async function startFakeServer() {
