@@ -1517,3 +1517,36 @@ buildWorkerToolPortWithRecoveryCheckpointing(missionId, task, agentInstanceId)
 - 注入点：Worker 构造提示词处（`worker-agent.ts` 的 system prompt 装配）——**先找到该函数**（本轮未找到，因为连"工具说明"字样都不存在）；
 - 分组键：`toolGroupIdentifier` + `revision`（仓库已有 `TOOLKIT01` 相关卡与 `tool-action-registry` 的能力族，可复用作为组标识）；
 - 反例（先行写、确认红）：① 首次 ⇒ 提示词含完整用法；② 同 revision 第二次 ⇒ 只含固定提醒、**不含**完整用法；③ 未分配工具请求 ⇒ 逐级上报。
+
+## 24. G1 Step 3（第 261–263 轮）：五门禁机制已落地，**证据来源**待接
+
+### 24.1 卡里怎么定的（我此前误说成"需要用户授权"）
+
+| 来源 | 原文要点 |
+| --- | --- |
+| `AGENTS.md:58` | 次级只有在**提交哈希、测试、验收、人工体验和操作授权**门禁**均满足**时才能判定 `merge-ready` |
+| `MERGE01_NODECTX01_TASK_CARDS.md:6` | **人工体验结论与 Linux/macOS 平台证据只能由用户/平台提供** |
+
+⇒ 边界**已由卡定死**；我需要的只是**两门证据的运行时来源**，不是设计授权。
+
+### 24.2 已实现（第 261 轮，`ac10347`）
+
+| 项 | 内容 |
+| --- | --- |
+| 模块 | `packages/core/src/orchestration/git-merge-readiness.ts`：`evaluateGitMergeReadiness(evidence)`，五门任一缺失 ⇒ `isMergeReady: false` 并点名缺口 |
+| 严格性 | 后两门**空串也算缺失**（不得用空白占位、Agent 推断或会话记忆绕过） |
+| 接入 | 控制器 `isTargetBranchMergeAllowed` 改为调用评估器（**当前证据全缺 ⇒ 恒 false，行为不变**） |
+| 反例 | `tests/core/unit/g1-merge-readiness.test.ts`：**8 条全绿**（含"五门齐 ⇒ 允许"、"空串不算满足"、"当前装配 ⇒ 五项全缺"） |
+| 验证 | `check` **457 文件 / 3336 用例**；变异 **60/60**；隔离包三项 exit 0 |
+
+### 24.3 还差什么才能**真正允许合并**
+
+1. **证据来源注入**（代码侧，低风险，2 轮）：控制器加可选 `readMergeReadinessEvidence?: () => GitMergeReadinessEvidence`，
+   缺省 ⇒ 空证据 ⇒ **仍恒 false**；注入后由外部提供证据；
+2. **前两门可本地产生**：提交哈希（`GitContributionVerifier` 已有）+ 测试（`integrationTestCommands` 实际执行）+ 验收（`acceptance-verdict-gate` 已有）；
+3. **后两门只能由用户/平台提供**：人工体验结论记录 + 逐次操作授权标识 ⇒ **没有这两项记录时，评估器永远返回 false**（设计如此）。
+
+### 24.4 明确的边界
+
+- 本层**只做判定，不执行合并**；合并动作仍属"受控合并"，须五门齐备；
+- **不得**为了让测试变绿而注入伪造的"人工体验/操作授权"记录到产品路径（测试里可用合成记录验证评估逻辑，但那不进入产品默认装配）。
