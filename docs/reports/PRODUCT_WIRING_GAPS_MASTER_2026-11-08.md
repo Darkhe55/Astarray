@@ -1294,3 +1294,40 @@ gitIntegration: { ...partial,
 ⇒ 接线后应转绿；随后补**临时 `git init` 仓库**的端到端用例（建分支 → 提交 → 报告）。
 
 **⇒ 我在第 243 轮停止于此**：依赖已全部解析、配方已完整，**但没有在上下文不足时半实现**（避免又留一个红树）。
+
+## 20. 第 247–248 轮：G1 编排层接线的**决策点**与 G4 现状
+
+### 20.1 G1：门面层已可用，编排层接线卡在**权限语义**
+
+**已完成**（第 245–246 轮，`8e4402d`）：门面 `gitIntegration?` 选项 + `startIntegrationSession`，
+构造五件套（分配器/验证器/报告存储/恢复点/协调器）并**真实创建集成分支**；
+端到端 2/2（含"目标分支未被改动"的 git 实证）。验证：`check` 456/3328、变异 60/60、隔离包三项 exit 0。
+
+**阻塞点**：`GitIntegrationOrchestrationOptions.buildGitWorktreeToolPort` 的签名是
+```ts
+buildGitWorktreeToolPort: (task: TaskDependencyNode, worktreePath: string) => ToolPort
+```
+但控制器的工具端口构造需要 **`agentInstanceId`**（权限按具体个体判定）：
+```ts
+buildWorkerToolPortWithRecoveryCheckpointing(missionId, task, agentInstanceId)
+```
+⇒ **worktree 端口不知道该用哪个身份** ✗ 这不是"补几行"，而是**权限语义问题**：用错身份会让权限审计与隔离失真。
+
+### 20.2 三条可选方案（需用户选择，未选前不动编排层）
+
+| 方案 | 做法 | 影响 |
+| --- | --- | --- |
+| **A（推荐）** | 扩展签名加 `agentInstanceId`（编排器按 task owner 传入） | 改一处类型 + 一处调用；权限语义正确 |
+| B | 控制器内按 `task.id` 反查 owner（新增映射） | 不改签名，但映射可能漏项 |
+| C | 暂不接编排层（保持门面层可用） | 零风险；G1 停在门面层 |
+
+### 20.3 G4（工具说明回执）现状：**组件在、接线为零**
+
+| 项 | 事实 |
+| --- | --- |
+| 组件 | `packages/core/src/tools/tool-help-recall-controller.ts`（16 处引用）+ `tool-documentation-recall.ts` |
+| 调用点 | 检索 `new .*ToolHelp.*(` / `.shouldSendFullHelp(` / `recordToolGroupDelivery(` ⇒ **零命中** |
+| 结论 | **未接线**（与 `AGENTS.md`「第一次接收工具组给完整公开用法、同 revision 后续只给固定提醒」的要求不符） |
+| 影响面 | 提示词层（首次下发/回访），不涉及权限或数据安全 ⇒ 风险低于 G1／G5 |
+
+**⇒ G4 若要开工，需先明确接入点**（worker 的工具组交付路径）；本窗口剩余轮次不足以安全完成。
