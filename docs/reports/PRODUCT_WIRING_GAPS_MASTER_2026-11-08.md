@@ -1001,3 +1001,38 @@ factVerification: ["network.read"],
 3. 之后 G3a 的正向反例（`record-reasoning`）应可转绿；同时**保留** `search-sources` 的 fail-closed 行为（不得放宽）。
 
 **⇒ 我此前两次结论（未映射 / 基线 profile deny）都不对；真正的原因是"安装门禁的工具级分类"。**
+### 15.6 **G3a 已转绿（第 215 轮）与 G3b-1 反例的判别力（第 216 轮）**
+
+#### 15.6.1 G3a 的修复（真实原因与修法）
+
+**真因**（第 215 轮，有代码证据）：`policy-wrapper.ts` 只在 `operationClass ∈ {process-execution, system-level, **unknown**}`
+时才走安装门禁；而 `factVerification` **未登记**在 `local-sensitive-operation-classifier.ts` 的 `TOOL_NAME_CLASS`
+⇒ 被判 **`unknown`** ⇒ 进安装门禁 ⇒ assist 无头环境 **fail-closed** 拒绝（文案「无可信交互通道，安装被拒绝」）。
+
+**修法**（按该文件里仓库自己的注释「内置工具名不应被误判为安装」）：
+
+```ts
+factVerification: "network-access",   // 网络检索由能力 network.read 管辖，不需安装门禁
+```
+
+**结果**：错误从「安装门禁拒绝」变为「需要权限调用（ask）」⇒ 在 **devolve**（`network.read` = allow）下，
+`record-reasoning` **成功**、高严谨任务**正常 `done`** ⇒ 正向反例**转绿**（`tests/core/integration/g3a-positive-path.test.ts`）。
+
+#### 15.6.2 G3b-1 反例现在**具备判别力**（第 216 轮实测）
+
+同一反例（`高严谨 + 开关开 + 只 record-reasoning + 宣布完成 ⇒ 不得 done`）此前是"假通过"（被 G3a 的缺陷挡住）；
+G3a 修好后它变成：
+
+| 用例 | 实测 |
+| --- | --- |
+| 高严谨 + 开关开 + 只推理 | **红**：`expected 'done' not to be 'done'` ✓（任务**照常结案**，因为没有证据包门禁） |
+| 对照（开关关） | **绿**：`done` ✓ |
+
+⇒ **这就是 G3b 有效的红反例**：证明"**调用过**事实工具"被满足后，**证据包内容完全没有被检查**。
+
+#### 15.6.3 下一步（G3b 实现要点）
+
+1. 捕获 `factVerification` 的**完整输出**（工具循环加 `onToolSucceeded` 端口，或复用 `toolCallFinished` 的完整文本）；
+2. 完成门禁里：高严谨 ⇒ 要求存在**证据包形状**的结果（`relation` + 条目），并调用 `EvidenceCompletionGate.evaluateEvidenceBundle`；
+3. 缺包/条目为空/`unavailable`/缺来源正文 ⇒ **不得结案**（对应 `AGENTS.md`「纯推理验证不足」）；
+4. 开关 `isHighRigorEvidenceRequired`（**缺省 false**）。
