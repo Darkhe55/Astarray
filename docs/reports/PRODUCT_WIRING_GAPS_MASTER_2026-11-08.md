@@ -425,3 +425,39 @@ G2 的正式反例已入库为 `tests/core/integration/g2-progress-guard.test.ts
 
 - `npm run check`：**exit 0 —— 446 文件 / 3312 用例**；
 - `npm run verify:mutation-kills`：**exit 0 —— 59/59 被拦下**。
+
+## 10. 卡片一致性扫描（第 149 轮）：候选复核清单
+
+**方法**：扫 `docs/tasks/*.md` 全部 **42** 张卡，找出「**含完成字样**」**且**「命中已知未接线领域关键词」的交集。
+命中关键词的领域：**G1 Git 集成**（Git 集成/受控合并/工作树分流/worktree）、**G4 工具说明回访**、
+**G5 检查点续跑**、**G3 证据包/高严谨性**、**G10 CLI 分发**（`concurrent status`/`preset list`）。
+
+> ⚠️ **这份清单是"候选"，不是"违规"**：关键词命中只说明该卡**提到**相关能力，
+> 是否真的过度声称，**必须逐卡读上下文**才能判定 —— 我**没有**据此批量打补丁（那会制造错误结论）。
+
+### 10.1 已注明边界（无需处理，4 张）
+
+| 卡 | 领域 | 依据 |
+| --- | --- | --- |
+| `OBS01_PERFORMANCE_USAGE_AND_DIAGNOSTICS_TASK_CARDS.md` | G3 证据包 | 卡内已写明边界 |
+| `T05D_HUMAN_AGENT_CONCURRENT_CHANGE_TASK_CARD.md` | G1 Git 集成 | 见 `STATUS_UPDATE_T05D_GIT_INTEGRATION_REACHABILITY_2026-11-08.md` |
+| `T08C_T07C_AGENT_ROUTING_AND_MODEL_POLICY_TASK_CARDS.md` | G1 Git 集成 | 卡内 L9 已注明"不代表厂商协议已接入产品路径" |
+| `TOOLKIT01_PROJECT_TO_GENERAL_TOOL_LIFECYCLE_TASK_CARD.md` | G4 工具说明回访 | 卡内已注明"04/06 大部分完成"与缺口 |
+
+### 10.2 待逐卡复核（7 张，**未改任何卡**）
+
+| 卡 | 命中领域 | 复核要点 |
+| --- | --- | --- |
+| `GUI_MVP_CODING_TASK_CARD.md` | G4 工具说明回访 | 是否声称"工具说明首次下发/回访"已完成 |
+| `LESSON01_MODEL_ALIGNED_COMMUNICATION_MEMORY_TASK_CARD.md` | G1 Git 集成 | 是否把 Git 集成算作已交付 |
+| `PROJECT01_ISOLATION_AND_CROSS_PROJECT_BORROWING_TASK_CARD.md` | G1 Git 集成 | worktree 相关能力是否与"不可达"冲突 |
+| `T07D_PROVIDER_RUNTIME_AND_STANDALONE_AGENT_TASK_CARD.md` | G1 Git 集成 | 同上 |
+| `T07D_R2_PROVIDER_PRODUCT_WIRING_TASK_CARD.md` | G3 证据包 | 是否声称证据包已强制 |
+| `T12A_SESSION_RECOVERY_RECONCILIATION_TASK_CARD.md` | G1 Git 集成 | 恢复/协调是否与 G5（未接）冲突 |
+| `T12_SECURITY_HARDENING_TASK_CARD.md` | G1 Git 集成 | 安全硬化是否包含未接线的合并门禁 |
+
+### 10.3 结论（如实）
+
+- **已确认的不一致只有 1 处**（T05D），且**已用独立状态补丁处理**（按 `AGENTS.md`，未改他人文件）；
+- 其余 6 张是**关键词候选**，需逐卡读上下文；**在复核完成前，不得据本清单宣称这些卡"过度声称"**；
+- 本轮**未修改任何任务卡**。
