@@ -1075,3 +1075,37 @@ G3a 修好后它变成：
 
 **⇒ G3a（本地规则标记 + 强制调用事实工具）与 G3b（证据包内容门禁）在本窗口闭合；
 开关仍缺省关（由 `isHighRigorEnforcementEnabled` 一并控制）。**
+### 15.8 G3b 的**正向**路径打通（第 224–231 轮）与它顶出的 4 个产品缺陷
+
+#### 15.8.1 为什么必须写正向用例
+
+`g3b-evidence-content`（只推理 ⇒ 不得 done）**只证明了"门禁会拒绝"**，无法区分"门禁正确"与"门禁永远拒绝"。
+加入正向用例（合法 source 证据包 ⇒ **应 done**）后，才在 4 层里各发现一个真实缺陷。
+
+#### 15.8.2 它顶出的 4 个产品缺陷（全部已修，各有提交）
+
+| # | 缺陷 | 证据（探针原文） | 修复 | 提交 |
+| --- | --- | --- | --- | --- |
+| 1 | 安装门禁把 `factVerification` 判为 `unknown` ⇒ fail-closed 拒绝 | `安装门禁拒绝: 无可信交互通道` | 在 `TOOL_NAME_CLASS` 登记 `network-access` | `fbb7794` |
+| 2 | 证据门禁写死 `requiredClaimIdentifier: "default-claim"` ⇒ **恒拒绝** | —— | 改用证据包自身主张（并注明该检查退化为自洽） | `804cc8d` |
+| 3 | `build-evidence-bundle` 要求模型猜到内部 claim id ⇒ **该 action 恒失败** | `证据条目 claimIdentifier 与证据包不一致: source` | 工具边界**归一化**条目主张 | `2102a1e` |
+| 4 | schema 校验错误信息只输出 `[` ⇒ 无法诊断 | `证据包非法: [` | 展开 `issues`（`path: message` 逐条） | `073d010` |
+
+**第 4 个缺陷修好后**立刻看到真正原因：`entries.0.contentHash: must match /^sha256:[a-f0-9]{64}$/` ⇒ 那是**测试数据**问题（补 `sha256:` 前缀）⇒ 正向转绿。
+
+#### 15.8.3 最终验收（第 230 轮实测）
+
+| 用例 | 断言 | 状态 |
+| --- | --- | --- |
+| `g3b-evidence-content` ① | 只推理 ⇒ **不得 done** | ✅ |
+| `g3b-evidence-content` ② | 开关关 ⇒ 照常 done | ✅ |
+| **`g3b-evidence-positive`** | **合法 source 证据包 ⇒ 应 done** | ✅ |
+| `g3a-positive-path` | 不再被安装门禁拒 + 被证据门禁拦（只推理不足） | ✅ |
+
+| 验证 | 结果 |
+| --- | --- |
+| `npm run check` | **exit 0 —— 453 文件 / 3323 用例** |
+| `npm run verify:mutation-kills` | **exit 0 —— 60/60** |
+| 隔离包（第 221 轮） | 273 文件；`verify-package` + `verify-sdk-consumer` 均 exit 0 |
+
+**⇒ G3a／G3b 在本窗口完整闭合（门禁 + 正负配对 + 4 个缺陷修复 + 开关缺省关）。**
