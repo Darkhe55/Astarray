@@ -275,9 +275,16 @@ export class WorkerAgent {
      */
     /** G3b（第 218 轮）：**证据包内容门禁**（缺省关 ⇒ 不执行）。 */
     if (this.options.isHighRigorEvidenceRequired === true) {
+      /**
+       * 2026-11-08 第 223 轮修正：此前把 `requiredClaimIdentifier` 写死成 `"default-claim"`，
+       * 而工具侧主张由模型在参数里给出 ⇒ **任何真实证据包都不可能通过**（门禁成了"恒拒绝"）。
+       * 现改为使用**证据包自身的主张**（主张一致性检查因此退化为自洽；
+       * 条目/来源正文/`unavailable` 三项检查仍生效）。后续可从任务注入精确主张。
+       */
+      const capturedBundle = this.parseCapturedEvidenceBundle();
       const evidenceGateResult = new EvidenceCompletionGate().evaluateEvidenceBundle(
-        this.parseCapturedEvidenceBundle(),
-        { requiredClaimIdentifier: "default-claim", requireSourceText: true },
+        capturedBundle,
+        { requiredClaimIdentifier: capturedBundle?.claimIdentifier ?? "", requireSourceText: true },
       );
       if (!evidenceGateResult.isPassable) {
         return (
