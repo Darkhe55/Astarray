@@ -480,3 +480,18 @@ G2 的正式反例已入库为 `tests/core/integration/g2-progress-guard.test.ts
 - 全仓**唯一确认的不一致是 T05D**，已用独立状态补丁处理（第 148 轮）；
 - 其余 42 张卡中，涉及未接线领域的卡**要么未完成、要么自带范围纠偏**；
 - **本轮未修改任何任务卡**（避免把关键词误判写成结论）。
+
+## 11. 窗口末段最终证据（第 153–154 轮实测）
+
+在 `ef5640f`（含接线清单测试）之上实测：
+
+| 项 | 命令 | 结果 |
+| --- | --- | --- |
+| 全量门禁 | `npm run check` | **exit 0 —— 447 文件 / 3315 用例** |
+| 变异验证 | `npm run verify:mutation-kills` | **exit 0 —— 59/59 被拦下** |
+| 打包 | `npm pack --pack-destination .tmp`（prepack 再跑一次 check） | **exit 0** —— 273 文件 / 1.6 MB |
+| 包内容校验 | `node scripts/verify-package.mjs` | **exit 0** —— 「打包校验通过: 273 个文件，shebang/BOM 正确，反馈进程入口已包含」 |
+| 隔离消费者验证 | `node scripts/verify-sdk-consumer.mjs` | **exit 0** —— 「SDK 消费者行为验证通过」（`acceptedStatus: accepted`、`idempotentMissionMatched: true`、`finalStatus: done`） |
+
+**⇒ 本窗口可交付的部分（阶段一、阶段二、接线清单、一致性收口）全部有上述证据支撑；
+未完成的部分（G3a 正向、G3b、G5、G1、G4、G10）在 §5.5／§5.6／§7／§8／§9 与 `PLAN_STATUS` 中如实标注。**
