@@ -126,6 +126,13 @@ export interface WorkerAgentOptions {
    * 否则不得以"本次没请求该工具"为由结案（此前只覆盖单次运行，重跑即可绕过）。
    */
   requiredMutatingToolNames?: readonly string[];
+  /**
+   * G3a（B 路线，2026-11-08 第 171 轮）：**必需工具**（可含**非变更类**，如 `factVerification`）。
+   *
+   * 与 `requiredMutatingToolNames` **相互独立**：后者绑定"变更类 + 跨运行（因权限询问被打断）"契约；
+   * 把非变更工具塞进去会让要求**永远无法满足**（第 136／139 轮两次实测的过度拦截）。
+   */
+  requiredToolNames?: readonly string[];
 }
 
 /**
