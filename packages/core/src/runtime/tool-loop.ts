@@ -3,6 +3,7 @@
  * 驱动 runtime 的多次迭代：文本增量累积 → 工具调用经 ToolPort 执行 →
  * 结果回填 → 再次调用 runtime，直到 success/error/cancelled 或达到最大迭代数。
  */
+import { createHash } from "node:crypto";
 import type { AgentEvent } from "../core/events.js";
 import { TASK_COMPLETION_MARKER } from "../core/completion-protocol.js";
 // DIAG-01（第 85 轮）：复用**既有**的"执行前拒绝"判定，拒绝不得记成故障
@@ -329,6 +330,15 @@ export async function runToolLoop(
    */
   const lastOutcomeSignatureByPath = new Map<string, string>();
 
+  /**
+   * G2（2026-11-08，第 131 轮）：**守卫中止标志**。
+   *
+   * 为什么需要它（第 130 轮实测踩到）：违反发生在**内层工具调用循环**里，那里 `break` 只跳出内层；
+   * 外层 `while` 会继续下一轮并**再次请求模型** ⇒ 守卫等于没生效（请求数仍跑满上限）。
+   * 故用一个标志，在内层跳出后**再跳出外层 `while`**。
+   */
+  let isProgressGuardAborted = false;
+
   while (iterationCount < options.maxLoopIterations) {
     iterationCount += 1;
     let iterationReason: Extract<AgentEvent, { kind: "runFinished" }>["reason"] =
@@ -465,6 +475,7 @@ export async function runToolLoop(
           outputSummary: truncate(guardViolation.message),
           errorCode: "progress-guard-violation",
         });
+        isProgressGuardAborted = true;
         break;
       }
       const toolResult: ToolCallResult = isGated
@@ -535,10 +546,19 @@ export async function runToolLoop(
        * 端口缺省 ⇒ 跳过；守卫抛错 ⇒ 只丢弃该次观测，不改变业务结果。
        */
       if (options.progressGuardPort !== undefined) {
+        /**
+         * G2（2026-11-08，第 131 轮）**签名口径**：错误只用 `errorCode`、**不用**自由文本。
+         *
+         * 第 130 轮实测踩到：`resource-already-read` 的错误文本里带**倒计时**
+         * （`remainingWaitMilliseconds`）⇒ 全文字签名**每次都不同** ⇒ `isNewProgress` 恒真、
+         * 无进展永不累计、守卫形同虚设。**错误码才是稳定指纹**（与 `DiagnosticEvent` 用
+         * `errorCode` 做分类/指纹同一口径）；成功则按**内容哈希**（内容变了才算进展）。
+         */
         const outcomeSignature =
           toolResult.kind === "success"
-            ? "success:" + toolResult.outputText
-            : "error:" + toolResult.errorCode + ":" + toolResult.errorMessage;
+            ? "success:" +
+              createHash("sha256").update(toolResult.outputText).digest("hex").slice(0, 16)
+            : "error:" + toolResult.errorCode;
         const pathKey = guardCallerKey + "->" + guardCalleeKey;
         const previousSignature = lastOutcomeSignatureByPath.get(pathKey);
         const isNewProgress = previousSignature !== outcomeSignature;
@@ -570,6 +590,7 @@ export async function runToolLoop(
             outputSummary: truncate(afterViolation.message),
             errorCode: "progress-guard-violation",
           });
+          isProgressGuardAborted = true;
           break;
         }
       }
@@ -592,6 +613,13 @@ export async function runToolLoop(
           content: toToolResultContent(toolResult),
         },
       );
+    }
+    /**
+     * G2（2026-11-08，第 131 轮）：守卫已中止 ⇒ **跳出外层 `while`**，
+     * 不再请求模型、不再继续迭代（这才是"**有界中止**"；内层 `break` 单独不够）。
+     */
+    if (isProgressGuardAborted) {
+      break;
     }
     // 本轮工具执行完毕：重申本地完成协议（真实模型常在工具执行后不再重复完成事件）。
     conversationMessages.push(buildCompletionProtocolRestatement());
