@@ -1939,3 +1939,46 @@ console.error("[P-A] reg=" + String(options.toolDocumentationRegistry !== undefi
 3. worker 内部用原料 + 自己的描述符构造 `ToolGroupDocumentation` ⇒ `planInjection` ⇒ 追加提示词 ⇒ `recordDelivery`。
 
 **代价**：第 286 轮我已写过这段 worker 代码，但当时因上游未通而误判为无效并回滚；现在上游已通，只需重做一次并保留。
+
+## 32. **G4 闭合（第 290 轮）**：工具说明回执端到端跑通
+
+### 32.1 病根与修法（由探针逐层定位，共 3 处断点）
+
+| # | 断点 | 探针证据 | 修法 | 提交 |
+| --- | --- | --- | --- | --- |
+| 1 | 登记表加在**门面构造函数选项**，没进装配层选项 | `[G4-A] reg=false` | 改加进 `createApplicationRuntime({...})` 选项 | `f0f2182` |
+| 2 | 注入在**编排器 `buildWorkerAgent`** 里构造，但那时 `availableToolDescriptors` **还是空** | `[P-O] wfReg=true wfInj=true **optsReg=false**` | 注入**下沉到 `worker-agent`**（用本实例已装配的描述符） | `ba9039a` |
+| 3 | 编排器只**透传原料**（登记表 + 注入器），不再自己构造 | 同上 | `ba9039a` |
+
+### 32.2 端到端验收（真实装配入口 + 假 Provider 捕获请求体）
+
+`tests/core/integration/g4-tool-documentation-e2e.test.ts`（**永久测试**）：
+
+| 用例 | 断言 | 结果 |
+| --- | --- | --- |
+| 提供登记（测试内合成） | system 消息含 `【工具说明】`、`## factVerification`、`用途：`、`局限：纯推理不构成证据` | ✅ |
+| **不提供登记** | system 消息**不含** `【工具说明】`、**不含**登记里的局限文本 | ✅ |
+
+### 32.3 拔线必失败
+
+回退 `worker-agent.ts` 到注入下沉之前（`ba9039a^`）⇒ **用例①红**；恢复 ⇒ **2/2 绿**（diff 0）✓
+
+### 32.4 最终验证（第 290 轮）
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run check` | **exit 0 —— 461 文件 / 3356 用例** |
+| `npm run verify:mutation-kills` | **exit 0 —— 60/60** |
+| `npm pack` + 两个 verify（重跑一次） | **exit 0 —— 273 文件**；三项 **exit 0** |
+
+**说明**：首次 `npm pack` 因其 `prepack` 再跑 `check` 时**抖了 1 条**（已知负载抖动家族），重跑即绿；直接 `check` 同轮 461/3356 全绿 ✓
+
+### 32.5 语义与不变式
+
+1. **产品默认不内置任何登记内容**：不传 `toolDocumentationRegistry` ⇒ 不构造注入器、不注入 ⇒ **提示词逐字不变**；
+2. **只对已登记的工具构成注入组**（组内仍是 10 字段的完整公开用法）；
+3. **完整用法送达后必须 `recordDelivery`**，否则同 agent 同 revision 会重复全文注入；
+4. 注入任何异常都吞掉：说明缺失不得阻塞任务。
+
+**⇒ G4 闭合**（`AGENTS.md`「第一次接收某工具组获得完整公开用法；同 revision 后续只注入固定提醒」已落地）。
+**注意**：真实工具组的登记内容仍**未提供**（产品默认空）—— 需要时应由使用方显式登记。
