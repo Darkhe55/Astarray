@@ -366,6 +366,10 @@ export class WorkerAgent {
           ? {}
           : { diagnosticEventSink: this.options.diagnosticEventSink }),
         /** G2（第 130 轮）：守卫端口 + 任务键。缺省 ⇒ 不传 ⇒ 不启用。 */
+        /** G5（2026-11-08 第 201 轮）：早停回调透传（缺省不提供 ⇒ 工具循环不触发）。 */
+        ...(this.options.onEarlyStopDetected === undefined
+          ? {}
+          : { onEarlyStopDetected: this.options.onEarlyStopDetected }),
         ...(this.options.progressGuardPort === undefined
           ? {}
           : {
