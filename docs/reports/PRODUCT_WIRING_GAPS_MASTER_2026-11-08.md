@@ -1888,3 +1888,33 @@ let systemPrompt = buildWorkerSystemPrompt(...);   // ← 在此之后追加
 4. 端到端用例（`.tmp` 草稿）应转绿 ⇒ 再拔线。
 
 **这样只依赖 `buildWorkerAgent` 是否 spread 选项**，不依赖"注入写在哪个构造点"，对三条路径都成立。
+
+### 31. G4 断点定位进度（第 287–288 轮）：已修一处、剩最后一跳待验证
+
+#### 31.1 已确认与已修
+
+| 检查 | 证据 | 结论 |
+| --- | --- | --- |
+| 门面是否把登记表传给**装配层** | 探针 `[G4-A] reg=false`（修复前） | ❌ 断在此处：我曾把它加在**门面构造函数选项**里 |
+| 修复 | 改加到 `createApplicationRuntime({...})` 的选项（`f0f2182`） | ✅ 已提交 |
+| 装配层 → 控制器 | 读源码：spread 在 `new MainController({...})` **内部**（L1130-1145） | ✅ 结构正确 |
+| 控制器 → `workerFactories` | 读源码：spread 在 `workerFactories: {` 之内（L1001-1006） | ✅ 结构正确 |
+| 编排器是否读到 | 探针 `[G4-P] wf.registry=false`（**修复前**跑） | ❓ **需在修复后重跑** |
+
+#### 31.2 下一步（唯一剩余动作，1 轮）
+
+**在修复后重跑装配层探针**（语句位置：`const controller = new MainController({` 之前）：
+
+```ts
+console.error("[P-A] reg=" + String(options.toolDocumentationRegistry !== undefined));
+```
+
+- 若 `true` ⇒ 断点在"装配层 → 控制器 → 编排器"之间的某一跳（继续用同样探针逐跳）；
+- 若 `false` ⇒ 说明 **`runtime: "provider"` 走了另一条创建路径**（不止 `createApplicationRuntime` 一处），需对其同样补传登记表。
+
+#### 31.3 两条**已踩过的坑**（务必避开）
+
+1. **探针/语句必须插在语句位置**：对象字面量内部（`workerFactories: {` 之后）与跨两行的参数表中间都会导致 `PARSE_ERROR`；
+2. **同名/近名对象有多处**：`gitIntegration`、`toolDocumentationRegistry` 都曾被我加进"门面自己的构造函数选项"而不是"传给装配层的选项"。
+
+**⇒ G4 当前状态：三构件完整、四层接线代码齐全、单测/组合测全绿；但"提示词真被注入"未证明（e2e 红）。**
