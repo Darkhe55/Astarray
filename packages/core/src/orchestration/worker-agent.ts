@@ -408,6 +408,15 @@ export class WorkerAgent {
           systemPrompt += "\n\n" + buildReminderText();
         } else {
           systemPrompt += "\n\n" + renderToolGroupDocumentation(toolDocumentationInjection.documentation);
+          /**
+           * 2026-11-08 第 283 轮修复：**完整用法送达后必须写回执**，
+           * 否则同一 agent 同 revision 的后续激活会**再次**被判定为首次 ⇒ 每次都全文注入
+           * （违反 `AGENTS.md`「同 revision 后续只给固定提醒」）。
+           */
+          await toolDocumentationInjection.injector.recordDelivery({
+            agentInstanceId: this.options.agentInstanceId,
+            documentation: toolDocumentationInjection.documentation,
+          });
         }
       } catch {
         // 说明注入失败不得阻塞任务（权限/验收/合并语义均不依赖本段）
