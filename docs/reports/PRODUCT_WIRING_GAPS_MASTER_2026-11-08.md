@@ -971,3 +971,33 @@ factVerification: ["network.read"],
 
 **⇒ 我之前请你决策的 (a)/(b) 两条都不成立**：既不需要"新增能力映射"，也不需要"转 pending-manual"。
 **这是我在没有先读映射表的情况下就下结论的错误**，与"把卡里已写的内容当成待决策"是同一类问题。
+### 15.5 **真正原因（第 212 轮实测）**：被**安装门禁**拒绝，且是**工具级**分类
+
+探针（放在 `push({…})` **之前的语句位置**）打印出完整文案：
+
+```
+[G3-TOOL-MSG] tool-permission-denied :: 安装门禁拒绝: 无可信交互通道，安装被拒绝（fail-closed）
+```
+
+### 15.5.1 这条文案说明了什么
+
+1. 拦截者**不是**权限能力矩阵（`network.read` 那条已排除，§15.4），而是 **`assist-installation-gate`**；
+2. 拒绝理由是 **fail-closed**：无头测试里**没有可信交互通道**可以征求授权 ⇒ 直接拒 ✓（这是设计的保守行为）；
+3. 但**被拒的调用是 `factVerification` 的 `record-reasoning`** —— 一个**纯本地、无副作用、不联网**的动作。
+
+### 15.5.2 因此这是一个**分类粒度缺陷**（不是"没法验收"）
+
+`AGENTS.md` 要求：安装/外部操作须先判定**实际作用范围**（S1–S7）。而这里显然按**工具**分类：
+`factVerification` 因为**存在** `search-sources`（联网）动作，被整体视为"安装/外部获取"⇒
+**纯本地的 `record-reasoning` / `record-local-experiment` 被连坐拒绝**。
+
+⇒ 正确做法应是**按 action 分类**（本仓已有 `action` 事实：描述符与 `tool-action-registry`）：
+`search-sources` → 需安装/外部授权；`record-reasoning` / `record-local-experiment` / `build-evidence-bundle` → 本地、不需安装授权。
+
+### 15.5.3 下一步（明确的三个动作）
+
+1. 读 `installation-operation-classifier.ts` / `assist-installation-gate.ts`：确认它是否接收并使用 `action`；
+2. 若未使用 ⇒ 按 **ADR-0043（治理规则迁移与统一）** 让它**按 action** 判定（`record-*` 不触发安装门禁）；
+3. 之后 G3a 的正向反例（`record-reasoning`）应可转绿；同时**保留** `search-sources` 的 fail-closed 行为（不得放宽）。
+
+**⇒ 我此前两次结论（未映射 / 基线 profile deny）都不对；真正的原因是"安装门禁的工具级分类"。**
