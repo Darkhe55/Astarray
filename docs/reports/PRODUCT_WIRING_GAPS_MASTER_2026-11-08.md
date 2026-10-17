@@ -1697,3 +1697,36 @@ let systemPrompt = buildWorkerSystemPrompt(...);   // ← 在此之后追加
 
 **设计建议**：渲染格式应含——工具标识、用途、参数 schema、返回 schema、示例、失败码、幂等性、副作用类别；
 且**必须**在末尾附 `buildReminderText()`（提醒模型如何请求帮助）。
+
+## 28. G4 状态（第 269–272 轮，**预算用尽，按纪律停下**）：三个缺口
+
+### 28.1 已完成（2 处提交，行为中性）
+
+| 步 | 内容 | 提交 | 验证 |
+| --- | --- | --- | --- |
+| 1 | **完整用法文本渲染器**（10 个字段 + 末尾固定提醒） | `3c9ca2a` | 单测 **5/5** |
+| 2 | **worker 提示词注入点**（首次完整用法 / 同 revision 仅提醒；**未提供注入器 ⇒ 提示词逐字不变**） | `8ed737d` | `typecheck` 0、回归 4/4 |
+
+### 28.2 三个缺口（全部实读确认）
+
+| # | 缺口 | 证据 |
+| --- | --- | --- |
+| ① | **没有"完整用法"文本渲染器** | 已补（本轮前，`tool-documentation-renderer.ts`） |
+| ② | **没有 `descriptor → ToolPublicDocumentation` 的生产者** | 全仓检索：`ToolPublicDocumentation` **只被消费、从不被生产**；`tool-help-recall-controller.ts:104` 要求调用方**直接提供** `Map<string, ToolPublicDocumentation>` |
+| ③ | **部分字段在描述符里无来源** | `examples`（示例）、`limitations`（局限）在 `ToolDescriptor` 中不存在 ⇒ 无法从描述符推导，必须**另行登记**（文档/注册表）|
+
+### 28.3 为什么停（预算 + 不可自创）
+
+- G4 预算 **4 轮**已用尽（269 取证、270 渲染器、271 注入点、272 取证）；
+- 缺口②③ 需要**新增"公开用法注册表"**（工具说明的权威来源），这是**产品设计决定**：
+  从描述符推导会逼我**自创** `examples`/`limitations` 内容 ⇒ 等于编造工具文档 ✗；
+- 按纪律「超出必须停下说明卡点，不许继续烧轮次」⇒ **停**。
+
+### 28.4 下窗口的可行路线（两条，需选一）
+
+**(a) 注册表路线（推荐）**：新建 `tool-public-documentation-registry.ts`，为每个已注册工具**显式登记** 10 个字段；
+  控制器构造 `Map<string, ToolPublicDocumentation>` 并传 `ToolDocumentationRecallInjector` + `ToolGroupDocumentation` 给 worker
+  ⇒ 接线只差"装配层构造 + 透传"（2–3 轮）。缺点：需维护登记内容。
+
+**(b) 推导路线**：从描述符推导 8 个字段，`examples`/`limitations` 留空并在渲染器里显示"（未登记）"；
+  ⇒ 可落地（1–2 轮），但**工具说明会缺少示例与局限**，与"完整公开用法"有差距（需在文档中如实标注）。
