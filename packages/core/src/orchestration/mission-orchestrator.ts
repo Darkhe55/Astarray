@@ -820,9 +820,31 @@ export class MissionOrchestrator {
    *
    * 覆写者必须返回一个可 `run()` 的 Worker（见 `WorkerAgentOptions`）。
    */
+  /**
+   * G5（2026-11-08 第 233 轮）：**早停观测**（任务级）。
+   *
+   * 只记录事实（工具循环在"以 error 收尾、已产出文本、无合法完成事件"时上报）；
+   * **本增量不续跑**——是否续跑由 `handleWorkerOutcome` 的失败分支按计数决定（下一增量）。
+   */
+  private readonly earlyStopObservationsByTask = new Map<
+    string,
+    { producedTextLength: number; iterationCount: number; outcomeDetail: string }
+  >();
+
+  /** G5（第 233 轮）：每任务的**已续跑次数**（下一增量写入；上限 2，防止无限重试）。 */
+  private readonly resumeAttemptsByTask = new Map<string, number>();
+
   protected buildWorkerAgent(options: WorkerAgentOptions): WorkerAgent {
     return new WorkerAgent({
       ...options,
+      /**
+       * G5（第 233 轮）：早停**只记录、不续跑**（本增量行为中性）。
+       * 上游若自带回调则一并转发。
+       */
+      onEarlyStopDetected: (observation) => {
+        this.earlyStopObservationsByTask.set(options.task.id, observation);
+        options.onEarlyStopDetected?.(observation);
+      },
       task: {
         ...options.task,
         publishedByRecipientId: resolvePublisherRecipientIdForTask({
