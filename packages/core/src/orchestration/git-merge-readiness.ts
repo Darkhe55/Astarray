@@ -59,3 +59,31 @@ export function evaluateGitMergeReadiness(
     ? { isMergeReady: true, unmetGateNames: [] }
     : { isMergeReady: false, unmetGateNames };
 }
+
+/** 空证据（**当前产品默认**）：五门全缺 ⇒ 永远不可合并。 */
+export const EMPTY_MERGE_READINESS_EVIDENCE: GitMergeReadinessEvidence = {
+  commitHash: null,
+  areTestsPassed: false,
+  isAcceptancePassed: false,
+  humanExperienceConclusion: null,
+  operationAuthorizationIdentifier: null,
+};
+
+/**
+ * 从**可选证据提供者**评估（G1 Step 3，第 264 轮）。
+ *
+ * - 提供者缺省 ⇒ 用 {@link EMPTY_MERGE_READINESS_EVIDENCE} ⇒ **恒 false**（行为与接线前一致）；
+ * - 提供者抛错 ⇒ 视为**无证据**（fail-closed，不因读取失败而放行）。
+ */
+export function evaluateMergeReadinessWithProvider(
+  provider: (() => GitMergeReadinessEvidence) | null | undefined,
+): GitMergeReadiness {
+  if (provider === null || provider === undefined) {
+    return evaluateGitMergeReadiness(EMPTY_MERGE_READINESS_EVIDENCE);
+  }
+  try {
+    return evaluateGitMergeReadiness(provider());
+  } catch {
+    return evaluateGitMergeReadiness(EMPTY_MERGE_READINESS_EVIDENCE);
+  }
+}

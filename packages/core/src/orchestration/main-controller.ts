@@ -6,7 +6,8 @@
  */
 import { randomUUID } from "node:crypto";
 // G1 Step 3（2026-11-08 第 261 轮）：受控合并的五门禁评估（纯函数）。
-import { evaluateGitMergeReadiness } from "./git-merge-readiness.js";
+import { evaluateMergeReadinessWithProvider } from "./git-merge-readiness.js";
+import type { GitMergeReadinessEvidence } from "./git-merge-readiness.js";
 
 import { DomainError } from "../core/errors.js";
 import { runToolLoop } from "../runtime/tool-loop.js";
@@ -227,6 +228,13 @@ export interface MainControllerOptions {
   workArchiveStore?: AgentWorkArchiveStore | null;
   /** T05B → T08：Git 集成装配（可选；缺省时编排行为与旧版一致）。 */
   gitIntegration?: GitIntegrationPartialOptions | null;
+  /**
+   * G1 Step 3（2026-11-08 第 264 轮）：**合并证据提供者**（可选）。
+   *
+   * 缺省 ⇒ 空证据 ⇒ 恒不可合并（fail-closed）。
+   * 前两门可由本地产生；**人工体验/操作授权只能由用户/平台提供的记录**填充 —— 不得伪造。
+   */
+  readMergeReadinessEvidence?: () => GitMergeReadinessEvidence;
   /** T05B：次级调度 Agent 具体实例 ID 工厂（每次 mission 不可复用）。 */
   secondaryAgentInstanceIdFactory?: (missionId: string) => string;
   /** B6R-04b：认证设置控制面依赖（TUI/CLI 共用；非模型工具）。 */
@@ -917,13 +925,8 @@ export class MainController {
        * 接入来源后无需改这里，只需让证据字段非空。
        */
       isTargetBranchMergeAllowed: () =>
-        evaluateGitMergeReadiness({
-          commitHash: null,
-          areTestsPassed: false,
-          isAcceptancePassed: false,
-          humanExperienceConclusion: null,
-          operationAuthorizationIdentifier: null,
-        }).isMergeReady,
+        evaluateMergeReadinessWithProvider(this.options.readMergeReadinessEvidence)
+          .isMergeReady,
     };
   }
 

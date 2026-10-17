@@ -13,7 +13,10 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.setConfig({ testTimeout: 10_000 });
 
-import { evaluateGitMergeReadiness } from "../../../packages/core/src/orchestration/git-merge-readiness.js";
+import {
+  evaluateGitMergeReadiness,
+  evaluateMergeReadinessWithProvider,
+} from "../../../packages/core/src/orchestration/git-merge-readiness.js";
 
 /** 五门全满足的基线证据。 */
 function buildAllGatesSatisfied() {
@@ -92,5 +95,38 @@ describe("G1 Step 3：五门禁 fail-closed", () => {
     });
     expect(result.isMergeReady).toBe(false);
     expect(result.unmetGateNames).toEqual(["提交哈希", "测试", "验收", "人工体验", "操作授权"]);
+  });
+});
+
+describe("G1 Step 3：证据提供者（第 264 轮）", () => {
+  it("提供者缺省 ⇒ 空证据 ⇒ 永不合并（行为与接线前一致）", () => {
+    const result = evaluateMergeReadinessWithProvider(undefined);
+    expect(result.isMergeReady).toBe(false);
+    expect(result.unmetGateNames).toEqual(["提交哈希", "测试", "验收", "人工体验", "操作授权"]);
+  });
+
+  it("提供者抛错 ⇒ 视为无证据（fail-closed，不因读取失败放行）", () => {
+    const result = evaluateMergeReadinessWithProvider(() => {
+      throw new Error("证据读取失败");
+    });
+    expect(result.isMergeReady).toBe(false);
+    expect(result.unmetGateNames).toHaveLength(5);
+  });
+
+  it("提供者给出五门齐的记录 ⇒ 允许（**仅测试用合成记录**，不进入产品默认装配）", () => {
+    const result = evaluateMergeReadinessWithProvider(() => buildAllGatesSatisfied());
+    expect(result.isMergeReady).toBe(true);
+  });
+
+  it("提供者只给前三门、缺人工体验/操作授权 ⇒ 仍不可合并", () => {
+    const result = evaluateMergeReadinessWithProvider(() => ({
+      commitHash: "abc123",
+      areTestsPassed: true,
+      isAcceptancePassed: true,
+      humanExperienceConclusion: null,
+      operationAuthorizationIdentifier: null,
+    }));
+    expect(result.isMergeReady).toBe(false);
+    expect(result.unmetGateNames).toEqual(["人工体验", "操作授权"]);
   });
 });
