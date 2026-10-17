@@ -288,3 +288,47 @@
 - **跨文件多行锚点在 Windows 不可靠**（行尾差异）⇒ 用唯一单行；
 - **关联改动不要一次脚本改多处**：一处一改、一次一验、一次一提交；
 - **"拔线证明"必须先提交**，用提交回退而不是补丁文件。
+
+## 7. G5（早停 → 从检查点有界续跑）：可行性评估与接线计划（第 143 轮）
+
+**规则依据**：`AGENTS.md`「输出提前结束、缺失完成事件或标识与本地状态不符时，由本地看门狗**从检查点有界续跑**，
+禁止无限重试或重复副作用」。
+
+### 7.1 组件现状（本轮实读源码）
+
+| 组件 | 位置 | 能力 |
+| --- | --- | --- |
+| `RecoveryCheckpointRecorder` | `orchestration/recovery-checkpoint-recorder.ts`（292 行） | `recordToolCallState`／`getToolCallStates`：记录工具调用恢复态 |
+| `RecoveryCheckpointStore` | `orchestration/recovery-checkpoint-store.ts`（208 行） | `writeCheckpoint`／`selectLatestTrustedCheckpoint`：写入与**按信任选择最新**检查点 |
+| 恢复检查点 schema | `orchestration/recovery-checkpoint-schemas.ts`（184 行） | `ToolCallRecoveryState`／`RecoveryDecisionType`／`RecoveryCheckpoint` |
+| `LongToolCheckpoint`（看门狗决策侧） | `runtime-guidance/long-tool-checkpoint.ts`（433 行） | `WatchdogResumeDecision`／`CompletionDeclarationOutcome` |
+
+**缺口（与 G2/G3 同型）**：这些**能力都在**，但「早停 ⇒ 从检查点**有界**续跑」的**执行路径不存在**
+（`LongToolCheckpoint` 的决策侧**无消费者**；续跑执行器**从未被构造**）；而**5 份文档**写成"已交付" ⇒
+文档漂移需一并更正。
+
+### 7.2 拟接线方案（缺省关）
+
+1. **检测**：工具循环里「已产出文本但**缺 `ASTARRAY_TASK_COMPLETION_V1`**」且 run 结束 ⇒ 判为**早停**
+   （现成判据：`CompletionDeclarationOutcome`）；
+2. **取检查点**：`RecoveryCheckpointStore.selectLatestTrustedCheckpoint()` ⇒ 若无可信检查点 ⇒ **不续跑**（直接按失败收口）；
+3. **有界续跑**：用一个**独立计数器**（每 `agentInstanceId` + 任务）限定 **≤ N 次**（建议 N=2，硬上限），
+   超限即收口为失败并给出原因（**不得无限重试**）；
+4. **不重复副作用**：续跑前用既有 `idempotencyKey` 账目复核已完成步骤，续跑只从**未完成**处开始；
+5. **开关** `isCheckpointResumeEnabled`（**缺省 false**），经 控制器 → 装配层 → 门面 透传。
+
+### 7.3 反例设计（**先红后绿**，三条缺一不可）
+
+| # | 场景 | 期望 | 为什么必须有 |
+| --- | --- | --- | --- |
+| 1 | 假 Provider **先给一次无完成事件的截断输出**，随后正常完成 | 任务**最终 done**，且**续跑次数 = 1**（可观测） | **正向**：证明"续跑真的发生了" |
+| 2 | 假 Provider **每次都截断**（永不发完成事件） | 任务**最终失败**，续跑次数 **≤ N**（有界） | 证明**不无限重试** |
+| 3 | 续跑场景下重复执行同一写操作 | **副作用只发生一次**（幂等） | 证明**不重复副作用** |
+
+### 7.4 前置风险（如实）
+
+- **副作用幂等**依赖既有 idempotency 账目是否覆盖该工具（需先核实）；
+- **续跑语义**会与既有「`tool-failure-threshold`／`max-iterations`」收口路径交互（需保证不互相掩盖）；
+- 因此本项**必须**先写 §7.3 的三条反例，再接线；**不得**先接线后补测。
+
+**状态：G5 = 未开始（本轮仅完成评估与计划，未接线、未宣称完成）。**
