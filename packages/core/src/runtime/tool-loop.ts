@@ -90,6 +90,20 @@ export interface ToolLoopOptions {
   progressGuardPort?: ToolLoopProgressGuardPort;
   /** G2：任务级预算键（守卫用；缺省 null ⇒ 不计任务预算）。 */
   progressGuardTaskExecutionId?: string | null;
+  /**
+   * G5（2026-11-08 第 199 轮）：**早停检测回调**（可选）。
+   *
+   * 触发条件：本轮循环以 `error` 收尾、且**已产出文本**但**没有**合法完成事件
+   * （`AGENTS.md`：「输出提前结束、缺失完成事件…由本地看门狗从检查点有界续跑」）。
+   *
+   * 这里只**上报事实**（不自己做续跑）；是否续跑、续跑几次由编排层决定。
+   * 回调抛错**不得**改变业务结局（观测失败不得阻塞业务）。**缺省不提供 ⇒ 行为逐字不变**。
+   */
+  onEarlyStopDetected?: (observation: {
+    producedTextLength: number;
+    iterationCount: number;
+    outcomeDetail: string;
+  }) => void;
 }
 
 /**
@@ -625,6 +639,21 @@ export async function runToolLoop(
     conversationMessages.push(buildCompletionProtocolRestatement());
   }
 
+    /** G5（第 199 轮）[G5] 早停检测：有文本、无合法完成事件、以 error 收尾 ⇒ 上报事实（不在此处续跑）。 */
+    if (options.onEarlyStopDetected !== undefined && outcome.reason === "error") {
+      const producedText = assistantTextBuffer.join("");
+      if (producedText.length > 0) {
+        try {
+          options.onEarlyStopDetected({
+            producedTextLength: producedText.length,
+            iterationCount,
+            outcomeDetail: outcome.detail,
+          });
+        } catch {
+          // 观测失败不得阻塞业务
+        }
+      }
+    }
   if (iterationCount >= options.maxLoopIterations && outcome.reason === "error") {
     outcome = {
       reason: "max-iterations",
