@@ -1036,3 +1036,42 @@ G3a 修好后它变成：
 2. 完成门禁里：高严谨 ⇒ 要求存在**证据包形状**的结果（`relation` + 条目），并调用 `EvidenceCompletionGate.evaluateEvidenceBundle`；
 3. 缺包/条目为空/`unavailable`/缺来源正文 ⇒ **不得结案**（对应 `AGENTS.md`「纯推理验证不足」）；
 4. 开关 `isHighRigorEvidenceRequired`（**缺省 false**）。
+### 15.7 **G3a + G3b 闭合（第 215–221 轮）**：完整证据链
+
+#### 15.7.1 产品改动（三处，均已单独提交）
+
+| 改动 | 位置 | 提交 |
+| --- | --- | --- |
+| **登记 `factVerification: "network-access"`**（此前未登记 ⇒ `unknown` ⇒ 被安装门禁 fail-closed 误拒） | `local-sensitive-operation-classifier.ts` | `fbb7794` |
+| **工具循环 `onToolSucceeded`**（把成功工具的**完整输出**交给上层） | `runtime/tool-loop.ts` | `78a3f42` |
+| **证据包门禁接入完成检查**（`EvidenceCompletionGate`：缺包/空条目/`unavailable`/缺来源正文 ⇒ 不得结案）＋ 高严谨 spread 一并开启 | `worker-agent.ts`、`mission-orchestrator.ts` | `a2c84f7`、`0681aca` |
+
+#### 15.7.2 验收（真实装配入口）
+
+| 用例 | 断言 | 状态 |
+| --- | --- | --- |
+| `g3a-positive-path.test.ts` | ① 不再出现「安装门禁拒绝」② 不再出现「必需操作未成功执行」③ 被「证据包不合格」拦下（只推理不足） | **通过** |
+| `g3b-evidence-content.test.ts` ① | 高严谨 + 开关开 + 只 `record-reasoning` ⇒ **不得 `done`** | **通过** |
+| `g3b-evidence-content.test.ts` ② | 对照：开关关 ⇒ 照常 `done` | **通过** |
+| `g3-high-rigor-evidence.test.ts`（3 条） | 高严谨必拦／低严谨不受影响／开关关=现状 | **通过** |
+
+**注意**：`g3a-positive-path` 的断言在第 220 轮被**修正**过 —— G3b 一旦生效，"调用过工具"不再足以结案，
+旧断言（期望 `done`）**必然失效**；现断言同时守住「G3a 修复」与「G3b 门禁」。
+
+#### 15.7.3 「拔掉接线必须失败」（两次）
+
+| 拔线对象 | 结果 |
+| --- | --- |
+| 回退 `mission-orchestrator.ts` 到 `0681aca^`（去掉 `isHighRigorEvidenceRequired: true`） | `g3b-evidence-content` **①红**（`expected 'done' not to be 'done'`）、②绿；恢复后 **2/2 绿**（diff 0） |
+| 回退 `factVerification` 的登记（第 215 轮前状态） | 工具被安装门禁拒绝（错误文案「无可信交互通道，安装被拒绝」） |
+
+#### 15.7.4 最终验证矩阵
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run check` | **exit 0 —— 452 文件 / 3322 用例** |
+| `npm run verify:mutation-kills` | **exit 0 —— 60/60** |
+| `npm pack` + 两个 verify | **273 文件**；三项 **exit 0**（「SDK 消费者行为验证通过」） |
+
+**⇒ G3a（本地规则标记 + 强制调用事实工具）与 G3b（证据包内容门禁）在本窗口闭合；
+开关仍缺省关（由 `isHighRigorEnforcementEnabled` 一并控制）。**
