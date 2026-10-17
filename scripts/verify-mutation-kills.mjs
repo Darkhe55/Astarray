@@ -1586,6 +1586,37 @@ export const MUTATIONS = [
       "让高严谨标记恒不命中 ⇒ 本地规则形同虚设、证据包永不强制" +
       "（AGENTS.md：高严谨任务必须被本地规则标记并强制形成证据包）⇒ 该反例必须变红",
   },
+  /**
+   * 2026-11-08（第 159 轮）新增：**接线清单必须能发现"构造点被拔掉"**。
+   *
+   * 变异把装配层的 `new LocalProgressAndCycleGuard()` 换成空对象 ⇒
+   *  - `wiring-manifest.test.ts` 的"标为已构造的组件必须在源码里被构造"必须变红（**这是本条要守的东西**）；
+   *  - 同时 `g2-progress-guard` 的"有界中止"也会红（守卫不再生效）。
+   *
+   * ⇒ 用来证明那张清单**真有判别力**，而不是一句注释。
+   *
+   * ⚠️ `testFiles` **由检索结果直接写入**。
+   */
+  {
+    mutationIdentifier: "wiring-manifest-constructor-removed",
+    targetFile: "packages/core/src/application/application-runtime.ts",
+    find: `new LocalProgressAndCycleGuard()`,
+    replace: `Object.assign(Object.create(null), {}) as unknown as LocalProgressAndCycleGuard`,
+    testFiles: [
+      "tests/core/integration/g2-progress-guard.test.ts",
+      "tests/core/unit/ar07-module-gaps-5.test.ts",
+      "tests/core/unit/ar07-module-gaps-8.test.ts",
+      "tests/core/unit/read-suppression-and-guard.test.ts",
+      "tests/core/unit/wiring-manifest.test.ts",
+    ],
+    expectedFailingTestNames: [
+      "标 `constructed` 的组件必须在装配/编排源码里被构造（被拔线 ⇒ 红）",
+      "启用守卫后必须显著早于上限中止",
+    ],
+    rationale:
+      "拔掉装配层的构造点 ⇒ 接线清单与 G2 行为反例都必须变红；" +
+      "若它们不变红，说明那张清单只是注释、没有判别力",
+  },
 ];
 
 function sha256OfFile(filePath) {
