@@ -1592,3 +1592,54 @@ buildWorkerToolPortWithRecoveryCheckpointing(missionId, task, agentInstanceId)
    ② 人工体验结论存储；③ 逐次操作授权记录的读取 —— 后两者只能由用户/平台提供；
 2. **G4**（工具说明回执）：§23 已查明需**新建提示词交付链路**（8–10 轮），本窗口未开工；
 3. 外部证据：macOS、GUI 人工体验、`SUM-01` 人工标注、真实 Provider 凭据。
+
+## 26. G1 Step 3 的**签名级限制**（第 266 轮发现）：门禁需要任务上下文
+
+### 26.1 问题
+
+编排器拿到的合并门禁是：
+
+```ts
+isTargetBranchMergeAllowed: () => boolean;   // mission-orchestrator.ts:154
+```
+
+**没有任何参数** ⇒ 它只能表达"这次使命整体是否允许合并"，**无法表达**：
+
+- 是**哪个任务/贡献**（`taskId`、提交哈希）；
+- 该贡献的**测试是否通过**；
+- 该贡献的**验收结论**（`acceptance-verdict-gate` 是按任务/产物判定的）；
+- 以及逐次操作授权**对应**哪一次合并。
+
+### 26.2 后果
+
+若硬要把"提交哈希/测试/验收"塞进这个无参回调，只能做成**使命级布尔值**，
+那就退化成"这个使命曾经有过一次通过 ⇒ 之后所有合并都放行" ⇒ **违反门禁的逐次语义** ✗
+
+⇒ 真正实现 Step 3 需要**再一次签名扩展**（与第 251 轮 `buildGitWorktreeToolPort` 加 `agentInstanceId` 同类）：
+
+```ts
+isTargetBranchMergeAllowed: (input: {
+  taskId: string;
+  contributionCommitHash: string | null;
+  areTestsPassed: boolean;
+  acceptanceVerdictIdentifier: string | null;
+  humanExperienceConclusion: string | null;
+  operationAuthorizationIdentifier: string | null;
+}) => boolean;
+```
+
+### 26.3 我为什么停在这里（不擅自改）
+
+1. 这会改动**编排器与装配方之间的契约**（与第 251 轮同类决定，属"接口变更"）；
+2. 且**后两门证据来源仍不存在**（只能由用户/平台提供）⇒ 改了签名也仍恒 `false`；
+3. 当前机制（§25）已能保证**永不放行**，改动不会增加安全性，只会增加接口变动风险。
+
+**⇒ 记录限制，等"证据来源"具备时再一并做签名扩展**（两者一起做才不浪费一次接口变更）。
+
+### 26.4 已具备的替代路径（无需改签名也能逐次把关）
+
+`GitIntegrationCoordinator` 的 `submitContribution` / `finalizeIntegration` **本身就是逐次 API**：
+- `submitContribution` 逐次接收任务贡献并做验证（`GitContributionVerifier`）⇒ 逐任务测试/哈希门禁可在此处落地；
+- `finalizeIntegration` 逐次决定是否把集成分支并入目标 ⇒ 逐次"人工体验/操作授权"可在此处校验。
+
+**⇒ 若将来要做 Step 3，优先在这两个逐次 API 处加证据校验，而不是扩展 `isTargetBranchMergeAllowed`（无参回调）—— 这是更小的改动面，也更符合逐次语义。**
