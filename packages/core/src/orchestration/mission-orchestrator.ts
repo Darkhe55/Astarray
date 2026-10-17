@@ -5,6 +5,11 @@
  * 直到 complete-mission 或取消。全程不阻塞主 Agent 输入循环。
  */
 import { createHash, randomUUID } from "node:crypto";
+// G4（第 282 轮）：公开用法生产者 + 完整用法构造 + 注入器类型。
+import { buildToolPublicDocumentation } from "../tools/tool-public-documentation-registry.js";
+import type { ToolPublicDocumentationRegistryEntry } from "../tools/tool-public-documentation-registry.js";
+import { buildFullDocumentation } from "../tools/tool-documentation-recall.js";
+import type { ToolDocumentationRecallInjector } from "../tools/tool-documentation-recall.js";
 import { spawnSync } from "node:child_process";
 
 import type {
@@ -56,6 +61,10 @@ import type { GitIntegrationCoordinator } from "./git-integration-coordinator.js
 import { GitProcess } from "./git-process.js";
 
 export interface OrchestratorWorkerFactories {
+  /** G4（第 282 轮）：工具公开用法登记（缺省 ⇒ 不注入）。 */
+  toolDocumentationRegistry?: Record<string, ToolPublicDocumentationRegistryEntry>;
+  /** G4（第 282 轮）：工具说明注入器（缺省 ⇒ 不注入）。 */
+  toolDocumentationInjector?: ToolDocumentationRecallInjector;
   runtimeFactory: (
     agentInstanceId: string,
     task: TaskDependencyNode,
@@ -864,6 +873,36 @@ export class MissionOrchestrator {
        * G5（第 233 轮）：早停**只记录、不续跑**（本增量行为中性）。
        * 上游若自带回调则一并转发。
        */
+      /**
+       * G4（第 282 轮）：提供登记表 + 注入器 ⇒ 构造注入；**任一工具缺登记 ⇒ 整体不注入**（fail-closed）。
+       * 未提供 ⇒ 返回空对象（提示词逐字不变）。
+       */
+      ...(() => {
+        const registry = this.options.workerFactories.toolDocumentationRegistry;
+        const injector = this.options.workerFactories.toolDocumentationInjector;
+        if (registry === undefined || injector === undefined) return {};
+        try {
+          const assignedTools = (options.availableToolDescriptors ?? []).map((descriptor) =>
+            buildToolPublicDocumentation({
+              descriptor,
+              registryEntry: registry[descriptor.name],
+            }),
+          );
+          if (assignedTools.length === 0) return {};
+          return {
+            toolDocumentationInjection: {
+              injector,
+              documentation: buildFullDocumentation({
+                toolGroupIdentifier: "assigned-tools",
+                toolGroupRevision: 1,
+                assignedTools,
+              }),
+            },
+          };
+        } catch {
+          return {};
+        }
+      })(),
       onEarlyStopDetected: (observation) => {
         this.earlyStopObservationsByTask.set(options.task.id, observation);
         options.onEarlyStopDetected?.(observation);
