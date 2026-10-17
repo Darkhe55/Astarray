@@ -75,8 +75,14 @@ const WIRING_MANIFEST: readonly WiringEntry[] = [
   // ---- 已知未接线（缺口总表对应小节） ----
   {
     componentClassName: "GitIntegrationCoordinator",
-    state: "unreachableByDesign",
-    reason: "G1（总表 §8）：T08 Git 集成整层不可达 —— 全仓无 new；用户硬约束：未完成前不得宣称完整 Git 集成",
+      /**
+       * G1（2026-11-08 第 254–255 轮）：**已接线**。
+       * 装配层在 `new MainController({...})` 选项里构造；控制器补全 worktree 端口（带身份）
+       * 并注入 `isTargetBranchMergeAllowed: () => false`。
+       * ⚠️ 仍**不得**宣称"完整 Git 集成"：受控合并（Step 3）永不通过。
+       */
+      state: "constructed",
+      reason: "G1 第 255 轮接线：装配层构造 → 控制器补全 → 编排器可选启用（缺省关；合并恒 false）",
   },
   {
     componentClassName: "LongToolCheckpoint",
