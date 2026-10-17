@@ -1227,6 +1227,11 @@ export interface PublicApplicationOptions {
   /** G2（第 162 轮）：任务链总调用预算（缺省 undefined ⇒ 200，**默认行为不变**）。 */
   progressGuardTaskTotalCallBudget?: number;
   /** G3（第 133 轮）：高严谨性强制事实验证开关。**缺省 false**。 */
+  /**
+   * G5（2026-11-08 第 235 轮）：**早停 ⇒ 从检查点有界续跑**（缺省关）。
+   * 仅当工具循环明确上报早停、且本任务续跑次数 < 2 时续跑。
+   */
+  isCheckpointResumeEnabled?: boolean;
   isHighRigorEnforcementEnabled?: boolean;
   /** T04：反馈进程入口模块路径；缺省按包内 dist 入口自动解析。 */
   feedbackProcessModulePath?: string | null;
@@ -1615,6 +1620,7 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
         ? {}
         : { progressGuardTaskTotalCallBudget: options.progressGuardTaskTotalCallBudget }),
       isHighRigorEnforcementEnabled: options.isHighRigorEnforcementEnabled ?? false,
+      isCheckpointResumeEnabled: options.isCheckpointResumeEnabled ?? false,
       streamOutput: options.streamOutput ?? (() => {}),
       // GUI-02-01 片①：权限询问的绝对身份透传（可选；未提供则不传字段）。
       ...(options.onPermissionAskWithIdentity === undefined

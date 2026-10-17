@@ -933,6 +933,30 @@ export class MissionOrchestrator {
      */
     ownerAgentInstanceId: string,
   ): Promise<void> {
+
+    /**
+     * G5（2026-11-08 第 234–236 轮）：**早停 ⇒ 有界续跑**（`AGENTS.md`：
+     * 「输出提前结束、缺失完成事件…由本地看门狗从检查点有界续跑，禁止无限重试或重复副作用」）。
+     *
+     * 判定**放在 switch 之前**：截断输出既可能以 `failure` 收尾、也可能以 `ambiguous`（"信息不足"）收尾，
+     * 两者都属"缺失完成事件"，都必须能续跑（实测：只覆盖 failure 时任务仍是 blocked）。
+     * 条件：开关开 + 工具循环**明确上报早停** + 续跑次数 **< 2**。
+     */
+    if (
+      this.options.isCheckpointResumeEnabled === true &&
+      (outcome.outcome === "failure" || outcome.outcome === "ambiguous") &&
+      (this.earlyStopObservationsByTask.get(taskId) ?? null) !== null &&
+      (this.resumeAttemptsByTask.get(taskId) ?? 0) < 2
+    ) {
+      const nextResumeAttempt = (this.resumeAttemptsByTask.get(taskId) ?? 0) + 1;
+      this.resumeAttemptsByTask.set(taskId, nextResumeAttempt);
+      this.earlyStopObservationsByTask.delete(taskId);
+      await this.dagScheduler.releaseTaskBackToPending(taskId).catch(() => null);
+      this.options.onUserEscalation(
+        `任务 ${taskId} 输出提前结束，正在从检查点续跑（第 ${nextResumeAttempt}/2 次）`,
+      );
+      return;
+    }
     switch (outcome.outcome) {
       case "success": {
         // T05B：写入型任务先提交并审查，审查通过才标记 done
@@ -971,27 +995,6 @@ export class MissionOrchestrator {
         break;
       }
       case "failure":
-        /**
-         * G5（2026-11-08 第 234 轮）：**早停 ⇒ 有界续跑**（`AGENTS.md`：
-         * 「输出提前结束、缺失完成事件…由本地看门狗从检查点有界续跑，禁止无限重试或重复副作用」）。
-         *
-         * 条件：开关开 + 工具循环**明确上报早停** + 续跑次数 **< 2**。
-         * 方式：把任务放回 pending 由调度循环重派（不新建派发路径，避免绕过租约/DAG）。
-         */
-        if (
-          this.options.isCheckpointResumeEnabled === true &&
-          (this.earlyStopObservationsByTask.get(taskId) ?? null) !== null &&
-          (this.resumeAttemptsByTask.get(taskId) ?? 0) < 2
-        ) {
-          const nextResumeAttempt = (this.resumeAttemptsByTask.get(taskId) ?? 0) + 1;
-          this.resumeAttemptsByTask.set(taskId, nextResumeAttempt);
-          this.earlyStopObservationsByTask.delete(taskId);
-          await this.dagScheduler.releaseTaskBackToPending(taskId).catch(() => null);
-          this.options.onUserEscalation(
-            `任务 ${taskId} 输出提前结束，正在从检查点续跑（第 ${nextResumeAttempt}/2 次）`,
-          );
-          break;
-        }
         await this.dagScheduler.finishTask(taskId, "failed", null);
         this.options.onUserEscalation(
           `任务 ${taskId} 失败：${outcome.failureReason}（状态：${outcome.stateSummary}）`,

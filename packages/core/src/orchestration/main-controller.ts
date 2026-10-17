@@ -189,6 +189,11 @@ export interface MainControllerOptions {
   /** G2（第 130 轮）：守卫端口（缺省 ⇒ 不传 ⇒ 不启用）。 */
   progressGuardPort?: ToolLoopProgressGuardPort;
   /** G3（第 133 轮）：高严谨性强制事实验证开关（缺省 ⇒ 不传 ⇒ 不启用）。 */
+  /**
+   * G5（2026-11-08 第 235 轮）：**早停 ⇒ 从检查点有界续跑**（缺省关）。
+   * 仅当工具循环明确上报早停、且本任务续跑次数 < 2 时续跑。
+   */
+  isCheckpointResumeEnabled?: boolean;
   isHighRigorEnforcementEnabled?: boolean;
   /** 流式输出到 UI 的回调。 */
   streamOutput: (missionId: string | null, text: string) => void;
@@ -935,6 +940,9 @@ export class MainController {
         ...(this.options.isHighRigorEnforcementEnabled === undefined
           ? {}
           : { isHighRigorEnforcementEnabled: this.options.isHighRigorEnforcementEnabled }),
+          ...(this.options.isCheckpointResumeEnabled === undefined
+            ? {}
+            : { isCheckpointResumeEnabled: this.options.isCheckpointResumeEnabled }),
         // DIAG-01 采集（第 85 轮接线）：缺省 ⇒ 不采集
         ...(this.options.diagnosticEventPort === undefined
           ? {}
@@ -1024,6 +1032,9 @@ export class MainController {
         ...(this.options.isHighRigorEnforcementEnabled === undefined
           ? {}
           : { isHighRigorEnforcementEnabled: this.options.isHighRigorEnforcementEnabled }),
+          ...(this.options.isCheckpointResumeEnabled === undefined
+            ? {}
+            : { isCheckpointResumeEnabled: this.options.isCheckpointResumeEnabled }),
         // DIAG-01 采集（第 85 轮接线）：缺省 ⇒ 不采集
         ...(this.options.diagnosticEventPort === undefined
           ? {}
