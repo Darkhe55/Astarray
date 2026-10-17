@@ -196,6 +196,12 @@
  * 「**紧接全量变异之后的那次门禁**失败」（安静机器复跑必过）。本轮改为
  * **先跑门禁、再跑全量变异** ⇒ 门禁 **exit 0（443 文件 / 3303 用例）**、变异 **57/57**。
  * ⇒ **建议固定顺序：先 `npm run check`，再 `npm run verify:mutation-kills`。**
+ * **2026-11-08（第 133 轮）修复一条**永不匹配**的 find，并记下 Windows 教训**。
+ * `comm01-orchestrator-skips-publisher-stamp` 原来是**跨文件多行** find；
+ * 而 `mission-orchestrator.ts`（源）与 harness 的**行尾不同**（源 CRLF、harness LF）
+ * ⇒ 多行 find **永不匹配**（全量跑报「锚点命中 0 次」，被 59/59 → 58/59 抓到）。
+ * 我一度误判为"转义反引号写坏"，改成双引号 `\n` 拼接 —— **同样因行尾不匹配失败**。
+ * ⇒ **纪律：跨文件多行锚点在 Windows 上必须避开（行尾不可控）；优先用唯一单行做 find/replace。**
  * 用法：
  *   node scripts/verify-mutation-kills.mjs            # 全部变异
  *   node scripts/verify-mutation-kills.mjs --json     # 机器可读
@@ -455,14 +461,18 @@ export const MUTATIONS = [
   {
     mutationIdentifier: "comm01-orchestrator-skips-publisher-stamp",
     targetFile: "packages/core/src/orchestration/mission-orchestrator.ts",
-    find: `        publishedByRecipientId: resolvePublisherRecipientIdForTask({
-          task: options.task,
-          publisherRecipientId: \`scheduler:\${options.missionId}\`,
-        }),`,
-    replace: `        publishedByRecipientId: resolvePublisherRecipientIdForTask({
-          task: { ...options.task, publishedByRecipientId: undefined } as never,
-          publisherRecipientId: undefined as never,
-        }),`,
+    /**
+     * ⚠️ **2026-11-08（第 133 轮）修正（两次踩坑，记录）**：
+     *
+     * 1. 原 `find` 是**多行**模板串，而 `mission-orchestrator.ts` 与 harness 的**行尾不同**
+     *    （工作区源文件 CRLF、harness LF）⇒ 多行 find **永不匹配**（全量跑报「锚点命中 0 次」）；
+     * 2. 我一度以为是"转义反引号"写坏，改成双引号 `\n` 拼接 —— 同样因行尾不匹配而失败。
+     *
+     * **结论：跨文件多行锚点在 Windows 上必须避开**（行尾不可控）。现改为**单行**变异，
+     * 语义不变：把发布者信箱登记改成 `undefined` 即"编排器不再登记发布者"。
+     */
+    find: "          publisherRecipientId: `scheduler:${options.missionId}`,",
+    replace: "          publisherRecipientId: undefined as never,",
     testFiles: ["tests/core/unit/comm01-task-publisher-feedback-route.test.ts"],
     expectedFailingTestNames: ["编排器产出的 Worker 配置里，任务带着"],
     rationale:
@@ -1543,6 +1553,38 @@ export const MUTATIONS = [
     rationale:
       "把无进展签名退回为**含自由文本** ⇒ 带倒计时/时间戳的错误文本使签名每次都变、" +
       "`isNewProgress` 恒真、守卫永不触发（**这正是第 130 轮实测的 bug**）⇒ 该反例必须变红",
+  },
+  /**
+   * 2026-11-08（第 133 轮）新增：**高严谨性必须被本地规则真正标记出来**。
+   *
+   * 变异把判定条件从 `=== "high"` 改成 `=== "standard"`（即**永远不为真**）⇒
+   * 高严谨任务不再被标记 ⇒ 不再强制 `factVerification` ⇒ 「证据包缺失也不得结案」形同虚设。
+   *
+   * 实测被 `tests/core/integration/g3-high-rigor-evidence.test.ts` 的
+   * 「高严谨 + 开关开 + 只发完成事件（未调 factVerification）⇒ 不得 done」拦下。
+   *
+   * ⚠️ `testFiles` **由检索结果直接写入**。
+   */
+  {
+    mutationIdentifier: "high-rigor-marking-never-matches",
+    targetFile: "packages/core/src/orchestration/mission-orchestrator.ts",
+    find: `      new LocalRigorPolicyEngine().classifyRigor(task.description).rigorLevel === "high"`,
+    replace: `      new LocalRigorPolicyEngine().classifyRigor(task.description).rigorLevel === "standard"`,
+    testFiles: [
+      "tests/core/integration/completion-gate-counterexamples.test.ts",
+      "tests/core/integration/evidence-and-identifiers-production-wiring.test.ts",
+      "tests/core/integration/g3-high-rigor-evidence.test.ts",
+      "tests/core/integration/scope-tool-mapping.test.ts",
+      "tests/core/unit/completion-protocol.test.ts",
+      "tests/core/unit/evidence-verification.test.ts",
+      "tests/core/unit/permission-profiles.test.ts",
+      "tests/core/unit/session-control-surface.test.ts",
+      "tests/core/unit/session-permission-elevation.test.ts",
+    ],
+    expectedFailingTestNames: ["高严谨 + 开关开 + 只发完成事件（未调 factVerification）⇒ 不得 done"],
+    rationale:
+      "让高严谨标记恒不命中 ⇒ 本地规则形同虚设、证据包永不强制" +
+      "（AGENTS.md：高严谨任务必须被本地规则标记并强制形成证据包）⇒ 该反例必须变红",
   },
 ];
 

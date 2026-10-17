@@ -195,3 +195,35 @@
 **⚠️ 边界（如实）**：守卫**缺省关**；是否默认启用属**用户决策**，我不擅自改默认。
 **任务总调用预算的持久化**（`readTaskBudget`/`writeTaskBudget`）目前用默认实现（进程内）⇒
 「进程重启不清零」这一半**尚未接线**，属 G2 的**剩余项**，不得视为已完成。
+
+### 5.5 G3a（阶段三第一半，已完成）：**本地规则标记 + 强制调用事实验证工具**
+
+**规则依据**：`AGENTS.md`「高严谨性任务由**本地规则标记**，并**强制调用事实验证工具形成证据包**」。
+
+**接线**（开关 `isHighRigorEnforcementEnabled`，**缺省 false**）：
+
+- 编排器用 `LocalRigorPolicyEngine.classifyRigor(task.description)`（**本地版本化规则**：法律/医疗/财务/
+  安全边界/破坏性操作/发布决策/身份权限/时效性事实/用户要求严格 ⇒ high）判定；
+- 高严谨 ⇒ 在该任务的 worker 选项里用**对象字面量后者胜**覆盖 `requiredMutatingToolNames`，追加
+  `factVerification` ⇒ **完成前必须成功调用过它**（复用既有的"完成前必须调用"机制，未新造机制）；
+- 开关经 控制器 → 装配层 → 门面 透传（`?? false`）。
+
+| 验收项 | 证据 |
+| --- | --- |
+| **真实应用装配入口** | `tests/core/integration/g3-high-rigor-evidence.test.ts`（3 条），经 `AstarrayApplicationFacade` 驱动 |
+| **拔掉接线 ⇒ 必须失败** | `git checkout d69d514 -- <4 文件>` 后第 1 条**失败**（`expected 'done' not to be 'done'`）、2/3 仍绿；`git checkout HEAD -- <4 文件>` 后 **3/3 通过** |
+| **隔离包验证** | `npm pack` ⇒ 273 文件 / 1.6 MB；`verify-package` **exit 0**；`verify-sdk-consumer` **exit 0**（消费者 `finalStatus: done`） |
+| **永久变异体** | `high-rigor-marking-never-matches`（59/59 被拦下） |
+| **门禁** | `check` **0 —— 446 文件 / 3312 用例**；`verify:mutation-kills` **0 —— 59/59** |
+
+**⚠️ 调试中发现（已写进测试注释）**：内部任务标识恒为 `T-001`，完成事件必须声明它，否则被
+**既有完成门禁**判为「完成事件未声明本任务」⇒ blocked —— 这是门禁在正常工作，不是缺陷。
+
+### 5.6 **G3b（阶段三第二半，未开始）**：证据包**内容**门禁
+
+`EvidenceCompletionGate.evaluateEvidenceBundle(bundle, { requiredClaimIdentifier, requireSourceText })`
+能校验：证据包缺失 / 主张标识不一致 / 条目为空 / 关系为 `unavailable` / 缺可定位资料正文。
+**但它在生产里仍是零使用** ⇒ 现在只强制"**调用过**事实工具"，**没有**校验"证据包**内容是否合格**。
+
+**⇒ G3 未完成**（只有第一半）。G3b 需要：在完成路径上取得该任务的 `EvidenceBundle`（由 `factVerification`
+返回）并交给该门禁；同时定义"关键主张标识"的来源（用户/任务信封/计划）。**待做，不宣称完成。**
