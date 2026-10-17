@@ -25,6 +25,13 @@ const ALLOWED_MODULES: Record<string, { tokens: AllowedTokens; reason: string }>
     tokens: ["writeFile", "rm", "rename", "copyFile"],
     reason: "底层原子写/备份/陈旧临时文件清理白名单模块（atomic temp→rename、.bak copy、.tmp rm）",
   },
+  "core/src/infra/task-call-budget-ledger.ts": {
+    tokens: ["writeFileSync", "renameSync"],
+    reason:
+      "任务链调用预算计数账本（T07E L27 / ADR-0017）：临时文件→同目录原子 rename；" +
+      "仅存一个整数计数，无用户内容，故不需要备份；未使用 rm/copyFile",
+  },
+
   "core/src/infra/mission-lease-store.ts": {
     tokens: ["writeFile", "rm"],
     reason: "跨进程租约：排他创建内容写入 + 瞬时租约文件释放 rm（T12-01，非用户内容）",

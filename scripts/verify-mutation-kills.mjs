@@ -1600,8 +1600,8 @@ export const MUTATIONS = [
   {
     mutationIdentifier: "wiring-manifest-constructor-removed",
     targetFile: "packages/core/src/application/application-runtime.ts",
-    find: `new LocalProgressAndCycleGuard()`,
-    replace: `Object.assign(Object.create(null), {}) as unknown as LocalProgressAndCycleGuard`,
+    find: `new LocalProgressAndCycleGuard({`,
+    replace: `new (class extends LocalProgressAndCycleGuard { async recordCallAndDetectViolation() { return null; } })({`,
     testFiles: [
       "tests/core/integration/g2-progress-guard.test.ts",
       "tests/core/unit/ar07-module-gaps-5.test.ts",
