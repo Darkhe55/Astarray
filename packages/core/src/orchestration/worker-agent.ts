@@ -101,6 +101,17 @@ export interface WorkerAgentOptions {
   diagnosticEventSink?: ToolLoopDiagnosticFailureSink;
   /** G2（第 130 轮）：活锁/循环守卫端口（缺省 ⇒ 不启用守卫）。 */
   progressGuardPort?: ToolLoopProgressGuardPort;
+  /**
+   * G5（2026-11-08 第 200 轮）：**早停检测回调**（可选）。
+   *
+   * 工具循环在「以 error 收尾、已产出文本、无合法完成事件」时上报；
+   * 本层只**透传**，是否续跑由编排层决定（有界 + 取检查点）。**缺省不提供 ⇒ 行为不变**。
+   */
+  onEarlyStopDetected?: (observation: {
+    producedTextLength: number;
+    iterationCount: number;
+    outcomeDetail: string;
+  }) => void;
   toolPort: ToolPort;
   failureCounter: ToolFailureCounter;
   feedbackTransport: FeedbackTransportPort;
