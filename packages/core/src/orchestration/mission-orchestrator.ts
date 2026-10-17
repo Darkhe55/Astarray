@@ -166,6 +166,12 @@ export interface MissionOrchestratorOptions {
   concurrency: number;
   failureThreshold: number;
   maxLoopIterations: number;
+  /**
+   * G5（2026-11-08 第 234 轮）：**早停 ⇒ 从检查点有界续跑**（缺省关）。
+   * 仅当工具循环明确上报早停、且本任务续跑次数 < 2 时续跑；否则原失败收口。
+   */
+  isCheckpointResumeEnabled?: boolean;
+
   workerFactories: OrchestratorWorkerFactories;
   /** T07D-R2-03：Provider 运行时是否强制要求本地完成控制事件。 */
   requireCompletionControlEvent?: boolean;
@@ -965,6 +971,27 @@ export class MissionOrchestrator {
         break;
       }
       case "failure":
+        /**
+         * G5（2026-11-08 第 234 轮）：**早停 ⇒ 有界续跑**（`AGENTS.md`：
+         * 「输出提前结束、缺失完成事件…由本地看门狗从检查点有界续跑，禁止无限重试或重复副作用」）。
+         *
+         * 条件：开关开 + 工具循环**明确上报早停** + 续跑次数 **< 2**。
+         * 方式：把任务放回 pending 由调度循环重派（不新建派发路径，避免绕过租约/DAG）。
+         */
+        if (
+          this.options.isCheckpointResumeEnabled === true &&
+          (this.earlyStopObservationsByTask.get(taskId) ?? null) !== null &&
+          (this.resumeAttemptsByTask.get(taskId) ?? 0) < 2
+        ) {
+          const nextResumeAttempt = (this.resumeAttemptsByTask.get(taskId) ?? 0) + 1;
+          this.resumeAttemptsByTask.set(taskId, nextResumeAttempt);
+          this.earlyStopObservationsByTask.delete(taskId);
+          await this.dagScheduler.releaseTaskBackToPending(taskId).catch(() => null);
+          this.options.onUserEscalation(
+            `任务 ${taskId} 输出提前结束，正在从检查点续跑（第 ${nextResumeAttempt}/2 次）`,
+          );
+          break;
+        }
         await this.dagScheduler.finishTask(taskId, "failed", null);
         this.options.onUserEscalation(
           `任务 ${taskId} 失败：${outcome.failureReason}（状态：${outcome.stateSummary}）`,
