@@ -1616,6 +1616,10 @@ export class AstarrayApplicationFacade implements PublicApplicationService {
             isInteractive: () => true,
           }));
     const runtime = await createApplicationRuntime({
+        /** G4（2026-11-08 第 287 轮修复）：登记表必须进**装配层选项**（此前错加在门面构造函数选项里）。 */
+        ...(options.toolDocumentationRegistry === undefined
+          ? {}
+          : { toolDocumentationRegistry: options.toolDocumentationRegistry }),
       mode: options.mode,
       stateDirectory: options.stateDirectory,
       // GUI-02-03：把项目标识透传给运行时（未提供时不传字段 ⇒ 保持既有回退行为）。
