@@ -14,6 +14,9 @@ import {
   executeContextStatusCommand,
   executeContextTransactionCommand,
   executeDoctorCommand,
+  // G10（2026-11-08 第 184 轮）：把两个"已实现但从未分发"的状态命令接入 CLI。
+  executePresetListCommand,
+  executeConcurrentStatusCommand,
   executeDoctorProviderCommand,
   executeProfileCopyCommand,
   executeProfileCreateCommand,
@@ -1833,6 +1836,37 @@ sessionCommand
       });
     },
   );
+
+/**
+ * G10（2026-11-08 第 184 轮）：`preset list` 与 `concurrent status` 此前**只有实现、从未分发**
+ * （全仓无调用点）⇒ 用户无法从 CLI 调用。此处按既有 `.command(...).action(...)` 风格接入。
+ *
+ * ⚠️ 这两个命令只做**只读状态视图**（不执行进程、不联网、不写文件），
+ * 输出语义已按 G9 改为如实：`modulesLoadable` + `componentsReadySemantics`。
+ */
+program
+  .command("preset")
+  .description("预设（模型/Provider 预设列表）")
+  .command("list")
+  .description("列出全部预设（内置 + 自定义）")
+  .option("--json", "输出机器可解析 JSON")
+  .action(async (options: { json?: boolean }) => {
+    process.exitCode = await executePresetListCommand({
+      isJsonOutput: options.json === true,
+    });
+  });
+
+program
+  .command("concurrent")
+  .description("并发变更（人工/Agent 并发冲突视图）")
+  .command("status")
+  .description("冲突状态视图（人工变更/意图/冲突种类/来源）")
+  .option("--json", "输出机器可解析 JSON")
+  .action(async (options: { json?: boolean }) => {
+    process.exitCode = await executeConcurrentStatusCommand({
+      isJsonOutput: options.json === true,
+    });
+  });
 
 program
   .command("doctor")
