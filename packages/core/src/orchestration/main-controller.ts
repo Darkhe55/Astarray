@@ -33,6 +33,7 @@ import type { MissionManager } from "./mission-manager.js";
 import type { MissionLeaseStore } from "../infra/mission-lease-store.js";
 import type {
   GitIntegrationOrchestrationOptions,
+  GitIntegrationPartialOptions,
   MissionDiagnosticEvent,
 } from "./mission-orchestrator.js";
 import type { ContextPromptProvider } from "./context-prompt-assembler.js";
@@ -223,7 +224,7 @@ export interface MainControllerOptions {
   /** T05A：Agent 工作存档（可选）。 */
   workArchiveStore?: AgentWorkArchiveStore | null;
   /** T05B → T08：Git 集成装配（可选；缺省时编排行为与旧版一致）。 */
-  gitIntegration?: GitIntegrationOrchestrationOptions | null;
+  gitIntegration?: GitIntegrationPartialOptions | null;
   /** T05B：次级调度 Agent 具体实例 ID 工厂（每次 mission 不可复用）。 */
   secondaryAgentInstanceIdFactory?: (missionId: string) => string;
   /** B6R-04b：认证设置控制面依赖（TUI/CLI 共用；非模型工具）。 */
@@ -887,6 +888,29 @@ export class MainController {
     }
   }
 
+  /**
+   * G1（2026-11-08 第 253 轮）：把装配层的**半成品**补全成编排器要的完整对象。
+   *
+   * - `buildGitWorktreeToolPort`：带 `agentInstanceId`（权限按具体个体判定）；
+   * - `isTargetBranchMergeAllowed`：**恒 false** —— 合并须人工体验 + 操作授权（`AGENTS.md`）。
+   */
+  private completeGitIntegrationOrchestrationOptions(
+    missionId: string,
+  ): GitIntegrationOrchestrationOptions | null {
+    const partial = this.options.gitIntegration;
+    if (partial === null || partial === undefined) return null;
+    return {
+      coordinator: partial.coordinator,
+      repositoryPath: partial.repositoryPath,
+      targetBranchName: partial.targetBranchName,
+      allowedPathsByTaskType: partial.allowedPathsByTaskType,
+      integrationTestCommands: partial.integrationTestCommands,
+      buildGitWorktreeToolPort: (task, worktreePath, agentInstanceId) =>
+        this.buildWorkerToolPortWithRecoveryCheckpointing(missionId, task, agentInstanceId),
+      isTargetBranchMergeAllowed: () => false,
+    };
+  }
+
   private launchAssistMission(
     missionId: string,
     taskNodes: TaskChainDocument["tasks"],
@@ -905,7 +929,7 @@ export class MainController {
       secondaryAgentInstanceId:
         this.options.secondaryAgentInstanceIdFactory?.(missionId) ??
         `scheduler:${missionId}`,
-      gitIntegration: this.options.gitIntegration ?? null,
+      gitIntegration: this.completeGitIntegrationOrchestrationOptions(missionId),
       requireCompletionControlEvent: this.options.requireCompletionControlEvent ?? false,
       // DIAG-01 采集（第 113 轮接线）：使命级诊断端口，缺省 ⇒ 不采集
       ...(this.options.missionDiagnosticEventPort === undefined
@@ -1002,7 +1026,7 @@ export class MainController {
       secondaryAgentInstanceId:
         this.options.secondaryAgentInstanceIdFactory?.(missionId) ??
         `scheduler:${missionId}`,
-      gitIntegration: this.options.gitIntegration ?? null,
+      gitIntegration: this.completeGitIntegrationOrchestrationOptions(missionId),
       requireCompletionControlEvent: this.options.requireCompletionControlEvent ?? false,
       // DIAG-01 采集（第 113 轮接线）：使命级诊断端口，缺省 ⇒ 不采集
       ...(this.options.missionDiagnosticEventPort === undefined

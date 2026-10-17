@@ -160,6 +160,21 @@ export interface GitIntegrationOrchestrationOptions {
   ) => ToolPort;
 }
 
+/**
+ * G1（2026-11-08 第 253 轮）：**装配层产出的 Git 集成半成品**。
+ *
+ * 控制器补全两项（它独占工具端口工厂与 `missionId`）：
+ * - `buildGitWorktreeToolPort`：写入型任务在隔离 worktree 内的端口（带 `agentInstanceId`）；
+ * - `isTargetBranchMergeAllowed`：**恒 `false`**（`AGENTS.md` 五道门禁 ⇒ 本层无自动合并）。
+ */
+export interface GitIntegrationPartialOptions {
+  coordinator: GitIntegrationCoordinator;
+  repositoryPath: string;
+  targetBranchName: string;
+  allowedPathsByTaskType: Record<string, string[]>;
+  integrationTestCommands: string[];
+}
+
 export interface MissionOrchestratorOptions {
   missionId: string;
   initialChain: TaskChainDocument;
