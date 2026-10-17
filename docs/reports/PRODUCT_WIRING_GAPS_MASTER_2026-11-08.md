@@ -332,3 +332,52 @@
 - 因此本项**必须**先写 §7.3 的三条反例，再接线；**不得**先接线后补测。
 
 **状态：G5 = 未开始（本轮仅完成评估与计划，未接线、未宣称完成）。**
+
+## 8. G1（T08 Git 集成整层）：可行性评估与验收条件（第 144 轮）
+
+> ❗ 用户硬约束：**G1 未完成前，不得宣称支持完整的多 Agent Git 集成流程。**
+> 本节的结论就是：**该约束当前成立**（整层在产品路径上不可达）。
+
+### 8.1 组件现状（本轮实读）
+
+11 个相关文件，核心四件：
+
+| 组件 | 行数 | 能力 |
+| --- | --- | --- |
+| `GitIntegrationCoordinator` | 395 | `StartIntegrationSessionInput`（开集成会话）／`SubmitContributionInput`（收贡献）／`FinalizeIntegrationInput`（收口） |
+| `GitContributionVerifier` | 219 | `verifyContribution`（提交哈希/测试/验收核对） |
+| `GitIntegrationReportStore` | 87 | 集成报告落库 |
+| `ConcurrentMergeCoordinator` | 193 | `evaluateControlledMerge`（受控合并评估；`concurrent status` 命令**已构造**它 ✓） |
+| 另有 | — | `GitWorktreeAllocator`／`HumanWorktreeObserver`／`GitRecoveryPointService`／`GitProcess`／`PermissionAskSafePreview`／`InstructionMergeEligibility` |
+
+### 8.2 缺口（第 104 轮已勘测，本轮复核）
+
+1. **没有任何生产装配点构造 `GitIntegrationCoordinator`**（全仓无 `new GitIntegrationCoordinator`）；
+2. **门面明确拒绝 `gitIntegration`**（`public-sdk` 的装配选项校验里被拒）；
+3. 因此「次级 Agent 负责 分支/工作树分流 → 差异审查 → 测试验证 → 受控合并」**这条链在生产不可达**；
+4. `HumanWorktreeObserver`／`StaleWriteGuard` 只在 `concurrent status` 里被 **import 用于"模块可加载"汇报**（G9 已改为如实表述）。
+
+**⇒ 现状 = 「能力存在、路径不通」；按用户约束，任何文档/汇报都不得说"支持完整多 Agent Git 集成"。**
+
+### 8.3 拟接线方案（分三步，每步都要真实验收入口）
+
+**Step 1（最小可验）**：装配层构造 `GitIntegrationCoordinator` + `GitContributionVerifier` + `GitIntegrationReportStore`，
+门面新增 `gitIntegration?: { integrationBranchName }` 选项（**缺省 undefined ⇒ 不启用**），
+并提供「开集成会话 / 提交贡献 / 收口」三个门面方法。验收：假仓库（临时目录 `git init`）里跑完整三步，
+断言分支/工作树/报告落库；**拔掉装配 ⇒ 门面方法必须不可用或抛错**（拔线必失败）。
+
+**Step 2（多 Agent 分流）**：把 `GitWorktreeAllocator` 接进 worker 分派：每个 `agentInstanceId` 一个隔离 worktree，
+三级 Agent **只能**提交到自己的分支（不得合并/变基/推送）。验收：两个并行 agent 各写一个文件 ⇒ 各自分支、
+主分支不受影响；**违规操作必须被拒**。
+
+**Step 3（合并门禁）**：`ConcurrentMergeCoordinator.evaluateControlledMerge` + `GitContributionVerifier`，
+只有「提交哈希 + 测试 + 验收 + 人工体验 + 操作授权」全满足才 `merge-ready`。验收：缺任一项 ⇒ **拒绝合并**。
+
+### 8.4 前置与风险（如实）
+
+- **真实 `git` 可用性**：本机 `git` 版本/配置会影响测试；需在测试里**自建临时仓库**而非依赖外部；
+- **人工体验结论**属**用户/平台**提供项（`merge-ready` 的另一半），我**不能**代为宣布；
+- **「自动合并」授权面**：Step 3 涉及"谁能自动合并"，**属用户决策**，不得由我默认开启；
+- 因此 Step 1 可以先做（缺省关、可验、可在隔离包里验证），**Step 3 必须等用户明确授权**。
+
+**状态：G1 = 未开始（本轮仅完成评估与验收条件，未接线、未宣称支持完整 Git 集成）。**
