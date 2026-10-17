@@ -937,3 +937,37 @@ npm run verify:mutation-kills    # 期望：exit 0，60/60 被拦下
 **闭合**：G9+状态纠偏、G2（守卫+预算持久化）、G10（CLI 分发）；
 **部分**：G3a 3/5 步（§15 阻断）、G5 回调三段（§16.4 停点）；
 **未开工**：G1 Step 1、G3b；**保留**：G4。**所有开关缺省关**。
+### 15.4 **重大更正（第 211 轮）**：`factVerification` 并非"未映射"
+
+**我此前（§15.1／§15.2）的结论是错的**，必须更正。原文如下（本轮实读）：
+
+`packages/core/src/tools/permission-capability-catalog.ts` 的 `DEFAULT_TOOL_CAPABILITY_MAPPINGS` **早已包含**：
+
+```ts
+factVerification: ["network.read"],
+```
+
+而 `network.read` 的定义是 **`devolveDefault: "allow"`、`assistDefault: "ask"`**。
+⇒ **该工具是被映射的**，不存在"不在 45 项能力内"的情况。**§15.1 第 181 轮那一行判定作废。**
+
+### 15.4.1 那 `tool-permission-denied` 到底来自哪里？
+
+`configurable-permission-policy-engine.ts` 的裁决顺序（L104–132）：
+
+1. **未映射工具 → deny**（本工具已映射 ⇒ 不走这条）；
+2. **基础决定 `baseDecision === "deny"` → deny**（理由文案「操作不可用」）← **实测命中的是这条**；
+3. 其余按 deny > ask > allow 的多规则合并。
+
+⇒ 真正的拦截点是：**`network.read` 在该会话里的"基础决定"是 deny** —— 这是**profile／会话基线**的问题，
+不是工具映射缺失。**`assist` 下本应是 `ask`（无头环境无人审批 ⇒ 事实上被拒），但 `devolve` 下本应是 `allow`** ⇒
+那说明**测试会话用的基线 profile 把 network.read 判成了 deny**。
+
+### 15.4.2 因此正确的下一步（不是补映射）
+
+1. 查**基线 profile 的来源**：`buildWorkerToolPort` 传 `useConfigurablePermissionProfileEngine: true` 时，
+   引擎的 `baseDecision` 由哪个 profile 计算（会话 profile / 默认 profile / 自定义 profile 控制器）；
+2. 在测试里**显式提供允许 network.read 的 profile**（这是"通过权限配置放行"的正当路径，ADR-0020 支持）；
+3. 若发现"默认 profile 一律 deny"是设计如此，则把它记为**产品语义**（而非缺陷），并按该语义写正向反例。
+
+**⇒ 我之前请你决策的 (a)/(b) 两条都不成立**：既不需要"新增能力映射"，也不需要"转 pending-manual"。
+**这是我在没有先读映射表的情况下就下结论的错误**，与"把卡里已写的内容当成待决策"是同一类问题。
