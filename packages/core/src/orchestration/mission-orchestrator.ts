@@ -156,6 +156,7 @@ export interface GitIntegrationOrchestrationOptions {
   buildGitWorktreeToolPort: (
     task: TaskDependencyNode,
     worktreePath: string,
+    agentInstanceId: string,
   ) => ToolPort;
 }
 
@@ -667,6 +668,7 @@ export class MissionOrchestrator {
         workerToolPort = gitIntegration.buildGitWorktreeToolPort(
           task,
           allocation.worktreePath,
+          agentInstanceId,
         );
       } catch (error) {
         this.options.onUserEscalation(
