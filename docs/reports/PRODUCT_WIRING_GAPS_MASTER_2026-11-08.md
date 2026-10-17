@@ -1825,3 +1825,44 @@ let systemPrompt = buildWorkerSystemPrompt(...);   // ← 在此之后追加
 
 **验收（§29.3 第 3 步）**：① 提供完整登记 ⇒ 提示词含完整用法；② 同一 agent 第二次 ⇒ 只含固定提醒；
 ③ 登记缺项 ⇒ 提示词不变（fail-closed）；④ 全都不提供 ⇒ 提示词逐字不变。
+
+## 30. G4 接线完成但**尚未证明"进入提示词"**（第 281–284 轮）
+
+### 30.1 已完成的接线（四层全通，`typecheck` 0、14 条单测/组合测绿）
+
+| 层 | 提交 |
+| --- | --- |
+| 门面 `toolDocumentationRegistry?` + 透传 | `d77d94b` |
+| 装配层选项 + **构造注入器**（回执存储落 `stateDirectory`） | `faa050e` |
+| 控制器选项 + 两处 `workerFactories` 透传 | `faa050e` |
+| 编排器 `workerFactories` 类型 + `buildWorkerAgent` 构造注入 | `beb9b54` |
+| worker 注入点 + **`recordDelivery` 写回执**（第 283 轮修复） | `8ed737d`、`12df7e4` |
+
+### 30.2 **未证明的事**（本轮实测发现）
+
+写了端到端用例（假 Provider 捕获请求体，断言 system 消息含完整用法）：
+
+| 用例 | 结果 |
+| --- | --- |
+| 提供登记 ⇒ system 含 `## factVerification` | ❌ **红**（system 里没有） |
+| 不提供登记 ⇒ system 不含 | ✅ 绿 |
+
+**探针（在 `buildWorkerAgent` 的构造 lambda 内打 `[G4-WIRE]`）一次未打印** ⇒
+该 lambda **没有被执行** ⇒ 说明这个测试路径里 **`buildWorkerAgent` 没被调用**（或 worker 由别处创建）。
+
+**⇒ 结论：接线代码在，但"提示词真被注入"未被证明。不得声称 G4 完成。**
+
+### 30.3 下轮的第一步诊断（10 分钟内）
+
+1. 在该测试里确认任务是否真的派发了 worker（打印 `result.status` 与 `[G4-OUTCOME]`；本轮因替换锚点未命中未拿到）；
+2. 若未派发 ⇒ 调整测试（任务/权限/循环上限），使 worker 真正运行；
+3. 若已派发但 lambda 未跑 ⇒ 检查 `launchWorker` 是否走 `buildWorkerAgent`（可能被覆写或另有路径）；
+4. 确认后，端到端用例应转绿 ⇒ 再做**拔线**（去掉任一层透传 ⇒ 红）。
+
+**草稿**：`.tmp/g4-tool-documentation-e2e.test.ts.draft`（**未入库**，当前红）。
+
+### 30.4 已证明的部分（可依赖）
+
+- **组合层**（真实注入器 + 真实回执存储 + 真实生产者/渲染器）：①首次完整用法 ②同 agent 同 revision 仅提醒 ③缺登记抛错 ⇒ **3/3 绿**；
+- **渲染器**：10 字段 + 末尾提醒 ⇒ 5/5 绿；
+- **生产者**：缺登记/空示例/空失败码/空局限/空返回 schema ⇒ fail-closed ⇒ 6/6 绿。
