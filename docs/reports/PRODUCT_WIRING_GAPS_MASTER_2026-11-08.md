@@ -168,3 +168,30 @@
 
 ⇒ **阶段一（G9 + 状态纠偏）按用户标准收尾完成**：真实（命令函数级）入口验收 + 「拔掉接线 4/4 失败」+ 隔离包验证三项齐备。
 **下一阶段 = G2（活锁与循环守卫）**，其验收同样须满足这三项。
+
+### 5.4 G2（阶段二，已完成）：活锁/循环守卫接线 + **有界中止**真正生效
+
+**规则依据**：`AGENTS.md`「**循环调用、无进展重试和 Agent 互相回派必须有本地检测与有界中止**」。
+
+**接线**：`LocalProgressAndCycleGuard`（T07B/ADR-0017）经端口接入工具循环（`before`/`after` 双相位），
+并沿 worker → 编排器 → 控制器 → 装配层 → 门面透传；门面开关 `isProgressGuardEnabled`，**缺省 false**。
+
+**第 130 轮实测定位的两个真缺陷（本轮修好）**：
+
+1. **中止无效**：违反发生在**内层**工具调用循环，`break` 只跳出内层 ⇒ 外层 `while` 继续请求模型。
+   修：`isProgressGuardAborted` 标志 + **迭代尾 `break` 外层 `while`**。
+2. **签名恒变**：签名含 `errorMessage` 自由文本，而 `resource-already-read` 的错误文本带
+   **倒计时字段**（`remainingWaitMilliseconds`）⇒ 签名每次都不同 ⇒ `isNewProgress` 恒真 ⇒
+   **无进展永不累计**、守卫形同虚设。修：错误只用 `errorCode`（与 `DiagnosticEvent` 同一口径）、
+   成功用内容哈希。**该 bug 已固化为永久变异体**。
+
+| 验收项 | 证据 |
+| --- | --- |
+| **真实应用装配入口** | 新增 `tests/core/integration/g2-progress-guard.test.ts`（2 条），经 `AstarrayApplicationFacade` 驱动真实 `submitTask/queryTask` 与假 Provider |
+| **拔掉接线 ⇒ 测试必须失败** | `git checkout 8be42cc -- <6 文件>` 回退后该用例**失败**（`expected 20 to be less than or equal to 8`）；`git checkout HEAD -- <6 文件>` 恢复后**通过**（**全程不经补丁文件**，避免第 130 轮那次损坏补丁的失误） |
+| **隔离包验证** | `npm pack`（prepack 门禁 **3309 用例**）⇒ 273 文件 / 1.6 MB；`verify-package` **exit 0**（「打包校验通过: 273 个文件，shebang/BOM 正确，反馈进程入口已包含」）；`verify-sdk-consumer` **exit 0** |
+| **永久变异体** | `progress-guard-signature-includes-volatile-text`（58/58 被拦下） |
+
+**⚠️ 边界（如实）**：守卫**缺省关**；是否默认启用属**用户决策**，我不擅自改默认。
+**任务总调用预算的持久化**（`readTaskBudget`/`writeTaskBudget`）目前用默认实现（进程内）⇒
+「进程重启不清零」这一半**尚未接线**，属 G2 的**剩余项**，不得视为已完成。

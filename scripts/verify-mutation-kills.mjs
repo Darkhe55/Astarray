@@ -1518,6 +1518,32 @@ export const MUTATIONS = [
       "让「同键异参」不再被拒绝 ⇒ 内容不同的同键指令被当作新指令接纳，" +
       "**既有指令可能被静默覆盖**（同键异参必须拒绝这一契约失守）⇒ 该反例必须变红",
   },
+  /**
+   * 2026-11-08（第 131 轮）新增：**无进展签名不得包含自由文本**（否则守卫形同虚设）。
+   *
+   * 这条正是第 130 轮**实测踩到的真 bug**：签名写成
+   * `"error:" + errorCode + ":" + errorMessage` 时，`resource-already-read` 的错误文本里带
+   * **倒计时字段**（`remainingWaitMilliseconds`）⇒ 签名每次都不同 ⇒ `isNewProgress` 恒真 ⇒
+   * 无进展永不累计 ⇒ 守卫永不触发（请求数跑满 `maximumLoopIterations`）。
+   *
+   * 实测被 `tests/core/integration/g2-progress-guard.test.ts` 的
+   * 「启用守卫后必须显著早于上限中止」拦下（守卫开了也照样跑满上限）⇒ 覆盖直接，固化防回归。
+   *
+   * ⚠️ `testFiles` **由检索结果直接写入**（不手敲）。
+   */
+  {
+    mutationIdentifier: "progress-guard-signature-includes-volatile-text",
+    targetFile: "packages/core/src/runtime/tool-loop.ts",
+    find: `            : "error:" + toolResult.errorCode;`,
+    replace: `            : "error:" + toolResult.errorCode + ":" + toolResult.errorMessage;`,
+    testFiles: [
+      "tests/core/integration/g2-progress-guard.test.ts",
+    ],
+    expectedFailingTestNames: ["启用守卫后必须显著早于上限中止"],
+    rationale:
+      "把无进展签名退回为**含自由文本** ⇒ 带倒计时/时间戳的错误文本使签名每次都变、" +
+      "`isNewProgress` 恒真、守卫永不触发（**这正是第 130 轮实测的 bug**）⇒ 该反例必须变红",
+  },
 ];
 
 function sha256OfFile(filePath) {
